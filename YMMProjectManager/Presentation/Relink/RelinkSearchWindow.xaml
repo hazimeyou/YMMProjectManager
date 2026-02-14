@@ -1,0 +1,30 @@
+﻿<Window
+    x:Class="YMMProjectManager.Presentation.Relink.RelinkSearchWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="探索設定"
+    Width="760"
+    Height="520"
+    WindowStartupLocation="CenterOwner">
+
+    <DockPanel Margin="10">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+            <TextBlock Text="探索フォルダ（複数可）" Margin="0,0,0,4" />
+            <StackPanel Orientation="Horizontal">
+                <ListBox x:Name="FoldersList" Width="520" Height="100" Margin="0,0,8,0" />
+                <StackPanel>
+                    <Button Content="追加" Width="90" Margin="0,0,0,8" Click="OnAddFolderClick" />
+                    <Button Content="削除" Width="90" Click="OnRemoveFolderClick" />
+                </StackPanel>
+            </StackPanel>
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="素材を再リンク（自動探索）" Width="210" Margin="0,0,8,0" Click="OnRunClick" />
+            <Button Content="キャンセル" Width="90" Click="OnCancelClick" />
+        </StackPanel>
+
+        <TextBlock x:Name="ProgressText" DockPanel.Dock="Top" Margin="0,0,0,6" />
+        <TextBlock x:Name="SummaryText" DockPanel.Dock="Top" Margin="0,0,0,6" />
+    </DockPanel>
+</Window>

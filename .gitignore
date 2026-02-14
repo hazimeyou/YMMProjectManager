@@ -1,0 +1,12 @@
+﻿################################################################################
+# この .gitignore ファイルは Microsoft(R) Visual Studio によって自動的に作成されました。
+################################################################################
+
+/.dotnet/.dotnet
+/.vs
+/YMMProjectManager/bin/Debug/net10.0-windows
+/YMMProjectManager/obj
+/_pngwav.il
+/_ymm_main.il
+/_ymm_plugin.il
+/spec.txt
