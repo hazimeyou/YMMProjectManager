@@ -1,0 +1,61 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build_and_release:
+    runs-on: windows-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Set Version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Build
+        run: dotnet build -c Release -p:VersionPrefix=$VERSION
+
+      - name: Publish
+        run: dotnet publish -c Release -p:VersionPrefix=$VERSION -o publish
+
+
+      - name: Copy LICENSE
+        run: Copy-Item ".github\assets\LICENSE.txt" "publish\LICENSE.txt"
+
+      - name: Copy README
+        run: Copy-Item ".github\assets\readme.txt" "publish\readme.txt"
+
+      - name: Prepare Package Folder
+        run: |
+          if (Test-Path package) { Remove-Item package -Recurse -Force }
+          New-Item -ItemType Directory -Path package
+          Copy-Item publish\* package -Recurse
+
+      - name: Create ZIP
+        run: Compress-Archive -Path "package\*" -DestinationPath "YMMProjectManager.zip"
+
+      - name: Rename ZIP to .ymme
+        run: Move-Item YMMProjectManager.zip YMMProjectManager.ymme
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ github.ref_name }}
+          artifacts: YMMProjectManager.ymme
+          draft: true
+          prerelease: true
