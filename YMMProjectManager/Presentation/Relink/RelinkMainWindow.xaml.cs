@@ -2,6 +2,7 @@
 using System.Windows;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Relink;
+using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Presentation.Relink;
 
@@ -10,8 +11,11 @@ public partial class RelinkMainWindow : Window
     private readonly FileLogger logger;
     private readonly RelinkScanService scanService;
     private readonly RelinkSaveService saveService;
+    private readonly TimelineMediaRelinkService timelineMediaRelinkService;
     private readonly ObservableCollection<RelinkRow> rows = [];
+    private readonly TimelineToolInfo? timelineInfo;
     private RelinkDocumentContext? context;
+    private TimelineRelinkContext? timelineContext;
 
     public RelinkMainWindow(string ymmpPath, FileLogger logger)
     {
@@ -19,42 +23,81 @@ public partial class RelinkMainWindow : Window
         this.logger = logger;
         scanService = new RelinkScanService(logger);
         saveService = new RelinkSaveService(logger);
+        timelineMediaRelinkService = new TimelineMediaRelinkService(logger);
         YmmpPath = ymmpPath;
         DataContext = this;
         Loaded += OnLoaded;
     }
 
-    public string YmmpPath { get; }
+    public RelinkMainWindow(TimelineToolInfo timelineInfo, FileLogger logger, string? ymmpPath = null)
+    {
+        InitializeComponent();
+        this.timelineInfo = timelineInfo;
+        this.logger = logger;
+        scanService = new RelinkScanService(logger);
+        saveService = new RelinkSaveService(logger);
+        timelineMediaRelinkService = new TimelineMediaRelinkService(logger);
+        YmmpPath = ymmpPath;
+        DataContext = this;
+        Loaded += OnLoaded;
+    }
+
+    public string? YmmpPath { get; }
     public ObservableCollection<RelinkRow> Rows => rows;
+    private bool IsRuntimeTimelineMode => timelineInfo?.Timeline is not null;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         SummaryText.Text = "読み込み中...";
         try
         {
-            logger.Info($"Relink.Load start. ymmp={YmmpPath}");
-            var (scanContext, result) = await scanService.ScanAsync(YmmpPath, CancellationToken.None);
-            if (scanContext is null)
+            if (IsRuntimeTimelineMode)
             {
-                SummaryText.Text = result.ErrorMessage ?? "読み込みに失敗しました。";
-                logger.Info($"Relink.Load failed. ymmp={YmmpPath}, reason={SummaryText.Text}");
+                logger.Info("Relink.Load start. mode=runtime-timeline");
+                var (scanContext, result) = timelineMediaRelinkService.Scan(timelineInfo);
+                if (scanContext is null)
+                {
+                    SummaryText.Text = result.ErrorMessage ?? "読み込みに失敗しました。";
+                    logger.Info($"Relink.Load failed. mode=runtime-timeline, reason={SummaryText.Text}");
+                    return;
+                }
+
+                timelineContext = scanContext;
+                rows.Clear();
+                foreach (var row in scanContext.Rows.Where(x => x.Status != RelinkStatus.Existing))
+                {
+                    rows.Add(row);
+                }
+
+                SummaryText.Text = $"検出: missing={result.MissingCount}件 / failed={result.FailedCount}件";
+                logger.Info($"Relink.Load end. mode=runtime-timeline, scanned={result.ScannedFilePathCount}, missing={result.MissingCount}, failed={result.FailedCount}");
+                logger.Flush();
                 return;
             }
 
-            context = scanContext;
+            logger.Info($"Relink.Load start. mode=ymmp-file, ymmp={YmmpPath}");
+            var (docContext, docResult) = await scanService.ScanAsync(YmmpPath!, CancellationToken.None);
+            if (docContext is null)
+            {
+                SummaryText.Text = docResult.ErrorMessage ?? "読み込みに失敗しました。";
+                logger.Info($"Relink.Load failed. mode=ymmp-file, ymmp={YmmpPath}, reason={SummaryText.Text}");
+                return;
+            }
+
+            context = docContext;
             rows.Clear();
-            foreach (var row in scanContext.Rows.Where(x => x.Status != RelinkStatus.Existing))
+            foreach (var row in docContext.Rows.Where(x => x.Status != RelinkStatus.Existing))
             {
                 rows.Add(row);
             }
 
-            SummaryText.Text = $"検出: missing={result.MissingCount}件 / failed={result.FailedCount}件";
-            logger.Info($"Relink.Load end. ymmp={YmmpPath}, scanned={result.ScannedFilePathCount}, missing={result.MissingCount}, failed={result.FailedCount}");
+            SummaryText.Text = $"検出: missing={docResult.MissingCount}件 / failed={docResult.FailedCount}件";
+            logger.Info($"Relink.Load end. mode=ymmp-file, ymmp={YmmpPath}, scanned={docResult.ScannedFilePathCount}, missing={docResult.MissingCount}, failed={docResult.FailedCount}");
             logger.Flush();
         }
         catch (Exception ex)
         {
-            logger.Error(ex, $"Relink.Load failed. ymmp={YmmpPath}");
+            logger.Error(ex, $"Relink.Load failed. mode={(IsRuntimeTimelineMode ? "runtime-timeline" : "ymmp-file")}, ymmp={YmmpPath ?? "<none>"}");
             logger.Flush();
             SummaryText.Text = "読み込み中にエラーが発生しました。";
             MessageBox.Show("読み込み中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -65,7 +108,7 @@ public partial class RelinkMainWindow : Window
     {
         try
         {
-            if (context is null)
+            if (rows.Count == 0)
             {
                 return;
             }
@@ -98,40 +141,66 @@ public partial class RelinkMainWindow : Window
     {
         try
         {
-            if (context is null)
+            if (context is null && timelineContext is null)
             {
                 return;
             }
 
-            logger.Info($"Relink.Save start. ymmp={YmmpPath}, rows={rows.Count}");
+            logger.Info($"Relink.Save start. mode={(timelineContext is null ? "ymmp-file" : "runtime-timeline")}, ymmp={YmmpPath ?? "<none>"}, rows={rows.Count}");
             foreach (var row in rows)
             {
-                var target = context.Rows.FirstOrDefault(x => x.OriginalPath == row.OriginalPath);
+                var target = context?.Rows.FirstOrDefault(x => x.RowIndex == row.RowIndex);
                 if (target is not null)
                 {
                     target.Status = row.Status;
                     target.SelectedCandidate = row.SelectedCandidate;
                 }
+
+                var timelineTarget = timelineContext?.Rows.FirstOrDefault(x => x.RowIndex == row.RowIndex);
+                if (timelineTarget is not null)
+                {
+                    timelineTarget.Status = row.Status;
+                    timelineTarget.SelectedCandidate = row.SelectedCandidate;
+                }
             }
 
-            var (success, errorMessage, backupPath) = await saveService.SaveAsync(context, CancellationToken.None);
-            if (!success)
+            if (timelineContext is not null)
             {
-                logger.Info($"Relink.Save failed. ymmp={YmmpPath}, reason={errorMessage}");
+                var (success, errorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
+                if (!success)
+                {
+                    logger.Info($"Relink.Save failed. mode=runtime-timeline, reason={errorMessage}");
+                    logger.Flush();
+                    MessageBox.Show(errorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                SummaryText.Text = updatedCount == 0
+                    ? "更新対象はありません。"
+                    : $"保存完了（タイムライン反映: {updatedCount}件）";
+                logger.Info($"Relink.Save end. mode=runtime-timeline, updated={updatedCount}");
                 logger.Flush();
-                MessageBox.Show(errorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var (fileSuccess, fileErrorMessage, backupPath) = await saveService.SaveAsync(context!, CancellationToken.None);
+            if (!fileSuccess)
+            {
+                logger.Info($"Relink.Save failed. mode=ymmp-file, ymmp={YmmpPath}, reason={fileErrorMessage}");
+                logger.Flush();
+                MessageBox.Show(fileErrorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             SummaryText.Text = backupPath is null
                 ? "更新対象はありません。"
                 : $"保存完了（バックアップ: {backupPath}）";
-            logger.Info($"Relink.Save end. ymmp={YmmpPath}, backup={backupPath ?? "<none>"}");
+            logger.Info($"Relink.Save end. mode=ymmp-file, ymmp={YmmpPath}, backup={backupPath ?? "<none>"}");
             logger.Flush();
         }
         catch (Exception ex)
         {
-            logger.Error(ex, $"Relink.Save failed. ymmp={YmmpPath}");
+            logger.Error(ex, $"Relink.Save failed. mode={(timelineContext is null ? "ymmp-file" : "runtime-timeline")}, ymmp={YmmpPath ?? "<none>"}");
             logger.Flush();
             MessageBox.Show("保存中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
         }

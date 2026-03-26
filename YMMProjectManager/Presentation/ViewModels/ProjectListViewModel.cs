@@ -21,6 +21,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
+    private readonly TimelineItemRelinkService timelineItemRelinkService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
@@ -66,6 +67,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand GoToFrameCommand { get; }
     public ICommand CopyPreviewCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
+    public ICommand ReplaceSelectedTimelineItemPathCommand { get; }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -77,6 +79,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
+        timelineItemRelinkService = new TimelineItemRelinkService(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -85,14 +88,16 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
-        OpenRelinkWindowCommand = new AsyncRelayCommand(OpenRelinkWindowAsync, () => !IsBusy && SelectedProject is not null);
+        OpenRelinkWindowCommand = new AsyncRelayCommand(OpenRelinkWindowAsync, () => !IsBusy && (SelectedProject is not null || TimelineContextService.Timeline is not null));
+        ReplaceSelectedTimelineItemPathCommand = new AsyncRelayCommand(ReplaceSelectedTimelineItemPathAsync, () => !IsBusy);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
     {
-        TimelineContextService.Timeline = info.Timeline;
+        TimelineContextService.Info = info;
         var timeline = info.Timeline;
         logger.Info($"SetTimelineToolInfo called. timeline={(timeline is null ? "null" : "available")}, currentFrame={timeline?.CurrentFrame}, length={timeline?.Length}");
+        CommandManager.InvalidateRequerySuggested();
     }
 
     public async Task InitializeAsync()
@@ -228,14 +233,28 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task OpenRelinkWindowAsync()
     {
-        if (SelectedProject is null)
-        {
-            return;
-        }
-
         await ExecuteWithBusyAsync("OpenRelinkWindow", () =>
         {
-            var window = new RelinkMainWindow(SelectedProject.FullPath, logger);
+            var info = TimelineContextService.Info;
+            var projectPath = info is null
+                ? SelectedProject?.FullPath
+                : YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
+
+            RelinkMainWindow window;
+            if (info?.Timeline is not null)
+            {
+                window = new RelinkMainWindow(info, logger, projectPath);
+            }
+            else if (!string.IsNullOrWhiteSpace(projectPath))
+            {
+                window = new RelinkMainWindow(projectPath, logger);
+            }
+            else
+            {
+                MessageBox.Show("再リンク対象のプロジェクトが見つかりませんでした。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return Task.CompletedTask;
+            }
+
             var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
             if (owner is not null && !ReferenceEquals(owner, window))
             {
@@ -243,6 +262,45 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
 
             window.ShowDialog();
+            return Task.CompletedTask;
+        }).ConfigureAwait(true);
+    }
+
+    private async Task ReplaceSelectedTimelineItemPathAsync()
+    {
+        await ExecuteWithBusyAsync("ReplaceSelectedTimelineItemPath", () =>
+        {
+            var info = TimelineContextService.Info;
+            var timeline = info?.Timeline;
+            if (timeline is not null && timeline.SelectedItems.Count == 0)
+            {
+                if (info is null)
+                {
+                    return Task.CompletedTask;
+                }
+
+                var ymmpPath = YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
+                logger.Info($"ReplaceSelectedTimelineItemPath fallback to project-wide timeline relink. ymmp={ymmpPath ?? "<none>"}");
+                var window = new RelinkMainWindow(info, logger, ymmpPath);
+                var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
+                if (owner is not null && !ReferenceEquals(owner, window))
+                {
+                    window.Owner = owner;
+                }
+
+                window.ShowDialog();
+                return Task.CompletedTask;
+            }
+
+            var (kind, message) = timelineItemRelinkService.ReplaceSelectedItemFilePath(TimelineContextService.Info);
+            var image = kind switch
+            {
+                TimelineItemRelinkResultKind.Success => MessageBoxImage.Information,
+                TimelineItemRelinkResultKind.Info => MessageBoxImage.Information,
+                TimelineItemRelinkResultKind.Warning => MessageBoxImage.Warning,
+                _ => MessageBoxImage.Information,
+            };
+            MessageBox.Show(message, "素材再リンク", MessageBoxButton.OK, image);
             return Task.CompletedTask;
         }).ConfigureAwait(true);
     }

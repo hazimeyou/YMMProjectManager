@@ -39,6 +39,11 @@
             DockPanel.Dock="Top"
             Margin="0,0,0,8">
             <Button
+                Content="選択アイテムを再リンク"
+                MinWidth="190"
+                Margin="0,0,8,0"
+                Command="{Binding ReplaceSelectedTimelineItemPathCommand}" />
+            <Button
                 Content="素材を再リンク"
                 MinWidth="190"
                 Margin="0,0,8,0"
