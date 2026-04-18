@@ -42,7 +42,7 @@ public sealed class TimelineMediaRelinkService
 
             foreach (var item in info.Timeline.Items)
             {
-                if (!TryGetFilePath(item, out var path) || string.IsNullOrWhiteSpace(path))
+                if (!TimelineItemFilePathAccessor.TryGetFilePath(item, out var path) || string.IsNullOrWhiteSpace(path))
                 {
                     continue;
                 }
@@ -114,7 +114,7 @@ public sealed class TimelineMediaRelinkService
                     continue;
                 }
 
-                if (!TryGetFilePath(target.Item, out var currentPath) || string.IsNullOrWhiteSpace(currentPath))
+                if (!TimelineItemFilePathAccessor.TryGetFilePath(target.Item, out var currentPath) || string.IsNullOrWhiteSpace(currentPath))
                 {
                     continue;
                 }
@@ -125,7 +125,7 @@ public sealed class TimelineMediaRelinkService
                     continue;
                 }
 
-                SetFilePath(target.Item, nextPath);
+                TimelineItemFilePathAccessor.SetFilePath(target.Item, nextPath);
                 updatedCount++;
             }
 
@@ -145,40 +145,4 @@ public sealed class TimelineMediaRelinkService
         }
     }
 
-    private static bool TryGetFilePath(IItem item, out string? path)
-    {
-        switch (item)
-        {
-            case VideoItem videoItem:
-                path = videoItem.FilePath;
-                return true;
-            case AudioItem audioItem:
-                path = audioItem.FilePath;
-                return true;
-            case ImageItem imageItem:
-                path = imageItem.FilePath;
-                return true;
-            default:
-                path = null;
-                return false;
-        }
-    }
-
-    private static void SetFilePath(IItem item, string path)
-    {
-        switch (item)
-        {
-            case VideoItem videoItem:
-                videoItem.FilePath = path;
-                break;
-            case AudioItem audioItem:
-                audioItem.FilePath = path;
-                break;
-            case ImageItem imageItem:
-                imageItem.FilePath = path;
-                break;
-            default:
-                throw new NotSupportedException($"Unsupported item type: {item.GetType().FullName}");
-        }
-    }
 }

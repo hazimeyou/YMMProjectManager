@@ -41,7 +41,7 @@ public sealed class TimelineItemRelinkService
         }
 
         var item = selectedItems[0];
-        var currentPath = GetFilePath(item);
+        var currentPath = TimelineItemFilePathAccessor.TryGetFilePath(item, out var path) ? path : null;
         if (string.IsNullOrWhiteSpace(currentPath))
         {
             logger.Info("Timeline item relink skipped. reason=item has no editable FilePath.");
@@ -70,7 +70,7 @@ public sealed class TimelineItemRelinkService
 
         try
         {
-            SetFilePath(item, newPath);
+            TimelineItemFilePathAccessor.SetFilePath(item, newPath);
             info.UndoRedoManager?.Record();
             logger.Info($"Timeline item relink updated. itemType={item.GetType().FullName}, oldPath={currentPath}, newPath={newPath}");
             logger.Flush();
@@ -81,35 +81,6 @@ public sealed class TimelineItemRelinkService
             logger.Error(ex, $"Timeline item relink failed. itemType={item.GetType().FullName}, oldPath={currentPath}, newPath={newPath}");
             logger.Flush();
             return (TimelineItemRelinkResultKind.Warning, "\u30d5\u30a1\u30a4\u30eb\u30d1\u30b9\u306e\u66f4\u65b0\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002\u30ed\u30b0\u3092\u78ba\u8a8d\u3057\u3066\u304f\u3060\u3055\u3044\u3002");
-        }
-    }
-
-    private static string? GetFilePath(IItem item)
-    {
-        return item switch
-        {
-            VideoItem videoItem => videoItem.FilePath,
-            AudioItem audioItem => audioItem.FilePath,
-            ImageItem imageItem => imageItem.FilePath,
-            _ => null,
-        };
-    }
-
-    private static void SetFilePath(IItem item, string path)
-    {
-        switch (item)
-        {
-            case VideoItem videoItem:
-                videoItem.FilePath = path;
-                break;
-            case AudioItem audioItem:
-                audioItem.FilePath = path;
-                break;
-            case ImageItem imageItem:
-                imageItem.FilePath = path;
-                break;
-            default:
-                throw new NotSupportedException($"Unsupported item type: {item.GetType().FullName}");
         }
     }
 

@@ -18,18 +18,16 @@ public partial class RelinkMainWindow : Window
     private TimelineRelinkContext? timelineContext;
 
     public RelinkMainWindow(string ymmpPath, FileLogger logger)
+        : this(logger, null, ymmpPath)
     {
-        InitializeComponent();
-        this.logger = logger;
-        scanService = new RelinkScanService(logger);
-        saveService = new RelinkSaveService(logger);
-        timelineMediaRelinkService = new TimelineMediaRelinkService(logger);
-        YmmpPath = ymmpPath;
-        DataContext = this;
-        Loaded += OnLoaded;
     }
 
     public RelinkMainWindow(TimelineToolInfo timelineInfo, FileLogger logger, string? ymmpPath = null)
+        : this(logger, timelineInfo, ymmpPath)
+    {
+    }
+
+    private RelinkMainWindow(FileLogger logger, TimelineToolInfo? timelineInfo, string? ymmpPath)
     {
         InitializeComponent();
         this.timelineInfo = timelineInfo;
@@ -147,22 +145,7 @@ public partial class RelinkMainWindow : Window
             }
 
             logger.Info($"Relink.Save start. mode={(timelineContext is null ? "ymmp-file" : "runtime-timeline")}, ymmp={YmmpPath ?? "<none>"}, rows={rows.Count}");
-            foreach (var row in rows)
-            {
-                var target = context?.Rows.FirstOrDefault(x => x.RowIndex == row.RowIndex);
-                if (target is not null)
-                {
-                    target.Status = row.Status;
-                    target.SelectedCandidate = row.SelectedCandidate;
-                }
-
-                var timelineTarget = timelineContext?.Rows.FirstOrDefault(x => x.RowIndex == row.RowIndex);
-                if (timelineTarget is not null)
-                {
-                    timelineTarget.Status = row.Status;
-                    timelineTarget.SelectedCandidate = row.SelectedCandidate;
-                }
-            }
+            SyncRows();
 
             if (timelineContext is not null)
             {
@@ -209,5 +192,25 @@ public partial class RelinkMainWindow : Window
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    private void SyncRows()
+    {
+        var contextRows = context?.Rows.ToDictionary(x => x.RowIndex);
+        var timelineRows = timelineContext?.Rows.ToDictionary(x => x.RowIndex);
+        foreach (var row in rows)
+        {
+            if (contextRows is not null && contextRows.TryGetValue(row.RowIndex, out var contextRow))
+            {
+                contextRow.Status = row.Status;
+                contextRow.SelectedCandidate = row.SelectedCandidate;
+            }
+
+            if (timelineRows is not null && timelineRows.TryGetValue(row.RowIndex, out var timelineRow))
+            {
+                timelineRow.Status = row.Status;
+                timelineRow.SelectedCandidate = row.SelectedCandidate;
+            }
+        }
     }
 }
