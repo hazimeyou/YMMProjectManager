@@ -12,27 +12,15 @@
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('$(YMM4DirPath)\YukkuriMovieMaker.Plugin.dll')">
-    <Reference Include="YukkuriMovieMaker.Plugin"
-               HintPath="$(YMM4DirPath)\YukkuriMovieMaker.Plugin.dll"
-               Private="false" />
-    <Reference Include="YukkuriMovieMaker.Controls"
-               HintPath="$(YMM4DirPath)\YukkuriMovieMaker.Controls.dll"
-               Private="false" />
-    <Reference Include="YukkuriMovieMaker"
-               HintPath="$(YMM4DirPath)\YukkuriMovieMaker.dll"
-               Private="false" />
+    <Reference Include="YukkuriMovieMaker.Plugin" HintPath="$(YMM4DirPath)\YukkuriMovieMaker.Plugin.dll" Private="false" />
+    <Reference Include="YukkuriMovieMaker.Controls" HintPath="$(YMM4DirPath)\YukkuriMovieMaker.Controls.dll" Private="false" />
+    <Reference Include="YukkuriMovieMaker" HintPath="$(YMM4DirPath)\YukkuriMovieMaker.dll" Private="false" />
   </ItemGroup>
 
   <ItemGroup Condition="!Exists('$(YMM4DirPath)\YukkuriMovieMaker.Plugin.dll')">
-    <Reference Include="YukkuriMovieMaker.Plugin"
-               HintPath="..\libs\YukkuriMovieMaker.Plugin.dll"
-               Private="false" />
-    <Reference Include="YukkuriMovieMaker.Controls"
-               HintPath="..\libs\YukkuriMovieMaker.Controls.dll"
-               Private="false" />
-    <Reference Include="YukkuriMovieMaker"
-               HintPath="..\libs\YukkuriMovieMaker.dll"
-               Private="false" />
+    <Reference Include="YukkuriMovieMaker.Plugin" HintPath="..\libs\YukkuriMovieMaker.Plugin.dll" Private="false" />
+    <Reference Include="YukkuriMovieMaker.Controls" HintPath="..\libs\YukkuriMovieMaker.Controls.dll" Private="false" />
+    <Reference Include="YukkuriMovieMaker" HintPath="..\libs\YukkuriMovieMaker.dll" Private="false" />
   </ItemGroup>
 
   <Target Name="CopyToYMM4" AfterTargets="Build" Condition="Exists('$(YMM4DirPath)')">
@@ -46,9 +34,7 @@
       <PluginFiles Include="$(TargetDir)$(AssemblyName).dll" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(PluginFiles)"
-          DestinationFolder="$(PluginOutputDir)"
-          SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(PluginFiles)" DestinationFolder="$(PluginOutputDir)" SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
