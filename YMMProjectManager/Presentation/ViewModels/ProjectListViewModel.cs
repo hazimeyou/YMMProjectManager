@@ -66,7 +66,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand GoToFrameCommand { get; }
     public ICommand CopyPreviewCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
-    public ICommand ReplaceSelectedTimelineItemPathCommand { get; }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -87,7 +86,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
-        ReplaceSelectedTimelineItemPathCommand = new AsyncRelayCommand(OpenSelectedProjectRelinkWindowAsync, () => !IsBusy && SelectedProject is not null);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
@@ -270,37 +268,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 projectPath = null;
             }
 
-            var window = new RelinkMainWindow(info, logger, projectPath);
-
-            var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
-            if (owner is not null && !ReferenceEquals(owner, window))
-            {
-                window.Owner = owner;
-            }
-
-            window.ShowDialog();
+            OpenRelinkWindowDialog(new RelinkMainWindow(info, logger, projectPath));
             return Task.CompletedTask;
         }).ConfigureAwait(true);
     }
 
-    private async Task OpenSelectedProjectRelinkWindowAsync()
+    private void OpenRelinkWindowDialog(RelinkMainWindow window)
     {
-        await ExecuteWithBusyAsync("OpenSelectedProjectRelinkWindow", () =>
-        {
-            var project = SelectedProject;
-            if (project is null)
-            {
-                MessageBox.Show("再リンク対象のPFが選択されていません。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return Task.CompletedTask;
-            }
-
-            if (!TryGetOpenableProjectPath(project.FullPath, out var pathToRelink, out var reason))
-            {
-                MessageBox.Show(reason, "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return Task.CompletedTask;
-            }
-
-            var window = new RelinkMainWindow(pathToRelink, logger);
             var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
             if (owner is not null && !ReferenceEquals(owner, window))
             {
@@ -308,8 +282,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
 
             window.ShowDialog();
-            return Task.CompletedTask;
-        }).ConfigureAwait(true);
     }
 
     private async Task GenerateThumbnailsFastAsync()

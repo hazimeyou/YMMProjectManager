@@ -44,11 +44,6 @@
                 Margin="0,0,8,0"
                 Command="{Binding OpenRelinkWindowCommand}" />
             <Button
-                Content="選択したPFを再リンク"
-                MinWidth="190"
-                Margin="0,0,8,0"
-                Command="{Binding ReplaceSelectedTimelineItemPathCommand}" />
-            <Button
                 Content="サムネイル生成"
                 MinWidth="180"
                 Command="{Binding GenerateThumbnailsFastCommand}" />
