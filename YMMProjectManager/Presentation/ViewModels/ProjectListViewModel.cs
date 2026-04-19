@@ -9,6 +9,7 @@ using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Output;
+using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
@@ -21,10 +22,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
+    private readonly YmmpBundleService bundleService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
     private string frameIndexText = "0";
+    private string bundleStatus = string.Empty;
+    private double bundleProgress;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -58,6 +62,18 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         set => SetProperty(ref frameIndexText, value);
     }
 
+    public string BundleStatus
+    {
+        get => bundleStatus;
+        set => SetProperty(ref bundleStatus, value);
+    }
+
+    public double BundleProgress
+    {
+        get => bundleProgress;
+        set => SetProperty(ref bundleProgress, value);
+    }
+
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -66,6 +82,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand GoToFrameCommand { get; }
     public ICommand CopyPreviewCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
+    public ICommand PackageSelectedProjectCommand { get; }
+    public ICommand PackageOpenedProjectCommand { get; }
+    public ICommand ExtractBundleCommand { get; }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -77,6 +96,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
+        bundleService = new YmmpBundleService(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -86,6 +106,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
+        PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
+        PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
+        ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
@@ -270,6 +293,116 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
             OpenRelinkWindowDialog(new RelinkMainWindow(info, logger, projectPath));
             return Task.CompletedTask;
+        }).ConfigureAwait(true);
+    }
+
+    private async Task PackageSelectedProjectAsync()
+    {
+        var path = SelectedProject?.FullPath;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        await PackageProjectAsync(path).ConfigureAwait(true);
+    }
+
+    private async Task PackageOpenedProjectAsync()
+    {
+        var currentProjectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
+        if (string.IsNullOrWhiteSpace(currentProjectPath))
+        {
+            MessageBox.Show("開いているPFが見つかりませんでした。", "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        await PackageProjectAsync(currentProjectPath).ConfigureAwait(true);
+    }
+
+    private async Task PackageProjectAsync(string sourcePath)
+    {
+        if (!TryGetOpenableProjectPath(sourcePath, out var ymmpPath, out var reason))
+        {
+            MessageBox.Show(reason, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var defaultOutput = Path.ChangeExtension(ymmpPath, ".ymmpx");
+        var dialog = new SaveFileDialog
+        {
+            Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
+            Title = "同梱ファイルの保存先を選択",
+            FileName = Path.GetFileName(defaultOutput),
+            InitialDirectory = Path.GetDirectoryName(defaultOutput),
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("PackageProject", async () =>
+        {
+            BundleStatus = "同梱ファイルを作成中...";
+            BundleProgress = 0;
+
+            var progress = new Progress<double>(value => BundleProgress = value * 100d);
+            var (success, errorMessage, outputPath) = await bundleService
+                .CreateBundleAsync(ymmpPath, dialog.FileName, CancellationToken.None, progress)
+                .ConfigureAwait(true);
+            if (!success)
+            {
+                BundleStatus = errorMessage ?? "同梱ファイル作成に失敗しました。";
+                MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            BundleProgress = 100;
+            BundleStatus = $"作成完了: {outputPath}";
+            MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    private async Task ExtractBundleAsync()
+    {
+        var bundleDialog = new OpenFileDialog
+        {
+            Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
+            Title = "展開する同梱ファイルを選択",
+            CheckFileExists = true,
+        };
+        if (bundleDialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var outputDialog = new OpenFolderDialog
+        {
+            Title = "展開先フォルダを選択",
+        };
+        if (outputDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(outputDialog.FolderName))
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("ExtractBundle", async () =>
+        {
+            BundleStatus = "同梱ファイルを展開中...";
+            BundleProgress = 0;
+
+            var progress = new Progress<double>(value => BundleProgress = value * 100d);
+            var (success, errorMessage, restoredYmmpPath) = await bundleService
+                .ExtractBundleAsync(bundleDialog.FileName, outputDialog.FolderName, CancellationToken.None, progress)
+                .ConfigureAwait(true);
+            if (!success)
+            {
+                BundleStatus = errorMessage ?? "同梱ファイル展開に失敗しました。";
+                MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            BundleProgress = 100;
+            BundleStatus = $"展開完了: {restoredYmmpPath}";
+            MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }
 
