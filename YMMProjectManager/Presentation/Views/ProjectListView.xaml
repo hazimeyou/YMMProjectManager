@@ -14,8 +14,7 @@
     MinHeight="240">
 
     <TabControl Margin="8">
-        <TabItem Header="プロジェクト管理">
-            <DockPanel Margin="0,8,0,0">
+        <DockPanel Margin="0,8,0,0">
                 <StackPanel
                     Orientation="Horizontal"
                     DockPanel.Dock="Top"
@@ -42,15 +41,38 @@
                     Margin="0,0,0,8">
                     <Button
                         Content="開いているPFを再リンク"
-                        MinWidth="190"
+                        MinWidth="180"
                         Margin="0,0,8,0"
                         Command="{Binding OpenRelinkWindowCommand}" />
                     <Button
                         Content="サムネイル生成"
                         MinWidth="180"
+                                                Margin="0,0,8,0"
                         Command="{Binding GenerateThumbnailsFastCommand}" />
+                    <Button
+                        Content=".ymmpxの関連付け"
+                        MinWidth="180"
+                        Command="{Binding AssociateYmmpxCommand}" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
+                    <Button
+                        Content="選択したPFを同梱化"
+                        MinWidth="180"
+                        Margin="0,0,8,0"
+                        Command="{Binding PackageSelectedProjectCommand}" />
+                    <Button
+                        Content="開いているPFを同梱化"
+                        MinWidth="180"
+                        Margin="0,0,8,0"
+                        Command="{Binding PackageOpenedProjectCommand}" />
+                    <Button
+                        Content="ymmpxを展開"
+                        MinWidth="180"
+                        Command="{Binding ExtractBundleCommand}" Click="Button_Click" />
                 </StackPanel>
 
+                <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
+                <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
                 <ListBox
                     ItemsSource="{Binding Projects}"
                     SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
@@ -77,30 +99,5 @@
                     </ListBox.ItemTemplate>
                 </ListBox>
             </DockPanel>
-        </TabItem>
-
-        <TabItem Header="同梱展開">
-            <DockPanel Margin="12">
-                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                    <Button
-                        Content="選択したPFを同梱化"
-                        MinWidth="180"
-                        Margin="0,0,8,0"
-                        Command="{Binding PackageSelectedProjectCommand}" />
-                    <Button
-                        Content="開いているPFを同梱化"
-                        MinWidth="180"
-                        Margin="0,0,8,0"
-                        Command="{Binding PackageOpenedProjectCommand}" />
-                    <Button
-                        Content="ymmpxを展開"
-                        MinWidth="140"
-                        Command="{Binding ExtractBundleCommand}" />
-                </StackPanel>
-
-                <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
-                <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
-            </DockPanel>
-        </TabItem>
     </TabControl>
 </UserControl>

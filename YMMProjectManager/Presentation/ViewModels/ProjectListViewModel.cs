@@ -402,6 +402,23 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
             BundleProgress = 100;
             BundleStatus = $"展開完了: {restoredYmmpPath}";
+            if (!string.IsNullOrWhiteSpace(restoredYmmpPath) && File.Exists(restoredYmmpPath))
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = restoredYmmpPath,
+                        UseShellExecute = true,
+                    });
+                    BundleStatus = $"展開して起動しました: {restoredYmmpPath}";
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"ExtractBundle auto-open failed. path={restoredYmmpPath}");
+                }
+            }
+
             MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }

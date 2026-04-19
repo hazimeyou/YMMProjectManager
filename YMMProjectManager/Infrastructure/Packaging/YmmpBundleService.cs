@@ -180,10 +180,19 @@ public sealed class YmmpBundleService
                 projectText = Regex.Replace(projectText, pattern, "$1" + newToken, RegexOptions.CultureInvariant);
             }
 
-            var projectName = string.IsNullOrWhiteSpace(manifest.ProjectFileName)
-                ? $"{Path.GetFileNameWithoutExtension(ymmpxPath)}.ymmp"
-                : manifest.ProjectFileName;
-            var restoredYmmpPath = Path.Combine(extractRoot, projectName);
+            var preferredProjectName = $"{Path.GetFileNameWithoutExtension(ymmpxPath)}.ymmp";
+            var restoredYmmpPath = Path.Combine(extractRoot, preferredProjectName);
+            if (File.Exists(restoredYmmpPath))
+            {
+                var index = 1;
+                var baseName = Path.GetFileNameWithoutExtension(preferredProjectName);
+                while (File.Exists(restoredYmmpPath))
+                {
+                    restoredYmmpPath = Path.Combine(extractRoot, $"{baseName}_{index}.ymmp");
+                    index++;
+                }
+            }
+
             await File.WriteAllTextAsync(restoredYmmpPath, projectText, token).ConfigureAwait(false);
 
             logger.Info($"Bundle.Extract completed. ymmpx={ymmpxPath}, output={restoredYmmpPath}, files={replacements.Count}");

@@ -114,4 +114,9 @@ public partial class ProjectListView : UserControl
 
         return false;
     }
+
+    private void Button_Click(object sender, RoutedEventArgs e)
+    {
+
+    }
 }
