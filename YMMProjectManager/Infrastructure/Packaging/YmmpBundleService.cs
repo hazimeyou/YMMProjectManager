@@ -116,7 +116,8 @@ public sealed class YmmpBundleService
         try
         {
             token.ThrowIfCancellationRequested();
-            var extractRoot = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(ymmpxPath));
+            var extractRoot = Path.GetFullPath(Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(ymmpxPath)));
+            var extractRootWithSeparator = EnsureTrailingDirectorySeparator(extractRoot);
             Directory.CreateDirectory(extractRoot);
 
             await using var zipStream = new FileStream(ymmpxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -151,7 +152,7 @@ public sealed class YmmpBundleService
 
                 var safeRelative = item.BundlePath.Replace('/', Path.DirectorySeparatorChar);
                 var destinationPath = Path.GetFullPath(Path.Combine(extractRoot, safeRelative));
-                if (!destinationPath.StartsWith(extractRoot, StringComparison.OrdinalIgnoreCase))
+                if (!destinationPath.StartsWith(extractRootWithSeparator, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }
@@ -279,6 +280,18 @@ public sealed class YmmpBundleService
         await using var stream = entry.Open();
         using var reader = new StreamReader(stream);
         return await reader.ReadToEndAsync(token).ConfigureAwait(false);
+    }
+
+    private static string EnsureTrailingDirectorySeparator(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            return Path.DirectorySeparatorChar.ToString();
+        }
+
+        return path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar)
+            ? path
+            : path + Path.DirectorySeparatorChar;
     }
 
     private sealed class BundleManifest

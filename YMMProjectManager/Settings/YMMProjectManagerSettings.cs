@@ -43,6 +43,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         SaveToPluginDirectory();
     }
 
+    public void Reload()
+    {
+        LoadFromPluginDirectory();
+    }
+
     private void LoadFromPluginDirectory()
     {
         try

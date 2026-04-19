@@ -185,12 +185,31 @@ public partial class RelinkMainWindow : Window
             ApplyUpdates(targetRows, execution.Updates);
             SyncRows();
 
+            if (IsRuntimeTimelineMode && timelineContext is not null)
+            {
+                var (saveSuccess, saveErrorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
+                if (!saveSuccess)
+                {
+                    logger.Info($"Relink.Search auto-save failed. mode=runtime-timeline, reason={saveErrorMessage}");
+                    logger.Flush();
+                    if (CanShowUiFeedback())
+                    {
+                        MessageBox.Show(
+                            saveErrorMessage ?? "タイムラインへの反映に失敗しました。ログを確認してください。",
+                            "素材再リンク",
+                            MessageBoxButton.OK,
+                            MessageBoxImage.Warning);
+                    }
+                }
+                else
+                {
+                    logger.Info($"Relink.Search auto-save end. mode=runtime-timeline, updated={updatedCount}");
+                    logger.Flush();
+                }
+            }
+
             if (IsRuntimeTimelineMode && suppressUiAfterClose && timelineContext is not null)
             {
-                var (success, errorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
-                logger.Info(
-                    $"Relink.Search background-save end. success={success}, updated={updatedCount}, error={errorMessage ?? "<none>"}");
-                logger.Flush();
                 return;
             }
 
@@ -362,6 +381,8 @@ public partial class RelinkMainWindow : Window
 
     private List<string> GetUsableSearchFolders()
     {
+        YMMProjectManagerSettings.Current.Reload();
+
         var usable = new List<string>();
         foreach (var folder in YMMProjectManagerSettings.Current.GetSearchFolders())
         {

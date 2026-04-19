@@ -10,3 +10,7 @@
 /_ymm_main.il
 /_ymm_plugin.il
 /spec.txt
+/package
+/publish
+/YMMProjectManager/bin/Release/net10.0-windows
+*.ymme
