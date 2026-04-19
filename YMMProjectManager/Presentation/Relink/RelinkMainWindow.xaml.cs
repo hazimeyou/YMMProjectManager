@@ -1,21 +1,31 @@
 ﻿using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.IO;
 using System.Windows;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Relink;
+using YMMProjectManager.Settings;
 using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Presentation.Relink;
 
 public partial class RelinkMainWindow : Window
 {
+    private static readonly TimeSpan ProgressUiInterval = TimeSpan.FromMilliseconds(200);
+
     private readonly FileLogger logger;
     private readonly RelinkScanService scanService;
+    private readonly RelinkSearchService searchService;
     private readonly RelinkSaveService saveService;
     private readonly TimelineMediaRelinkService timelineMediaRelinkService;
     private readonly ObservableCollection<RelinkRow> rows = [];
     private readonly TimelineToolInfo? timelineInfo;
     private RelinkDocumentContext? context;
     private TimelineRelinkContext? timelineContext;
+    private DateTimeOffset lastProgressUiUpdate = DateTimeOffset.MinValue;
+    private CancellationTokenSource? searchCts;
+    private bool isSearchRunning;
+    private bool suppressUiAfterClose;
 
     public RelinkMainWindow(string ymmpPath, FileLogger logger)
         : this(logger, null, ymmpPath)
@@ -33,11 +43,13 @@ public partial class RelinkMainWindow : Window
         this.timelineInfo = timelineInfo;
         this.logger = logger;
         scanService = new RelinkScanService(logger);
+        searchService = new RelinkSearchService(logger);
         saveService = new RelinkSaveService(logger);
         timelineMediaRelinkService = new TimelineMediaRelinkService(logger);
         YmmpPath = ymmpPath;
         DataContext = this;
         Loaded += OnLoaded;
+        Closing += OnWindowClosing;
     }
 
     public string? YmmpPath { get; }
@@ -46,7 +58,8 @@ public partial class RelinkMainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
-        SummaryText.Text = "読み込み中...";
+        SetSummaryText("読み込み中...");
+        SetSearchUiState(isRunning: false);
         try
         {
             if (IsRuntimeTimelineMode)
@@ -55,8 +68,8 @@ public partial class RelinkMainWindow : Window
                 var (scanContext, result) = timelineMediaRelinkService.Scan(timelineInfo);
                 if (scanContext is null)
                 {
-                    SummaryText.Text = result.ErrorMessage ?? "読み込みに失敗しました。";
-                    logger.Info($"Relink.Load failed. mode=runtime-timeline, reason={SummaryText.Text}");
+                    SetSummaryText(result.ErrorMessage ?? "読み込みに失敗しました。");
+                    logger.Info($"Relink.Load failed. mode=runtime-timeline, reason={result.ErrorMessage}");
                     return;
                 }
 
@@ -67,7 +80,7 @@ public partial class RelinkMainWindow : Window
                     rows.Add(row);
                 }
 
-                SummaryText.Text = $"検出: missing={result.MissingCount}件 / failed={result.FailedCount}件";
+                SetSummaryText($"検出: missing={result.MissingCount}件 / failed={result.FailedCount}件");
                 logger.Info($"Relink.Load end. mode=runtime-timeline, scanned={result.ScannedFilePathCount}, missing={result.MissingCount}, failed={result.FailedCount}");
                 logger.Flush();
                 return;
@@ -77,8 +90,8 @@ public partial class RelinkMainWindow : Window
             var (docContext, docResult) = await scanService.ScanAsync(YmmpPath!, CancellationToken.None);
             if (docContext is null)
             {
-                SummaryText.Text = docResult.ErrorMessage ?? "読み込みに失敗しました。";
-                logger.Info($"Relink.Load failed. mode=ymmp-file, ymmp={YmmpPath}, reason={SummaryText.Text}");
+                SetSummaryText(docResult.ErrorMessage ?? "読み込みに失敗しました。");
+                logger.Info($"Relink.Load failed. mode=ymmp-file, ymmp={YmmpPath}, reason={docResult.ErrorMessage}");
                 return;
             }
 
@@ -89,7 +102,7 @@ public partial class RelinkMainWindow : Window
                 rows.Add(row);
             }
 
-            SummaryText.Text = $"検出: missing={docResult.MissingCount}件 / failed={docResult.FailedCount}件";
+            SetSummaryText($"検出: missing={docResult.MissingCount}件 / failed={docResult.FailedCount}件");
             logger.Info($"Relink.Load end. mode=ymmp-file, ymmp={YmmpPath}, scanned={docResult.ScannedFilePathCount}, missing={docResult.MissingCount}, failed={docResult.FailedCount}");
             logger.Flush();
         }
@@ -97,13 +110,21 @@ public partial class RelinkMainWindow : Window
         {
             logger.Error(ex, $"Relink.Load failed. mode={(IsRuntimeTimelineMode ? "runtime-timeline" : "ymmp-file")}, ymmp={YmmpPath ?? "<none>"}");
             logger.Flush();
-            SummaryText.Text = "読み込み中にエラーが発生しました。";
-            MessageBox.Show("読み込み中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            SetSummaryText("読み込み中にエラーが発生しました。");
+            if (CanShowUiFeedback())
+            {
+                MessageBox.Show("読み込み中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
     }
 
-    private void OnOpenSearchSettingsClick(object sender, RoutedEventArgs e)
+    private async void OnOpenSearchSettingsClick(object sender, RoutedEventArgs e)
     {
+        if (isSearchRunning)
+        {
+            return;
+        }
+
         try
         {
             if (rows.Count == 0)
@@ -111,27 +132,100 @@ public partial class RelinkMainWindow : Window
                 return;
             }
 
-            var targetRows = rows.Where(x => x.Status is RelinkStatus.Missing or RelinkStatus.Ambiguous or RelinkStatus.NotFound).ToList();
-            logger.Info($"Relink.OpenSearch start. targetRows={targetRows.Count}");
-            var window = new RelinkSearchWindow(targetRows, logger)
+            var targetRows = rows
+                .Where(x => x.Status is RelinkStatus.Missing or RelinkStatus.Ambiguous or RelinkStatus.NotFound)
+                .ToList();
+            if (targetRows.Count == 0)
             {
-                Owner = this,
-            };
-            window.ShowDialog();
+                SetSummaryText("探索対象はありません。");
+                return;
+            }
 
-            var updated = rows.Count(x => x.Status == RelinkStatus.Updated);
-            var ambiguous = rows.Count(x => x.Status == RelinkStatus.Ambiguous);
-            var notFound = rows.Count(x => x.Status == RelinkStatus.NotFound);
-            var failed = rows.Count(x => x.Status == RelinkStatus.Failed);
-            SummaryText.Text = $"更新{updated}件 / 曖昧{ambiguous}件 / 未発見{notFound}件 / 失敗{failed}件";
-            logger.Info($"Relink.OpenSearch end. updated={updated}, ambiguous={ambiguous}, notFound={notFound}, failed={failed}");
+            var searchFolders = GetUsableSearchFolders();
+            if (searchFolders.Count == 0)
+            {
+                if (CanShowUiFeedback())
+                {
+                    MessageBox.Show(
+                        "探索フォルダが未設定、または存在しません。設定メニューの「プロジェクトマネージャー」で探索フォルダを追加してください。",
+                        "素材再リンク",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+                return;
+            }
+
+            searchCts?.Cancel();
+            searchCts?.Dispose();
+            searchCts = new CancellationTokenSource();
+            lastProgressUiUpdate = DateTimeOffset.MinValue;
+            isSearchRunning = true;
+            SetSearchUiState(isRunning: true);
+
+            SetSummaryText("探索を開始します...");
+            logger.Info($"Relink.Search start. rows={targetRows.Count}, folders={searchFolders.Count}");
             logger.Flush();
+
+            var snapshots = BuildSearchInputRows(targetRows);
+
+            var progress = new Progress<RelinkSearchProgressInfo>(p =>
+            {
+                var now = DateTimeOffset.Now;
+                if (now - lastProgressUiUpdate < ProgressUiInterval && p.Done < p.Total)
+                {
+                    return;
+                }
+
+                lastProgressUiUpdate = now;
+                var totalText = p.Total > 0 ? p.Total.ToString() : "-";
+                SetSummaryText($"処理中: {p.CurrentFileName} ({p.Done}/{totalText})");
+            });
+
+            var execution = await searchService.ExecuteAsync(snapshots, searchFolders, searchCts.Token, progress);
+            ApplyUpdates(targetRows, execution.Updates);
+            SyncRows();
+
+            if (IsRuntimeTimelineMode && suppressUiAfterClose && timelineContext is not null)
+            {
+                var (success, errorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
+                logger.Info(
+                    $"Relink.Search background-save end. success={success}, updated={updatedCount}, error={errorMessage ?? "<none>"}");
+                logger.Flush();
+                return;
+            }
+
+            var result = execution.Summary;
+            SetSummaryText($"更新{result.UpdatedCount}件 / 曖昧{result.AmbiguousCount}件 / 未発見{result.NotFoundCount}件 / 失敗{result.FailedCount}件");
+            logger.Info(
+                $"Relink.Search end. scannedFilePathCount={result.ScannedFilePathCount}, missingCount={result.MissingCount}, updatedCount={result.UpdatedCount}, ambiguousCount={result.AmbiguousCount}, notFoundCount={result.NotFoundCount}, skippedCount={result.SkippedCount}, failedCount={result.FailedCount}");
+            logger.Flush();
+
+            if (!string.IsNullOrWhiteSpace(result.ErrorMessage) && CanShowUiFeedback())
+            {
+                MessageBox.Show(result.ErrorMessage, "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            logger.Info("Relink.Search canceled.");
+            logger.Flush();
+            SetSummaryText("探索をキャンセルしました。");
         }
         catch (Exception ex)
         {
-            logger.Error(ex, "Relink.OpenSearch failed.");
+            logger.Error(ex, "Relink.Search failed.");
             logger.Flush();
-            MessageBox.Show("探索設定の表示中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (CanShowUiFeedback())
+            {
+                MessageBox.Show("探索中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        finally
+        {
+            isSearchRunning = false;
+            SetSearchUiState(isRunning: false);
+            searchCts?.Dispose();
+            searchCts = null;
         }
     }
 
@@ -154,13 +248,16 @@ public partial class RelinkMainWindow : Window
                 {
                     logger.Info($"Relink.Save failed. mode=runtime-timeline, reason={errorMessage}");
                     logger.Flush();
-                    MessageBox.Show(errorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    if (CanShowUiFeedback())
+                    {
+                        MessageBox.Show(errorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
                     return;
                 }
 
-                SummaryText.Text = updatedCount == 0
+                SetSummaryText(updatedCount == 0
                     ? "更新対象はありません。"
-                    : $"保存完了（タイムライン反映: {updatedCount}件）";
+                    : $"保存完了（タイムライン反映: {updatedCount}件）");
                 logger.Info($"Relink.Save end. mode=runtime-timeline, updated={updatedCount}");
                 logger.Flush();
                 return;
@@ -171,13 +268,16 @@ public partial class RelinkMainWindow : Window
             {
                 logger.Info($"Relink.Save failed. mode=ymmp-file, ymmp={YmmpPath}, reason={fileErrorMessage}");
                 logger.Flush();
-                MessageBox.Show(fileErrorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                if (CanShowUiFeedback())
+                {
+                    MessageBox.Show(fileErrorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
                 return;
             }
 
-            SummaryText.Text = backupPath is null
+            SetSummaryText(backupPath is null
                 ? "更新対象はありません。"
-                : $"保存完了（バックアップ: {backupPath}）";
+                : $"保存完了（バックアップ: {backupPath}）");
             logger.Info($"Relink.Save end. mode=ymmp-file, ymmp={YmmpPath}, backup={backupPath ?? "<none>"}");
             logger.Flush();
         }
@@ -185,13 +285,21 @@ public partial class RelinkMainWindow : Window
         {
             logger.Error(ex, $"Relink.Save failed. mode={(timelineContext is null ? "ymmp-file" : "runtime-timeline")}, ymmp={YmmpPath ?? "<none>"}");
             logger.Flush();
-            MessageBox.Show("保存中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            if (CanShowUiFeedback())
+            {
+                MessageBox.Show("保存中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
         }
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
         Close();
+    }
+
+    private void OnCancelSearchClick(object sender, RoutedEventArgs e)
+    {
+        CancelCurrentSearch();
     }
 
     private void SyncRows()
@@ -212,5 +320,139 @@ public partial class RelinkMainWindow : Window
                 timelineRow.SelectedCandidate = row.SelectedCandidate;
             }
         }
+    }
+
+    private static void ApplyUpdates(IEnumerable<RelinkRow> targetRows, IEnumerable<RelinkRowUpdate> updates)
+    {
+        var rowMap = targetRows.ToDictionary(x => x.RowIndex);
+        foreach (var update in updates)
+        {
+            if (!rowMap.TryGetValue(update.RowIndex, out var row))
+            {
+                continue;
+            }
+
+            row.Candidates.Clear();
+            foreach (var candidate in update.Candidates)
+            {
+                row.Candidates.Add(candidate);
+            }
+
+            row.CandidateCount = update.Candidates.Count;
+            row.SelectedCandidate = update.SelectedCandidate;
+            row.Status = update.Status;
+            row.Message = update.Message;
+        }
+    }
+
+    private static List<RelinkSearchInputRow> BuildSearchInputRows(IEnumerable<RelinkRow> targetRows)
+    {
+        return targetRows
+            .Select(x => new RelinkSearchInputRow
+            {
+                RowIndex = x.RowIndex,
+                TypeHint = x.TypeHint,
+                OriginalPath = x.OriginalPath,
+                FileName = x.FileName,
+                Extension = x.Extension,
+                CurrentStatus = x.Status,
+            })
+            .ToList();
+    }
+
+    private List<string> GetUsableSearchFolders()
+    {
+        var usable = new List<string>();
+        foreach (var folder in YMMProjectManagerSettings.Current.GetSearchFolders())
+        {
+            if (!Directory.Exists(folder))
+            {
+                logger.Info($"Relink.Search skipped folder. not found: {folder}");
+                continue;
+            }
+
+            if (!usable.Contains(folder, StringComparer.OrdinalIgnoreCase))
+            {
+                usable.Add(folder);
+            }
+        }
+
+        return usable;
+    }
+
+    private void OnWindowClosing(object? sender, CancelEventArgs e)
+    {
+        if (!isSearchRunning)
+        {
+            return;
+        }
+
+        if (IsRuntimeTimelineMode)
+        {
+            var answer = MessageBox.Show(
+                "探索中です。\n[はい] バックグラウンドで続行して閉じる\n[いいえ] キャンセルして閉じる\n[キャンセル] 閉じない",
+                "素材再リンク",
+                MessageBoxButton.YesNoCancel,
+                MessageBoxImage.Question);
+
+            if (answer == MessageBoxResult.Cancel)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            if (answer == MessageBoxResult.No)
+            {
+                CancelCurrentSearch();
+            }
+
+            suppressUiAfterClose = true;
+            return;
+        }
+
+        CancelCurrentSearch();
+        suppressUiAfterClose = true;
+    }
+
+    private void CancelCurrentSearch()
+    {
+        if (!isSearchRunning)
+        {
+            return;
+        }
+
+        try
+        {
+            searchCts?.Cancel();
+        }
+        catch
+        {
+        }
+    }
+
+    private void SetSearchUiState(bool isRunning)
+    {
+        if (suppressUiAfterClose || !IsLoaded)
+        {
+            return;
+        }
+
+        SearchButton.IsEnabled = !isRunning;
+        CancelSearchButton.IsEnabled = isRunning;
+    }
+
+    private void SetSummaryText(string text)
+    {
+        if (suppressUiAfterClose || !IsLoaded)
+        {
+            return;
+        }
+
+        SummaryText.Text = text;
+    }
+
+    private bool CanShowUiFeedback()
+    {
+        return !suppressUiAfterClose && IsLoaded;
     }
 }

@@ -9,7 +9,8 @@
 
     <DockPanel Margin="10">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Content="探索設定..." Width="120" Margin="0,0,8,0" Click="OnOpenSearchSettingsClick" />
+            <Button x:Name="SearchButton" Content="ファイル捜索" Width="120" Margin="0,0,8,0" Click="OnOpenSearchSettingsClick" />
+            <Button x:Name="CancelSearchButton" Content="探索キャンセル" Width="120" Margin="0,0,8,0" Click="OnCancelSearchClick" IsEnabled="False" />
             <Button Content="更新内容を保存" Width="140" Margin="0,0,8,0" Click="OnSaveClick" />
             <Button Content="閉じる" Width="90" Click="OnCloseClick" />
         </StackPanel>

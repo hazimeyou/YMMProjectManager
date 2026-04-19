@@ -311,8 +311,8 @@ public sealed class RelinkSearchService
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var candidateCache = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
             var targets = rows.Where(x => x.CurrentStatus is RelinkStatus.Missing or RelinkStatus.Ambiguous or RelinkStatus.NotFound).ToList();
+            var candidateIndex = await BuildCandidateIndexAsync(normalizedFolders, summary, token, progress).ConfigureAwait(false);
 
             for (var i = 0; i < targets.Count; i++)
             {
@@ -322,12 +322,10 @@ public sealed class RelinkSearchService
 
                 try
                 {
-                    var candidates = await FindCandidatesByFileNameAsync(
-                        row.FileName,
-                        normalizedFolders,
-                        candidateCache,
-                        summary,
-                        token).ConfigureAwait(false);
+                    candidateIndex.TryGetValue(row.FileName, out var indexedCandidates);
+                    var candidates = indexedCandidates is null
+                        ? []
+                        : (IReadOnlyList<string>)indexedCandidates;
                     if (candidates.Count == 0)
                     {
                         updates.Add(new RelinkRowUpdate
@@ -398,21 +396,16 @@ public sealed class RelinkSearchService
         }
     }
 
-    private async Task<IReadOnlyList<string>> FindCandidatesByFileNameAsync(
-        string fileName,
+    private async Task<Dictionary<string, List<string>>> BuildCandidateIndexAsync(
         IReadOnlyList<string> searchFolders,
-        IDictionary<string, IReadOnlyList<string>> cache,
         RelinkResult summary,
-        CancellationToken token)
+        CancellationToken token,
+        IProgress<RelinkSearchProgressInfo>? progress)
     {
-        if (cache.TryGetValue(fileName, out var cached))
+        return await Task.Run(() =>
         {
-            return cached;
-        }
-
-        var candidates = await Task.Run(() =>
-        {
-            var results = new List<string>();
+            var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            var scanned = 0;
             foreach (var folder in searchFolders)
             {
                 token.ThrowIfCancellationRequested();
@@ -424,17 +417,33 @@ public sealed class RelinkSearchService
                 foreach (var file in EnumerateFilesSafe(folder, summary))
                 {
                     token.ThrowIfCancellationRequested();
-                    if (string.Equals(Path.GetFileName(file), fileName, StringComparison.OrdinalIgnoreCase))
+                    var fileName = Path.GetFileName(file);
+                    if (string.IsNullOrWhiteSpace(fileName))
                     {
-                        results.Add(file);
+                        continue;
+                    }
+
+                    if (!index.TryGetValue(fileName, out var list))
+                    {
+                        list = [];
+                        index[fileName] = list;
+                    }
+
+                    list.Add(file);
+                    scanned++;
+                    if (scanned % 2000 == 0)
+                    {
+                        progress?.Report(new RelinkSearchProgressInfo
+                        {
+                            Done = scanned,
+                            Total = 0,
+                            CurrentFileName = $"索引作成中: {fileName}",
+                        });
                     }
                 }
             }
-            return (IReadOnlyList<string>)results;
+            return index;
         }, token).ConfigureAwait(false);
-
-        cache[fileName] = candidates;
-        return candidates;
     }
 
     private IEnumerable<string> EnumerateFilesSafe(string root, RelinkResult summary)

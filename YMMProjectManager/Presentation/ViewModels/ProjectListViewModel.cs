@@ -21,7 +21,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
-    private readonly TimelineItemRelinkService timelineItemRelinkService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
@@ -79,7 +78,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
-        timelineItemRelinkService = new TimelineItemRelinkService(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -88,8 +86,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
-        OpenRelinkWindowCommand = new AsyncRelayCommand(OpenRelinkWindowAsync, () => !IsBusy && (SelectedProject is not null || TimelineContextService.Timeline is not null));
-        ReplaceSelectedTimelineItemPathCommand = new AsyncRelayCommand(ReplaceSelectedTimelineItemPathAsync, () => !IsBusy);
+        OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
+        ReplaceSelectedTimelineItemPathCommand = new AsyncRelayCommand(OpenSelectedProjectRelinkWindowAsync, () => !IsBusy && SelectedProject is not null);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
@@ -156,7 +154,23 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                     continue;
                 }
 
-                var fullPath = Path.GetFullPath(rawPath);
+                string fullPath;
+                try
+                {
+                    fullPath = Path.GetFullPath(rawPath);
+                }
+                catch (Exception ex)
+                {
+                    logger.Error(ex, $"Add batch skip. invalid path: {rawPath}");
+                    continue;
+                }
+
+                if (!File.Exists(fullPath))
+                {
+                    logger.Info($"Add batch skip. file not found: {fullPath}");
+                    continue;
+                }
+
                 if (!existing.Add(fullPath))
                 {
                     continue;
@@ -219,41 +233,44 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 return;
             }
 
+            if (!TryGetOpenableProjectPath(project.FullPath, out var pathToOpen, out var reason))
+            {
+                logger.Info($"Open skipped. path={project.FullPath}, reason={reason}");
+                MessageBox.Show(reason, "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
             Process.Start(new ProcessStartInfo
             {
-                FileName = project.FullPath,
+                FileName = pathToOpen,
                 UseShellExecute = true,
             });
 
             project.LastAccess = DateTimeOffset.Now;
             await SaveAsync().ConfigureAwait(true);
-            logger.Info($"Open end. path={project.FullPath}");
+            logger.Info($"Open end. path={pathToOpen}");
         }).ConfigureAwait(true);
     }
 
-    private async Task OpenRelinkWindowAsync()
+    private async Task OpenOpenedProjectRelinkWindowAsync()
     {
-        await ExecuteWithBusyAsync("OpenRelinkWindow", () =>
+        await ExecuteWithBusyAsync("OpenOpenedProjectRelinkWindow", () =>
         {
             var info = TimelineContextService.Info;
-            var projectPath = info is null
-                ? SelectedProject?.FullPath
-                : YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
-
-            RelinkMainWindow window;
-            if (info?.Timeline is not null)
+            if (info?.Timeline is null)
             {
-                window = new RelinkMainWindow(info, logger, projectPath);
-            }
-            else if (!string.IsNullOrWhiteSpace(projectPath))
-            {
-                window = new RelinkMainWindow(projectPath, logger);
-            }
-            else
-            {
-                MessageBox.Show("再リンク対象のプロジェクトが見つかりませんでした。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show("開いているPFが見つかりませんでした。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return Task.CompletedTask;
             }
+
+            var projectPath = YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
+            if (!string.IsNullOrWhiteSpace(projectPath) &&
+                !TryGetOpenableProjectPath(projectPath, out projectPath, out _))
+            {
+                projectPath = null;
+            }
+
+            var window = new RelinkMainWindow(info, logger, projectPath);
 
             var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
             if (owner is not null && !ReferenceEquals(owner, window))
@@ -266,41 +283,31 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }).ConfigureAwait(true);
     }
 
-    private async Task ReplaceSelectedTimelineItemPathAsync()
+    private async Task OpenSelectedProjectRelinkWindowAsync()
     {
-        await ExecuteWithBusyAsync("ReplaceSelectedTimelineItemPath", () =>
+        await ExecuteWithBusyAsync("OpenSelectedProjectRelinkWindow", () =>
         {
-            var info = TimelineContextService.Info;
-            var timeline = info?.Timeline;
-            if (timeline is not null && timeline.SelectedItems.Count == 0)
+            var project = SelectedProject;
+            if (project is null)
             {
-                if (info is null)
-                {
-                    return Task.CompletedTask;
-                }
-
-                var ymmpPath = YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
-                logger.Info($"ReplaceSelectedTimelineItemPath fallback to project-wide timeline relink. ymmp={ymmpPath ?? "<none>"}");
-                var window = new RelinkMainWindow(info, logger, ymmpPath);
-                var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
-                if (owner is not null && !ReferenceEquals(owner, window))
-                {
-                    window.Owner = owner;
-                }
-
-                window.ShowDialog();
+                MessageBox.Show("再リンク対象のPFが選択されていません。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return Task.CompletedTask;
             }
 
-            var (kind, message) = timelineItemRelinkService.ReplaceSelectedItemFilePath(TimelineContextService.Info);
-            var image = kind switch
+            if (!TryGetOpenableProjectPath(project.FullPath, out var pathToRelink, out var reason))
             {
-                TimelineItemRelinkResultKind.Success => MessageBoxImage.Information,
-                TimelineItemRelinkResultKind.Info => MessageBoxImage.Information,
-                TimelineItemRelinkResultKind.Warning => MessageBoxImage.Warning,
-                _ => MessageBoxImage.Information,
-            };
-            MessageBox.Show(message, "素材再リンク", MessageBoxButton.OK, image);
+                MessageBox.Show(reason, "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return Task.CompletedTask;
+            }
+
+            var window = new RelinkMainWindow(pathToRelink, logger);
+            var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
+            if (owner is not null && !ReferenceEquals(owner, window))
+            {
+                window.Owner = owner;
+            }
+
+            window.ShowDialog();
             return Task.CompletedTask;
         }).ConfigureAwait(true);
     }
@@ -472,5 +479,41 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             entry.ThumbnailSource = null;
             logger.Error($"UpdateThumbnailMetadata failed: {entry.FullPath}", ex);
         }
+    }
+
+    private static bool TryGetOpenableProjectPath(string sourcePath, out string fullPath, out string reason)
+    {
+        fullPath = string.Empty;
+        reason = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            reason = "プロジェクトパスが空です。";
+            return false;
+        }
+
+        try
+        {
+            fullPath = Path.GetFullPath(sourcePath);
+        }
+        catch (Exception)
+        {
+            reason = "プロジェクトパスが不正です。";
+            return false;
+        }
+
+        if (!fullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
+        {
+            reason = "拡張子が .ymmp のファイルのみ開けます。";
+            return false;
+        }
+
+        if (!File.Exists(fullPath))
+        {
+            reason = "プロジェクトファイルが見つかりません。";
+            return false;
+        }
+
+        return true;
     }
 }
