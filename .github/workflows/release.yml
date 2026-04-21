@@ -27,10 +27,32 @@ jobs:
           echo "VERSION=$version" >> $env:GITHUB_ENV
 
       - name: Build
-        run: dotnet build -c Release -p:VersionPrefix=$VERSION
+        run: dotnet build .\YMMProjectManager.sln -c Release -p:VersionPrefix=$env:VERSION
 
       - name: Publish
-        run: dotnet publish -c Release -p:VersionPrefix=$VERSION -o publish
+        run: dotnet publish .\YMMProjectManagerLauncher\YMMProjectManagerLauncher.csproj -c Release -r win-x64 --self-contained true -p:VersionPrefix=$env:VERSION -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
+
+      - name: Collect Plugin Files
+        shell: pwsh
+        run: |
+          $pluginBin = "YMMProjectManager\bin\Release\net10.0-windows"
+          $requiredFiles = @(
+            "YMMProjectManager.dll",
+            "YMMProjectManager.deps.json"
+          )
+
+          foreach ($file in $requiredFiles) {
+            $src = Join-Path $pluginBin $file
+            if (!(Test-Path $src)) {
+              throw "Required file not found: $src"
+            }
+            Copy-Item $src "publish\$file" -Force
+          }
+
+          $pdb = Join-Path $pluginBin "YMMProjectManager.pdb"
+          if (Test-Path $pdb) {
+            Copy-Item $pdb "publish\YMMProjectManager.pdb" -Force
+          }
 
 
       - name: Copy LICENSE
