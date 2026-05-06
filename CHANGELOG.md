@@ -1,5 +1,18 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview14
+
+- Added constructor binding dry-run for `TimelineView` / `TimelineViewModel`
+  - `YmmTimelineConstructorBinder`
+  - `YmmTimelineConstructorBindingResult`
+  - `YmmTimelineConstructorParameterResult`
+  - `YmmTimelineGenerationReadiness`
+  - `YmmTimelineDependencyResolver`
+- Added generation readiness score and blocking/warning diagnostics
+- Integrated dry-run into experimental host initialization path
+- Added timeline binding diagnostics JSON output (`logs/diagnostics/timeline-binding-*.json`)
+- Kept experimental mode default-disabled and fallback-safe behavior
+
 ## v0.2.9-history-preview13
 
 - Added reflection-based timeline probe:
@@ -44,3 +57,4 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+

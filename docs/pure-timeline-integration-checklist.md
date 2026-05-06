@@ -13,3 +13,7 @@
 - Placeholder fallback remains available
 - DiffTL standalone remains usable
 - Dispose path remains safe under repeated init/dispose
+- Constructor binding dry-run is available for `TimelineView` / `TimelineViewModel`
+- Required constructor parameter resolvability is visible per parameter
+- Readiness score and blocking reasons are persisted to diagnostics JSON
+- Experimental initialize remains disabled by default unless explicitly enabled

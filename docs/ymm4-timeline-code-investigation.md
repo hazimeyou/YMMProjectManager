@@ -59,3 +59,30 @@ Do not proceed when:
 - probe cannot resolve key runtime types
 - dependency chain requires unstable private internals
 - fallback safety cannot be preserved
+
+## preview14 Constructor Binding Dry-run
+
+- Added parameter-level constructor binding inspection for `TimelineView` / `TimelineViewModel`
+- Each parameter now reports:
+  - type/name
+  - optional/nullable
+  - can-resolve (dry-run)
+  - failure reason
+- Readiness score (0-100) is computed from:
+  - type discovery
+  - constructor bindability
+  - dependency coverage (`UndoRedoManager`, `AsyncAwaitStatus`, `SetTimelineToolInfo`)
+  - blocking reasons
+- Diagnostics JSON now includes:
+  - reflection result
+  - constructor binding results
+  - readiness score
+  - blocking reasons / warnings
+
+### preview15 go signal
+
+Proceed only when:
+
+- readiness score is high enough (target >= 70)
+- `TimelineViewModel` required parameters are dry-run resolvable
+- fallback safety remains guaranteed

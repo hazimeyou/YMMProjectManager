@@ -9,6 +9,7 @@ Define objective criteria for whether preview14 should attempt actual `TimelineV
 - `TimelineView` type resolution succeeded
 - `TimelineViewModel` type resolution succeeded
 - Constructor candidates are discoverable
+- Constructor binding dry-run resolves required parameters (or safe substitutes)
 - Required dependency types are available (`UndoRedoManager`, `AsyncAwaitStatus`)
 - Dispose path is understood and repeatable
 - Fallback to placeholder remains guaranteed
@@ -21,6 +22,13 @@ Define objective criteria for whether preview14 should attempt actual `TimelineV
 - Dispose safety is uncertain
 - YMM runtime coupling risk is too high for current preview
 - Any failure can break DiffTL standalone behavior
+
+## preview14 Dry-run Signals
+
+- Readiness score target: `>= 70` for considering isolated generation in preview15
+- Blocking reasons must be explicit and actionable
+- Optional/nullable parameters may be considered resolvable in dry-run
+- Unknown required parameters are treated as blockers
 
 ## Safety Constraints
 

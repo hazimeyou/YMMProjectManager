@@ -25,6 +25,9 @@ Current preview capabilities include:
 - Experimental isolated host PoC (default disabled)
 - Reflection-based timeline probe (preview13)
 - `ExperimentalReady` state for future adapter (preview13)
+- Timeline constructor binding dry-run (preview14)
+- Generation readiness score (preview14)
+- Disabled-by-default experimental generation investigation (preview14)
 
 ### Experimental Mode Safety
 

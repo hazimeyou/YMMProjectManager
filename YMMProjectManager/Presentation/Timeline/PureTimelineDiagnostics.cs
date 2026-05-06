@@ -13,6 +13,11 @@ public static class PureTimelineDiagnostics
     private static long timelineReflectionProbeMs;
     private static int timelineReflectionAssemblyCount;
     private static int timelineReflectionTypeFoundCount;
+    private static long timelineConstructorBindingMs;
+    private static int timelineConstructorCandidateCount;
+    private static int timelineConstructorBindableCount;
+    private static int timelineGenerationReadinessScore;
+    private static int timelineGenerationBlockingReasonCount;
 
     public static int InitializeCount => initializeCount;
     public static int DisposeCount => disposeCount;
@@ -25,6 +30,11 @@ public static class PureTimelineDiagnostics
     public static long TimelineReflectionProbeMs => Interlocked.Read(ref timelineReflectionProbeMs);
     public static int TimelineReflectionAssemblyCount => timelineReflectionAssemblyCount;
     public static int TimelineReflectionTypeFoundCount => timelineReflectionTypeFoundCount;
+    public static long TimelineConstructorBindingMs => Interlocked.Read(ref timelineConstructorBindingMs);
+    public static int TimelineConstructorCandidateCount => timelineConstructorCandidateCount;
+    public static int TimelineConstructorBindableCount => timelineConstructorBindableCount;
+    public static int TimelineGenerationReadinessScore => timelineGenerationReadinessScore;
+    public static int TimelineGenerationBlockingReasonCount => timelineGenerationBlockingReasonCount;
 
     public static void IncrementInitializeCount() => Interlocked.Increment(ref initializeCount);
     public static void IncrementDisposeCount() => Interlocked.Increment(ref disposeCount);
@@ -41,5 +51,19 @@ public static class PureTimelineDiagnostics
         Interlocked.Exchange(ref timelineReflectionProbeMs, probeMs);
         Interlocked.Exchange(ref timelineReflectionAssemblyCount, assemblyCount);
         Interlocked.Exchange(ref timelineReflectionTypeFoundCount, typeFoundCount);
+    }
+
+    public static void UpdateTimelineConstructorBindingMetrics(
+        long bindingMs,
+        int candidateCount,
+        int bindableCount,
+        int readinessScore,
+        int blockingReasonCount)
+    {
+        Interlocked.Exchange(ref timelineConstructorBindingMs, bindingMs);
+        Interlocked.Exchange(ref timelineConstructorCandidateCount, candidateCount);
+        Interlocked.Exchange(ref timelineConstructorBindableCount, bindableCount);
+        Interlocked.Exchange(ref timelineGenerationReadinessScore, readinessScore);
+        Interlocked.Exchange(ref timelineGenerationBlockingReasonCount, blockingReasonCount);
     }
 }

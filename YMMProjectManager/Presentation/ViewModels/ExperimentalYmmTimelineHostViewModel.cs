@@ -5,10 +5,14 @@ namespace YMMProjectManager.Presentation.ViewModels;
 public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDisposable
 {
     private readonly YmmTimelineReflectionProbe probe = new();
+    private readonly YmmTimelineConstructorBinder constructorBinder = new();
     private readonly Stopwatch initializeStopwatch = new();
     private readonly Stopwatch disposeStopwatch = new();
     private readonly ObservableCollection<YmmTimelineReflectionLog> logs = [];
     private readonly ObservableCollection<string> constructorSignatures = [];
+    private readonly ObservableCollection<string> constructorBindingSummary = [];
+    private readonly ObservableCollection<string> blockingReasons = [];
+    private readonly ObservableCollection<string> readinessWarnings = [];
     private readonly ObservableCollection<string> missingDependencies = [];
     private readonly ObservableCollection<string> foundAssemblies = [];
     private string status = "Not initialized";
@@ -17,6 +21,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
 
     public ReadOnlyObservableCollection<YmmTimelineReflectionLog> Logs { get; }
     public ReadOnlyObservableCollection<string> ConstructorSignatures { get; }
+    public ReadOnlyObservableCollection<string> ConstructorBindingSummary { get; }
+    public ReadOnlyObservableCollection<string> BlockingReasons { get; }
+    public ReadOnlyObservableCollection<string> ReadinessWarnings { get; }
     public ReadOnlyObservableCollection<string> MissingDependencies { get; }
     public ReadOnlyObservableCollection<string> FoundAssemblies { get; }
 
@@ -38,6 +45,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public long DisposeMs { get; private set; }
 
     public YmmTimelineReflectionResult? ReflectionResult { get; private set; }
+    public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewBindingResults { get; private set; } = [];
+    public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewModelBindingResults { get; private set; } = [];
+    public YmmTimelineGenerationReadiness? GenerationReadiness { get; private set; }
 
     public string ReflectionSummary =>
         ReflectionResult is null
@@ -47,6 +57,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public string TimelineViewType => ReflectionResult?.TimelineViewTypeName ?? "(not found)";
     public string TimelineViewModelType => ReflectionResult?.TimelineViewModelTypeName ?? "(not found)";
     public string SetTimelineToolInfoOwnerType => ReflectionResult?.SetTimelineToolInfoOwnerTypeName ?? "(not found)";
+    public int ReadinessScore => GenerationReadiness?.Score ?? 0;
+    public bool CanAttemptViewModelGeneration => GenerationReadiness?.CanAttemptViewModelGeneration ?? false;
+    public bool CanAttemptViewGeneration => GenerationReadiness?.CanAttemptViewGeneration ?? false;
+    public bool ReadinessSufficient => ReadinessScore >= 70;
 
     public bool TryInitialize(bool useReflection)
     {
@@ -80,18 +94,37 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(TimelineViewModelType));
             OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
 
-            SaveDiagnostics(result, logs);
-            PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);
+            var bindingStopwatch = Stopwatch.StartNew();
+            var timelineViewType = ResolveType(result.TimelineViewTypeName);
+            var timelineViewModelType = ResolveType(result.TimelineViewModelTypeName);
+            TimelineViewBindingResults = constructorBinder.DryRunForType(timelineViewType, logs);
+            TimelineViewModelBindingResults = constructorBinder.DryRunForType(timelineViewModelType, logs);
+            GenerationReadiness = constructorBinder.BuildReadiness(result, TimelineViewBindingResults, TimelineViewModelBindingResults);
+            bindingStopwatch.Stop();
+            PureTimelineDiagnostics.UpdateTimelineConstructorBindingMetrics(
+                bindingStopwatch.ElapsedMilliseconds,
+                TimelineViewBindingResults.Count + TimelineViewModelBindingResults.Count,
+                TimelineViewBindingResults.Count(x => x.CanAttemptGeneration) + TimelineViewModelBindingResults.Count(x => x.CanAttemptGeneration),
+                GenerationReadiness.Score,
+                GenerationReadiness.BlockingReasons.Count);
+            RefreshBindingCollections();
 
-            if (result.CanAttemptExperimentalHost)
+            SaveDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, logs);
+            PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);
+            OnPropertyChanged(nameof(ReadinessScore));
+            OnPropertyChanged(nameof(CanAttemptViewModelGeneration));
+            OnPropertyChanged(nameof(CanAttemptViewGeneration));
+            OnPropertyChanged(nameof(ReadinessSufficient));
+
+            if (GenerationReadiness.Score >= 70 && GenerationReadiness.CanAttemptViewModelGeneration)
             {
                 Status = "ExperimentalReady";
-                Summary = "Reflection probe succeeded enough for experimental host attempt.";
+                Summary = $"Readiness: {GenerationReadiness.Score} / Constructor binding mostly resolved.";
                 return true;
             }
 
             Status = "Unavailable";
-            Summary = "Reflection probe completed, but required types/dependencies are missing.";
+            Summary = $"Readiness: {GenerationReadiness.Score} / {string.Join(" ; ", GenerationReadiness.BlockingReasons.DefaultIfEmpty("Required dependencies are missing."))}";
             return false;
         }
         catch (Exception ex)
@@ -111,7 +144,12 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         }
     }
 
-    private static void SaveDiagnostics(YmmTimelineReflectionResult result, IEnumerable<YmmTimelineReflectionLog> logs)
+    private static void SaveDiagnostics(
+        YmmTimelineReflectionResult result,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewBindings,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewModelBindings,
+        YmmTimelineGenerationReadiness? readiness,
+        IEnumerable<YmmTimelineReflectionLog> logs)
     {
         try
         {
@@ -120,11 +158,14 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             var output = new
             {
                 timestamp = DateTimeOffset.Now,
-                result,
+                reflection = result,
+                timelineViewConstructorBindings = viewBindings,
+                timelineViewModelConstructorBindings = viewModelBindings,
+                readiness,
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
             };
             var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
-            var path = Path.Combine(dir, $"timeline-reflection-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            var path = Path.Combine(dir, $"timeline-binding-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(path, json, Encoding.UTF8);
         }
         catch
@@ -145,7 +186,13 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         {
             TimelineViewElement = null;
             ReflectionResult = null;
+            TimelineViewBindingResults = [];
+            TimelineViewModelBindingResults = [];
+            GenerationReadiness = null;
             constructorSignatures.Clear();
+            constructorBindingSummary.Clear();
+            blockingReasons.Clear();
+            readinessWarnings.Clear();
             missingDependencies.Clear();
             foundAssemblies.Clear();
             Status = "Disposed";
@@ -155,6 +202,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(TimelineViewType));
             OnPropertyChanged(nameof(TimelineViewModelType));
             OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
+            OnPropertyChanged(nameof(ReadinessScore));
+            OnPropertyChanged(nameof(CanAttemptViewModelGeneration));
+            OnPropertyChanged(nameof(CanAttemptViewGeneration));
+            OnPropertyChanged(nameof(ReadinessSufficient));
         }
         finally
         {
@@ -170,6 +221,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     {
         Logs = new ReadOnlyObservableCollection<YmmTimelineReflectionLog>(logs);
         ConstructorSignatures = new ReadOnlyObservableCollection<string>(constructorSignatures);
+        ConstructorBindingSummary = new ReadOnlyObservableCollection<string>(constructorBindingSummary);
+        BlockingReasons = new ReadOnlyObservableCollection<string>(blockingReasons);
+        ReadinessWarnings = new ReadOnlyObservableCollection<string>(readinessWarnings);
         MissingDependencies = new ReadOnlyObservableCollection<string>(missingDependencies);
         FoundAssemblies = new ReadOnlyObservableCollection<string>(foundAssemblies);
     }
@@ -181,5 +235,41 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         {
             target.Add(item);
         }
+    }
+
+    private void RefreshBindingCollections()
+    {
+        constructorBindingSummary.Clear();
+        foreach (var binding in TimelineViewModelBindingResults.Concat(TimelineViewBindingResults))
+        {
+            constructorBindingSummary.Add($"{binding.TargetTypeName}: {binding.ConstructorSignature} => {(binding.CanAttemptGeneration ? "OK" : "NG")}");
+            foreach (var parameter in binding.Parameters)
+            {
+                var state = parameter.CanResolve ? "OK" : $"NG ({parameter.FailureReason})";
+                constructorBindingSummary.Add($"  - {parameter.ParameterName}: {state}");
+            }
+        }
+
+        ReplaceCollection(blockingReasons, GenerationReadiness?.BlockingReasons ?? []);
+        ReplaceCollection(readinessWarnings, GenerationReadiness?.Warnings ?? []);
+    }
+
+    private static Type? ResolveType(string? fullTypeName)
+    {
+        if (string.IsNullOrWhiteSpace(fullTypeName))
+        {
+            return null;
+        }
+
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            var type = assembly.GetType(fullTypeName, false, false);
+            if (type is not null)
+            {
+                return type;
+            }
+        }
+
+        return null;
     }
 }

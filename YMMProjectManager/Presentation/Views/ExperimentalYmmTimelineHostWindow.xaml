@@ -2,7 +2,7 @@
     x:Class="YMMProjectManager.Presentation.Views.ExperimentalYmmTimelineHostWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-    Title="Experimental YMM Timeline Host"
+    Title="Experimental YMM Timeline Host (Dry-run)"
     Width="1000"
     Height="700"
     WindowStartupLocation="CenterOwner">
@@ -21,7 +21,13 @@
             <TextBlock Text="Init(ms):" Margin="0,0,4,0" />
             <TextBlock Text="{Binding InitializeMs}" Margin="0,0,12,0" />
             <TextBlock Text="Dispose(ms):" Margin="0,0,4,0" />
-            <TextBlock Text="{Binding DisposeMs}" />
+            <TextBlock Text="{Binding DisposeMs}" Margin="0,0,12,0" />
+            <TextBlock Text="Readiness:" Margin="0,0,4,0" />
+            <TextBlock Text="{Binding ReadinessScore}" Margin="0,0,12,0" />
+            <TextBlock Text="CanVM:" Margin="0,0,4,0" />
+            <TextBlock Text="{Binding CanAttemptViewModelGeneration}" Margin="0,0,12,0" />
+            <TextBlock Text="CanView:" Margin="0,0,4,0" />
+            <TextBlock Text="{Binding CanAttemptViewGeneration}" />
         </StackPanel>
 
         <StackPanel Grid.Row="1" Margin="0,0,0,8">
@@ -49,9 +55,22 @@
             </GroupBox>
         </Grid>
 
-        <Border Grid.Row="3" BorderBrush="#555" BorderThickness="1" Background="#111">
-            <ContentControl Content="{Binding TimelineViewElement}" />
-        </Border>
+        <Grid Grid.Row="3" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="Constructor Binding Results" Margin="0,0,8,0">
+                <ListBox ItemsSource="{Binding ConstructorBindingSummary}" />
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Blocking Reasons" Margin="0,0,8,0">
+                <ListBox ItemsSource="{Binding BlockingReasons}" />
+            </GroupBox>
+            <GroupBox Grid.Column="2" Header="Warnings">
+                <ListBox ItemsSource="{Binding ReadinessWarnings}" />
+            </GroupBox>
+        </Grid>
 
         <ListBox Grid.Row="4" Margin="0,8,0,0" ItemsSource="{Binding Logs}" />
     </Grid>

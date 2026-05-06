@@ -30,6 +30,12 @@ public sealed class YmmTimelineReflectionProbe
         {
             typeFoundCount++;
             Log("Type", $"Found TimelineView: {timelineViewType.FullName}");
+            foreach (var ctor in timelineViewType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
+            {
+                var signature = $"TimelineView {FormatConstructor(ctor)}";
+                constructorSignatures.Add(signature);
+                Log("Ctor", signature);
+            }
         }
         else
         {
@@ -44,7 +50,7 @@ public sealed class YmmTimelineReflectionProbe
             Log("Type", $"Found TimelineViewModel: {timelineViewModelType.FullName}");
             foreach (var ctor in timelineViewModelType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
             {
-                var signature = FormatConstructor(ctor);
+                var signature = $"TimelineViewModel {FormatConstructor(ctor)}";
                 constructorSignatures.Add(signature);
                 Log("Ctor", signature);
             }

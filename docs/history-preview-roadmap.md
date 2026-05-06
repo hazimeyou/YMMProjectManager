@@ -54,7 +54,15 @@
 - Reflection diagnostics output (`logs/diagnostics`)
 - Generation criteria doc for preview14 decision
 
-## preview14 Candidates
+### preview14
+
+- Constructor binding dry-run for `TimelineView` / `TimelineViewModel`
+- Parameter-level dependency resolvability diagnostics
+- Generation readiness scoring (`0-100`) with blocking reasons
+- Dry-run integration into `FutureYmmTimelineAdapter` experimental path
+- Diagnostics JSON output: `logs/diagnostics/timeline-binding-*.json`
+
+## preview15 Candidates
 
 - Optional actual TimelineView generation attempt (still isolated)
 - Runtime object wiring experiment (`scene`, `UndoRedoManager`, `AsyncAwaitStatus`)

@@ -44,7 +44,7 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
             Status = PureTimelineStatus.Unavailable;
             IsAvailable = false;
             return Task.FromResult(
-                PureTimelineAdapterResult.Fail("Experimental YMM host disabled by default (preview12)."));
+                PureTimelineAdapterResult.Fail("Experimental YMM host is disabled by default (preview14)."));
         }
 
         var sw = Stopwatch.StartNew();
@@ -58,7 +58,7 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
                 IsAvailable = false;
                 PureTimelineDiagnostics.IncrementExperimentalYmmHostFailureCount();
                 return Task.FromResult(PureTimelineAdapterResult.Fail(
-                    $"Experimental host initialize failed: {experimentalHostViewModel.Summary}"));
+                    $"Experimental host dry-run failed: {experimentalHostViewModel.Summary}"));
             }
 
             if (options.OpenIsolatedHostWindow && System.Windows.Application.Current is not null)
