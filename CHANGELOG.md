@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview15
+
+- Added isolated TimelineViewModel generation-attempt gate in experimental host
+- Added `AllowViewModelGenerationAttempt` (default `false`)
+- Added readiness threshold option (`MinimumReadinessScoreForGeneration`, default `80`)
+- Added immediate dispose verification flow for generation attempts
+- Added generation attempt result model and diagnostics output (`logs/diagnostics/timeline-generation-attempt-*.json`)
+- Added generation/dispose diagnostics counters for timeline experimentation
+- Kept TimelineView generation out-of-scope and maintained fallback-safe behavior
+
 ## v0.2.9-history-preview14
 
 - Added constructor binding dry-run for `TimelineView` / `TimelineViewModel`
@@ -57,4 +67,5 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 

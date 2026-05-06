@@ -12,7 +12,8 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="2*" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="200" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="180" />
         </Grid.RowDefinitions>
 
         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
@@ -31,6 +32,7 @@
         </StackPanel>
 
         <StackPanel Grid.Row="1" Margin="0,0,0,8">
+            <TextBlock Text="Experimental generation attempt is disabled by default." FontWeight="SemiBold" />
             <TextBlock Text="{Binding ReflectionSummary}" FontWeight="SemiBold" />
             <TextBlock Text="{Binding TimelineViewType, StringFormat=TimelineView: {0}}" />
             <TextBlock Text="{Binding TimelineViewModelType, StringFormat=TimelineViewModel: {0}}" />
@@ -72,6 +74,29 @@
             </GroupBox>
         </Grid>
 
-        <ListBox Grid.Row="4" Margin="0,8,0,0" ItemsSource="{Binding Logs}" />
+        <Grid Grid.Row="4" Margin="0,8,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="Generation Attempt Result" Margin="0,0,8,0">
+                <StackPanel>
+                    <TextBlock Text="{Binding GenerationAttempted, StringFormat=Attempted: {0}}" />
+                    <TextBlock Text="{Binding GenerationSucceeded, StringFormat=Succeeded: {0}}" />
+                    <TextBlock Text="{Binding GenerationConstructorSignature, StringFormat=Constructor: {0}}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding GenerationFailureReason, StringFormat=Failure: {0}}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding GenerationException, StringFormat=Exception: {0}}" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Dispose Result">
+                <StackPanel>
+                    <TextBlock Text="{Binding DisposeAttempted, StringFormat=DisposeAttempted: {0}}" />
+                    <TextBlock Text="{Binding DisposeSucceeded, StringFormat=DisposeSucceeded: {0}}" />
+                    <TextBlock Text="{Binding DisposeFailureReason, StringFormat=DisposeFailure: {0}}" TextWrapping="Wrap" />
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+
+        <ListBox Grid.Row="5" Margin="0,8,0,0" ItemsSource="{Binding Logs}" />
     </Grid>
 </Window>

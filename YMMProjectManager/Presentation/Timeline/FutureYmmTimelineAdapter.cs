@@ -44,14 +44,14 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
             Status = PureTimelineStatus.Unavailable;
             IsAvailable = false;
             return Task.FromResult(
-                PureTimelineAdapterResult.Fail("Experimental YMM host is disabled by default (preview14)."));
+                PureTimelineAdapterResult.Fail("Experimental YMM host is disabled by default (preview15)."));
         }
 
         var sw = Stopwatch.StartNew();
         try
         {
             experimentalHostViewModel = new ExperimentalYmmTimelineHostViewModel();
-            var ok = experimentalHostViewModel.TryInitialize(options.UseReflection);
+            var ok = experimentalHostViewModel.TryInitialize(options);
             if (!ok)
             {
                 Status = PureTimelineStatus.Unavailable;
@@ -77,7 +77,10 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
             PureTimelineDiagnostics.IncrementExperimentalYmmHostSuccessCount();
             PureTimelineDiagnostics.IncrementExperimentalReadyCount();
             sw.Stop();
-            return Task.FromResult(PureTimelineAdapterResult.Ok($"Experimental host is ready in {sw.ElapsedMilliseconds} ms."));
+            return Task.FromResult(PureTimelineAdapterResult.Ok(
+                options.AllowViewModelGenerationAttempt
+                    ? $"Experimental host is ready in {sw.ElapsedMilliseconds} ms. {experimentalHostViewModel.Summary}"
+                    : $"Experimental host is ready in {sw.ElapsedMilliseconds} ms."));
         }
         catch (Exception ex)
         {

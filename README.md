@@ -28,10 +28,13 @@ Current preview capabilities include:
 - Timeline constructor binding dry-run (preview14)
 - Generation readiness score (preview14)
 - Disabled-by-default experimental generation investigation (preview14)
+- Isolated TimelineViewModel generation attempt PoC (preview15)
+- Immediate dispose verification after generation attempt (preview15)
 
 ### Experimental Mode Safety
 
 - `EnableExperimentalYmmTimelineHost = false` by default
+- `AllowViewModelGenerationAttempt = false` by default
 - Experimental failures are treated as normal failures
 - DiffTL standalone must remain usable
 

@@ -32,3 +32,9 @@ Track at minimum:
 - `timelineReflectionTypeFoundCount`
 - `timelineReflectionFailureCount`
 - `experimentalReadyCount`
+
+## preview15 Generation Attempt Fallback
+
+- Even when generation gate passes, failure of generation or dispose must not close Diff window.
+- Generation attempt failure keeps adapter unavailable and allows fallback/standalone continuity.
+- `TimelineView` remains ungenerated in preview15 to reduce integration risk.

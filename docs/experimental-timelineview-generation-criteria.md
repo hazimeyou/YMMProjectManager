@@ -36,3 +36,16 @@ Define objective criteria for whether preview14 should attempt actual `TimelineV
 - Reflection failures are treated as normal failures
 - Adapter boundary (`IPureTimelineAdapter`) must absorb all failures
 - `ProjectDiffWindow` and DiffTL must remain usable regardless of probe result
+
+## preview15 Gate and Attempt Policy
+
+- Generation attempt remains disabled by default.
+- Gate conditions:
+  - `EnableExperimentalYmmTimelineHost == true`
+  - `AllowViewModelGenerationAttempt == true`
+  - reflection probe + constructor dry-run completed
+  - readiness score >= `MinimumReadinessScoreForGeneration`
+  - `CanAttemptViewModelGeneration == true`
+- If gate passes, only `TimelineViewModel` generation is attempted in isolated host.
+- `TimelineView` generation is still out-of-scope.
+- Successful generation is followed by immediate dispose verification.

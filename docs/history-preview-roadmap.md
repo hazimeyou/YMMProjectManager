@@ -62,8 +62,16 @@
 - Dry-run integration into `FutureYmmTimelineAdapter` experimental path
 - Diagnostics JSON output: `logs/diagnostics/timeline-binding-*.json`
 
-## preview15 Candidates
+### preview15
 
-- Optional actual TimelineView generation attempt (still isolated)
-- Runtime object wiring experiment (`scene`, `UndoRedoManager`, `AsyncAwaitStatus`)
-- Repeated initialize/dispose stress checks
+- Isolated TimelineViewModel generation attempt gate added
+- `AllowViewModelGenerationAttempt` default-disabled safety switch
+- Readiness threshold option (`MinimumReadinessScoreForGeneration=80`)
+- Immediate dispose verification after successful generation
+- Generation attempt diagnostics JSON output (`logs/diagnostics/timeline-generation-attempt-*.json`)
+
+## preview16 Candidates
+
+- Optional isolated `TimelineView` generation attempt (still no formal embed)
+- Broader constructor value resolver experiments (still runtime-safe)
+- Repeated generation/dispose stress diagnostics

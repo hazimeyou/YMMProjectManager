@@ -17,3 +17,7 @@
 - Required constructor parameter resolvability is visible per parameter
 - Readiness score and blocking reasons are persisted to diagnostics JSON
 - Experimental initialize remains disabled by default unless explicitly enabled
+- ViewModel generation attempt is gated and default-disabled (`AllowViewModelGenerationAttempt=false`)
+- Generation attempt uses isolated host only; no ProjectDiffWindow formal embed
+- Immediate dispose verification result is recorded per attempt
+- Generation failure must not break DiffTL standalone fallback

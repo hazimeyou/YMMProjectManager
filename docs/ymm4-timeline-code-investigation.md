@@ -86,3 +86,10 @@ Proceed only when:
 - readiness score is high enough (target >= 70)
 - `TimelineViewModel` required parameters are dry-run resolvable
 - fallback safety remains guaranteed
+
+## preview15 Generation Attempt Notes
+
+- Added isolated `TimelineViewModel` generation attempt gate.
+- Added immediate dispose verification (`IDisposable` / `IAsyncDisposable` / reflection `Dispose`).
+- Kept `TimelineView` generation intentionally disabled in this phase.
+- Failure path remains non-fatal and fallback-safe.

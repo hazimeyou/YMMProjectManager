@@ -6,6 +6,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
 {
     private readonly YmmTimelineReflectionProbe probe = new();
     private readonly YmmTimelineConstructorBinder constructorBinder = new();
+    private readonly YmmTimelineViewModelGenerationAttempt generationAttempt = new();
     private readonly Stopwatch initializeStopwatch = new();
     private readonly Stopwatch disposeStopwatch = new();
     private readonly ObservableCollection<YmmTimelineReflectionLog> logs = [];
@@ -48,6 +49,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewBindingResults { get; private set; } = [];
     public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewModelBindingResults { get; private set; } = [];
     public YmmTimelineGenerationReadiness? GenerationReadiness { get; private set; }
+    public YmmTimelineGenerationAttemptResult? GenerationAttemptResult { get; private set; }
 
     public string ReflectionSummary =>
         ReflectionResult is null
@@ -61,8 +63,16 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public bool CanAttemptViewModelGeneration => GenerationReadiness?.CanAttemptViewModelGeneration ?? false;
     public bool CanAttemptViewGeneration => GenerationReadiness?.CanAttemptViewGeneration ?? false;
     public bool ReadinessSufficient => ReadinessScore >= 70;
+    public bool GenerationAttempted => GenerationAttemptResult?.Attempted ?? false;
+    public bool GenerationSucceeded => GenerationAttemptResult?.Succeeded ?? false;
+    public string GenerationFailureReason => GenerationAttemptResult?.FailureReason ?? string.Empty;
+    public string GenerationConstructorSignature => GenerationAttemptResult?.ConstructorSignature ?? string.Empty;
+    public string GenerationException => GenerationAttemptResult?.ExceptionMessage ?? string.Empty;
+    public bool DisposeAttempted => GenerationAttemptResult?.DisposeAttempted ?? false;
+    public bool DisposeSucceeded => GenerationAttemptResult?.DisposeSucceeded ?? false;
+    public string DisposeFailureReason => GenerationAttemptResult?.DisposeFailureReason ?? string.Empty;
 
-    public bool TryInitialize(bool useReflection)
+    public bool TryInitialize(PureTimelineExperimentalOptions options)
     {
         if (disposed)
         {
@@ -72,11 +82,11 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
 
         initializeStopwatch.Restart();
         logs.Clear();
-        logs.Add(new YmmTimelineReflectionLog { Category = "Init", Message = $"Initialize start (useReflection={useReflection})" });
+        logs.Add(new YmmTimelineReflectionLog { Category = "Init", Message = $"Initialize start (useReflection={options.UseReflection})" });
 
         try
         {
-            if (!useReflection)
+            if (!options.UseReflection)
             {
                 Status = "ReflectionDisabled";
                 Summary = "UseReflection=false";
@@ -116,10 +126,54 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(CanAttemptViewGeneration));
             OnPropertyChanged(nameof(ReadinessSufficient));
 
+            var gatePassed =
+                options.EnableExperimentalYmmTimelineHost &&
+                options.AllowViewModelGenerationAttempt &&
+                GenerationReadiness.Score >= options.MinimumReadinessScoreForGeneration &&
+                GenerationReadiness.CanAttemptViewModelGeneration;
+
+            if (gatePassed)
+            {
+                var selectedBinding = TimelineViewModelBindingResults
+                    .Where(x => x.CanAttemptGeneration)
+                    .OrderByDescending(x => x.Parameters.Count)
+                    .FirstOrDefault();
+                var vmType = ResolveType(result.TimelineViewModelTypeName);
+                if (selectedBinding is not null && vmType is not null)
+                {
+                    GenerationAttemptResult = generationAttempt
+                        .TryGenerateAndDisposeAsync(vmType, selectedBinding, options.DisposeImmediatelyAfterGeneration)
+                        .GetAwaiter().GetResult();
+                    PureTimelineDiagnostics.UpdateTimelineViewModelGenerationMetrics(GenerationAttemptResult);
+                    OnPropertyChanged(nameof(GenerationAttempted));
+                    OnPropertyChanged(nameof(GenerationSucceeded));
+                    OnPropertyChanged(nameof(GenerationFailureReason));
+                    OnPropertyChanged(nameof(GenerationConstructorSignature));
+                    OnPropertyChanged(nameof(GenerationException));
+                    OnPropertyChanged(nameof(DisposeAttempted));
+                    OnPropertyChanged(nameof(DisposeSucceeded));
+                    OnPropertyChanged(nameof(DisposeFailureReason));
+                    SaveGenerationAttemptDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, GenerationAttemptResult, logs);
+
+                    if (GenerationAttemptResult.Succeeded && (!GenerationAttemptResult.DisposeAttempted || GenerationAttemptResult.DisposeSucceeded))
+                    {
+                        Status = "ExperimentalReady";
+                        Summary = "ViewModel generation and immediate dispose succeeded.";
+                        return true;
+                    }
+
+                    Status = "Unavailable";
+                    Summary = $"Generation failed: {GenerationAttemptResult.FailureReason ?? GenerationAttemptResult.ExceptionMessage}";
+                    return false;
+                }
+            }
+
             if (GenerationReadiness.Score >= 70 && GenerationReadiness.CanAttemptViewModelGeneration)
             {
                 Status = "ExperimentalReady";
-                Summary = $"Readiness: {GenerationReadiness.Score} / Constructor binding mostly resolved.";
+                Summary = options.AllowViewModelGenerationAttempt
+                    ? $"Generation skipped: gate unresolved (score={GenerationReadiness.Score})."
+                    : $"Readiness: {GenerationReadiness.Score} / Generation attempt is disabled by default.";
                 return true;
             }
 
@@ -174,6 +228,38 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         }
     }
 
+    private static void SaveGenerationAttemptDiagnostics(
+        YmmTimelineReflectionResult result,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewBindings,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewModelBindings,
+        YmmTimelineGenerationReadiness? readiness,
+        YmmTimelineGenerationAttemptResult? generationAttemptResult,
+        IEnumerable<YmmTimelineReflectionLog> logs)
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.CurrentDirectory, "logs", "diagnostics");
+            Directory.CreateDirectory(dir);
+            var output = new
+            {
+                timestamp = DateTimeOffset.Now,
+                reflection = result,
+                timelineViewConstructorBindings = viewBindings,
+                timelineViewModelConstructorBindings = viewModelBindings,
+                readiness,
+                generationAttempt = generationAttemptResult,
+                logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
+            };
+            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+            var path = Path.Combine(dir, $"timeline-generation-attempt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(path, json, Encoding.UTF8);
+        }
+        catch
+        {
+            // Diagnostics output failure must not break flow.
+        }
+    }
+
     public void Dispose()
     {
         if (disposed)
@@ -189,6 +275,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             TimelineViewBindingResults = [];
             TimelineViewModelBindingResults = [];
             GenerationReadiness = null;
+            GenerationAttemptResult = null;
             constructorSignatures.Clear();
             constructorBindingSummary.Clear();
             blockingReasons.Clear();
@@ -206,6 +293,14 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(CanAttemptViewModelGeneration));
             OnPropertyChanged(nameof(CanAttemptViewGeneration));
             OnPropertyChanged(nameof(ReadinessSufficient));
+            OnPropertyChanged(nameof(GenerationAttempted));
+            OnPropertyChanged(nameof(GenerationSucceeded));
+            OnPropertyChanged(nameof(GenerationFailureReason));
+            OnPropertyChanged(nameof(GenerationConstructorSignature));
+            OnPropertyChanged(nameof(GenerationException));
+            OnPropertyChanged(nameof(DisposeAttempted));
+            OnPropertyChanged(nameof(DisposeSucceeded));
+            OnPropertyChanged(nameof(DisposeFailureReason));
         }
         finally
         {
