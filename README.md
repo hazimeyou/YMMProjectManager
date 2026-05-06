@@ -36,6 +36,9 @@ Current preview capabilities include:
 - `Scene / UndoRedoManager / AsyncAwaitStatus` are treated as required YMM runtime dependencies (preview19)
 - Runtime dependency instance discovery diagnostics (preview20)
 - Added owner/property/field/method route candidates and discovery summaries (preview20)
+- Runtime dependency live resolution analysis support (preview21)
+- Diagnostics `summary` section (resolved counts + top owners) (preview21)
+- Discovery cost controls (depth/node bounds + owner prefix excludes) (preview21)
 
 ### Experimental Mode Safety
 
@@ -54,6 +57,10 @@ Outputs:
 
 - `logs/benchmarks/benchmark-yyyyMMdd-HHmmss.md`
 - `logs/benchmarks/correctness-yyyyMMdd-HHmmss.json`
+
+## Diagnostics Guide
+
+- [Runtime Diagnostics Playbook](docs/runtime-diagnostics-playbook.md)
 
 ## License
 

@@ -99,3 +99,12 @@ Proceed only when:
 - Added runtime classification to reflection probe results.
 - Added process and assembly-group metadata for investigation.
 - Added manual probe buttons in experimental host to run diagnostics in YMM4 runtime.
+
+## preview21 Dependency Resolution Analysis Note
+
+- Timeline-related type discovery remains successful in YMM4 runtime.
+- Runtime dependency live-instance resolution is still unresolved in isolated diagnostics:
+  - `SceneDiscovery.resolved = false`
+  - `UndoRedoManagerDiscovery.resolved = false`
+  - `AsyncAwaitStatusDiscovery.resolved = false`
+- Strict gate remains required and generation retry is intentionally blocked until all three become resolved.

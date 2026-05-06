@@ -3,7 +3,12 @@ namespace YMMProjectManager.Presentation.Timeline;
 public sealed class YmmTimelineReflectionProbe
 {
     private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
-    private readonly YmmRuntimeDependencyDiscoveryService runtimeDependencyDiscoveryService = new();
+    private readonly YmmRuntimeDependencyDiscoveryService runtimeDependencyDiscoveryService = new(
+        new YmmRuntimeDependencyDiscoveryOptions
+        {
+            MaxDepth = 3,
+            MaxNodes = 1200,
+        });
 
     public YmmTimelineReflectionResult Probe(ICollection<YmmTimelineReflectionLog>? logs = null)
     {

@@ -2,6 +2,18 @@ namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmRuntimeDependencyDiscoveryService
 {
+    private readonly YmmRuntimeDependencyDiscoveryOptions options;
+
+    public YmmRuntimeDependencyDiscoveryService()
+        : this(new YmmRuntimeDependencyDiscoveryOptions())
+    {
+    }
+
+    public YmmRuntimeDependencyDiscoveryService(YmmRuntimeDependencyDiscoveryOptions options)
+    {
+        this.options = options;
+    }
+
     public IReadOnlyList<YmmRuntimeDependencyCandidate> DiscoverCandidates(
         IEnumerable<Assembly> assemblies,
         string dependencyName,
@@ -32,6 +44,11 @@ public sealed class YmmRuntimeDependencyDiscoveryService
 
             foreach (var owner in types)
             {
+                if (ShouldExcludeOwnerType(owner))
+                {
+                    continue;
+                }
+
                 DiscoverPropertyCandidates(owner, dependencyName, dependencyType, candidates);
                 DiscoverFieldCandidates(owner, dependencyName, dependencyType, candidates);
                 DiscoverMethodCandidates(owner, dependencyName, dependencyType, candidates);
@@ -150,7 +167,7 @@ public sealed class YmmRuntimeDependencyDiscoveryService
         }
     }
 
-    private static void DiscoverLiveInstanceCandidates(
+    private void DiscoverLiveInstanceCandidates(
         string dependencyName,
         Type dependencyType,
         ICollection<YmmRuntimeDependencyCandidate> candidates)
@@ -161,8 +178,8 @@ public sealed class YmmRuntimeDependencyDiscoveryService
             return;
         }
 
-        const int maxDepth = 4;
-        const int maxNodes = 2000;
+        var maxDepth = Math.Max(1, options.MaxDepth);
+        var maxNodes = Math.Max(100, options.MaxNodes);
         var queue = new Queue<(object Node, string Path, int Depth)>();
         var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
 
@@ -204,6 +221,11 @@ public sealed class YmmRuntimeDependencyDiscoveryService
             }
 
             var nodeType = node.GetType();
+            if (ShouldExcludeOwnerType(nodeType))
+            {
+                continue;
+            }
+
             foreach (var property in nodeType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
             {
                 if (property.GetIndexParameters().Length > 0)
@@ -320,5 +342,19 @@ public sealed class YmmRuntimeDependencyDiscoveryService
         }
 
         return true;
+    }
+
+    private bool ShouldExcludeOwnerType(Type type)
+    {
+        var fullName = type.FullName ?? type.Name;
+        foreach (var prefix in options.ExcludedOwnerTypePrefixes)
+        {
+            if (fullName.StartsWith(prefix, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

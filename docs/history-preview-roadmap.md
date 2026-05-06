@@ -108,3 +108,10 @@
 - Added safe Application.Current.Windows / DataContext graph traversal with depth limits
 - Added owner/property/field/method route candidates for Scene, UndoRedoManager, AsyncAwaitStatus
 - Added dependency discovery summaries for feasibility analysis
+
+### preview21
+
+- Added live runtime dependency resolution analysis phase outputs
+- Added diagnostics summary section for quick triage (`resolved`, top owner candidates)
+- Added discovery cost tuning (depth/node limits and owner-prefix excludes)
+- Consolidated run steps and log locations in `docs/runtime-diagnostics-playbook.md`

@@ -1,5 +1,15 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview21
+
+- Added live runtime dependency resolution analysis outputs for Scene, UndoRedoManager, and AsyncAwaitStatus
+- Added diagnostics summary block (resolved flags and top owner candidates)
+- Added discovery cost controls:
+  - traversal depth limit
+  - node cap
+  - owner type exclude prefixes
+- Added runtime diagnostics playbook doc and consolidated run/log procedures
+- Kept strict generation gate and fallback-first behavior
 ## v0.2.9-history-preview20
 
 - Added runtime dependency instance discovery for Scene, UndoRedoManager, and AsyncAwaitStatus
@@ -103,6 +113,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 

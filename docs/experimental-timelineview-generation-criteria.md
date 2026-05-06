@@ -56,3 +56,28 @@ Define objective criteria for whether preview14 should attempt actual `TimelineV
 - `RuntimeKind=Benchmark` and missing Timeline types is expected.
 - Run probe inside YMM4 plugin runtime to validate Timeline type visibility.
 - Diagnostics now include runtime metadata and runtime-aware filenames.
+
+## preview19-21 Measured Reality
+
+- Reflection feasibility is stable in YMM4 runtime:
+  - `TimelineViewFound = true`
+  - `TimelineViewModelFound = true`
+- Strict gate correctly blocks unsafe generation when live dependencies are unresolved.
+- Current blocker remains runtime dependency resolution:
+  - `SceneDiscovery.resolved = false`
+  - `UndoRedoManagerDiscovery.resolved = false`
+  - `AsyncAwaitStatusDiscovery.resolved = false`
+
+### Why `resolved=false` now
+
+- Candidate routes exist, but no safe verified live instance route has been confirmed yet.
+- Static/property/field candidates are often metadata-only paths without accessible live objects.
+- Isolated context forbids creating new fallback instances.
+
+### Next-step condition (explicit)
+
+Only consider strict safe generation retry when all are true:
+
+- `SceneDiscovery.resolved = true`
+- `UndoRedoManagerDiscovery.resolved = true`
+- `AsyncAwaitStatusDiscovery.resolved = true`

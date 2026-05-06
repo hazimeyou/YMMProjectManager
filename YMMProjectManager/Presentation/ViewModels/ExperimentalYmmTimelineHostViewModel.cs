@@ -268,13 +268,26 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 processName = result.ProcessName,
                 loadedAssemblyCount = result.AssemblyCount,
                 ymmAssemblyNames = result.YmmRelatedAssemblyNames,
+                summary = new
+                {
+                    sceneResolved = result.SceneDiscovery.Resolved,
+                    undoRedoResolved = result.UndoRedoManagerDiscovery.Resolved,
+                    asyncAwaitResolved = result.AsyncAwaitStatusDiscovery.Resolved,
+                    topSceneOwners = result.SceneDiscovery.CandidateOwners.Take(5).ToArray(),
+                    topUndoRedoOwners = result.UndoRedoManagerDiscovery.CandidateOwners.Take(5).ToArray(),
+                    topAsyncAwaitOwners = result.AsyncAwaitStatusDiscovery.CandidateOwners.Take(5).ToArray(),
+                },
                 reflection = result,
                 timelineViewConstructorBindings = viewBindings,
                 timelineViewModelConstructorBindings = viewModelBindings,
                 readiness,
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
             };
-            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
             var runtime = result.RuntimeKind.ToString();
             var bindingPath = Path.Combine(dir, $"timeline-binding-{runtime}-{stamp}.json");
@@ -307,6 +320,15 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 processName = result.ProcessName,
                 loadedAssemblyCount = result.AssemblyCount,
                 ymmAssemblyNames = result.YmmRelatedAssemblyNames,
+                summary = new
+                {
+                    sceneResolved = result.SceneDiscovery.Resolved,
+                    undoRedoResolved = result.UndoRedoManagerDiscovery.Resolved,
+                    asyncAwaitResolved = result.AsyncAwaitStatusDiscovery.Resolved,
+                    topSceneOwners = result.SceneDiscovery.CandidateOwners.Take(5).ToArray(),
+                    topUndoRedoOwners = result.UndoRedoManagerDiscovery.CandidateOwners.Take(5).ToArray(),
+                    topAsyncAwaitOwners = result.AsyncAwaitStatusDiscovery.CandidateOwners.Take(5).ToArray(),
+                },
                 reflection = result,
                 timelineViewConstructorBindings = viewBindings,
                 timelineViewModelConstructorBindings = viewModelBindings,
@@ -314,7 +336,11 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 generationAttempt = generationAttemptResult,
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
             };
-            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
             var path = Path.Combine(dir, $"timeline-generation-attempt-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(path, json, Encoding.UTF8);
         }
