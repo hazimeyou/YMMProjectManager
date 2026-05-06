@@ -75,9 +75,16 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public string GenerationFailureReason => GenerationAttemptResult?.FailureReason ?? string.Empty;
     public string GenerationConstructorSignature => GenerationAttemptResult?.ConstructorSignature ?? string.Empty;
     public string GenerationException => GenerationAttemptResult?.ExceptionMessage ?? string.Empty;
+    public string GenerationStackTrace => GenerationAttemptResult?.ExceptionStackTrace ?? string.Empty;
+    public string NullInjectedParameters => GenerationAttemptResult is null
+        ? string.Empty
+        : string.Join(", ", GenerationAttemptResult.NullInjectedParameters);
     public bool DisposeAttempted => GenerationAttemptResult?.DisposeAttempted ?? false;
     public bool DisposeSucceeded => GenerationAttemptResult?.DisposeSucceeded ?? false;
     public string DisposeFailureReason => GenerationAttemptResult?.DisposeFailureReason ?? string.Empty;
+    public bool GcVerificationAttempted => GenerationAttemptResult?.GcVerificationAttempted ?? false;
+    public string WeakReferenceAfterGc => GenerationAttemptResult?.WeakReferenceAliveAfterGc?.ToString() ?? string.Empty;
+    public string FinalizationNote => GenerationAttemptResult?.FinalizationNote ?? string.Empty;
 
     public bool TryInitialize(PureTimelineExperimentalOptions options)
     {
@@ -161,9 +168,14 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                     OnPropertyChanged(nameof(GenerationFailureReason));
                     OnPropertyChanged(nameof(GenerationConstructorSignature));
                     OnPropertyChanged(nameof(GenerationException));
+                    OnPropertyChanged(nameof(GenerationStackTrace));
+                    OnPropertyChanged(nameof(NullInjectedParameters));
                     OnPropertyChanged(nameof(DisposeAttempted));
                     OnPropertyChanged(nameof(DisposeSucceeded));
                     OnPropertyChanged(nameof(DisposeFailureReason));
+                    OnPropertyChanged(nameof(GcVerificationAttempted));
+                    OnPropertyChanged(nameof(WeakReferenceAfterGc));
+                    OnPropertyChanged(nameof(FinalizationNote));
                     SaveGenerationAttemptDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, GenerationAttemptResult, logs);
 
                     if (GenerationAttemptResult.Succeeded && (!GenerationAttemptResult.DisposeAttempted || GenerationAttemptResult.DisposeSucceeded))
@@ -351,9 +363,14 @@ public void Dispose()
             OnPropertyChanged(nameof(GenerationFailureReason));
             OnPropertyChanged(nameof(GenerationConstructorSignature));
             OnPropertyChanged(nameof(GenerationException));
+            OnPropertyChanged(nameof(GenerationStackTrace));
+            OnPropertyChanged(nameof(NullInjectedParameters));
             OnPropertyChanged(nameof(DisposeAttempted));
             OnPropertyChanged(nameof(DisposeSucceeded));
             OnPropertyChanged(nameof(DisposeFailureReason));
+            OnPropertyChanged(nameof(GcVerificationAttempted));
+            OnPropertyChanged(nameof(WeakReferenceAfterGc));
+            OnPropertyChanged(nameof(FinalizationNote));
         }
         finally
         {
@@ -387,6 +404,26 @@ public void Dispose()
             Category = "Runtime",
             Message = $"Runtime redetected: {runtimeEnvironmentDetector.Detect()}, process={runtimeEnvironmentDetector.GetProcessName()}",
         });
+    }
+
+    public bool TryRunGenerationAttempt()
+    {
+        var options = new PureTimelineExperimentalOptions
+        {
+            EnableExperimentalYmmTimelineHost = true,
+            UseReflection = true,
+            OpenIsolatedHostWindow = false,
+            AllowViewModelGenerationAttempt = true,
+            MinimumReadinessScoreForGeneration = 80,
+            DisposeImmediatelyAfterGeneration = true,
+        };
+
+        logs.Add(new YmmTimelineReflectionLog
+        {
+            Category = "Generation",
+            Message = "Explicit generation attempt requested by user action.",
+        });
+        return TryInitialize(options);
     }
 
     private static void ReplaceCollection(ObservableCollection<string> target, IEnumerable<string> source)

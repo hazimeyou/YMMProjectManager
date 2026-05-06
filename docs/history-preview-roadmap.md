@@ -87,3 +87,10 @@
 
 - Validate probe results from real YMM4 plugin runtime session
 - Evaluate guarded next-step for ViewModel generation only in YMM4 runtime
+
+### preview18
+
+- Added explicit user-action path for isolated TimelineViewModel generation attempt
+- Added immediate dispose verification with post-dispose GC reachability note
+- Extended generation diagnostics (null-injected parameters, stack trace)
+- Maintained fallback-first behavior and default-disabled experimental execution

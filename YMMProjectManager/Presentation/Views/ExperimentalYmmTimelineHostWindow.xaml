@@ -35,6 +35,7 @@
             <Button Content="実行環境を再判定" Width="140" Margin="0,0,6,0" Click="OnRedetectRuntimeClick" />
             <Button Content="Reflection Probe 実行" Width="150" Margin="0,0,6,0" Click="OnRunProbeClick" />
             <Button Content="Binding Dry-run 実行" Width="150" Margin="0,0,6,0" Click="OnRunBindingDryRunClick" />
+            <Button Content="生成試行(即破棄)" Width="130" Margin="0,0,6,0" Click="OnRunGenerationAttemptClick" />
             <Button Content="Diagnostics JSON 保存" Width="170" Click="OnSaveDiagnosticsClick" />
         </StackPanel>
 
@@ -97,9 +98,11 @@
                 <StackPanel>
                     <TextBlock Text="{Binding GenerationAttempted, StringFormat=Attempted: {0}}" />
                     <TextBlock Text="{Binding GenerationSucceeded, StringFormat=Succeeded: {0}}" />
+                    <TextBlock Text="{Binding NullInjectedParameters, StringFormat=NullInjected: {0}}" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding GenerationConstructorSignature, StringFormat=Constructor: {0}}" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding GenerationFailureReason, StringFormat=Failure: {0}}" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding GenerationException, StringFormat=Exception: {0}}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding GenerationStackTrace, StringFormat=StackTrace: {0}}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>
             <GroupBox Grid.Column="1" Header="Dispose Result">
@@ -107,6 +110,9 @@
                     <TextBlock Text="{Binding DisposeAttempted, StringFormat=DisposeAttempted: {0}}" />
                     <TextBlock Text="{Binding DisposeSucceeded, StringFormat=DisposeSucceeded: {0}}" />
                     <TextBlock Text="{Binding DisposeFailureReason, StringFormat=DisposeFailure: {0}}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding GcVerificationAttempted, StringFormat=GCCheck: {0}}" />
+                    <TextBlock Text="{Binding WeakReferenceAfterGc, StringFormat=WeakRefAliveAfterGc: {0}}" />
+                    <TextBlock Text="{Binding FinalizationNote, StringFormat=FinalizationNote: {0}}" TextWrapping="Wrap" />
                 </StackPanel>
             </GroupBox>
         </Grid>

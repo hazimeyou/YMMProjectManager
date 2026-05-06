@@ -30,6 +30,8 @@ Current preview capabilities include:
 - Disabled-by-default experimental generation investigation (preview14)
 - Isolated TimelineViewModel generation attempt PoC (preview15)
 - Immediate dispose verification after generation attempt (preview15)
+- Explicit isolated ViewModel generation action in experimental host (preview18)
+- Immediate dispose + GC reachability verification diagnostics (preview18)
 
 ### Experimental Mode Safety
 

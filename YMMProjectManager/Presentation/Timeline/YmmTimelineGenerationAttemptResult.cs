@@ -25,4 +25,16 @@ public sealed class YmmTimelineGenerationAttemptResult
     public long GenerationAttemptMs { get; set; }
 
     public long DisposeMs { get; set; }
+
+    public IReadOnlyList<string> ConstructorParameters { get; set; } = Array.Empty<string>();
+
+    public IReadOnlyList<string> NullInjectedParameters { get; set; } = Array.Empty<string>();
+
+    public string? ExceptionStackTrace { get; set; }
+
+    public bool GcVerificationAttempted { get; set; }
+
+    public bool? WeakReferenceAliveAfterGc { get; set; }
+
+    public string? FinalizationNote { get; set; }
 }

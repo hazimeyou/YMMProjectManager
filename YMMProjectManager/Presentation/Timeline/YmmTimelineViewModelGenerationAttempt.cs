@@ -16,6 +16,7 @@ public sealed class YmmTimelineViewModelGenerationAttempt
 
         var generationSw = Stopwatch.StartNew();
         object? instance = null;
+        WeakReference? weakReference = null;
         try
         {
             var constructor = ResolveConstructor(targetType, bindingResult.ConstructorSignature);
@@ -26,8 +27,16 @@ public sealed class YmmTimelineViewModelGenerationAttempt
                 return result;
             }
 
-            var args = BuildArguments(constructor.GetParameters());
+            var constructorParameters = constructor.GetParameters();
+            result.ConstructorParameters = constructorParameters
+                .Select(x => $"{x.ParameterType.FullName ?? x.ParameterType.Name} {x.Name}")
+                .ToArray();
+
+            var build = BuildArguments(constructorParameters);
+            var args = build.Args;
+            result.NullInjectedParameters = build.NullInjectedParameters;
             instance = constructor.Invoke(args);
+            weakReference = new WeakReference(instance);
             result.Succeeded = true;
         }
         catch (Exception ex)
@@ -37,6 +46,7 @@ public sealed class YmmTimelineViewModelGenerationAttempt
             result.FailureReason = "Generation attempt failed.";
             result.ExceptionType = core.GetType().FullName;
             result.ExceptionMessage = core.Message;
+            result.ExceptionStackTrace = core.StackTrace;
         }
         finally
         {
@@ -56,6 +66,7 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         result.DisposeMs = disposeSw.ElapsedMilliseconds;
         result.DisposeSucceeded = disposeResult.Succeeded;
         result.DisposeFailureReason = disposeResult.FailureReason;
+        VerifyGcReachability(result, weakReference);
         return result;
     }
 
@@ -73,15 +84,21 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         return null;
     }
 
-    private static object?[] BuildArguments(IReadOnlyList<ParameterInfo> parameters)
+    private static (object?[] Args, IReadOnlyList<string> NullInjectedParameters) BuildArguments(IReadOnlyList<ParameterInfo> parameters)
     {
         var args = new object?[parameters.Count];
+        var nullInjected = new List<string>();
         for (var i = 0; i < parameters.Count; i++)
         {
-            args[i] = ResolveArgument(parameters[i]);
+            var value = ResolveArgument(parameters[i]);
+            args[i] = value;
+            if (value is null)
+            {
+                nullInjected.Add($"{parameters[i].Name}:{parameters[i].ParameterType.FullName ?? parameters[i].ParameterType.Name}");
+            }
         }
 
-        return args;
+        return (args, nullInjected);
     }
 
     private static object? ResolveArgument(ParameterInfo parameterInfo)
@@ -119,5 +136,29 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         var args = string.Join(", ", constructorInfo.GetParameters()
             .Select(p => $"{p.ParameterType.Name} {p.Name}"));
         return $"{access} .ctor({args})";
+    }
+
+    private static void VerifyGcReachability(YmmTimelineGenerationAttemptResult result, WeakReference? weakReference)
+    {
+        if (weakReference is null)
+        {
+            return;
+        }
+
+        result.GcVerificationAttempted = true;
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            result.WeakReferenceAliveAfterGc = weakReference.IsAlive;
+            result.FinalizationNote = weakReference.IsAlive
+                ? "WeakReference is still alive after forced GC. This may be normal depending on runtime references."
+                : "WeakReference is not alive after forced GC.";
+        }
+        catch (Exception ex)
+        {
+            result.FinalizationNote = $"GC verification failed: {ex.GetType().Name}: {ex.Message}";
+        }
     }
 }

@@ -41,6 +41,11 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         Vm?.TryInitialize(options);
     }
 
+    private void OnRunGenerationAttemptClick(object sender, RoutedEventArgs e)
+    {
+        Vm?.TryRunGenerationAttempt();
+    }
+
     private void OnSaveDiagnosticsClick(object sender, RoutedEventArgs e)
     {
         Vm?.SaveDiagnosticsSnapshot();

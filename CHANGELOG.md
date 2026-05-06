@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview18
+
+- Added explicit user-action button for isolated TimelineViewModel generation attempt (生成試行(即破棄))
+- Kept generation default-disabled in normal flow; no automatic generation added
+- Extended generation diagnostics with:
+  - constructor parameter dump
+  - null-injected parameter list
+  - exception stack trace
+  - immediate dispose result
+  - post-dispose GC reachability note
+- Preserved fallback-safe behavior (DiffTimeline standalone and placeholder path)
 ## v0.2.9-history-preview16
 
 - Added runtime environment detection (`Benchmark` / `YMM4Plugin` / `Standalone` / `Unknown`)
@@ -78,6 +89,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 
