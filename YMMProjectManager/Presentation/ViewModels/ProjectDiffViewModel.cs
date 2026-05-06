@@ -1,8 +1,8 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.IO;
+using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Diff;
 using YMMProjectManager.Infrastructure.History;
-using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -13,15 +13,24 @@ public sealed class ProjectDiffViewModel : ViewModelBase
     private readonly JsonNormalizeService normalizeService;
     private readonly JsonDiffService jsonDiffService;
     private readonly YmmProjectDiffService ymmDiffService;
+
     private string title = "差分";
+    private string matchStatisticsText = string.Empty;
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
+    public DiffTimelineViewModel TimelineViewModel { get; } = new();
 
     public string Title
     {
         get => title;
         private set => SetProperty(ref title, value);
+    }
+
+    public string MatchStatisticsText
+    {
+        get => matchStatisticsText;
+        private set => SetProperty(ref matchStatisticsText, value);
     }
 
     public ProjectDiffViewModel(
@@ -86,7 +95,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
                 });
             }
 
-            foreach (var x in ymmDiffService.Diff(before, after))
+            var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
+            foreach (var x in ymmResult.Entries)
             {
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
@@ -97,10 +107,39 @@ public sealed class ProjectDiffViewModel : ViewModelBase
                     After = x.After ?? string.Empty,
                 });
             }
+
+            MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
+            TimelineViewModel.SetItems(ymmResult.Entries.Select((x, i) => TimelineViewModel.CreateItem(
+                id: $"diff-{i}",
+                kind: x.Kind.ToString(),
+                category: x.Category,
+                displayName: $"{x.Kind} {x.Field}",
+                timelineIndex: x.TimelineIndex,
+                layer: x.Layer,
+                frame: x.Frame,
+                length: Math.Max(1, x.Length),
+                oldValue: x.Before,
+                newValue: x.After)));
         }
         catch (Exception ex)
         {
             logger.Error(ex, "ApplyDiff failed");
+            MatchStatisticsText = "統計の計算に失敗しました。";
         }
+    }
+
+    private static string FormatStatistics(YmmDiffMatchStatistics s)
+    {
+        return string.Join(" | ",
+            $"old={s.OldItemCount}",
+            $"new={s.NewItemCount}",
+            $"idMatch={s.MatchedByInternalId}",
+            $"fallbackMatch={s.MatchedByFallback}",
+            $"unmatchedOld={s.UnmatchedOldItems}",
+            $"unmatchedNew={s.UnmatchedNewItems}",
+            $"added={s.AddedCount}",
+            $"removed={s.RemovedCount}",
+            $"moved={s.MovedCount}",
+            $"modified={s.ModifiedCount}");
     }
 }

@@ -29,6 +29,8 @@
 
 `hash(Type + Timeline + InitialPosition + Text + FilePath)`
 
+preview5 では Internal ID match statistics を追加し、correctness fixture で妥当性検証を開始しました。
+
 ## Timeline Policy
 
 - 純正TL側: YMM4-Timeline の設計（SetTimelineToolInfo, Dispose, scene切替処理）を参考に再実装
@@ -40,6 +42,15 @@ DiffTL初期要件:
 - 縦軸: Layer
 - 表示: Added / Removed / Modified / Moved
 - クリックで差分詳細表示
+
+preview5 では `DiffTimelineView` の最小プロトタイプ（読み取り専用）を追加しました。
+
+## YMM4-Timeline Investigation Status
+
+- `TimelineView` は `YukkuriMovieMaker.Views.TimelineView` を直接埋め込み
+- `SetTimelineToolInfo` で scene を取得して `TimelineViewModel(scene, UndoRedoManager, AsyncAwaitStatus)` を生成
+- scene切替時は旧 `TimelineViewModel` を Dispose し、`Timeline.PropertyChanged` を解除して再生成
+- 依存DLLが多いため、YMMProjectManager への直接依存は避ける方針を維持
 
 ## Release Plan
 
