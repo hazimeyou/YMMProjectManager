@@ -8,10 +8,13 @@ using Microsoft.Win32;
 using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Diff;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
+using YMMProjectManager.Infrastructure.History;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Relink;
+using YMMProjectManager.Presentation.Views;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
 
@@ -23,6 +26,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
     private readonly YmmpBundleService bundleService;
+    private readonly JsonNormalizeService jsonNormalizeService;
+    private readonly ProjectSnapshotService snapshotService;
+    private readonly JsonDiffService jsonDiffService;
+    private readonly YmmProjectDiffService ymmDiffService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
@@ -85,6 +92,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
     public ICommand ExtractBundleCommand { get; }
+    public ICommand CreateSnapshotCommand { get; }
+    public ICommand OpenHistoryDiffCommand { get; }
+    public ICommand OpenProjectFolderCommand { get; }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -97,6 +107,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
         bundleService = new YmmpBundleService(logger);
+        jsonNormalizeService = new JsonNormalizeService();
+        snapshotService = new ProjectSnapshotService(logger, jsonNormalizeService);
+        jsonDiffService = new JsonDiffService();
+        ymmDiffService = new YmmProjectDiffService();
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -109,6 +123,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
+        CreateSnapshotCommand = new AsyncRelayCommand(CreateSnapshotAsync, () => !IsBusy && SelectedProject is not null);
+        OpenHistoryDiffCommand = new AsyncRelayCommand(OpenHistoryDiffAsync, () => !IsBusy && SelectedProject is not null);
+        OpenProjectFolderCommand = new AsyncRelayCommand(OpenProjectFolderAsync, () => !IsBusy && SelectedProject is not null);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
@@ -513,6 +530,80 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 MessageBox.Show("CopyPreview failed. clipboard empty", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }).ConfigureAwait(true);
+    }
+
+    private async Task CreateSnapshotAsync()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("CreateSnapshot", async () =>
+        {
+            var metadata = await snapshotService.CreateSnapshotAsync(SelectedProject.FullPath).ConfigureAwait(true);
+            if (metadata is null)
+            {
+                MessageBox.Show("スナップショット作成に失敗しました。", "履歴", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            MessageBox.Show($"作成しました: {metadata.SnapshotId}", "履歴", MessageBoxButton.OK, MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    private async Task OpenHistoryDiffAsync()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("OpenHistoryDiff", () =>
+        {
+            var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
+            var window = new SnapshotListWindow(
+                SelectedProject.FullPath,
+                logger,
+                snapshotService,
+                jsonNormalizeService,
+                jsonDiffService,
+                ymmDiffService);
+            if (owner is not null && !ReferenceEquals(owner, window))
+            {
+                window.Owner = owner;
+            }
+
+            window.ShowDialog();
+            return Task.CompletedTask;
+        }).ConfigureAwait(true);
+    }
+
+    private Task OpenProjectFolderAsync()
+    {
+        if (SelectedProject is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        try
+        {
+            var dir = Path.GetDirectoryName(SelectedProject.FullPath);
+            if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = dir,
+                    UseShellExecute = true,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "OpenProjectFolderAsync failed.");
+        }
+
+        return Task.CompletedTask;
     }
 
     private async Task SaveAsync()
