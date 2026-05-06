@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview9
+
+- Timeline sync UX improvements
+- CurrentFrame navigation (go/center/nearest)
+- Frame jump operations (first/last/prev-from-frame/next-from-frame)
+- SyncState and TimelineMode UI switching
+- Pure Timeline integration checklist added
+- Benchmark diagnostics for sync operations
+
 ## v0.2.9-history-preview8
 
 - Pure Timeline investigation docs added
@@ -29,3 +38,4 @@
 - visible range filtering を継続強化
 - Benchmark 強化
 - YMM4-Timeline 調査方針の整理をドキュメントへ追記
+

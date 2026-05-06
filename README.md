@@ -136,3 +136,11 @@ correctness fixture:
 - Timeline sync design を追加
 - Experimental sync-ready architecture (Pure Timeline Placeholder + DiffTL current frame line) を追加
 
+
+
+## preview9 Notes
+
+- Timeline sync UX improvements
+- CurrentFrame navigation
+- Pure Timeline integration checklist
+

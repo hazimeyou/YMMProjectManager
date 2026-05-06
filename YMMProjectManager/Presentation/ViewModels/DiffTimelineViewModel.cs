@@ -175,6 +175,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     public event Action<DiffTimelineItemViewModel?>? SelectedDiffItemChanged;
     public event Action<DiffTimelineItemViewModel>? ScrollToSelectedRequested;
+    public event Action<int, bool>? ScrollToFrameRequested;
 
     public DiffTimelineViewModel()
     {
@@ -190,6 +191,80 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public void SetCurrentFrame(int frame)
     {
         CurrentFrame = frame;
+    }
+
+    public void ScrollToCurrentFrame()
+    {
+        ScrollToFrameRequested?.Invoke(CurrentFrame, false);
+    }
+
+    public void CenterCurrentFrame()
+    {
+        ScrollToFrameRequested?.Invoke(CurrentFrame, true);
+    }
+
+    public bool SelectNearestDiffToCurrentFrame()
+    {
+        if (allItems.Count == 0)
+        {
+            return false;
+        }
+
+        var nearest = allItems
+            .OrderBy(x => Math.Abs(x.Frame - CurrentFrame))
+            .ThenBy(x => x.Frame)
+            .FirstOrDefault();
+        if (nearest is null)
+        {
+            return false;
+        }
+
+        SelectedDiffItem = nearest;
+        return true;
+    }
+
+    public bool JumpToFirstDiff()
+    {
+        var first = allItems.OrderBy(x => x.Frame).ThenBy(x => x.Layer).FirstOrDefault();
+        if (first is null) return false;
+        SelectedDiffItem = first;
+        SetCurrentFrame(first.Frame);
+        return true;
+    }
+
+    public bool JumpToLastDiff()
+    {
+        var last = allItems.OrderByDescending(x => x.Frame).ThenByDescending(x => x.Layer).FirstOrDefault();
+        if (last is null) return false;
+        SelectedDiffItem = last;
+        SetCurrentFrame(last.Frame);
+        return true;
+    }
+
+    public bool JumpToPreviousDiffFromCurrentFrame()
+    {
+        var prev = allItems
+            .Where(x => x.Frame < CurrentFrame)
+            .OrderByDescending(x => x.Frame)
+            .ThenByDescending(x => x.Layer)
+            .FirstOrDefault();
+        if (prev is null) return false;
+        SelectedDiffItem = prev;
+        SetCurrentFrame(prev.Frame);
+        return true;
+    }
+
+    public bool JumpToNextDiffFromCurrentFrame()
+    {
+        var next = allItems
+            .Where(x => x.Frame > CurrentFrame)
+            .OrderBy(x => x.Frame)
+            .ThenBy(x => x.Layer)
+            .FirstOrDefault();
+        if (next is null) return false;
+        SelectedDiffItem = next;
+        SetCurrentFrame(next.Frame);
+        return true;
     }
 
     public void ZoomIn()

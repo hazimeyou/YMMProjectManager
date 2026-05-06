@@ -65,3 +65,11 @@ YMMProjectManager 方針:
 
 - Pure Timeline investigation doc: docs/pure-timeline-investigation.md`n- Timeline sync design doc: docs/timeline-sync-design.md`n- One-way frame sync PoC added via placeholder panel.
 
+
+
+## Preview9 Additions
+
+- CurrentFrame navigation commands and frame-based diff jump
+- SyncState/TimelineMode manual UI switching
+- Pure timeline integration checklist (docs/pure-timeline-integration-checklist.md)
+

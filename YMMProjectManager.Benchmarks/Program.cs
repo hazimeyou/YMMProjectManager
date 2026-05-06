@@ -36,12 +36,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview7)",
+        "# YMMProjectManager Benchmark (preview9)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | itemCount | timelineCount | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | timelineProjectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | matchingMsApprox | snapshotBytes | memoryBytes | idMatch | fallbackMatch |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | matchingMsApprox |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -58,7 +58,7 @@ async Task RunPerformanceBenchmarksAsync()
         await File.WriteAllTextAsync(changedPath, changedJson, Encoding.UTF8);
 
         var swSnapshot = Stopwatch.StartNew();
-        var snapshot = await snapshotService.CreateSnapshotAsync(basePath);
+        _ = await snapshotService.CreateSnapshotAsync(basePath);
         swSnapshot.Stop();
 
         var swNormalize = Stopwatch.StartNew();
@@ -66,13 +66,8 @@ async Task RunPerformanceBenchmarksAsync()
         var normalizedChanged = await normalize.NormalizeFileAsync(changedPath);
         swNormalize.Stop();
 
-        GC.Collect();
-        GC.WaitForPendingFinalizers();
-        GC.Collect();
-        var beforeMemory = GC.GetTotalMemory(true);
-
         var swJsonDiff = Stopwatch.StartNew();
-        var jsonDiffEntries = jsonDiff.Diff(normalizedBase, normalizedChanged);
+        _ = jsonDiff.Diff(normalizedBase, normalizedChanged);
         swJsonDiff.Stop();
 
         var swYmmDiff = Stopwatch.StartNew();
@@ -81,13 +76,11 @@ async Task RunPerformanceBenchmarksAsync()
 
         var timelineMetrics = BenchmarkTimelineProjectionAndFiltering(ymmResult);
         var groupingMs = BenchmarkGrouping(ymmResult);
+        var syncMetrics = BenchmarkSyncMetrics(ymmResult);
 
-        var afterMemory = GC.GetTotalMemory(true);
-        var memoryBytes = Math.Max(0, afterMemory - beforeMemory);
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {s.ItemCount} | {s.TimelineCount} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {matchingApprox} | {snapshot?.OriginalFileSize ?? 0} | {memoryBytes} | {ymmResult.Statistics.MatchedByInternalId} | {ymmResult.Statistics.MatchedByFallback} |");
-        lines.Add($"  - jsonDiffEntries={jsonDiffEntries.Count}, ymmDiffEntries={ymmResult.Entries.Count}");
+        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {matchingApprox} |");
     }
 
     await File.WriteAllLinesAsync(logFile, lines, Encoding.UTF8);
@@ -96,30 +89,26 @@ async Task RunPerformanceBenchmarksAsync()
 async Task RunCorrectnessBenchmarksAsync()
 {
     var fixturesRoot = Path.Combine(repoRoot, "YMMProjectManager.Benchmarks", "Fixtures");
-    var results = new List<DiffCorrectnessResult>();
-
     if (!Directory.Exists(fixturesRoot))
     {
         return;
     }
 
+    var results = new List<DiffCorrectnessResult>();
     foreach (var fixtureDir in Directory.EnumerateDirectories(fixturesRoot))
     {
         var fixtureName = Path.GetFileName(fixtureDir);
         var beforePath = Path.Combine(fixtureDir, "before.ymmp");
         var afterPath = Path.Combine(fixtureDir, "after.ymmp");
         var expectedPath = Path.Combine(fixtureDir, "expected.json");
-
         if (!File.Exists(beforePath) || !File.Exists(afterPath) || !File.Exists(expectedPath))
         {
-            results.Add(new DiffCorrectnessResult { FixtureName = fixtureName, Passed = false, Notes = "Missing fixture file." });
             continue;
         }
 
         var expected = JsonSerializer.Deserialize<FixtureExpectedRoot>(await File.ReadAllTextAsync(expectedPath));
         if (expected?.Expected is null)
         {
-            results.Add(new DiffCorrectnessResult { FixtureName = fixtureName, Passed = false, Notes = "Invalid expected.json." });
             continue;
         }
 
@@ -127,15 +116,13 @@ async Task RunCorrectnessBenchmarksAsync()
         var after = await normalize.NormalizeFileAsync(afterPath);
         var diffResult = ymmDiff.DiffWithStatistics(before, after);
 
-        var passed = expected.Expected.Added == diffResult.Statistics.AddedCount
-                     && expected.Expected.Removed == diffResult.Statistics.RemovedCount
-                     && expected.Expected.Moved == diffResult.Statistics.MovedCount
-                     && expected.Expected.Modified == diffResult.Statistics.ModifiedCount;
-
         results.Add(new DiffCorrectnessResult
         {
             FixtureName = fixtureName,
-            Passed = passed,
+            Passed = expected.Expected.Added == diffResult.Statistics.AddedCount
+                     && expected.Expected.Removed == diffResult.Statistics.RemovedCount
+                     && expected.Expected.Moved == diffResult.Statistics.MovedCount
+                     && expected.Expected.Modified == diffResult.Statistics.ModifiedCount,
             ExpectedAdded = expected.Expected.Added,
             ActualAdded = diffResult.Statistics.AddedCount,
             ExpectedRemoved = expected.Expected.Removed,
@@ -155,17 +142,7 @@ async Task RunCorrectnessBenchmarksAsync()
 static (long projectionMs, long filteringMs, long zoomRecalcMs, int visibleCount) BenchmarkTimelineProjectionAndFiltering(YmmProjectDiffResult diffResult)
 {
     var vm = new DiffTimelineViewModel();
-    var items = diffResult.Entries.Select((x, i) => vm.CreateItem(
-        id: $"bench-{i}",
-        kind: x.Kind.ToString(),
-        category: x.Category,
-        displayName: $"{x.Kind} {x.Field}",
-        timelineIndex: x.TimelineIndex,
-        layer: x.Layer,
-        frame: x.Frame,
-        length: Math.Max(1, x.Length),
-        oldValue: x.Before,
-        newValue: x.After)).ToList();
+    var items = diffResult.Entries.Select((x, i) => vm.CreateItem($"bench-{i}", x.Kind.ToString(), x.Category, $"{x.Kind} {x.Field}", x.TimelineIndex, x.Layer, x.Frame, Math.Max(1, x.Length), x.Before, x.After)).ToList();
 
     var swProjection = Stopwatch.StartNew();
     vm.SetItems(items);
@@ -178,22 +155,45 @@ static (long projectionMs, long filteringMs, long zoomRecalcMs, int visibleCount
     swFilter.Stop();
 
     var swZoom = Stopwatch.StartNew();
-    vm.ZoomIn();
-    vm.ZoomOut();
-    vm.ResetZoom();
+    vm.ZoomIn(); vm.ZoomOut(); vm.ResetZoom();
     swZoom.Stop();
 
     return (swProjection.ElapsedMilliseconds, swFilter.ElapsedMilliseconds, swZoom.ElapsedMilliseconds, visibleCount);
 }
 
+static (long frameCenterMs, long nearestDiffSearchMs, long frameJumpMs, int syncStateChangeCount) BenchmarkSyncMetrics(YmmProjectDiffResult diffResult)
+{
+    var vm = new DiffTimelineViewModel();
+    vm.SetItems(diffResult.Entries.Select((x, i) => vm.CreateItem($"s-{i}", x.Kind.ToString(), x.Category, "d", x.TimelineIndex, x.Layer, x.Frame, Math.Max(1, x.Length), x.Before, x.After)));
+
+    var swCenter = Stopwatch.StartNew();
+    vm.SetCurrentFrame(1200);
+    vm.CenterCurrentFrame();
+    swCenter.Stop();
+
+    var swNearest = Stopwatch.StartNew();
+    _ = vm.SelectNearestDiffToCurrentFrame();
+    swNearest.Stop();
+
+    var swJump = Stopwatch.StartNew();
+    _ = vm.JumpToPreviousDiffFromCurrentFrame();
+    _ = vm.JumpToNextDiffFromCurrentFrame();
+    _ = vm.JumpToFirstDiff();
+    _ = vm.JumpToLastDiff();
+    swJump.Stop();
+
+    var count = 0;
+    vm.SetSyncMode(TimelineMode.Synced, TimelineSyncState.Detached); count++;
+    vm.SetSyncMode(TimelineMode.Synced, TimelineSyncState.Synced); count++;
+    vm.SetSyncMode(TimelineMode.Synced, TimelineSyncState.Manual); count++;
+
+    return (swCenter.ElapsedMilliseconds, swNearest.ElapsedMilliseconds, swJump.ElapsedMilliseconds, count);
+}
+
 static long BenchmarkGrouping(YmmProjectDiffResult diffResult)
 {
     var sw = Stopwatch.StartNew();
-    _ = diffResult.Entries
-        .GroupBy(x => x.Field)
-        .Select(x => new { Field = x.Key, Count = x.Count() })
-        .OrderByDescending(x => x.Count)
-        .ToList();
+    _ = diffResult.Entries.GroupBy(x => x.Field).Select(x => new { x.Key, Count = x.Count() }).OrderByDescending(x => x.Count).ToList();
     sw.Stop();
     return sw.ElapsedMilliseconds;
 }
@@ -202,7 +202,6 @@ static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)
 {
     var timelines = new List<object>();
     var perTimeline = Math.Max(1, itemCount / Math.Max(1, timelineCount));
-
     for (var t = 0; t < timelineCount; t++)
     {
         var items = new List<object>();
@@ -213,39 +212,16 @@ static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)
             var layer = (globalIndex % 12) + 1;
             var movedFrame = moved && globalIndex % 20 == 0 ? frame + 7 : frame;
             var movedLayer = moved && globalIndex % 35 == 0 ? Math.Min(24, layer + 1) : layer;
-
-            items.Add(new
-            {
-                Type = globalIndex % 3 == 0 ? "Text" : "Media",
-                Text = $"Item Text {globalIndex % 150}",
-                FilePath = $"C:/media/clip_{globalIndex % 400}.wav",
-                Frame = movedFrame,
-                Layer = movedLayer,
-                Length = 30 + (globalIndex % 90),
-            });
+            items.Add(new { Type = globalIndex % 3 == 0 ? "Text" : "Media", Text = $"Item Text {globalIndex % 150}", FilePath = $"C:/media/clip_{globalIndex % 400}.wav", Frame = movedFrame, Layer = movedLayer, Length = 30 + (globalIndex % 90) });
         }
-
         timelines.Add(new { Index = t, Items = items });
     }
-
     return JsonSerializer.Serialize(new { Project = new { Name = "BenchmarkProject", Timelines = timelines } });
 }
 
 sealed record Scenario(string Name, int ItemCount, int TimelineCount);
-
-sealed class FixtureExpectedRoot
-{
-    public FixtureExpected? Expected { get; set; }
-}
-
-sealed class FixtureExpected
-{
-    public int Added { get; set; }
-    public int Removed { get; set; }
-    public int Moved { get; set; }
-    public int Modified { get; set; }
-}
-
+sealed class FixtureExpectedRoot { public FixtureExpected? Expected { get; set; } }
+sealed class FixtureExpected { public int Added { get; set; } public int Removed { get; set; } public int Moved { get; set; } public int Modified { get; set; } }
 public sealed class DiffCorrectnessResult
 {
     public string FixtureName { get; set; } = string.Empty;

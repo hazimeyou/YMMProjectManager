@@ -20,11 +20,20 @@ public sealed class ProjectDiffViewModel : ViewModelBase
     private bool isSyncingSelection;
     private int pureTimelineCurrentFrame;
     private string pureTimelineSelection = "(none)";
+    private string pureTimelineStatus = "Placeholder";
+    private string pureTimelineActiveScene = "Scene: (placeholder)";
+    private string pureTimelineActiveTimeline = "Timeline: (placeholder)";
+    private string lastSyncAction = "Last Sync: (none)";
+    private TimelineSyncState selectedSyncState = TimelineSyncState.Detached;
+    private TimelineMode selectedTimelineMode = TimelineMode.Synced;
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
     public ObservableCollection<DiffGroupViewModel> DiffGroups { get; } = [];
     public DiffTimelineViewModel TimelineViewModel { get; } = new();
+
+    public IReadOnlyList<TimelineSyncState> SyncStateOptions { get; } = Enum.GetValues<TimelineSyncState>();
+    public IReadOnlyList<TimelineMode> TimelineModeOptions { get; } = Enum.GetValues<TimelineMode>();
 
     public string Title
     {
@@ -56,7 +65,58 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         set => SetProperty(ref pureTimelineSelection, value);
     }
 
+    public string PureTimelineStatus
+    {
+        get => pureTimelineStatus;
+        set => SetProperty(ref pureTimelineStatus, value);
+    }
+
+    public string PureTimelineActiveScene
+    {
+        get => pureTimelineActiveScene;
+        set => SetProperty(ref pureTimelineActiveScene, value);
+    }
+
+    public string PureTimelineActiveTimeline
+    {
+        get => pureTimelineActiveTimeline;
+        set => SetProperty(ref pureTimelineActiveTimeline, value);
+    }
+
+    public string LastSyncAction
+    {
+        get => lastSyncAction;
+        set => SetProperty(ref lastSyncAction, value);
+    }
+
+    public TimelineSyncState SelectedSyncState
+    {
+        get => selectedSyncState;
+        set
+        {
+            if (SetProperty(ref selectedSyncState, value))
+            {
+                ApplySyncModeAndState();
+                LastSyncAction = $"Last Sync: Set state {value}";
+            }
+        }
+    }
+
+    public TimelineMode SelectedTimelineMode
+    {
+        get => selectedTimelineMode;
+        set
+        {
+            if (SetProperty(ref selectedTimelineMode, value))
+            {
+                ApplySyncModeAndState();
+                LastSyncAction = $"Last Sync: Set mode {value}";
+            }
+        }
+    }
+
     public string PureTimelineSyncState => TimelineViewModel.SyncState.ToString();
+    public string PureTimelineMode => TimelineViewModel.Mode.ToString();
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -101,18 +161,77 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         this.ymmDiffService = ymmDiffService;
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
-        TimelineViewModel.SetSyncMode(TimelineMode.Synced, TimelineSyncState.Detached);
+        ApplySyncModeAndState();
     }
 
     public void SyncFrameFromPlaceholder()
     {
         TimelineViewModel.SetCurrentFrame(PureTimelineCurrentFrame);
+        LastSyncAction = $"Last Sync: Synced frame {PureTimelineCurrentFrame}";
     }
 
-    public void SetSyncState(TimelineSyncState state)
+    public void GoToCurrentFrame()
     {
-        TimelineViewModel.SetSyncMode(TimelineMode.Synced, state);
-        OnPropertyChanged(nameof(PureTimelineSyncState));
+        TimelineViewModel.ScrollToCurrentFrame();
+        LastSyncAction = $"Last Sync: Go To Current Frame {PureTimelineCurrentFrame}";
+    }
+
+    public void CenterCurrentFrame()
+    {
+        TimelineViewModel.CenterCurrentFrame();
+        LastSyncAction = $"Last Sync: Centered DiffTL at frame {PureTimelineCurrentFrame}";
+    }
+
+    public void SelectNearestDiffToCurrentFrame()
+    {
+        var ok = TimelineViewModel.SelectNearestDiffToCurrentFrame();
+        LastSyncAction = ok
+            ? $"Last Sync: Selected nearest diff at frame {PureTimelineCurrentFrame}"
+            : "Last Sync: No diff for nearest selection";
+    }
+
+    public void JumpToFirstDiff()
+    {
+        var ok = TimelineViewModel.JumpToFirstDiff();
+        if (ok && TimelineViewModel.SelectedDiffItem is not null)
+        {
+            PureTimelineCurrentFrame = TimelineViewModel.SelectedDiffItem.Frame;
+        }
+
+        LastSyncAction = ok ? "Last Sync: Jumped to first diff" : "Last Sync: No first diff";
+    }
+
+    public void JumpToLastDiff()
+    {
+        var ok = TimelineViewModel.JumpToLastDiff();
+        if (ok && TimelineViewModel.SelectedDiffItem is not null)
+        {
+            PureTimelineCurrentFrame = TimelineViewModel.SelectedDiffItem.Frame;
+        }
+
+        LastSyncAction = ok ? "Last Sync: Jumped to last diff" : "Last Sync: No last diff";
+    }
+
+    public void JumpToPreviousDiffFromCurrentFrame()
+    {
+        var ok = TimelineViewModel.JumpToPreviousDiffFromCurrentFrame();
+        if (ok && TimelineViewModel.SelectedDiffItem is not null)
+        {
+            PureTimelineCurrentFrame = TimelineViewModel.SelectedDiffItem.Frame;
+        }
+
+        LastSyncAction = ok ? "Last Sync: Jumped to previous diff from frame" : "Last Sync: No previous diff";
+    }
+
+    public void JumpToNextDiffFromCurrentFrame()
+    {
+        var ok = TimelineViewModel.JumpToNextDiffFromCurrentFrame();
+        if (ok && TimelineViewModel.SelectedDiffItem is not null)
+        {
+            PureTimelineCurrentFrame = TimelineViewModel.SelectedDiffItem.Frame;
+        }
+
+        LastSyncAction = ok ? "Last Sync: Jumped to next diff from frame" : "Last Sync: No next diff";
     }
 
     public async Task LoadSnapshotsDiffAsync(string projectPath, string leftSnapshotId, string rightSnapshotId)
@@ -202,14 +321,23 @@ public sealed class ProjectDiffViewModel : ViewModelBase
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
-            SetSyncState(TimelineSyncState.Synced);
+            SelectedSyncState = TimelineSyncState.Synced;
+            LastSyncAction = "Last Sync: Diff loaded and synced";
         }
         catch (Exception ex)
         {
             logger.Error(ex, "ApplyDiff failed");
             MatchStatisticsText = "統計の計算に失敗しました。";
-            SetSyncState(TimelineSyncState.Unavailable);
+            SelectedSyncState = TimelineSyncState.Error;
+            LastSyncAction = "Last Sync: Error";
         }
+    }
+
+    private void ApplySyncModeAndState()
+    {
+        TimelineViewModel.SetSyncMode(SelectedTimelineMode, SelectedSyncState);
+        OnPropertyChanged(nameof(PureTimelineSyncState));
+        OnPropertyChanged(nameof(PureTimelineMode));
     }
 
     private void BuildGroups()
