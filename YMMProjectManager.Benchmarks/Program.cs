@@ -21,14 +21,11 @@ var snapshotService = new ProjectSnapshotService(
 
 await RunPerformanceBenchmarksAsync();
 await RunCorrectnessBenchmarksAsync();
-
 Console.WriteLine("Benchmark completed.");
-return;
 
 async Task RunPerformanceBenchmarksAsync()
 {
     var logFile = Path.Combine(outputDir, $"benchmark-{DateTime.Now:yyyyMMdd-HHmmss}.md");
-
     var scenarios = new[]
     {
         new Scenario("small", 50, 2),
@@ -39,12 +36,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview6)",
+        "# YMMProjectManager Benchmark (preview7)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | itemCount | timelineCount | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | timelineProjectionMs | visibleFilterMs | matchingMsApprox | snapshotBytes | memoryBytes | idMatch | fallbackMatch |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | itemCount | timelineCount | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | timelineProjectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | matchingMsApprox | snapshotBytes | memoryBytes | idMatch | fallbackMatch |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -82,14 +79,14 @@ async Task RunPerformanceBenchmarksAsync()
         var ymmResult = ymmDiff.DiffWithStatistics(normalizedBase, normalizedChanged);
         swYmmDiff.Stop();
 
-        var (timelineProjectionMs, visibleFilterMs) = BenchmarkTimelineProjection(ymmResult);
+        var timelineMetrics = BenchmarkTimelineProjectionAndFiltering(ymmResult);
+        var groupingMs = BenchmarkGrouping(ymmResult);
 
         var afterMemory = GC.GetTotalMemory(true);
         var memoryBytes = Math.Max(0, afterMemory - beforeMemory);
-
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {s.ItemCount} | {s.TimelineCount} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineProjectionMs} | {visibleFilterMs} | {matchingApprox} | {snapshot?.OriginalFileSize ?? 0} | {memoryBytes} | {ymmResult.Statistics.MatchedByInternalId} | {ymmResult.Statistics.MatchedByFallback} |");
+        lines.Add($"| {s.Name} | {s.ItemCount} | {s.TimelineCount} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {matchingApprox} | {snapshot?.OriginalFileSize ?? 0} | {memoryBytes} | {ymmResult.Statistics.MatchedByInternalId} | {ymmResult.Statistics.MatchedByFallback} |");
         lines.Add($"  - jsonDiffEntries={jsonDiffEntries.Count}, ymmDiffEntries={ymmResult.Entries.Count}");
     }
 
@@ -130,31 +127,24 @@ async Task RunCorrectnessBenchmarksAsync()
         var after = await normalize.NormalizeFileAsync(afterPath);
         var diffResult = ymmDiff.DiffWithStatistics(before, after);
 
-        var actualAdded = diffResult.Statistics.AddedCount;
-        var actualRemoved = diffResult.Statistics.RemovedCount;
-        var actualMoved = diffResult.Statistics.MovedCount;
-        var actualModified = diffResult.Statistics.ModifiedCount;
-
-        var passed = expected.Expected.Added == actualAdded
-                     && expected.Expected.Removed == actualRemoved
-                     && expected.Expected.Moved == actualMoved
-                     && expected.Expected.Modified == actualModified;
+        var passed = expected.Expected.Added == diffResult.Statistics.AddedCount
+                     && expected.Expected.Removed == diffResult.Statistics.RemovedCount
+                     && expected.Expected.Moved == diffResult.Statistics.MovedCount
+                     && expected.Expected.Modified == diffResult.Statistics.ModifiedCount;
 
         results.Add(new DiffCorrectnessResult
         {
             FixtureName = fixtureName,
             Passed = passed,
             ExpectedAdded = expected.Expected.Added,
-            ActualAdded = actualAdded,
+            ActualAdded = diffResult.Statistics.AddedCount,
             ExpectedRemoved = expected.Expected.Removed,
-            ActualRemoved = actualRemoved,
+            ActualRemoved = diffResult.Statistics.RemovedCount,
             ExpectedMoved = expected.Expected.Moved,
-            ActualMoved = actualMoved,
+            ActualMoved = diffResult.Statistics.MovedCount,
             ExpectedModified = expected.Expected.Modified,
-            ActualModified = actualModified,
-            Notes = passed
-                ? $"idMatch={diffResult.Statistics.MatchedByInternalId}, fallbackMatch={diffResult.Statistics.MatchedByFallback}"
-                : $"Mismatch. idMatch={diffResult.Statistics.MatchedByInternalId}, fallbackMatch={diffResult.Statistics.MatchedByFallback}",
+            ActualModified = diffResult.Statistics.ModifiedCount,
+            Notes = $"idMatch={diffResult.Statistics.MatchedByInternalId}, fallbackMatch={diffResult.Statistics.MatchedByFallback}",
         });
     }
 
@@ -162,7 +152,7 @@ async Task RunCorrectnessBenchmarksAsync()
     await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
 }
 
-static (long projectionMs, long filteringMs) BenchmarkTimelineProjection(YmmProjectDiffResult diffResult)
+static (long projectionMs, long filteringMs, long zoomRecalcMs, int visibleCount) BenchmarkTimelineProjectionAndFiltering(YmmProjectDiffResult diffResult)
 {
     var vm = new DiffTimelineViewModel();
     var items = diffResult.Entries.Select((x, i) => vm.CreateItem(
@@ -184,10 +174,28 @@ static (long projectionMs, long filteringMs) BenchmarkTimelineProjection(YmmProj
     var swFilter = Stopwatch.StartNew();
     vm.UpdateVisibleFrameRange(500, 3000);
     vm.UpdateVisibleLayerRange(0, 12);
-    _ = vm.GetVisibleItemsSnapshot().Count;
+    var visibleCount = vm.GetVisibleItemsSnapshot().Count;
     swFilter.Stop();
 
-    return (swProjection.ElapsedMilliseconds, swFilter.ElapsedMilliseconds);
+    var swZoom = Stopwatch.StartNew();
+    vm.ZoomIn();
+    vm.ZoomOut();
+    vm.ResetZoom();
+    swZoom.Stop();
+
+    return (swProjection.ElapsedMilliseconds, swFilter.ElapsedMilliseconds, swZoom.ElapsedMilliseconds, visibleCount);
+}
+
+static long BenchmarkGrouping(YmmProjectDiffResult diffResult)
+{
+    var sw = Stopwatch.StartNew();
+    _ = diffResult.Entries
+        .GroupBy(x => x.Field)
+        .Select(x => new { Field = x.Key, Count = x.Count() })
+        .OrderByDescending(x => x.Count)
+        .ToList();
+    sw.Stop();
+    return sw.ElapsedMilliseconds;
 }
 
 static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)
@@ -220,16 +228,7 @@ static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)
         timelines.Add(new { Index = t, Items = items });
     }
 
-    var model = new
-    {
-        Project = new
-        {
-            Name = "BenchmarkProject",
-            Timelines = timelines,
-        }
-    };
-
-    return JsonSerializer.Serialize(model);
+    return JsonSerializer.Serialize(new { Project = new { Name = "BenchmarkProject", Timelines = timelines } });
 }
 
 sealed record Scenario(string Name, int ItemCount, int TimelineCount);

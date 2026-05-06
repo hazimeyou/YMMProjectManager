@@ -21,4 +21,5 @@ public sealed class DiffTimelineItemViewModel
     public double Height { get; set; }
 
     public Brush Fill { get; set; } = Brushes.Gray;
+    public bool IsSelected { get; set; }
 }

@@ -5,11 +5,13 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     xmlns:vm="clr-namespace:YMMProjectManager.Presentation.ViewModels"
+    xmlns:views="clr-namespace:YMMProjectManager.Presentation.Views"
     mc:Ignorable="d"
     d:DataContext="{d:DesignInstance Type=vm:DiffTimelineViewModel}">
 
     <Grid>
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
@@ -18,23 +20,26 @@
             <Button Content="Prev Diff" Width="90" Margin="0,0,8,0" Click="OnPrevDiffClick" />
             <Button Content="Next Diff" Width="90" Margin="0,0,8,0" Click="OnNextDiffClick" />
             <Button Content="Scroll To Selected" Width="130" Margin="0,0,10,0" Click="OnScrollToSelectedClick" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleStartFrame, StringFormat=F:{0}}" Margin="0,0,6,0" />
-            <TextBlock VerticalAlignment="Center" Text="-" Margin="0,0,6,0" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleEndFrame, StringFormat=F:{0}}" Margin="0,0,12,0" />
-            <TextBlock VerticalAlignment="Center" Text="L:" Margin="0,0,4,0" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleMinLayer}" Margin="0,0,6,0" />
-            <TextBlock VerticalAlignment="Center" Text="-" Margin="0,0,6,0" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleMaxLayer}" />
+            <Separator Width="12" />
+            <Button Content="Zoom -" Width="70" Margin="0,0,6,0" Click="OnZoomOutClick" />
+            <Button Content="Zoom +" Width="70" Margin="0,0,6,0" Click="OnZoomInClick" />
+            <Button Content="Reset" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
+            <TextBlock VerticalAlignment="Center" Text="Scale:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding Scale, StringFormat=F2}" Margin="0,0,10,0" />
+            <TextBlock VerticalAlignment="Center" Text="Visible:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
         </StackPanel>
 
-        <Grid Grid.Row="1">
+        <views:DiffTimelineHeader Grid.Row="1" DataContext="{Binding}" />
+
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="3*" />
                 <ColumnDefinition Width="2*" />
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0">
-                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged">
+                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged" PreviewMouseWheel="OnTimelinePreviewMouseWheel">
                     <ItemsControl ItemsSource="{Binding VisibleItems}">
                         <ItemsControl.ItemsPanel>
                             <ItemsPanelTemplate>
@@ -50,7 +55,21 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
                                 <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
-                                    <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
+                                    <Grid>
+                                        <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
+                                        <Rectangle Stroke="#FFD43B" StrokeThickness="2" RadiusX="2" RadiusY="2">
+                                            <Rectangle.Style>
+                                                <Style TargetType="Rectangle">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Rectangle.Style>
+                                        </Rectangle>
+                                    </Grid>
                                 </Button>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>

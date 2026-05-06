@@ -4,8 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:views="clr-namespace:YMMProjectManager.Presentation.Views"
     Title="{Binding Title}"
-    Width="1280"
-    Height="780"
+    Width="1360"
+    Height="820"
     WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -20,38 +20,71 @@
         <TabControl Grid.Row="2">
             <TabItem Header="List View">
                 <Grid Margin="0,8,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="*" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="4*" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+                    <Grid Grid.Column="0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
 
-                    <DataGrid
-                        x:Name="YmmDiffGrid"
-                        Grid.Row="0"
-                        ItemsSource="{Binding YmmDiffEntries}"
-                        SelectedItem="{Binding SelectedYmmDiffEntry, Mode=TwoWay}"
-                        AutoGenerateColumns="False"
-                        IsReadOnly="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
-                            <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="90" />
-                            <DataGridTextColumn Header="T" Binding="{Binding TimelineIndex}" Width="45" />
-                            <DataGridTextColumn Header="L" Binding="{Binding Layer}" Width="45" />
-                            <DataGridTextColumn Header="F" Binding="{Binding Frame}" Width="80" />
-                            <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="*" />
-                            <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
-                            <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
-                        </DataGrid.Columns>
-                    </DataGrid>
+                        <DataGrid
+                            x:Name="YmmDiffGrid"
+                            Grid.Row="0"
+                            ItemsSource="{Binding YmmDiffEntries}"
+                            SelectedItem="{Binding SelectedYmmDiffEntry, Mode=TwoWay}"
+                            AutoGenerateColumns="False"
+                            IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
+                                <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="90" />
+                                <DataGridTextColumn Header="T" Binding="{Binding TimelineIndex}" Width="45" />
+                                <DataGridTextColumn Header="L" Binding="{Binding Layer}" Width="45" />
+                                <DataGridTextColumn Header="F" Binding="{Binding Frame}" Width="80" />
+                                <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="*" />
+                                <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
+                                <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
 
-                    <DataGrid Grid.Row="1" Margin="0,8,0,0" ItemsSource="{Binding JsonDiffEntries}" AutoGenerateColumns="False" IsReadOnly="True">
-                        <DataGrid.Columns>
-                            <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
-                            <DataGridTextColumn Header="Path" Binding="{Binding Scope}" Width="*" />
-                            <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
-                            <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
-                        </DataGrid.Columns>
-                    </DataGrid>
+                        <DataGrid Grid.Row="1" Margin="0,8,0,0" ItemsSource="{Binding JsonDiffEntries}" AutoGenerateColumns="False" IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
+                                <DataGridTextColumn Header="Path" Binding="{Binding Scope}" Width="*" />
+                                <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
+                                <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+
+                    <ScrollViewer Grid.Column="1" Margin="8,0,0,0">
+                        <ItemsControl ItemsSource="{Binding DiffGroups}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Expander IsExpanded="True" Margin="0,0,0,6">
+                                        <Expander.Header>
+                                            <TextBlock FontWeight="SemiBold">
+                                                <Run Text="▼ " />
+                                                <Run Text="{Binding GroupName}" />
+                                                <Run Text=" (" />
+                                                <Run Text="{Binding Count}" />
+                                                <Run Text=")" />
+                                            </TextBlock>
+                                        </Expander.Header>
+                                        <ItemsControl ItemsSource="{Binding Items}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <TextBlock Margin="8,2,0,2" Text="{Binding Kind}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </Expander>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                 </Grid>
             </TabItem>
 

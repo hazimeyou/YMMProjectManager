@@ -9,6 +9,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private const double ItemPadding = 4;
 
     private readonly List<DiffTimelineItemViewModel> allItems = [];
+    private readonly ObservableCollection<TimelineRulerMark> rulerMarks = [];
     private DiffTimelineItemViewModel? selectedDiffItem;
     private double scale = 0.1;
     private double rowHeight = 28;
@@ -18,17 +19,23 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int visibleMaxLayer = 50;
     private double canvasWidth = 2400;
     private double canvasHeight = 1200;
+    private int lastVisibleCount;
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
+    public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
+
+    public double MinScale { get; } = 0.02;
+    public double MaxScale { get; } = 5.0;
 
     public double Scale
     {
         get => scale;
         set
         {
-            if (SetProperty(ref scale, value <= 0 ? 0.1 : value))
+            var clamped = Math.Max(MinScale, Math.Min(MaxScale, value));
+            if (SetProperty(ref scale, clamped))
             {
-                ReprojectAndFilter();
+                ReprojectAndFilter(keepSelectionVisible: true);
             }
         }
     }
@@ -40,7 +47,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         {
             if (SetProperty(ref rowHeight, value <= 4 ? 28 : value))
             {
-                ReprojectAndFilter();
+                ReprojectAndFilter(keepSelectionVisible: true);
             }
         }
     }
@@ -53,6 +60,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             if (SetProperty(ref visibleStartFrame, Math.Max(0, value)))
             {
                 FilterVisibleItems();
+                RebuildRulerMarks();
             }
         }
     }
@@ -65,6 +73,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             if (SetProperty(ref visibleEndFrame, Math.Max(value, VisibleStartFrame)))
             {
                 FilterVisibleItems();
+                RebuildRulerMarks();
             }
         }
     }
@@ -105,12 +114,28 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         private set => SetProperty(ref canvasHeight, value);
     }
 
+    public int LastVisibleCount
+    {
+        get => lastVisibleCount;
+        private set => SetProperty(ref lastVisibleCount, value);
+    }
+
     public DiffTimelineItemViewModel? SelectedDiffItem
     {
         get => selectedDiffItem;
         set
         {
-            if (SetProperty(ref selectedDiffItem, value) && value is not null)
+            if (!SetProperty(ref selectedDiffItem, value))
+            {
+                return;
+            }
+
+            foreach (var item in allItems)
+            {
+                item.IsSelected = ReferenceEquals(item, value);
+            }
+
+            if (value is not null)
             {
                 SelectedDiffItemChanged?.Invoke(value);
                 ScrollToSelectedRequested?.Invoke(value);
@@ -121,11 +146,31 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public event Action<DiffTimelineItemViewModel?>? SelectedDiffItemChanged;
     public event Action<DiffTimelineItemViewModel>? ScrollToSelectedRequested;
 
+    public DiffTimelineViewModel()
+    {
+        RulerMarks = new ReadOnlyObservableCollection<TimelineRulerMark>(rulerMarks);
+    }
+
+    public void ZoomIn()
+    {
+        Scale *= 1.25;
+    }
+
+    public void ZoomOut()
+    {
+        Scale /= 1.25;
+    }
+
+    public void ResetZoom()
+    {
+        Scale = 0.1;
+    }
+
     public void SetItems(IEnumerable<DiffTimelineItemViewModel> items)
     {
         allItems.Clear();
         allItems.AddRange(items);
-        ReprojectAndFilter();
+        ReprojectAndFilter(keepSelectionVisible: false);
     }
 
     public IReadOnlyList<DiffTimelineItemViewModel> GetVisibleItemsSnapshot()
@@ -231,7 +276,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         return model;
     }
 
-    private void ReprojectAndFilter()
+    private void ReprojectAndFilter(bool keepSelectionVisible)
     {
         foreach (var item in allItems)
         {
@@ -241,6 +286,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         CanvasWidth = Math.Max(2400, allItems.Count == 0 ? 2400 : allItems.Max(x => x.X + x.Width + 24));
         CanvasHeight = Math.Max(1200, allItems.Count == 0 ? 1200 : allItems.Max(x => x.Y + x.Height + 24));
         FilterVisibleItems();
+        RebuildRulerMarks();
+
+        if (keepSelectionVisible && SelectedDiffItem is not null)
+        {
+            ScrollToSelectedRequested?.Invoke(SelectedDiffItem);
+        }
     }
 
     private void ProjectItem(DiffTimelineItemViewModel item)
@@ -267,10 +318,48 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             }
         }
 
+        LastVisibleCount = VisibleItems.Count;
+
         if (SelectedDiffItem is not null && !VisibleItems.Contains(SelectedDiffItem))
         {
             SelectedDiffItem = VisibleItems.FirstOrDefault();
         }
+    }
+
+    private void RebuildRulerMarks()
+    {
+        rulerMarks.Clear();
+        var step = ResolveRulerStep();
+        if (step <= 0)
+        {
+            step = 300;
+        }
+
+        var start = (VisibleStartFrame / step) * step;
+        for (var frame = start; frame <= VisibleEndFrame + step; frame += step)
+        {
+            rulerMarks.Add(new TimelineRulerMark
+            {
+                Frame = frame,
+                X = frame * Scale,
+                Label = frame.ToString(),
+            });
+        }
+    }
+
+    private int ResolveRulerStep()
+    {
+        if (Scale <= 0.05)
+        {
+            return 1000;
+        }
+
+        if (Scale <= 0.2)
+        {
+            return 300;
+        }
+
+        return 30;
     }
 
     private static Brush ResolveBrush(string kind)

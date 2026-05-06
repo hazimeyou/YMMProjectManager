@@ -21,6 +21,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
+    public ObservableCollection<DiffGroupViewModel> DiffGroups { get; } = [];
     public DiffTimelineViewModel TimelineViewModel { get; } = new();
 
     public string Title
@@ -113,6 +114,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         {
             JsonDiffEntries.Clear();
             YmmDiffEntries.Clear();
+            DiffGroups.Clear();
 
             foreach (var x in jsonDiffService.Diff(before, after))
             {
@@ -160,6 +162,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase
                     newValue: x.After));
             }
 
+            BuildGroups();
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
@@ -168,6 +171,31 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         {
             logger.Error(ex, "ApplyDiff failed");
             MatchStatisticsText = "統計の計算に失敗しました。";
+        }
+    }
+
+    private void BuildGroups()
+    {
+        static string ResolveGroupName(DiffEntryViewModel item)
+        {
+            return item.Field switch
+            {
+                "Text" => "Text Changes",
+                "FilePath" => "FilePath Changes",
+                "Frame" or "Layer" => "Timeline Moves",
+                "Length" => "Length Changes",
+                _ => "Other Changes",
+            };
+        }
+
+        foreach (var group in YmmDiffEntries.GroupBy(ResolveGroupName).OrderByDescending(x => x.Count()))
+        {
+            DiffGroups.Add(new DiffGroupViewModel
+            {
+                GroupName = group.Key,
+                Items = group.ToList(),
+                Count = group.Count(),
+            });
         }
     }
 
