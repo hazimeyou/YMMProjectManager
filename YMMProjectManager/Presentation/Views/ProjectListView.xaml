@@ -19,7 +19,7 @@
                 <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
                 <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
                 <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
-                <Button Content="Snapshot" Width="90" Margin="0,0,8,0" Command="{Binding CreateSnapshotCommand}" />
+                <Button Content="スナップショット" Width="90" Margin="0,0,8,0" Command="{Binding CreateSnapshotCommand}" />
                 <Button Content="履歴/差分" Width="90" Command="{Binding OpenHistoryDiffCommand}" />
             </StackPanel>
 

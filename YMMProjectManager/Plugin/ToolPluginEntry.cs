@@ -7,7 +7,7 @@ public sealed class ToolPluginEntry : IToolPlugin
     private static readonly FileLogger Logger = CreateLogger();
     private static bool exceptionHooksInstalled;
 
-    public string Name => "繝励Ο繧ｸ繧ｧ繧ｯ繝医・繝阪・繧ｸ繝｣繝ｼ";
+    public string Name => "プロジェクトマネージャー";
     public Type ViewModelType => typeof(ProjectListViewModel);
     public Type ViewType => typeof(ProjectListView);
 
