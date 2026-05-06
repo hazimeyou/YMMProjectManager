@@ -59,3 +59,9 @@ YMMProjectManager 方針:
 - `純正TL + DiffTL + DiffDetailPanel` 構成の本格導入
 - DiffTLの可視化強化
 - restore / branch / merge は対象外のまま
+
+
+## Preview8 Additions
+
+- Pure Timeline investigation doc: docs/pure-timeline-investigation.md`n- Timeline sync design doc: docs/timeline-sync-design.md`n- One-way frame sync PoC added via placeholder panel.
+

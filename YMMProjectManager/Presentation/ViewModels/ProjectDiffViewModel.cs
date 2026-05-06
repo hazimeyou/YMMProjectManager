@@ -18,6 +18,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
     private string matchStatisticsText = string.Empty;
     private DiffEntryViewModel? selectedYmmDiffEntry;
     private bool isSyncingSelection;
+    private int pureTimelineCurrentFrame;
+    private string pureTimelineSelection = "(none)";
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
@@ -35,6 +37,26 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         get => matchStatisticsText;
         private set => SetProperty(ref matchStatisticsText, value);
     }
+
+    public int PureTimelineCurrentFrame
+    {
+        get => pureTimelineCurrentFrame;
+        set
+        {
+            if (SetProperty(ref pureTimelineCurrentFrame, Math.Max(0, value)))
+            {
+                TimelineViewModel.SetCurrentFrame(pureTimelineCurrentFrame);
+            }
+        }
+    }
+
+    public string PureTimelineSelection
+    {
+        get => pureTimelineSelection;
+        set => SetProperty(ref pureTimelineSelection, value);
+    }
+
+    public string PureTimelineSyncState => TimelineViewModel.SyncState.ToString();
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -55,6 +77,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
             try
             {
                 TimelineViewModel.SelectById(value.Id);
+                PureTimelineCurrentFrame = value.Frame;
+                PureTimelineSelection = value.Id;
             }
             finally
             {
@@ -77,6 +101,18 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         this.ymmDiffService = ymmDiffService;
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
+        TimelineViewModel.SetSyncMode(TimelineMode.Synced, TimelineSyncState.Detached);
+    }
+
+    public void SyncFrameFromPlaceholder()
+    {
+        TimelineViewModel.SetCurrentFrame(PureTimelineCurrentFrame);
+    }
+
+    public void SetSyncState(TimelineSyncState state)
+    {
+        TimelineViewModel.SetSyncMode(TimelineMode.Synced, state);
+        OnPropertyChanged(nameof(PureTimelineSyncState));
     }
 
     public async Task LoadSnapshotsDiffAsync(string projectPath, string leftSnapshotId, string rightSnapshotId)
@@ -166,11 +202,13 @@ public sealed class ProjectDiffViewModel : ViewModelBase
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
+            SetSyncState(TimelineSyncState.Synced);
         }
         catch (Exception ex)
         {
             logger.Error(ex, "ApplyDiff failed");
             MatchStatisticsText = "統計の計算に失敗しました。";
+            SetSyncState(TimelineSyncState.Unavailable);
         }
     }
 
@@ -216,6 +254,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         try
         {
             SelectedYmmDiffEntry = match;
+            PureTimelineCurrentFrame = match.Frame;
+            PureTimelineSelection = match.Id;
         }
         finally
         {

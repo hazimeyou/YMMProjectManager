@@ -20,6 +20,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private double canvasWidth = 2400;
     private double canvasHeight = 1200;
     private int lastVisibleCount;
+    private int currentFrame;
+    private TimelineSyncState syncState = TimelineSyncState.Unavailable;
+    private TimelineMode mode = TimelineMode.Standalone;
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -35,6 +38,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             var clamped = Math.Max(MinScale, Math.Min(MaxScale, value));
             if (SetProperty(ref scale, clamped))
             {
+                OnPropertyChanged(nameof(CurrentFrameX));
                 ReprojectAndFilter(keepSelectionVisible: true);
             }
         }
@@ -120,6 +124,32 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         private set => SetProperty(ref lastVisibleCount, value);
     }
 
+    public int CurrentFrame
+    {
+        get => currentFrame;
+        private set
+        {
+            if (SetProperty(ref currentFrame, Math.Max(0, value)))
+            {
+                OnPropertyChanged(nameof(CurrentFrameX));
+            }
+        }
+    }
+
+    public double CurrentFrameX => CurrentFrame * Scale;
+
+    public TimelineSyncState SyncState
+    {
+        get => syncState;
+        private set => SetProperty(ref syncState, value);
+    }
+
+    public TimelineMode Mode
+    {
+        get => mode;
+        private set => SetProperty(ref mode, value);
+    }
+
     public DiffTimelineItemViewModel? SelectedDiffItem
     {
         get => selectedDiffItem;
@@ -149,6 +179,17 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public DiffTimelineViewModel()
     {
         RulerMarks = new ReadOnlyObservableCollection<TimelineRulerMark>(rulerMarks);
+    }
+
+    public void SetSyncMode(TimelineMode mode, TimelineSyncState state)
+    {
+        Mode = mode;
+        SyncState = state;
+    }
+
+    public void SetCurrentFrame(int frame)
+    {
+        CurrentFrame = frame;
     }
 
     public void ZoomIn()

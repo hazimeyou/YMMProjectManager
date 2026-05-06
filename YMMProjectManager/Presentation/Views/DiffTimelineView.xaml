@@ -26,6 +26,10 @@
             <Button Content="Reset" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
             <TextBlock VerticalAlignment="Center" Text="Scale:" Margin="0,0,4,0" />
             <TextBlock VerticalAlignment="Center" Text="{Binding Scale, StringFormat=F2}" Margin="0,0,10,0" />
+            <TextBlock VerticalAlignment="Center" Text="Mode:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding Mode}" Margin="0,0,10,0" />
+            <TextBlock VerticalAlignment="Center" Text="Sync:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding SyncState}" Margin="0,0,10,0" />
             <TextBlock VerticalAlignment="Center" Text="Visible:" Margin="0,0,4,0" />
             <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
         </StackPanel>
@@ -40,40 +44,52 @@
 
             <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0">
                 <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged" PreviewMouseWheel="OnTimelinePreviewMouseWheel">
-                    <ItemsControl ItemsSource="{Binding VisibleItems}">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <Canvas Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
-                        <ItemsControl.ItemContainerStyle>
-                            <Style TargetType="ContentPresenter">
-                                <Setter Property="Canvas.Left" Value="{Binding X}" />
-                                <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                            </Style>
-                        </ItemsControl.ItemContainerStyle>
-                        <ItemsControl.ItemTemplate>
-                            <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
-                                <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
-                                    <Grid>
-                                        <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
-                                        <Rectangle Stroke="#FFD43B" StrokeThickness="2" RadiusX="2" RadiusY="2">
-                                            <Rectangle.Style>
-                                                <Style TargetType="Rectangle">
-                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                    <Style.Triggers>
-                                                        <DataTrigger Binding="{Binding IsSelected}" Value="True">
-                                                            <Setter Property="Visibility" Value="Visible" />
-                                                        </DataTrigger>
-                                                    </Style.Triggers>
-                                                </Style>
-                                            </Rectangle.Style>
-                                        </Rectangle>
-                                    </Grid>
-                                </Button>
-                            </DataTemplate>
-                        </ItemsControl.ItemTemplate>
-                    </ItemsControl>
+                    <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}">
+                        <ItemsControl ItemsSource="{Binding VisibleItems}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <Canvas Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemContainerStyle>
+                                <Style TargetType="ContentPresenter">
+                                    <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                    <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                                </Style>
+                            </ItemsControl.ItemContainerStyle>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
+                                    <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
+                                        <Grid>
+                                            <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
+                                            <Rectangle Stroke="#FFD43B" StrokeThickness="2" RadiusX="2" RadiusY="2">
+                                                <Rectangle.Style>
+                                                    <Style TargetType="Rectangle">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Rectangle.Style>
+                                            </Rectangle>
+                                        </Grid>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Line
+                            X1="{Binding CurrentFrameX}"
+                            X2="{Binding CurrentFrameX}"
+                            Y1="0"
+                            Y2="{Binding CanvasHeight}"
+                            Stroke="#FFCC00"
+                            StrokeThickness="1.5"
+                            StrokeDashArray="2,2"
+                            IsHitTestVisible="False" />
+                    </Grid>
                 </ScrollViewer>
             </Border>
 

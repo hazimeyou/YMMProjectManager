@@ -128,3 +128,11 @@ correctness fixture:
 # ライセンス
 
 本ソフトウェアは MIT License のもとで公開されています。
+
+
+## preview8 Notes
+
+- Pure Timeline investigation を追加
+- Timeline sync design を追加
+- Experimental sync-ready architecture (Pure Timeline Placeholder + DiffTL current frame line) を追加
+
