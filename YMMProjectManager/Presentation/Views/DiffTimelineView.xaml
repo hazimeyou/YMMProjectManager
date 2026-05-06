@@ -17,20 +17,20 @@
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Content="Prev Diff" Width="90" Margin="0,0,8,0" Click="OnPrevDiffClick" />
-            <Button Content="Next Diff" Width="90" Margin="0,0,8,0" Click="OnNextDiffClick" />
-            <Button Content="Scroll To Selected" Width="130" Margin="0,0,10,0" Click="OnScrollToSelectedClick" />
+            <Button Content="前の差分" Width="90" Margin="0,0,8,0" Click="OnPrevDiffClick" />
+            <Button Content="次の差分" Width="90" Margin="0,0,8,0" Click="OnNextDiffClick" />
+            <Button Content="選択差分へ移動" Width="130" Margin="0,0,10,0" Click="OnScrollToSelectedClick" />
             <Separator Width="12" />
-            <Button Content="Zoom -" Width="70" Margin="0,0,6,0" Click="OnZoomOutClick" />
-            <Button Content="Zoom +" Width="70" Margin="0,0,6,0" Click="OnZoomInClick" />
-            <Button Content="Reset" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
-            <TextBlock VerticalAlignment="Center" Text="Scale:" Margin="0,0,4,0" />
+            <Button Content="縮小" Width="70" Margin="0,0,6,0" Click="OnZoomOutClick" />
+            <Button Content="拡大" Width="70" Margin="0,0,6,0" Click="OnZoomInClick" />
+            <Button Content="リセット" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
+            <TextBlock VerticalAlignment="Center" Text="倍率:" Margin="0,0,4,0" />
             <TextBlock VerticalAlignment="Center" Text="{Binding Scale, StringFormat=F2}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="Mode:" Margin="0,0,4,0" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding Mode}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="Sync:" Margin="0,0,4,0" />
-            <TextBlock VerticalAlignment="Center" Text="{Binding SyncState}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="Visible:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="モード:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding ModeLabel}" Margin="0,0,10,0" />
+            <TextBlock VerticalAlignment="Center" Text="同期:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding SyncStateLabel}" Margin="0,0,10,0" />
+            <TextBlock VerticalAlignment="Center" Text="表示中:" Margin="0,0,4,0" />
             <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
         </StackPanel>
 
@@ -42,7 +42,7 @@
                 <ColumnDefinition Width="2*" />
             </Grid.ColumnDefinitions>
 
-            <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0">
+            <Border Grid.Column="0" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
                 <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged" PreviewMouseWheel="OnTimelinePreviewMouseWheel">
                     <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}">
                         <ItemsControl ItemsSource="{Binding VisibleItems}">
@@ -62,7 +62,7 @@
                                     <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
                                         <Grid>
                                             <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
-                                            <Rectangle Stroke="#FFD43B" StrokeThickness="2" RadiusX="2" RadiusY="2">
+                                            <Rectangle Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" StrokeThickness="2" RadiusX="2" RadiusY="2">
                                                 <Rectangle.Style>
                                                     <Style TargetType="Rectangle">
                                                         <Setter Property="Visibility" Value="Collapsed" />
@@ -85,7 +85,7 @@
                             X2="{Binding CurrentFrameX}"
                             Y1="0"
                             Y2="{Binding CanvasHeight}"
-                            Stroke="#FFCC00"
+                            Stroke="{DynamicResource {x:Static SystemColors.HotTrackBrushKey}}"
                             StrokeThickness="1.5"
                             StrokeDashArray="2,2"
                             IsHitTestVisible="False" />
@@ -93,24 +93,24 @@
                 </ScrollViewer>
             </Border>
 
-            <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="8">
+            <Border Grid.Column="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
                 <StackPanel>
-                    <TextBlock Text="Diff Detail" FontWeight="SemiBold" Margin="0,0,0,8" />
-                    <TextBlock Text="Kind" FontWeight="SemiBold" />
+                    <TextBlock Text="差分詳細" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="種別" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding SelectedDiffItem.Kind, TargetNullValue=-}" Margin="0,0,0,6" />
-                    <TextBlock Text="Item" FontWeight="SemiBold" />
+                    <TextBlock Text="項目" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding SelectedDiffItem.DisplayName, TargetNullValue=-}" Margin="0,0,0,6" />
-                    <TextBlock Text="Position" FontWeight="SemiBold" />
+                    <TextBlock Text="位置" FontWeight="SemiBold" />
                     <TextBlock Margin="0,0,0,6">
                         <Run Text="T=" /><Run Text="{Binding SelectedDiffItem.TimelineIndex}" />
                         <Run Text=", L=" /><Run Text="{Binding SelectedDiffItem.Layer}" />
                         <Run Text=", F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
                         <Run Text=", Len=" /><Run Text="{Binding SelectedDiffItem.Length}" />
                     </TextBlock>
-                    <TextBlock Text="Before" FontWeight="SemiBold" />
-                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.OldValue, TargetNullValue=-}" Margin="0,0,0,6" />
-                    <TextBlock Text="After" FontWeight="SemiBold" />
-                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.NewValue, TargetNullValue=-}" />
+                    <TextBlock Text="変更前" FontWeight="SemiBold" />
+                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.OldValue, TargetNullValue=(なし)}" Margin="0,0,0,6" />
+                    <TextBlock Text="変更後" FontWeight="SemiBold" />
+                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.NewValue, TargetNullValue=(なし)}" />
                 </StackPanel>
             </Border>
         </Grid>

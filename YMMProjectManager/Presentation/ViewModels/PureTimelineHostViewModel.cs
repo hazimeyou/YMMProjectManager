@@ -12,7 +12,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
     private string? lastError;
     private PureTimelineStatus status = PureTimelineStatus.Unavailable;
     private string displayName = string.Empty;
-    private string lastAction = "Last Sync: (none)";
+    private string lastAction = "最終同期: (なし)";
     private bool isAvailable;
     private int currentFrame;
     private bool disposed;
@@ -98,8 +98,8 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         Status = adapter.Status;
         UpdateAdapterProperties();
         LastAction = result.Succeeded
-            ? $"Last Sync: {result.Message}"
-            : $"Last Sync: Initialize failed - {result.Message}";
+            ? $"最終同期: {result.Message}"
+            : $"最終同期: 初期化失敗 - {result.Message}";
         if (!result.Succeeded)
         {
             LastError = result.Message;
@@ -129,8 +129,8 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         }
 
         LastAction = result.Succeeded
-            ? $"Last Sync: {result.Message}"
-            : $"Last Sync: Set frame failed - {result.Message}";
+            ? $"最終同期: {result.Message}"
+            : $"最終同期: フレーム設定失敗 - {result.Message}";
         RefreshDiagnostics();
     }
 
@@ -151,8 +151,8 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         }
 
         LastAction = result.Succeeded
-            ? $"Last Sync: {result.Message}"
-            : $"Last Sync: Center frame failed - {result.Message}";
+            ? $"最終同期: {result.Message}"
+            : $"最終同期: フレーム中央表示失敗 - {result.Message}";
         RefreshDiagnostics();
     }
 
@@ -167,8 +167,8 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         var result = await adapter.DisposeAsync().ConfigureAwait(true);
         Status = result.Succeeded ? PureTimelineStatus.Detached : PureTimelineStatus.Error;
         LastAction = result.Succeeded
-            ? $"Last Sync: {result.Message}"
-            : $"Last Sync: Dispose failed - {result.Message}";
+            ? $"最終同期: {result.Message}"
+            : $"最終同期: 解放失敗 - {result.Message}";
         adapter.Dispose();
         RefreshDiagnostics();
     }
@@ -199,7 +199,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         if (!init.Succeeded)
         {
             Status = PureTimelineStatus.Error;
-            LastAction = $"Last Sync: Fallback initialize failed - {init.Message}";
+            LastAction = $"最終同期: フォールバック初期化失敗 - {init.Message}";
             return;
         }
 
@@ -207,7 +207,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         FallbackActive = true;
         Status = adapter.Status;
         UpdateAdapterProperties();
-        LastAction = $"Last Sync: {reason}";
+        LastAction = $"最終同期: {reason}";
         RefreshDiagnostics();
     }
 

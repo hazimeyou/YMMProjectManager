@@ -139,14 +139,44 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public TimelineSyncState SyncState
     {
         get => syncState;
-        private set => SetProperty(ref syncState, value);
+        private set
+        {
+            if (SetProperty(ref syncState, value))
+            {
+                OnPropertyChanged(nameof(SyncStateLabel));
+            }
+        }
     }
 
     public TimelineMode Mode
     {
         get => mode;
-        private set => SetProperty(ref mode, value);
+        private set
+        {
+            if (SetProperty(ref mode, value))
+            {
+                OnPropertyChanged(nameof(ModeLabel));
+            }
+        }
     }
+
+    public string SyncStateLabel => syncState switch
+    {
+        TimelineSyncState.Unavailable => "利用不可",
+        TimelineSyncState.Detached => "切断",
+        TimelineSyncState.Synced => "同期中",
+        TimelineSyncState.Manual => "手動",
+        TimelineSyncState.Error => "エラー",
+        _ => syncState.ToString(),
+    };
+
+    public string ModeLabel => mode switch
+    {
+        TimelineMode.Standalone => "単独",
+        TimelineMode.Synced => "同期",
+        TimelineMode.Comparison => "比較",
+        _ => mode.ToString(),
+    };
 
     public DiffTimelineItemViewModel? SelectedDiffItem
     {
@@ -480,10 +510,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     {
         return kind switch
         {
-            "Added" => Brushes.ForestGreen,
-            "Removed" => Brushes.IndianRed,
-            "Moved" => Brushes.DarkOrange,
-            "Changed" => Brushes.DodgerBlue,
+            "Added" or "追加" => Brushes.ForestGreen,
+            "Removed" or "削除" => Brushes.IndianRed,
+            "Moved" or "移動" => Brushes.DarkOrange,
+            "Changed" or "変更" => Brushes.DodgerBlue,
             _ => Brushes.Gray,
         };
     }

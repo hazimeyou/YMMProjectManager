@@ -18,7 +18,7 @@
         <TextBlock Grid.Row="1" Margin="0,0,0,8" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
 
         <TabControl Grid.Row="2">
-            <TabItem Header="List View">
+            <TabItem Header="一覧表示">
                 <Grid Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="4*" />
@@ -32,23 +32,23 @@
 
                         <DataGrid Grid.Row="0" ItemsSource="{Binding YmmDiffEntries}" SelectedItem="{Binding SelectedYmmDiffEntry, Mode=TwoWay}" AutoGenerateColumns="False" IsReadOnly="True">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
-                                <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="90" />
+                                <DataGridTextColumn Header="種別" Binding="{Binding Kind}" Width="80" />
+                                <DataGridTextColumn Header="項目" Binding="{Binding Field}" Width="90" />
                                 <DataGridTextColumn Header="T" Binding="{Binding TimelineIndex}" Width="45" />
                                 <DataGridTextColumn Header="L" Binding="{Binding Layer}" Width="45" />
                                 <DataGridTextColumn Header="F" Binding="{Binding Frame}" Width="80" />
-                                <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="*" />
-                                <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
-                                <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
+                                <DataGridTextColumn Header="スコープ" Binding="{Binding Scope}" Width="*" />
+                                <DataGridTextColumn Header="変更前" Binding="{Binding Before}" Width="2*" />
+                                <DataGridTextColumn Header="変更後" Binding="{Binding After}" Width="2*" />
                             </DataGrid.Columns>
                         </DataGrid>
 
                         <DataGrid Grid.Row="1" Margin="0,8,0,0" ItemsSource="{Binding JsonDiffEntries}" AutoGenerateColumns="False" IsReadOnly="True">
                             <DataGrid.Columns>
-                                <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
-                                <DataGridTextColumn Header="Path" Binding="{Binding Scope}" Width="*" />
-                                <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
-                                <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />
+                                <DataGridTextColumn Header="種別" Binding="{Binding Kind}" Width="80" />
+                                <DataGridTextColumn Header="パス" Binding="{Binding Scope}" Width="*" />
+                                <DataGridTextColumn Header="変更前" Binding="{Binding Before}" Width="2*" />
+                                <DataGridTextColumn Header="変更後" Binding="{Binding After}" Width="2*" />
                             </DataGrid.Columns>
                         </DataGrid>
                     </Grid>
@@ -82,70 +82,70 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="Timeline View">
+            <TabItem Header="タイムライン表示">
                 <Grid Margin="0,8,0,0">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" BorderBrush="#335" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,8" Background="#F8FAFF">
+                    <Border Grid.Row="0" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,8" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Pure Timeline Host" FontWeight="SemiBold" Margin="0,0,12,0" />
-                                <TextBlock Text="Adapter Kind:" Margin="0,0,4,0" />
-                                <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" SelectedItem="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="Adapter:" Margin="0,0,4,0" />
+                                <TextBlock Text="純正タイムラインホスト" FontWeight="SemiBold" Margin="0,0,12,0" />
+                                <TextBlock Text="アダプター種別:" Margin="0,0,4,0" />
+                                <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
+                                <TextBlock Text="アダプター:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.AdapterDisplayName}" Margin="0,0,12,0" />
-                                <TextBlock Text="Status:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.Status}" Margin="0,0,12,0" />
-                                <TextBlock Text="IsAvailable:" Margin="0,0,4,0" />
+                                <TextBlock Text="状態:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineStatus}" Margin="0,0,12,0" />
+                                <TextBlock Text="利用可否:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.IsAvailable}" Margin="0,0,12,0" />
-                                <TextBlock Text="Fallback:" Margin="0,0,4,0" />
+                                <TextBlock Text="フォールバック:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.FallbackActive}" Margin="0,0,12,0" />
-                                <TextBlock Text="Scene:" Margin="0,0,4,0" />
+                                <TextBlock Text="シーン:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineActiveScene}" Margin="0,0,12,0" />
-                                <TextBlock Text="Timeline:" Margin="0,0,4,0" />
+                                <TextBlock Text="タイムライン:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineActiveTimeline}" />
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="Sync State:" Margin="0,0,4,0" />
-                                <ComboBox Width="130" ItemsSource="{Binding SyncStateOptions}" SelectedItem="{Binding SelectedSyncState, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="Timeline Mode:" Margin="0,0,4,0" />
-                                <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" SelectedItem="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="Current Frame:" Margin="0,0,4,0" />
+                                <TextBlock Text="同期状態:" Margin="0,0,4,0" />
+                                <ComboBox Width="130" ItemsSource="{Binding SyncStateOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedSyncState, Mode=TwoWay}" Margin="0,0,12,0" />
+                                <TextBlock Text="タイムラインモード:" Margin="0,0,4,0" />
+                                <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
+                                <TextBlock Text="現在フレーム:" Margin="0,0,4,0" />
                                 <TextBox Width="90" Text="{Binding PureTimelineHost.CurrentFrame, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
-                                <Button Content="Sync Frame -> DiffTL" Width="130" Click="OnSyncFrameClick" Margin="0,0,6,0" />
-                                <Button Content="Go To Current" Width="110" Click="OnGoToCurrentFrameClick" Margin="0,0,6,0" />
-                                <Button Content="Center Current" Width="110" Click="OnCenterCurrentFrameClick" Margin="0,0,6,0" />
-                                <Button Content="Nearest Diff" Width="100" Click="OnNearestDiffClick" />
+                                <Button Content="フレーム同期→DiffTL" Width="130" Click="OnSyncFrameClick" Margin="0,0,6,0" />
+                                <Button Content="現在フレームへ移動" Width="120" Click="OnGoToCurrentFrameClick" Margin="0,0,6,0" />
+                                <Button Content="現在フレームを中央表示" Width="140" Click="OnCenterCurrentFrameClick" Margin="0,0,6,0" />
+                                <Button Content="最寄りの差分へ" Width="100" Click="OnNearestDiffClick" />
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <Button Content="First Diff" Width="90" Click="OnFirstDiffClick" Margin="0,0,6,0" />
-                                <Button Content="Last Diff" Width="90" Click="OnLastDiffClick" Margin="0,0,6,0" />
-                                <Button Content="Prev From Frame" Width="120" Click="OnPrevFromFrameClick" Margin="0,0,6,0" />
-                                <Button Content="Next From Frame" Width="120" Click="OnNextFromFrameClick" Margin="0,0,12,0" />
-                                <TextBlock Text="Sync:" Margin="0,0,4,0" />
+                                <Button Content="先頭差分" Width="90" Click="OnFirstDiffClick" Margin="0,0,6,0" />
+                                <Button Content="末尾差分" Width="90" Click="OnLastDiffClick" Margin="0,0,6,0" />
+                                <Button Content="前の差分(現在フレーム基準)" Width="170" Click="OnPrevFromFrameClick" Margin="0,0,6,0" />
+                                <Button Content="次の差分(現在フレーム基準)" Width="170" Click="OnNextFromFrameClick" Margin="0,0,12,0" />
+                                <TextBlock Text="同期:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineSyncState}" Margin="0,0,12,0" />
-                                <TextBlock Text="Mode:" Margin="0,0,4,0" />
+                                <TextBlock Text="モード:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineMode}" />
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="InitCount:" Margin="0,0,4,0" />
+                                <TextBlock Text="初期化回数:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.InitializeCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="DisposeCount:" Margin="0,0,4,0" />
+                                <TextBlock Text="解放回数:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.DisposeCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="DisposeFail:" Margin="0,0,4,0" />
+                                <TextBlock Text="解放失敗:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.DisposeFailureCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="ActiveHost:" Margin="0,0,4,0" />
+                                <TextBlock Text="アクティブホスト:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.ActiveHostCount}" />
                             </StackPanel>
 
-                            <TextBlock Text="{Binding PureTimelineSelection, StringFormat=Selected: {0}}" Margin="0,6,0,0" />
-                            <TextBlock Text="{Binding PureTimelineHost.LastError, StringFormat=Last Error: {0}}" Margin="0,2,0,0" />
+                            <TextBlock Text="{Binding PureTimelineSelection, StringFormat=選択中: {0}}" Margin="0,6,0,0" />
+                            <TextBlock Text="{Binding PureTimelineHost.LastError, StringFormat=最終エラー: {0}}" Margin="0,2,0,0" />
                             <TextBlock Text="{Binding PureTimelineHost.LastAction}" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>

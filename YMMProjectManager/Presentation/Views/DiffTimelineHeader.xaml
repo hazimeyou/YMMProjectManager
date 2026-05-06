@@ -7,7 +7,7 @@
     xmlns:vm="clr-namespace:YMMProjectManager.Presentation.ViewModels"
     mc:Ignorable="d"
     d:DataContext="{d:DesignInstance Type=vm:DiffTimelineViewModel}">
-    <Border BorderBrush="#444" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,0,6">
+    <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,0,6" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
         <ScrollViewer HorizontalScrollBarVisibility="Hidden" VerticalScrollBarVisibility="Disabled">
             <ItemsControl ItemsSource="{Binding RulerMarks}">
                 <ItemsControl.ItemsPanel>
@@ -24,8 +24,8 @@
                 <ItemsControl.ItemTemplate>
                     <DataTemplate DataType="{x:Type vm:TimelineRulerMark}">
                         <StackPanel>
-                            <Rectangle Width="1" Height="12" Fill="#666" HorizontalAlignment="Left" />
-                            <TextBlock Text="{Binding Label}" FontSize="10" Foreground="#444" />
+                            <Rectangle Width="1" Height="12" Fill="{DynamicResource {x:Static SystemColors.GrayTextBrushKey}}" HorizontalAlignment="Left" />
+                            <TextBlock Text="{Binding Label}" FontSize="10" Foreground="{DynamicResource {x:Static SystemColors.ControlTextBrushKey}}" />
                         </StackPanel>
                     </DataTemplate>
                 </ItemsControl.ItemTemplate>

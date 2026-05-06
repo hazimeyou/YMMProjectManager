@@ -14,9 +14,9 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private string matchStatisticsText = string.Empty;
     private DiffEntryViewModel? selectedYmmDiffEntry;
     private bool isSyncingSelection;
-    private string pureTimelineSelection = "(none)";
-    private string pureTimelineActiveScene = "Scene: (placeholder)";
-    private string pureTimelineActiveTimeline = "Timeline: (placeholder)";
+    private string pureTimelineSelection = "(なし)";
+    private string pureTimelineActiveScene = "(プレースホルダー)";
+    private string pureTimelineActiveTimeline = "(プレースホルダー)";
     private TimelineSyncState selectedSyncState = TimelineSyncState.Detached;
     private TimelineMode selectedTimelineMode = TimelineMode.Synced;
 
@@ -26,9 +26,12 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public DiffTimelineViewModel TimelineViewModel { get; } = new();
     public PureTimelineHostViewModel PureTimelineHost { get; }
 
-    public IReadOnlyList<TimelineSyncState> SyncStateOptions { get; } = Enum.GetValues<TimelineSyncState>();
-    public IReadOnlyList<TimelineMode> TimelineModeOptions { get; } = Enum.GetValues<TimelineMode>();
-    public IReadOnlyList<PureTimelineAdapterKind> AdapterKindOptions { get; } = Enum.GetValues<PureTimelineAdapterKind>();
+    public IReadOnlyList<SelectionOption<TimelineSyncState>> SyncStateOptions { get; } =
+        Enum.GetValues<TimelineSyncState>().Select(x => new SelectionOption<TimelineSyncState>(x, ToSyncStateLabel(x))).ToList();
+    public IReadOnlyList<SelectionOption<TimelineMode>> TimelineModeOptions { get; } =
+        Enum.GetValues<TimelineMode>().Select(x => new SelectionOption<TimelineMode>(x, ToTimelineModeLabel(x))).ToList();
+    public IReadOnlyList<SelectionOption<PureTimelineAdapterKind>> AdapterKindOptions { get; } =
+        Enum.GetValues<PureTimelineAdapterKind>().Select(x => new SelectionOption<PureTimelineAdapterKind>(x, ToAdapterKindLabel(x))).ToList();
 
     public PureTimelineAdapterKind SelectedAdapterKind
     {
@@ -79,10 +82,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         set => SetProperty(ref pureTimelineSelection, value);
     }
 
-    public string PureTimelineStatus
-    {
-        get => PureTimelineHost.Status.ToString();
-    }
+    public string PureTimelineStatus => ToPureTimelineStatusLabel(PureTimelineHost.Status);
 
     public string PureTimelineActiveScene
     {
@@ -109,7 +109,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             if (SetProperty(ref selectedSyncState, value))
             {
                 ApplySyncModeAndState();
-                TrySetHostFrame(PureTimelineCurrentFrame, "Set sync state");
+                TrySetHostFrame(PureTimelineCurrentFrame, "同期状態変更");
             }
         }
     }
@@ -122,13 +122,13 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             if (SetProperty(ref selectedTimelineMode, value))
             {
                 ApplySyncModeAndState();
-                TrySetHostFrame(PureTimelineCurrentFrame, "Set timeline mode");
+                TrySetHostFrame(PureTimelineCurrentFrame, "タイムラインモード変更");
             }
         }
     }
 
-    public string PureTimelineSyncState => TimelineViewModel.SyncState.ToString();
-    public string PureTimelineMode => TimelineViewModel.Mode.ToString();
+    public string PureTimelineSyncState => ToSyncStateLabel(TimelineViewModel.SyncState);
+    public string PureTimelineMode => ToTimelineModeLabel(TimelineViewModel.Mode);
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -181,13 +181,13 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public void SyncFrameFromPlaceholder()
     {
         TimelineViewModel.SetCurrentFrame(PureTimelineCurrentFrame);
-        TrySetHostFrame(PureTimelineCurrentFrame, "Sync frame");
+        TrySetHostFrame(PureTimelineCurrentFrame, "フレーム同期");
     }
 
     public void GoToCurrentFrame()
     {
         TimelineViewModel.ScrollToCurrentFrame();
-        TrySetHostFrame(PureTimelineCurrentFrame, "Go to current frame");
+        TrySetHostFrame(PureTimelineCurrentFrame, "現在フレームへ移動");
     }
 
     public void CenterCurrentFrame()
@@ -201,7 +201,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         var ok = TimelineViewModel.SelectNearestDiffToCurrentFrame();
         if (ok)
         {
-            TrySetHostFrame(PureTimelineCurrentFrame, "Select nearest diff");
+            TrySetHostFrame(PureTimelineCurrentFrame, "最寄り差分選択");
         }
     }
 
@@ -215,7 +215,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
         if (ok)
         {
-            TrySetHostFrame(PureTimelineCurrentFrame, "Jump to first diff");
+            TrySetHostFrame(PureTimelineCurrentFrame, "先頭差分へ移動");
         }
     }
 
@@ -229,7 +229,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
         if (ok)
         {
-            TrySetHostFrame(PureTimelineCurrentFrame, "Jump to last diff");
+            TrySetHostFrame(PureTimelineCurrentFrame, "末尾差分へ移動");
         }
     }
 
@@ -243,7 +243,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
         if (ok)
         {
-            TrySetHostFrame(PureTimelineCurrentFrame, "Jump to previous diff");
+            TrySetHostFrame(PureTimelineCurrentFrame, "前の差分へ移動");
         }
     }
 
@@ -257,7 +257,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
         if (ok)
         {
-            TrySetHostFrame(PureTimelineCurrentFrame, "Jump to next diff");
+            TrySetHostFrame(PureTimelineCurrentFrame, "次の差分へ移動");
         }
     }
 
@@ -287,7 +287,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         var current = await normalizeService.NormalizeFileAsync(projectPath).ConfigureAwait(true);
         var snapshot = await File.ReadAllTextAsync(snapshotPath).ConfigureAwait(true);
         ApplyDiff(snapshot, current);
-        Title = $"差分: {snapshotId} -> current";
+        Title = $"差分: {snapshotId} -> 現在";
     }
 
     private void ApplyDiff(string before, string after)
@@ -303,11 +303,11 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 JsonDiffEntries.Add(new DiffEntryViewModel
                 {
                     Id = $"json-{JsonDiffEntries.Count}",
-                    Kind = x.Kind.ToString(),
+                    Kind = ToDiffKindLabel(x.Kind.ToString()),
                     Scope = x.Path,
                     Field = "JSON",
-                    Before = x.Before ?? string.Empty,
-                    After = x.After ?? string.Empty,
+                    Before = DiffDisplayTextService.ToDisplayText(x.Before),
+                    After = DiffDisplayTextService.ToDisplayText(x.After),
                 });
             }
 
@@ -320,11 +320,11 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
                     Id = id,
-                    Kind = x.Kind.ToString(),
+                    Kind = ToDiffKindLabel(x.Kind.ToString()),
                     Scope = x.Scope,
-                    Field = x.Field,
-                    Before = x.Before ?? string.Empty,
-                    After = x.After ?? string.Empty,
+                    Field = ToFieldLabel(x.Field),
+                    Before = DiffDisplayTextService.ToDisplayText(x.Before),
+                    After = DiffDisplayTextService.ToDisplayText(x.After),
                     TimelineIndex = x.TimelineIndex,
                     Layer = x.Layer,
                     Frame = x.Frame,
@@ -333,15 +333,15 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
                 timelineItems.Add(TimelineViewModel.CreateItem(
                     id: id,
-                    kind: x.Kind.ToString(),
+                    kind: ToDiffKindLabel(x.Kind.ToString()),
                     category: x.Category,
-                    displayName: $"{x.Kind} {x.Field}",
+                    displayName: $"{ToDiffKindLabel(x.Kind.ToString())} {ToFieldLabel(x.Field)}",
                     timelineIndex: x.TimelineIndex,
                     layer: x.Layer,
                     frame: x.Frame,
                     length: Math.Max(1, x.Length),
-                    oldValue: x.Before,
-                    newValue: x.After));
+                    oldValue: DiffDisplayTextService.ToDisplayText(x.Before),
+                    newValue: DiffDisplayTextService.ToDisplayText(x.After)));
             }
 
             BuildGroups();
@@ -349,7 +349,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
             SelectedSyncState = TimelineSyncState.Synced;
-            TrySetHostFrame(PureTimelineCurrentFrame, "Diff loaded");
+            TrySetHostFrame(PureTimelineCurrentFrame, "差分読み込み");
         }
         catch (Exception ex)
         {
@@ -373,11 +373,11 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         {
             return item.Field switch
             {
-                "Text" => "Text Changes",
-                "FilePath" => "FilePath Changes",
-                "Frame" or "Layer" => "Timeline Moves",
-                "Length" => "Length Changes",
-                _ => "Other Changes",
+                "テキスト" => "テキスト変更",
+                "素材パス" => "素材パス変更",
+                "フレーム" or "レイヤー" => "タイムライン移動",
+                "長さ" => "長さ変更",
+                _ => "その他",
             };
         }
 
@@ -421,16 +421,90 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private static string FormatStatistics(YmmDiffMatchStatistics s)
     {
         return string.Join(" | ",
-            $"old={s.OldItemCount}",
-            $"new={s.NewItemCount}",
-            $"idMatch={s.MatchedByInternalId}",
-            $"fallbackMatch={s.MatchedByFallback}",
-            $"unmatchedOld={s.UnmatchedOldItems}",
-            $"unmatchedNew={s.UnmatchedNewItems}",
-            $"added={s.AddedCount}",
-            $"removed={s.RemovedCount}",
-            $"moved={s.MovedCount}",
-            $"modified={s.ModifiedCount}");
+            $"旧={s.OldItemCount}",
+            $"新={s.NewItemCount}",
+            $"ID一致={s.MatchedByInternalId}",
+            $"Fallback一致={s.MatchedByFallback}",
+            $"旧未一致={s.UnmatchedOldItems}",
+            $"新未一致={s.UnmatchedNewItems}",
+            $"追加={s.AddedCount}",
+            $"削除={s.RemovedCount}",
+            $"移動={s.MovedCount}",
+            $"変更={s.ModifiedCount}");
+    }
+
+    private static string ToDiffKindLabel(string kind)
+    {
+        return kind switch
+        {
+            "Added" => "追加",
+            "Removed" => "削除",
+            "Moved" => "移動",
+            "Changed" => "変更",
+            _ => kind,
+        };
+    }
+
+    private static string ToFieldLabel(string field)
+    {
+        return field switch
+        {
+            "Text" => "テキスト",
+            "FilePath" => "素材パス",
+            "Frame" => "フレーム",
+            "Layer" => "レイヤー",
+            "Length" => "長さ",
+            _ => field,
+        };
+    }
+
+    private static string ToSyncStateLabel(TimelineSyncState state)
+    {
+        return state switch
+        {
+            TimelineSyncState.Unavailable => "利用不可",
+            TimelineSyncState.Detached => "切断",
+            TimelineSyncState.Synced => "同期中",
+            TimelineSyncState.Manual => "手動",
+            TimelineSyncState.Error => "エラー",
+            _ => state.ToString(),
+        };
+    }
+
+    private static string ToTimelineModeLabel(TimelineMode mode)
+    {
+        return mode switch
+        {
+            TimelineMode.Standalone => "単独",
+            TimelineMode.Synced => "同期",
+            TimelineMode.Comparison => "比較",
+            _ => mode.ToString(),
+        };
+    }
+
+    private static string ToAdapterKindLabel(PureTimelineAdapterKind kind)
+    {
+        return kind switch
+        {
+            PureTimelineAdapterKind.Placeholder => "プレースホルダー",
+            PureTimelineAdapterKind.FutureYmmTimeline => "将来YMMタイムライン",
+            _ => kind.ToString(),
+        };
+    }
+
+    private static string ToPureTimelineStatusLabel(YMMProjectManager.Presentation.Timeline.PureTimelineStatus status)
+    {
+        return status switch
+        {
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Unavailable => "利用不可",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Placeholder => "プレースホルダー",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Initializing => "初期化中",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.ExperimentalReady => "実験準備完了",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Ready => "準備完了",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Detached => "切断",
+            YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Error => "エラー",
+            _ => status.ToString(),
+        };
     }
 
     private void TryInitializeHost()
