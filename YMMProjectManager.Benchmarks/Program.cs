@@ -37,12 +37,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview12)",
+        "# YMMProjectManager Benchmark (preview13)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | futureYmmTimelineInitializeMs | futureYmmTimelineFailureCount | fallbackToPlaceholderCount | experimentalYmmHostInitializeMs | experimentalYmmHostSuccessCount | experimentalYmmHostFailureCount | experimentalYmmHostDisposeMs | experimentalYmmHostDisposeFailureCount | matchingMsApprox |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | futureYmmTimelineInitializeMs | futureYmmTimelineFailureCount | fallbackToPlaceholderCount | experimentalYmmHostInitializeMs | experimentalYmmHostSuccessCount | experimentalYmmHostFailureCount | experimentalYmmHostDisposeMs | experimentalYmmHostDisposeFailureCount | timelineReflectionProbeMs | timelineReflectionAssemblyCount | timelineReflectionTypeFoundCount | timelineReflectionFailureCount | experimentalReadyCount | matchingMsApprox |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -84,7 +84,7 @@ async Task RunPerformanceBenchmarksAsync()
 
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {futureMetrics.initializeMs} | {futureMetrics.failureCount} | {futureMetrics.fallbackToPlaceholderCount} | {experimentalMetrics.initializeMs} | {experimentalMetrics.successCount} | {experimentalMetrics.failureCount} | {experimentalMetrics.disposeMs} | {experimentalMetrics.disposeFailureCount} | {matchingApprox} |");
+        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {futureMetrics.initializeMs} | {futureMetrics.failureCount} | {futureMetrics.fallbackToPlaceholderCount} | {experimentalMetrics.initializeMs} | {experimentalMetrics.successCount} | {experimentalMetrics.failureCount} | {experimentalMetrics.disposeMs} | {experimentalMetrics.disposeFailureCount} | {PureTimelineDiagnostics.TimelineReflectionProbeMs} | {PureTimelineDiagnostics.TimelineReflectionAssemblyCount} | {PureTimelineDiagnostics.TimelineReflectionTypeFoundCount} | {PureTimelineDiagnostics.TimelineReflectionFailureCount} | {PureTimelineDiagnostics.ExperimentalReadyCount} | {matchingApprox} |");
     }
 
     await File.WriteAllLinesAsync(logFile, lines, Encoding.UTF8);

@@ -4,15 +4,21 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDisposable
 {
+    private readonly YmmTimelineReflectionProbe probe = new();
     private readonly Stopwatch initializeStopwatch = new();
     private readonly Stopwatch disposeStopwatch = new();
-    private object? timelineView;
-    private object? timelineViewModel;
+    private readonly ObservableCollection<YmmTimelineReflectionLog> logs = [];
+    private readonly ObservableCollection<string> constructorSignatures = [];
+    private readonly ObservableCollection<string> missingDependencies = [];
+    private readonly ObservableCollection<string> foundAssemblies = [];
     private string status = "Not initialized";
     private string summary = string.Empty;
     private bool disposed;
 
-    public ObservableCollection<string> Logs { get; } = [];
+    public ReadOnlyObservableCollection<YmmTimelineReflectionLog> Logs { get; }
+    public ReadOnlyObservableCollection<string> ConstructorSignatures { get; }
+    public ReadOnlyObservableCollection<string> MissingDependencies { get; }
+    public ReadOnlyObservableCollection<string> FoundAssemblies { get; }
 
     public string Status
     {
@@ -31,57 +37,67 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public long InitializeMs { get; private set; }
     public long DisposeMs { get; private set; }
 
+    public YmmTimelineReflectionResult? ReflectionResult { get; private set; }
+
+    public string ReflectionSummary =>
+        ReflectionResult is null
+            ? "(no reflection result)"
+            : $"ready={ReflectionResult.CanAttemptExperimentalHost}, found={ReflectionResult.TypeFoundCount}, missing={ReflectionResult.MissingDependencies.Count}";
+
+    public string TimelineViewType => ReflectionResult?.TimelineViewTypeName ?? "(not found)";
+    public string TimelineViewModelType => ReflectionResult?.TimelineViewModelTypeName ?? "(not found)";
+    public string SetTimelineToolInfoOwnerType => ReflectionResult?.SetTimelineToolInfoOwnerTypeName ?? "(not found)";
+
     public bool TryInitialize(bool useReflection)
     {
         if (disposed)
         {
-            Logs.Add("Initialization skipped: already disposed.");
+            logs.Add(new YmmTimelineReflectionLog { Category = "Init", Message = "Initialization skipped: already disposed." });
             return false;
         }
 
         initializeStopwatch.Restart();
-        Logs.Clear();
-        Logs.Add($"Initialize start (useReflection={useReflection})");
+        logs.Clear();
+        logs.Add(new YmmTimelineReflectionLog { Category = "Init", Message = $"Initialize start (useReflection={useReflection})" });
 
         try
         {
-            var timelineViewType = ResolveType("YukkuriMovieMaker.Views.TimelineView");
-            if (timelineViewType is null)
+            if (!useReflection)
             {
-                Logs.Add("Type not found: YukkuriMovieMaker.Views.TimelineView");
-                Status = "TypeMissing";
+                Status = "ReflectionDisabled";
+                Summary = "UseReflection=false";
                 return false;
             }
 
-            Logs.Add($"Type found: {timelineViewType.FullName}");
-            timelineView = Activator.CreateInstance(timelineViewType);
-            TimelineViewElement = timelineView as FrameworkElement;
-            Logs.Add(timelineView is null ? "TimelineView instance create failed." : "TimelineView instance created.");
+            var result = probe.Probe(logs);
+            ReflectionResult = result;
+            ReplaceCollection(constructorSignatures, result.ConstructorSignatures);
+            ReplaceCollection(missingDependencies, result.MissingDependencies);
+            ReplaceCollection(foundAssemblies, result.FoundAssemblies);
+            OnPropertyChanged(nameof(ReflectionResult));
+            OnPropertyChanged(nameof(ReflectionSummary));
+            OnPropertyChanged(nameof(TimelineViewType));
+            OnPropertyChanged(nameof(TimelineViewModelType));
+            OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
 
-            var timelineViewModelType = ResolveType("YukkuriMovieMaker.ViewModels.TimelineViewModel");
-            if (timelineViewModelType is null)
+            SaveDiagnostics(result, logs);
+            PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);
+
+            if (result.CanAttemptExperimentalHost)
             {
-                Logs.Add("Type not found: YukkuriMovieMaker.ViewModels.TimelineViewModel");
-                Status = "ViewModelTypeMissing";
-                return false;
+                Status = "ExperimentalReady";
+                Summary = "Reflection probe succeeded enough for experimental host attempt.";
+                return true;
             }
 
-            Logs.Add($"Type found: {timelineViewModelType.FullName}");
-            var constructors = timelineViewModelType.GetConstructors(BindingFlags.Public | BindingFlags.Instance);
-            Logs.Add($"TimelineViewModel ctor count: {constructors.Length}");
-            foreach (var ctor in constructors)
-            {
-                var args = string.Join(", ", ctor.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
-                Logs.Add($"Ctor: ({args})");
-            }
-
-            Status = "Initialized (partial)";
-            Summary = "TimelineView created. TimelineViewModel constructor signatures collected.";
-            return true;
+            Status = "Unavailable";
+            Summary = "Reflection probe completed, but required types/dependencies are missing.";
+            return false;
         }
         catch (Exception ex)
         {
-            Logs.Add($"Initialize exception: {ex.GetType().Name}: {ex.Message}");
+            PureTimelineDiagnostics.IncrementTimelineReflectionFailureCount();
+            logs.Add(new YmmTimelineReflectionLog { Category = "Error", Message = $"Probe exception: {ex.GetType().Name}: {ex.Message}" });
             Status = "InitializeFailed";
             Summary = ex.Message;
             return false;
@@ -91,17 +107,30 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             initializeStopwatch.Stop();
             InitializeMs = initializeStopwatch.ElapsedMilliseconds;
             OnPropertyChanged(nameof(InitializeMs));
-            OnPropertyChanged(nameof(TimelineViewElement));
-            Logs.Add($"Initialize finished in {InitializeMs} ms");
+            logs.Add(new YmmTimelineReflectionLog { Category = "Init", Message = $"Initialize finished in {InitializeMs} ms" });
         }
     }
 
-    private static Type? ResolveType(string fullName)
+    private static void SaveDiagnostics(YmmTimelineReflectionResult result, IEnumerable<YmmTimelineReflectionLog> logs)
     {
-        return AppDomain.CurrentDomain
-            .GetAssemblies()
-            .Select(a => a.GetType(fullName, false))
-            .FirstOrDefault(t => t is not null);
+        try
+        {
+            var dir = Path.Combine(Environment.CurrentDirectory, "logs", "diagnostics");
+            Directory.CreateDirectory(dir);
+            var output = new
+            {
+                timestamp = DateTimeOffset.Now,
+                result,
+                logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
+            };
+            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
+            var path = Path.Combine(dir, $"timeline-reflection-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(path, json, Encoding.UTF8);
+        }
+        catch
+        {
+            // Diagnostics output failure must not break flow.
+        }
     }
 
     public void Dispose()
@@ -114,33 +143,43 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         disposeStopwatch.Restart();
         try
         {
-            if (timelineViewModel is IDisposable vmDisposable)
-            {
-                vmDisposable.Dispose();
-                Logs.Add("TimelineViewModel disposed.");
-            }
-
-            if (timelineView is IDisposable viewDisposable)
-            {
-                viewDisposable.Dispose();
-                Logs.Add("TimelineView disposed.");
-            }
-        }
-        catch (Exception ex)
-        {
-            Logs.Add($"Dispose exception: {ex.GetType().Name}: {ex.Message}");
+            TimelineViewElement = null;
+            ReflectionResult = null;
+            constructorSignatures.Clear();
+            missingDependencies.Clear();
+            foundAssemblies.Clear();
+            Status = "Disposed";
+            Summary = "Disposed experimental host view model.";
+            OnPropertyChanged(nameof(ReflectionResult));
+            OnPropertyChanged(nameof(ReflectionSummary));
+            OnPropertyChanged(nameof(TimelineViewType));
+            OnPropertyChanged(nameof(TimelineViewModelType));
+            OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
         }
         finally
         {
-            timelineView = null;
-            timelineViewModel = null;
-            TimelineViewElement = null;
             disposed = true;
             disposeStopwatch.Stop();
             DisposeMs = disposeStopwatch.ElapsedMilliseconds;
             OnPropertyChanged(nameof(DisposeMs));
-            OnPropertyChanged(nameof(TimelineViewElement));
-            Logs.Add($"Dispose finished in {DisposeMs} ms");
+            logs.Add(new YmmTimelineReflectionLog { Category = "Dispose", Message = $"Dispose finished in {DisposeMs} ms" });
+        }
+    }
+
+    public ExperimentalYmmTimelineHostViewModel()
+    {
+        Logs = new ReadOnlyObservableCollection<YmmTimelineReflectionLog>(logs);
+        ConstructorSignatures = new ReadOnlyObservableCollection<string>(constructorSignatures);
+        MissingDependencies = new ReadOnlyObservableCollection<string>(missingDependencies);
+        FoundAssemblies = new ReadOnlyObservableCollection<string>(foundAssemblies);
+    }
+
+    private static void ReplaceCollection(ObservableCollection<string> target, IEnumerable<string> source)
+    {
+        target.Clear();
+        foreach (var item in source)
+        {
+            target.Add(item);
         }
     }
 }

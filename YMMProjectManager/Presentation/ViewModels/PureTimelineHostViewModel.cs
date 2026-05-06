@@ -75,6 +75,8 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
     public int DisposeCount => PureTimelineDiagnostics.DisposeCount;
     public int DisposeFailureCount => PureTimelineDiagnostics.DisposeFailureCount;
     public int ActiveHostCount => PureTimelineDiagnostics.ActiveHostCount;
+    public int ExperimentalReadyCount => PureTimelineDiagnostics.ExperimentalReadyCount;
+    public int TimelineReflectionFailureCount => PureTimelineDiagnostics.TimelineReflectionFailureCount;
 
     public PureTimelineHostViewModel(PureTimelineAdapterKind kind, PureTimelineExperimentalOptions? options = null)
     {
@@ -242,5 +244,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(DisposeCount));
         OnPropertyChanged(nameof(DisposeFailureCount));
         OnPropertyChanged(nameof(ActiveHostCount));
+        OnPropertyChanged(nameof(ExperimentalReadyCount));
+        OnPropertyChanged(nameof(TimelineReflectionFailureCount));
     }
 }

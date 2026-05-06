@@ -54,7 +54,7 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
             var ok = experimentalHostViewModel.TryInitialize(options.UseReflection);
             if (!ok)
             {
-                Status = PureTimelineStatus.Error;
+                Status = PureTimelineStatus.Unavailable;
                 IsAvailable = false;
                 PureTimelineDiagnostics.IncrementExperimentalYmmHostFailureCount();
                 return Task.FromResult(PureTimelineAdapterResult.Fail(
@@ -72,11 +72,12 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
             }
 
             initialized = true;
-            Status = PureTimelineStatus.Ready;
+            Status = PureTimelineStatus.ExperimentalReady;
             IsAvailable = true;
             PureTimelineDiagnostics.IncrementExperimentalYmmHostSuccessCount();
+            PureTimelineDiagnostics.IncrementExperimentalReadyCount();
             sw.Stop();
-            return Task.FromResult(PureTimelineAdapterResult.Ok($"Experimental host initialized in {sw.ElapsedMilliseconds} ms."));
+            return Task.FromResult(PureTimelineAdapterResult.Ok($"Experimental host is ready in {sw.ElapsedMilliseconds} ms."));
         }
         catch (Exception ex)
         {

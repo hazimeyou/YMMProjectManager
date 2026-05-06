@@ -9,6 +9,8 @@
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="2*" />
             <RowDefinition Height="*" />
             <RowDefinition Height="200" />
         </Grid.RowDefinitions>
@@ -22,10 +24,35 @@
             <TextBlock Text="{Binding DisposeMs}" />
         </StackPanel>
 
-        <Border Grid.Row="1" BorderBrush="#555" BorderThickness="1" Background="#111">
+        <StackPanel Grid.Row="1" Margin="0,0,0,8">
+            <TextBlock Text="{Binding ReflectionSummary}" FontWeight="SemiBold" />
+            <TextBlock Text="{Binding TimelineViewType, StringFormat=TimelineView: {0}}" />
+            <TextBlock Text="{Binding TimelineViewModelType, StringFormat=TimelineViewModel: {0}}" />
+            <TextBlock Text="{Binding SetTimelineToolInfoOwnerType, StringFormat=SetTimelineToolInfo Owner: {0}}" />
+        </StackPanel>
+
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <GroupBox Header="Found Assemblies" Margin="0,0,8,0">
+                <ListBox ItemsSource="{Binding FoundAssemblies}" />
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Constructors" Margin="0,0,8,0">
+                <ListBox ItemsSource="{Binding ConstructorSignatures}" />
+            </GroupBox>
+            <GroupBox Grid.Column="2" Header="Missing Dependencies">
+                <ListBox ItemsSource="{Binding MissingDependencies}" />
+            </GroupBox>
+        </Grid>
+
+        <Border Grid.Row="3" BorderBrush="#555" BorderThickness="1" Background="#111">
             <ContentControl Content="{Binding TimelineViewElement}" />
         </Border>
 
-        <ListBox Grid.Row="2" Margin="0,8,0,0" ItemsSource="{Binding Logs}" />
+        <ListBox Grid.Row="4" Margin="0,8,0,0" ItemsSource="{Binding Logs}" />
     </Grid>
 </Window>
