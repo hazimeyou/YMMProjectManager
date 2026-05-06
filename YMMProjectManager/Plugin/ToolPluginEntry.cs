@@ -1,11 +1,4 @@
-using System;
-using System.IO;
-using System.Threading.Tasks;
-using System.Windows;
-using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Presentation.ViewModels;
-using YMMProjectManager.Presentation.Views;
-using YukkuriMovieMaker.Plugin;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Plugin;
 
@@ -14,7 +7,7 @@ public sealed class ToolPluginEntry : IToolPlugin
     private static readonly FileLogger Logger = CreateLogger();
     private static bool exceptionHooksInstalled;
 
-    public string Name => "プロジェクトマネージャー";
+    public string Name => "繝励Ο繧ｸ繧ｧ繧ｯ繝医・繝阪・繧ｸ繝｣繝ｼ";
     public Type ViewModelType => typeof(ProjectListViewModel);
     public Type ViewType => typeof(ProjectListView);
 

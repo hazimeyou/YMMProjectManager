@@ -1,10 +1,4 @@
-using System.Diagnostics;
-using System.IO;
-using System.Windows.Media.Imaging;
-using YMMProjectManager.Infrastructure;
-using YukkuriMovieMaker.Commons;
-using YukkuriMovieMaker.Player.Video;
-
+﻿
 namespace YMMProjectManager.Infrastructure.Output;
 
 public sealed class FastThumbnailGenerator

@@ -1,6 +1,3 @@
-using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Reflection;
 using System.Windows;
 
 namespace YMMProjectManager.Presentation.ViewModels;

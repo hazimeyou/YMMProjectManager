@@ -1,9 +1,4 @@
-using System.Windows;
-using System.Linq;
-using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Diff;
-using YMMProjectManager.Infrastructure.History;
-using YMMProjectManager.Presentation.ViewModels;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.Views;
 
@@ -57,7 +52,7 @@ public partial class SnapshotListWindow : Window
             return;
         }
 
-        if (MessageBox.Show("選択スナップショットを削除します。", "履歴", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
+        if (MessageBox.Show("選択スナップショットを削除します。", "確認", MessageBoxButton.OKCancel, MessageBoxImage.Warning) != MessageBoxResult.OK)
         {
             return;
         }
@@ -80,7 +75,7 @@ public partial class SnapshotListWindow : Window
         var selected = SnapshotGrid.SelectedItems.Cast<ProjectSnapshotMetadata>().ToList();
         if (selected.Count != 2)
         {
-            MessageBox.Show("2件選択してください。", "履歴 / 差分", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show("2件選択してください。", "確認 / 比較", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 

@@ -1,9 +1,4 @@
-﻿using System.IO;
-using System.Text;
-using System.Text.Json;
-using YMMProjectManager.Plugin;
-using YukkuriMovieMaker.Plugin;
-
+﻿
 namespace YMMProjectManager.Settings;
 
 public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>

@@ -1,6 +1,4 @@
-using System;
-using System.Windows.Input;
-
+﻿
 namespace YMMProjectManager.Presentation.Commands;
 
 public sealed class RelayCommand : ICommand

@@ -1,5 +1,4 @@
-﻿using YMMProjectManager.Presentation.Timeline;
-
+﻿
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable

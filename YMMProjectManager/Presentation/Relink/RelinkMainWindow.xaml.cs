@@ -1,11 +1,4 @@
-﻿using System.Collections.ObjectModel;
-using System.ComponentModel;
-using System.IO;
-using System.Windows;
-using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Relink;
-using YMMProjectManager.Settings;
-using YukkuriMovieMaker.Plugin;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.Relink;
 

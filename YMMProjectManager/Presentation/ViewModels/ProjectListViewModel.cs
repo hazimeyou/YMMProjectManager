@@ -1,22 +1,4 @@
-﻿using System.Collections.ObjectModel;
-using System.Diagnostics;
-using System.Globalization;
-using System.IO;
-using System.Windows;
-using System.Windows.Input;
-using Microsoft.Win32;
-using YMMProjectManager.Application;
-using YMMProjectManager.Domain;
-using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Diff;
-using YMMProjectManager.Infrastructure.Output;
-using YMMProjectManager.Infrastructure.Packaging;
-using YMMProjectManager.Infrastructure.History;
-using YMMProjectManager.Presentation.Commands;
-using YMMProjectManager.Presentation.Relink;
-using YMMProjectManager.Presentation.Views;
-using YukkuriMovieMaker.Commons;
-using YukkuriMovieMaker.Plugin;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 

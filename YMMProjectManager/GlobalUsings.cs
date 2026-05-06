@@ -1,0 +1,56 @@
+﻿global using Microsoft.Win32;
+
+global using System;
+global using System.Collections.Concurrent;
+global using System.Collections.Generic;
+global using System.Collections.ObjectModel;
+global using System.ComponentModel;
+global using System.Diagnostics;
+global using System.Globalization;
+global using System.IO;
+global using System.IO.Compression;
+global using System.Linq;
+global using System.Reflection;
+global using System.Runtime.CompilerServices;
+global using System.Runtime.InteropServices;
+global using System.Security.Cryptography;
+global using System.Text;
+global using System.Text.Encodings.Web;
+global using System.Text.Json;
+global using System.Text.Json.Nodes;
+global using System.Text.RegularExpressions;
+global using System.Threading;
+global using System.Threading.Tasks;
+global using System.Windows.Automation;
+global using System.Windows.Controls;
+global using System.Windows.Data;
+global using System.Windows.Documents;
+global using System.Windows.Input;
+global using System.Windows.Media;
+global using System.Windows.Media.Imaging;
+global using System.Windows.Navigation;
+global using System.Windows.Threading;
+
+global using YMMProjectManager.Application;
+global using YMMProjectManager.Domain;
+global using YMMProjectManager.Infrastructure;
+global using YMMProjectManager.Infrastructure.Diff;
+global using YMMProjectManager.Infrastructure.History;
+global using YMMProjectManager.Infrastructure.Output;
+global using YMMProjectManager.Infrastructure.Packaging;
+global using YMMProjectManager.Infrastructure.Relink;
+global using YMMProjectManager.Infrastructure.Ymm;
+global using YMMProjectManager.Plugin;
+global using YMMProjectManager.Presentation.Commands;
+global using YMMProjectManager.Presentation.Relink;
+global using YMMProjectManager.Presentation.Timeline;
+global using YMMProjectManager.Presentation.ViewModels;
+global using YMMProjectManager.Presentation.Views;
+global using YMMProjectManager.Settings;
+
+global using YukkuriMovieMaker.Commons;
+global using YukkuriMovieMaker.Player.Video;
+global using YukkuriMovieMaker.Plugin;
+global using YukkuriMovieMaker.Project;
+global using YukkuriMovieMaker.Project.Items;
+

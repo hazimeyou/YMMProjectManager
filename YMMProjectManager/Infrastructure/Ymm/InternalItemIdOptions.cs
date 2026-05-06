@@ -1,7 +1,4 @@
-﻿using System;
-using System.Security.Cryptography;
-using System.Text;
-
+﻿
 namespace YMMProjectManager.Infrastructure.Ymm;
 
 public sealed class InternalItemIdOptions

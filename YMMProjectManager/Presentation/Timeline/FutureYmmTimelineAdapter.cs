@@ -1,8 +1,4 @@
-using System.Diagnostics;
-using System.Windows;
-using YMMProjectManager.Presentation.ViewModels;
-using YMMProjectManager.Presentation.Views;
-
+﻿
 namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter

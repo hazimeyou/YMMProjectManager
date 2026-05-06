@@ -1,7 +1,4 @@
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Runtime.CompilerServices;
-
+﻿
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public abstract class ViewModelBase : INotifyPropertyChanged

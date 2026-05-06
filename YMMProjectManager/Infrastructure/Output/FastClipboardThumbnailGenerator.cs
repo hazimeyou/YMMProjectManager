@@ -1,15 +1,4 @@
-using System.Diagnostics;
-using System.IO;
-using System.Reflection;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-using System.Windows.Threading;
-using YMMProjectManager.Infrastructure;
-using YukkuriMovieMaker.Commons;
-using YukkuriMovieMaker.Project;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Infrastructure.Output;
 

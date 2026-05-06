@@ -1,6 +1,4 @@
-﻿using System.Collections.ObjectModel;
-using System.Windows.Media;
-
+﻿
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class DiffTimelineViewModel : ViewModelBase

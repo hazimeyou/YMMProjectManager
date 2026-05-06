@@ -1,9 +1,4 @@
-using System.Linq;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using System.Windows.Media;
-using YMMProjectManager.Presentation.ViewModels;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.Views;
 

@@ -1,9 +1,4 @@
-using System.IO.Compression;
-using System.Text.Json;
-using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
-using System.IO;
-
+﻿
 namespace YMMProjectManager.Infrastructure.Packaging;
 
 public sealed class YmmpBundleService
@@ -103,7 +98,7 @@ public sealed class YmmpBundleService
         {
             logger.Error(ex, $"Bundle.Create failed. ymmp={ymmpPath}, output={outputYmmpxPath}");
             logger.Flush();
-            return (false, "同梱ファイルの作成に失敗しました。ログを確認してください。", null);
+            return (false, "構成ファイルの作成に失敗しました。ログを確認してください。", null);
         }
     }
 
@@ -127,7 +122,7 @@ public sealed class YmmpBundleService
             var projectEntry = archive.GetEntry(ProjectEntryName);
             if (manifestEntry is null || projectEntry is null)
             {
-                return (false, "同梱ファイルの形式が不正です。", null);
+                return (false, "構成ファイルの形式が不正です。", null);
             }
 
             BundleManifest manifest;
@@ -210,7 +205,7 @@ public sealed class YmmpBundleService
         {
             logger.Error(ex, $"Bundle.Extract failed. ymmpx={ymmpxPath}, output={outputDirectory}");
             logger.Flush();
-            return (false, "同梱ファイルの展開に失敗しました。ログを確認してください。", null);
+            return (false, "構成ファイルの展開に失敗しました。ログを確認してください。", null);
         }
     }
 

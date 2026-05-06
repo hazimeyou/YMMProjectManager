@@ -1,6 +1,4 @@
-using System.Collections.ObjectModel;
-using YMMProjectManager.Infrastructure.History;
-
+﻿
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class SnapshotListViewModel : ViewModelBase

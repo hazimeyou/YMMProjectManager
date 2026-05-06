@@ -1,10 +1,4 @@
-using System;
-using System.Collections.Concurrent;
-using System.IO;
-using System.Threading.Tasks;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
-
+﻿
 namespace YMMProjectManager.Infrastructure.Output;
 
 public static class ThumbnailImageLoader

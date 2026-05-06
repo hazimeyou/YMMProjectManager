@@ -1,5 +1,4 @@
-using System.Windows;
-using YMMProjectManager.Presentation.ViewModels;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.Views;
 

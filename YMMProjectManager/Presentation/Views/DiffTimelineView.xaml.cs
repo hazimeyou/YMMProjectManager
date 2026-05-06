@@ -1,7 +1,4 @@
 ﻿using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Input;
-using YMMProjectManager.Presentation.ViewModels;
 
 namespace YMMProjectManager.Presentation.Views;
 

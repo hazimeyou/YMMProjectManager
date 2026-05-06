@@ -1,9 +1,4 @@
-using System.Reflection;
-using System.Runtime.CompilerServices;
-using System.Windows;
-using System.Windows.Media;
-using YMMProjectManager.Infrastructure;
-using YukkuriMovieMaker.Commons;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Infrastructure.Output;
 

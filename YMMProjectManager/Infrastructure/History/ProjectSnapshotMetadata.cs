@@ -1,5 +1,4 @@
-﻿using System;
-
+﻿
 namespace YMMProjectManager.Infrastructure.History;
 
 public sealed class ProjectSnapshotMetadata

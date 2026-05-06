@@ -1,7 +1,4 @@
-﻿using System.Collections.ObjectModel;
-using System.Windows;
-using System.Windows.Controls;
-using Microsoft.Win32;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Settings;
 

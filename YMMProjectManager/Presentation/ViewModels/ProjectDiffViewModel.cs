@@ -1,10 +1,4 @@
-﻿using System.Collections.ObjectModel;
-using System.IO;
-using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Diff;
-using YMMProjectManager.Infrastructure.History;
-using YMMProjectManager.Presentation.Timeline;
-
+﻿
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
@@ -489,3 +483,4 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         PureTimelineHost.Dispose();
     }
 }
+

@@ -1,8 +1,4 @@
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Automation;
-using YMMProjectManager.Infrastructure;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Infrastructure.Output;
 

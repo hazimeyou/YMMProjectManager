@@ -1,14 +1,4 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
-using YMMProjectManager.Application;
-using YMMProjectManager.Domain;
-using YukkuriMovieMaker.Commons;
-
+﻿
 namespace YMMProjectManager.Infrastructure;
 
 public sealed class JsonProjectRepository : IProjectRepository
