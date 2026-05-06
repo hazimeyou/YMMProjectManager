@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview10
+
+- Added Pure Timeline adapter boundary (`IPureTimelineAdapter`)
+- Added `PureTimelineHostViewModel` and `PlaceholderPureTimelineAdapter`
+- Added fallback-safe host behavior for Pure Timeline failures
+- Added Pure Timeline fallback design doc
+- Added YMM4-Timeline code investigation plan doc
+
 ## v0.2.9-history-preview9
 
 - Timeline sync UX improvements

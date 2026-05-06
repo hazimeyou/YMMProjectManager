@@ -144,3 +144,11 @@ correctness fixture:
 - CurrentFrame navigation
 - Pure Timeline integration checklist
 
+
+## preview10 Notes
+
+- PureTimeline Adapter boundary (`IPureTimelineAdapter`) を追加
+- Placeholder PureTimelineHost (`PureTimelineHostViewModel`) を追加
+- DiffTL standalone fallback design を追加
+- YMM4-Timeline code-level investigation plan を追加
+

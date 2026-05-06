@@ -73,3 +73,11 @@ YMMProjectManager 方針:
 - SyncState/TimelineMode manual UI switching
 - Pure timeline integration checklist (docs/pure-timeline-integration-checklist.md)
 
+## Preview10 Additions
+
+- Pure Timeline integration boundary (`IPureTimelineAdapter`)
+- Placeholder host model (`PureTimelineHostViewModel`)
+- DiffTL standalone fallback design doc
+- YMM4-Timeline code-level investigation plan
+- preview11候補: FutureYmmTimelineAdapter PoC / adapter diagnostics強化
+

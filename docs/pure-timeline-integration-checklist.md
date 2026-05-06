@@ -1,4 +1,4 @@
-﻿# Pure Timeline Integration Checklist (preview9)
+# Pure Timeline Integration Checklist (preview10)
 
 - TimelineView / TimelineViewModel を安全に生成できるか
 - YMM本体の現在シーンを取得できるか
@@ -9,3 +9,8 @@
 - YMM4-Timelineのコードを参考利用する場合のMIT表記が整理されているか
 - YMMProjectManager単体配布を壊さないか
 - PureTLが失敗してもDiffTL単体で動くか
+- Adapter境界（`IPureTimelineAdapter`）があるか
+- Placeholder fallback（`PlaceholderPureTimelineAdapter`）があるか
+- Initialize失敗時に `ProjectDiffWindow` を閉じず継続できるか
+- Dispose失敗時にアプリを落とさないか
+- 将来 `FutureYmmTimelineAdapter` へ差し替え可能か
