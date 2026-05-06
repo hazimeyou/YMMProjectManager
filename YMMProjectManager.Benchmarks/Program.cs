@@ -4,6 +4,7 @@ using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Diff;
 using YMMProjectManager.Infrastructure.History;
+using YMMProjectManager.Presentation.ViewModels;
 
 var repoRoot = Directory.GetCurrentDirectory();
 var outputDir = Path.Combine(repoRoot, "logs", "benchmarks");
@@ -38,12 +39,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview5)",
+        "# YMMProjectManager Benchmark (preview6)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | itemCount | timelineCount | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | matchingMsApprox | snapshotBytes | memoryBytes | idMatch | fallbackMatch |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | itemCount | timelineCount | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | timelineProjectionMs | visibleFilterMs | matchingMsApprox | snapshotBytes | memoryBytes | idMatch | fallbackMatch |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -81,12 +82,14 @@ async Task RunPerformanceBenchmarksAsync()
         var ymmResult = ymmDiff.DiffWithStatistics(normalizedBase, normalizedChanged);
         swYmmDiff.Stop();
 
+        var (timelineProjectionMs, visibleFilterMs) = BenchmarkTimelineProjection(ymmResult);
+
         var afterMemory = GC.GetTotalMemory(true);
         var memoryBytes = Math.Max(0, afterMemory - beforeMemory);
 
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {s.ItemCount} | {s.TimelineCount} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {matchingApprox} | {snapshot?.OriginalFileSize ?? 0} | {memoryBytes} | {ymmResult.Statistics.MatchedByInternalId} | {ymmResult.Statistics.MatchedByFallback} |");
+        lines.Add($"| {s.Name} | {s.ItemCount} | {s.TimelineCount} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineProjectionMs} | {visibleFilterMs} | {matchingApprox} | {snapshot?.OriginalFileSize ?? 0} | {memoryBytes} | {ymmResult.Statistics.MatchedByInternalId} | {ymmResult.Statistics.MatchedByFallback} |");
         lines.Add($"  - jsonDiffEntries={jsonDiffEntries.Count}, ymmDiffEntries={ymmResult.Entries.Count}");
     }
 
@@ -157,6 +160,34 @@ async Task RunCorrectnessBenchmarksAsync()
 
     var outputPath = Path.Combine(outputDir, $"correctness-{DateTime.Now:yyyyMMdd-HHmmss}.json");
     await File.WriteAllTextAsync(outputPath, JsonSerializer.Serialize(results, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8);
+}
+
+static (long projectionMs, long filteringMs) BenchmarkTimelineProjection(YmmProjectDiffResult diffResult)
+{
+    var vm = new DiffTimelineViewModel();
+    var items = diffResult.Entries.Select((x, i) => vm.CreateItem(
+        id: $"bench-{i}",
+        kind: x.Kind.ToString(),
+        category: x.Category,
+        displayName: $"{x.Kind} {x.Field}",
+        timelineIndex: x.TimelineIndex,
+        layer: x.Layer,
+        frame: x.Frame,
+        length: Math.Max(1, x.Length),
+        oldValue: x.Before,
+        newValue: x.After)).ToList();
+
+    var swProjection = Stopwatch.StartNew();
+    vm.SetItems(items);
+    swProjection.Stop();
+
+    var swFilter = Stopwatch.StartNew();
+    vm.UpdateVisibleFrameRange(500, 3000);
+    vm.UpdateVisibleLayerRange(0, 12);
+    _ = vm.GetVisibleItemsSnapshot().Count;
+    swFilter.Stop();
+
+    return (swProjection.ElapsedMilliseconds, swFilter.ElapsedMilliseconds);
 }
 
 static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)

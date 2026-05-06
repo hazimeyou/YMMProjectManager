@@ -45,7 +45,7 @@ YukkuriMovieMaker 用の補助ツールです。
 - `Text / FilePath / Frame / Layer / Length` の意味差分（基盤）
 - Internal Item ID PoC（互換保証なし）
 - Internal ID 精度統計（match by id / fallback / unmatched）
-- DiffTimeline prototype（experimental）
+- DiffTimeline prototype（experimental）`n- DiffTimeline visible-range filtering + navigation（preview6）
 
 履歴保存先:
 
@@ -65,7 +65,7 @@ YukkuriMovieMaker 用の補助ツールです。
 
 ## ベンチマーク（Preview）
 
-Diff/Snapshot の性能検証と correctness 検証のため `YMMProjectManager.Benchmarks` を追加しています。
+Diff/Snapshot の性能検証と correctness 検証のため `YMMProjectManager.Benchmarks` を追加しています。`n`npreview6 では以下を追加しました。`n`n- DiffTimeline projection time`n- visible item filtering time（Frame/Layer filtering）
 
 実行:
 
@@ -115,3 +115,4 @@ correctness fixture:
 # ライセンス
 
 本ソフトウェアは MIT License のもとで公開されています。
+

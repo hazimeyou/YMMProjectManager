@@ -1,5 +1,17 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview6
+
+- DiffTimelineView を大規模運用向けに強化
+  - visible range filtering（Frame/Layer 範囲外は描画しない）
+  - `Scale / RowHeight / VisibleStartFrame / VisibleEndFrame / VisibleMinLayer / VisibleMaxLayer` を ViewModel に追加
+  - 次/前Diffナビゲーションと選択Diffへのスクロールを追加
+- ProjectDiffWindow の一覧選択と Timeline 選択の同期土台を追加
+- ベンチマーク拡張
+  - DiffTimeline projection time
+  - visible item filtering time
+  - large/extreme シナリオで確認可能
+
 ## v0.2.9-history-preview5
 
 - Added Internal ID match statistics

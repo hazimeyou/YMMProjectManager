@@ -4,8 +4,8 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:views="clr-namespace:YMMProjectManager.Presentation.Views"
     Title="{Binding Title}"
-    Width="1200"
-    Height="760"
+    Width="1280"
+    Height="780"
     WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>
@@ -25,10 +25,19 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <DataGrid Grid.Row="0" ItemsSource="{Binding YmmDiffEntries}" AutoGenerateColumns="False" IsReadOnly="True">
+                    <DataGrid
+                        x:Name="YmmDiffGrid"
+                        Grid.Row="0"
+                        ItemsSource="{Binding YmmDiffEntries}"
+                        SelectedItem="{Binding SelectedYmmDiffEntry, Mode=TwoWay}"
+                        AutoGenerateColumns="False"
+                        IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="Kind" Binding="{Binding Kind}" Width="80" />
                             <DataGridTextColumn Header="Field" Binding="{Binding Field}" Width="90" />
+                            <DataGridTextColumn Header="T" Binding="{Binding TimelineIndex}" Width="45" />
+                            <DataGridTextColumn Header="L" Binding="{Binding Layer}" Width="45" />
+                            <DataGridTextColumn Header="F" Binding="{Binding Frame}" Width="80" />
                             <DataGridTextColumn Header="Scope" Binding="{Binding Scope}" Width="*" />
                             <DataGridTextColumn Header="Before" Binding="{Binding Before}" Width="2*" />
                             <DataGridTextColumn Header="After" Binding="{Binding After}" Width="2*" />

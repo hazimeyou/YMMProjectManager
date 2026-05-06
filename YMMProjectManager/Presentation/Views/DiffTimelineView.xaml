@@ -9,55 +9,75 @@
     d:DataContext="{d:DesignInstance Type=vm:DiffTimelineViewModel}">
 
     <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="3*" />
-            <ColumnDefinition Width="2*" />
-        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0">
-            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
-                <ItemsControl ItemsSource="{Binding Items}">
-                    <ItemsControl.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <Canvas Width="2400" Height="1200" />
-                        </ItemsPanelTemplate>
-                    </ItemsControl.ItemsPanel>
-                    <ItemsControl.ItemContainerStyle>
-                        <Style TargetType="ContentPresenter">
-                            <Setter Property="Canvas.Left" Value="{Binding X}" />
-                            <Setter Property="Canvas.Top" Value="{Binding Y}" />
-                        </Style>
-                    </ItemsControl.ItemContainerStyle>
-                    <ItemsControl.ItemTemplate>
-                        <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
-                            <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
-                                <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
-                            </Button>
-                        </DataTemplate>
-                    </ItemsControl.ItemTemplate>
-                </ItemsControl>
-            </ScrollViewer>
-        </Border>
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+            <Button Content="Prev Diff" Width="90" Margin="0,0,8,0" Click="OnPrevDiffClick" />
+            <Button Content="Next Diff" Width="90" Margin="0,0,8,0" Click="OnNextDiffClick" />
+            <Button Content="Scroll To Selected" Width="130" Margin="0,0,10,0" Click="OnScrollToSelectedClick" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleStartFrame, StringFormat=F:{0}}" Margin="0,0,6,0" />
+            <TextBlock VerticalAlignment="Center" Text="-" Margin="0,0,6,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleEndFrame, StringFormat=F:{0}}" Margin="0,0,12,0" />
+            <TextBlock VerticalAlignment="Center" Text="L:" Margin="0,0,4,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleMinLayer}" Margin="0,0,6,0" />
+            <TextBlock VerticalAlignment="Center" Text="-" Margin="0,0,6,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding VisibleMaxLayer}" />
+        </StackPanel>
 
-        <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="8">
-            <StackPanel>
-                <TextBlock Text="Diff Detail" FontWeight="SemiBold" Margin="0,0,0,8" />
-                <TextBlock Text="Kind" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding SelectedItem.Kind, TargetNullValue=-}" Margin="0,0,0,6" />
-                <TextBlock Text="Item" FontWeight="SemiBold" />
-                <TextBlock Text="{Binding SelectedItem.DisplayName, TargetNullValue=-}" Margin="0,0,0,6" />
-                <TextBlock Text="Position" FontWeight="SemiBold" />
-                <TextBlock Margin="0,0,0,6">
-                    <Run Text="T=" /><Run Text="{Binding SelectedItem.TimelineIndex}" />
-                    <Run Text=", L=" /><Run Text="{Binding SelectedItem.Layer}" />
-                    <Run Text=", F=" /><Run Text="{Binding SelectedItem.Frame}" />
-                    <Run Text=", Len=" /><Run Text="{Binding SelectedItem.Length}" />
-                </TextBlock>
-                <TextBlock Text="Before" FontWeight="SemiBold" />
-                <TextBlock TextWrapping="Wrap" Text="{Binding SelectedItem.OldValue, TargetNullValue=-}" Margin="0,0,0,6" />
-                <TextBlock Text="After" FontWeight="SemiBold" />
-                <TextBlock TextWrapping="Wrap" Text="{Binding SelectedItem.NewValue, TargetNullValue=-}" />
-            </StackPanel>
-        </Border>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="2*" />
+            </Grid.ColumnDefinitions>
+
+            <Border Grid.Column="0" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0">
+                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged">
+                    <ItemsControl ItemsSource="{Binding VisibleItems}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <Canvas Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" />
+                            </ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemContainerStyle>
+                            <Style TargetType="ContentPresenter">
+                                <Setter Property="Canvas.Left" Value="{Binding X}" />
+                                <Setter Property="Canvas.Top" Value="{Binding Y}" />
+                            </Style>
+                        </ItemsControl.ItemContainerStyle>
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
+                                <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
+                                    <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Border>
+
+            <Border Grid.Column="1" BorderBrush="#333" BorderThickness="1" CornerRadius="4" Padding="8">
+                <StackPanel>
+                    <TextBlock Text="Diff Detail" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="Kind" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SelectedDiffItem.Kind, TargetNullValue=-}" Margin="0,0,0,6" />
+                    <TextBlock Text="Item" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SelectedDiffItem.DisplayName, TargetNullValue=-}" Margin="0,0,0,6" />
+                    <TextBlock Text="Position" FontWeight="SemiBold" />
+                    <TextBlock Margin="0,0,0,6">
+                        <Run Text="T=" /><Run Text="{Binding SelectedDiffItem.TimelineIndex}" />
+                        <Run Text=", L=" /><Run Text="{Binding SelectedDiffItem.Layer}" />
+                        <Run Text=", F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
+                        <Run Text=", Len=" /><Run Text="{Binding SelectedDiffItem.Length}" />
+                    </TextBlock>
+                    <TextBlock Text="Before" FontWeight="SemiBold" />
+                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.OldValue, TargetNullValue=-}" Margin="0,0,0,6" />
+                    <TextBlock Text="After" FontWeight="SemiBold" />
+                    <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.NewValue, TargetNullValue=-}" />
+                </StackPanel>
+            </Border>
+        </Grid>
     </Grid>
 </UserControl>

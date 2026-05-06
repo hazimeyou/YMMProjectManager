@@ -16,6 +16,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
 
     private string title = "差分";
     private string matchStatisticsText = string.Empty;
+    private DiffEntryViewModel? selectedYmmDiffEntry;
+    private bool isSyncingSelection;
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
@@ -33,6 +35,33 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         private set => SetProperty(ref matchStatisticsText, value);
     }
 
+    public DiffEntryViewModel? SelectedYmmDiffEntry
+    {
+        get => selectedYmmDiffEntry;
+        set
+        {
+            if (!SetProperty(ref selectedYmmDiffEntry, value))
+            {
+                return;
+            }
+
+            if (isSyncingSelection || value is null)
+            {
+                return;
+            }
+
+            isSyncingSelection = true;
+            try
+            {
+                TimelineViewModel.SelectById(value.Id);
+            }
+            finally
+            {
+                isSyncingSelection = false;
+            }
+        }
+    }
+
     public ProjectDiffViewModel(
         FileLogger logger,
         ProjectSnapshotService snapshotService,
@@ -45,6 +74,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase
         this.normalizeService = normalizeService;
         this.jsonDiffService = jsonDiffService;
         this.ymmDiffService = ymmDiffService;
+
+        TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
     }
 
     public async Task LoadSnapshotsDiffAsync(string projectPath, string leftSnapshotId, string rightSnapshotId)
@@ -87,6 +118,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase
             {
                 JsonDiffEntries.Add(new DiffEntryViewModel
                 {
+                    Id = $"json-{JsonDiffEntries.Count}",
                     Kind = x.Kind.ToString(),
                     Scope = x.Path,
                     Field = "JSON",
@@ -96,35 +128,70 @@ public sealed class ProjectDiffViewModel : ViewModelBase
             }
 
             var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
-            foreach (var x in ymmResult.Entries)
+            var timelineItems = new List<DiffTimelineItemViewModel>(ymmResult.Entries.Count);
+            for (var i = 0; i < ymmResult.Entries.Count; i++)
             {
+                var x = ymmResult.Entries[i];
+                var id = $"diff-{i}";
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
+                    Id = id,
                     Kind = x.Kind.ToString(),
                     Scope = x.Scope,
                     Field = x.Field,
                     Before = x.Before ?? string.Empty,
                     After = x.After ?? string.Empty,
+                    TimelineIndex = x.TimelineIndex,
+                    Layer = x.Layer,
+                    Frame = x.Frame,
+                    Length = x.Length,
                 });
+
+                timelineItems.Add(TimelineViewModel.CreateItem(
+                    id: id,
+                    kind: x.Kind.ToString(),
+                    category: x.Category,
+                    displayName: $"{x.Kind} {x.Field}",
+                    timelineIndex: x.TimelineIndex,
+                    layer: x.Layer,
+                    frame: x.Frame,
+                    length: Math.Max(1, x.Length),
+                    oldValue: x.Before,
+                    newValue: x.After));
             }
 
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
-            TimelineViewModel.SetItems(ymmResult.Entries.Select((x, i) => TimelineViewModel.CreateItem(
-                id: $"diff-{i}",
-                kind: x.Kind.ToString(),
-                category: x.Category,
-                displayName: $"{x.Kind} {x.Field}",
-                timelineIndex: x.TimelineIndex,
-                layer: x.Layer,
-                frame: x.Frame,
-                length: Math.Max(1, x.Length),
-                oldValue: x.Before,
-                newValue: x.After)));
+            TimelineViewModel.SetItems(timelineItems);
+            SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
         }
         catch (Exception ex)
         {
             logger.Error(ex, "ApplyDiff failed");
             MatchStatisticsText = "統計の計算に失敗しました。";
+        }
+    }
+
+    private void OnTimelineSelectedDiffItemChanged(DiffTimelineItemViewModel? item)
+    {
+        if (item is null || isSyncingSelection)
+        {
+            return;
+        }
+
+        var match = YmmDiffEntries.FirstOrDefault(x => string.Equals(x.Id, item.Id, StringComparison.Ordinal));
+        if (match is null)
+        {
+            return;
+        }
+
+        isSyncingSelection = true;
+        try
+        {
+            SelectedYmmDiffEntry = match;
+        }
+        finally
+        {
+            isSyncingSelection = false;
         }
     }
 
