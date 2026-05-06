@@ -1,4 +1,4 @@
-# Pure Timeline Fallback Design (preview10)
+# Pure Timeline Fallback Design (preview11)
 
 ## Goal
 
@@ -44,3 +44,9 @@ Pure Timeline 統合が失敗しても、DiffTimeline（DiffTL）単体運用を
 - `IPureTimelineAdapter` 境界を導入
 - `PlaceholderPureTimelineAdapter` を基準実装として使用
 - 本統合未実装でも UI と操作導線を維持
+
+## Preview11 Additions
+
+- `FutureYmmTimelineAdapter` が初期化失敗しても fallback できる構造を追加
+- `PureTimelineAdapterKind` で Adapter を切替可能にした
+- Host UI に `AdapterKind`, `FallbackActive`, `LastError` を表示

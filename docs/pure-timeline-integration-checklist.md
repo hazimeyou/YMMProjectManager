@@ -1,4 +1,4 @@
-# Pure Timeline Integration Checklist (preview10)
+# Pure Timeline Integration Checklist (preview11)
 
 - TimelineView / TimelineViewModel を安全に生成できるか
 - YMM本体の現在シーンを取得できるか
@@ -14,3 +14,7 @@
 - Initialize失敗時に `ProjectDiffWindow` を閉じず継続できるか
 - Dispose失敗時にアプリを落とさないか
 - 将来 `FutureYmmTimelineAdapter` へ差し替え可能か
+- `PureTimelineAdapterKind` で切替できるか
+- `FutureYmmTimelineAdapter` が安全に Fail するか
+- Fail 後に Placeholder fallback が有効化されるか
+- `LastError` / `FallbackActive` が UI で確認できるか

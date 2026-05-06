@@ -152,3 +152,11 @@ correctness fixture:
 - DiffTL standalone fallback design を追加
 - YMM4-Timeline code-level investigation plan を追加
 
+
+## preview11 Notes
+
+- FutureYmmTimelineAdapter experimental scaffold を追加
+- Adapter kind selection scaffold（Placeholder / FutureYmmTimeline）を追加
+- Adapter fallback verification（Future adapter failure -> Placeholder fallback）
+- YMM4-Timeline code investigation を実測結果で更新
+

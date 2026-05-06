@@ -1,5 +1,14 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview11
+
+- Added `FutureYmmTimelineAdapter` experimental scaffold
+- Added `PureTimelineAdapterKind` and adapter-kind switching base
+- Added fallback verification path (future adapter failure to placeholder)
+- Added host UI status details (`AdapterKind`, `Fallback`, `LastError`)
+- Expanded YMM4-Timeline code investigation docs
+- Added third-party MIT usage notes
+
 ## v0.2.9-history-preview10
 
 - Added Pure Timeline adapter boundary (`IPureTimelineAdapter`)
@@ -46,4 +55,3 @@
 - visible range filtering を継続強化
 - Benchmark 強化
 - YMM4-Timeline 調査方針の整理をドキュメントへ追記
-

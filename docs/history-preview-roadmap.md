@@ -81,3 +81,11 @@ YMMProjectManager 方針:
 - YMM4-Timeline code-level investigation plan
 - preview11候補: FutureYmmTimelineAdapter PoC / adapter diagnostics強化
 
+## Preview11 Additions
+
+- `FutureYmmTimelineAdapter` investigation scaffold
+- Adapter kind switching base (`Placeholder` / `FutureYmmTimeline`)
+- Future adapter failure fallback verification
+- YMM4-Timeline code investigation update with concrete class flow
+- preview12候補: optional runtime binding PoC + partial one-way frame sync bridge
+
