@@ -92,9 +92,13 @@
                     <Border Grid.Row="0" BorderBrush="#335" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,8" Background="#F8FAFF">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="Pure Timeline Placeholder" FontWeight="SemiBold" Margin="0,0,12,0" />
+                                <TextBlock Text="Pure Timeline Host" FontWeight="SemiBold" Margin="0,0,12,0" />
+                                <TextBlock Text="Adapter:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.DisplayName}" Margin="0,0,12,0" />
                                 <TextBlock Text="Status:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineStatus}" Margin="0,0,12,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.Status}" Margin="0,0,12,0" />
+                                <TextBlock Text="IsAvailable:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.IsAvailable}" Margin="0,0,12,0" />
                                 <TextBlock Text="Scene:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineActiveScene}" Margin="0,0,12,0" />
                                 <TextBlock Text="Timeline:" Margin="0,0,4,0" />
@@ -107,7 +111,7 @@
                                 <TextBlock Text="Timeline Mode:" Margin="0,0,4,0" />
                                 <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" SelectedItem="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
                                 <TextBlock Text="Current Frame:" Margin="0,0,4,0" />
-                                <TextBox Width="90" Text="{Binding PureTimelineCurrentFrame, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
+                                <TextBox Width="90" Text="{Binding PureTimelineHost.CurrentFrame, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
                                 <Button Content="Sync Frame -> DiffTL" Width="130" Click="OnSyncFrameClick" Margin="0,0,6,0" />
                                 <Button Content="Go To Current" Width="110" Click="OnGoToCurrentFrameClick" Margin="0,0,6,0" />
                                 <Button Content="Center Current" Width="110" Click="OnCenterCurrentFrameClick" Margin="0,0,6,0" />
@@ -126,7 +130,7 @@
                             </StackPanel>
 
                             <TextBlock Text="{Binding PureTimelineSelection, StringFormat=Selected: {0}}" Margin="0,6,0,0" />
-                            <TextBlock Text="{Binding LastSyncAction}" Margin="0,2,0,0" />
+                            <TextBlock Text="{Binding PureTimelineHost.LastAction}" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>
 

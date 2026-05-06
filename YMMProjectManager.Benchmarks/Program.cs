@@ -4,6 +4,7 @@ using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Diff;
 using YMMProjectManager.Infrastructure.History;
+using YMMProjectManager.Presentation.Timeline;
 using YMMProjectManager.Presentation.ViewModels;
 
 var repoRoot = Directory.GetCurrentDirectory();
@@ -36,12 +37,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview9)",
+        "# YMMProjectManager Benchmark (preview10)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | matchingMsApprox |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | matchingMsApprox |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -77,10 +78,11 @@ async Task RunPerformanceBenchmarksAsync()
         var timelineMetrics = BenchmarkTimelineProjectionAndFiltering(ymmResult);
         var groupingMs = BenchmarkGrouping(ymmResult);
         var syncMetrics = BenchmarkSyncMetrics(ymmResult);
+        var pureTimelineMetrics = await BenchmarkPureTimelineAdapterMetricsAsync();
 
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {matchingApprox} |");
+        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {matchingApprox} |");
     }
 
     await File.WriteAllLinesAsync(logFile, lines, Encoding.UTF8);
@@ -196,6 +198,44 @@ static long BenchmarkGrouping(YmmProjectDiffResult diffResult)
     _ = diffResult.Entries.GroupBy(x => x.Field).Select(x => new { x.Key, Count = x.Count() }).OrderByDescending(x => x.Count).ToList();
     sw.Stop();
     return sw.ElapsedMilliseconds;
+}
+
+static async Task<(long initializeMs, long setFrameMs, long centerFrameMs, int failureCount)> BenchmarkPureTimelineAdapterMetricsAsync()
+{
+    var failureCount = 0;
+    var adapter = new PlaceholderPureTimelineAdapter();
+
+    var swInit = Stopwatch.StartNew();
+    var initResult = await adapter.InitializeAsync(CancellationToken.None);
+    swInit.Stop();
+    if (!initResult.Succeeded)
+    {
+        failureCount++;
+    }
+
+    var swSet = Stopwatch.StartNew();
+    var setResult = await adapter.SetCurrentFrameAsync(1200, CancellationToken.None);
+    swSet.Stop();
+    if (!setResult.Succeeded)
+    {
+        failureCount++;
+    }
+
+    var swCenter = Stopwatch.StartNew();
+    var centerResult = await adapter.CenterFrameAsync(1200, CancellationToken.None);
+    swCenter.Stop();
+    if (!centerResult.Succeeded)
+    {
+        failureCount++;
+    }
+
+    var disposeResult = await adapter.DisposeAsync();
+    if (!disposeResult.Succeeded)
+    {
+        failureCount++;
+    }
+
+    return (swInit.ElapsedMilliseconds, swSet.ElapsedMilliseconds, swCenter.ElapsedMilliseconds, failureCount);
 }
 
 static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)
