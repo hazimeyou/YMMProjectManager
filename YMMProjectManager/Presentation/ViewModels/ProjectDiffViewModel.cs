@@ -33,6 +33,24 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
     public IReadOnlyList<TimelineSyncState> SyncStateOptions { get; } = Enum.GetValues<TimelineSyncState>();
     public IReadOnlyList<TimelineMode> TimelineModeOptions { get; } = Enum.GetValues<TimelineMode>();
+    public IReadOnlyList<PureTimelineAdapterKind> AdapterKindOptions { get; } = Enum.GetValues<PureTimelineAdapterKind>();
+
+    public PureTimelineAdapterKind SelectedAdapterKind
+    {
+        get => PureTimelineHost.AdapterKind;
+        set
+        {
+            if (PureTimelineHost.AdapterKind == value)
+            {
+                return;
+            }
+
+            PureTimelineHost.SwitchAdapter(value);
+            OnPropertyChanged(nameof(SelectedAdapterKind));
+            OnPropertyChanged(nameof(PureTimelineStatus));
+            OnPropertyChanged(nameof(LastSyncAction));
+        }
+    }
 
     public string Title
     {
@@ -158,7 +176,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         this.normalizeService = normalizeService;
         this.jsonDiffService = jsonDiffService;
         this.ymmDiffService = ymmDiffService;
-        PureTimelineHost = new PureTimelineHostViewModel(new PlaceholderPureTimelineAdapter());
+        PureTimelineHost = new PureTimelineHostViewModel(PureTimelineAdapterKind.Placeholder);
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
         ApplySyncModeAndState();

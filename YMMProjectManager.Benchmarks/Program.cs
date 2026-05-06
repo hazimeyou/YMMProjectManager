@@ -37,12 +37,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview10)",
+        "# YMMProjectManager Benchmark (preview11)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | matchingMsApprox |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | futureYmmTimelineInitializeMs | futureYmmTimelineFailureCount | fallbackToPlaceholderCount | matchingMsApprox |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -79,10 +79,11 @@ async Task RunPerformanceBenchmarksAsync()
         var groupingMs = BenchmarkGrouping(ymmResult);
         var syncMetrics = BenchmarkSyncMetrics(ymmResult);
         var pureTimelineMetrics = await BenchmarkPureTimelineAdapterMetricsAsync();
+        var futureMetrics = await BenchmarkFutureYmmAdapterMetricsAsync();
 
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {matchingApprox} |");
+        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {futureMetrics.initializeMs} | {futureMetrics.failureCount} | {futureMetrics.fallbackToPlaceholderCount} | {matchingApprox} |");
     }
 
     await File.WriteAllLinesAsync(logFile, lines, Encoding.UTF8);
@@ -236,6 +237,35 @@ static async Task<(long initializeMs, long setFrameMs, long centerFrameMs, int f
     }
 
     return (swInit.ElapsedMilliseconds, swSet.ElapsedMilliseconds, swCenter.ElapsedMilliseconds, failureCount);
+}
+
+static async Task<(long initializeMs, int failureCount, int fallbackToPlaceholderCount)> BenchmarkFutureYmmAdapterMetricsAsync()
+{
+    var adapter = new FutureYmmTimelineAdapter();
+    var failureCount = 0;
+    var fallbackToPlaceholderCount = 0;
+
+    var swInit = Stopwatch.StartNew();
+    var init = await adapter.InitializeAsync(CancellationToken.None);
+    swInit.Stop();
+    if (!init.Succeeded)
+    {
+        failureCount++;
+    }
+
+    if (!adapter.IsAvailable)
+    {
+        var fallback = new PlaceholderPureTimelineAdapter();
+        var fallbackInit = await fallback.InitializeAsync(CancellationToken.None);
+        if (fallbackInit.Succeeded)
+        {
+            fallbackToPlaceholderCount++;
+        }
+        await fallback.DisposeAsync();
+    }
+
+    await adapter.DisposeAsync();
+    return (swInit.ElapsedMilliseconds, failureCount, fallbackToPlaceholderCount);
 }
 
 static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)

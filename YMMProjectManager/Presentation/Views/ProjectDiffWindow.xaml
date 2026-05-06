@@ -93,12 +93,16 @@
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="Pure Timeline Host" FontWeight="SemiBold" Margin="0,0,12,0" />
+                                <TextBlock Text="Adapter Kind:" Margin="0,0,4,0" />
+                                <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" SelectedItem="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
                                 <TextBlock Text="Adapter:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.DisplayName}" Margin="0,0,12,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.AdapterDisplayName}" Margin="0,0,12,0" />
                                 <TextBlock Text="Status:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.Status}" Margin="0,0,12,0" />
                                 <TextBlock Text="IsAvailable:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.IsAvailable}" Margin="0,0,12,0" />
+                                <TextBlock Text="Fallback:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.FallbackActive}" Margin="0,0,12,0" />
                                 <TextBlock Text="Scene:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineActiveScene}" Margin="0,0,12,0" />
                                 <TextBlock Text="Timeline:" Margin="0,0,4,0" />
@@ -130,6 +134,7 @@
                             </StackPanel>
 
                             <TextBlock Text="{Binding PureTimelineSelection, StringFormat=Selected: {0}}" Margin="0,6,0,0" />
+                            <TextBlock Text="{Binding PureTimelineHost.LastError, StringFormat=Last Error: {0}}" Margin="0,2,0,0" />
                             <TextBlock Text="{Binding PureTimelineHost.LastAction}" Margin="0,2,0,0" />
                         </StackPanel>
                     </Border>

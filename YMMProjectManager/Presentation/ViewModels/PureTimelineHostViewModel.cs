@@ -1,10 +1,15 @@
-using YMMProjectManager.Presentation.Timeline;
+﻿using YMMProjectManager.Presentation.Timeline;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
 {
-    private readonly IPureTimelineAdapter adapter;
+    private IPureTimelineAdapter adapter;
+    private PlaceholderPureTimelineAdapter? fallbackAdapter;
+    private PureTimelineAdapterKind adapterKind;
+    private string adapterDisplayName = string.Empty;
+    private bool fallbackActive;
+    private string? lastError;
     private PureTimelineStatus status = PureTimelineStatus.Unavailable;
     private string displayName = string.Empty;
     private string lastAction = "Last Sync: (none)";
@@ -42,12 +47,35 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         set => SetProperty(ref currentFrame, Math.Max(0, value));
     }
 
-    public PureTimelineHostViewModel(IPureTimelineAdapter adapter)
+    public PureTimelineAdapterKind AdapterKind
     {
-        this.adapter = adapter;
-        DisplayName = adapter.DisplayName;
-        IsAvailable = adapter.IsAvailable;
-        Status = adapter.Status;
+        get => adapterKind;
+        private set => SetProperty(ref adapterKind, value);
+    }
+
+    public string AdapterDisplayName
+    {
+        get => adapterDisplayName;
+        private set => SetProperty(ref adapterDisplayName, value);
+    }
+
+    public bool FallbackActive
+    {
+        get => fallbackActive;
+        private set => SetProperty(ref fallbackActive, value);
+    }
+
+    public string? LastError
+    {
+        get => lastError;
+        private set => SetProperty(ref lastError, value);
+    }
+
+    public PureTimelineHostViewModel(PureTimelineAdapterKind kind)
+    {
+        AdapterKind = kind;
+        adapter = CreateAdapter(kind);
+        UpdateAdapterProperties();
     }
 
     public async Task InitializeAsync()
@@ -60,12 +88,18 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         Status = PureTimelineStatus.Initializing;
         var result = await adapter.InitializeAsync(CancellationToken.None).ConfigureAwait(true);
         Status = adapter.Status;
+        UpdateAdapterProperties();
         LastAction = result.Succeeded
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Initialize failed - {result.Message}";
         if (!result.Succeeded)
         {
-            Status = PureTimelineStatus.Error;
+            LastError = result.Message;
+            await ActivateFallbackAsync("Initialize failed fallback").ConfigureAwait(true);
+        }
+        else
+        {
+            LastError = null;
         }
     }
 
@@ -80,6 +114,11 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         CurrentFrame = normalizedFrame;
         var result = await adapter.SetCurrentFrameAsync(normalizedFrame, CancellationToken.None).ConfigureAwait(true);
         Status = result.Succeeded ? adapter.Status : PureTimelineStatus.Error;
+        if (!result.Succeeded)
+        {
+            LastError = result.Message;
+        }
+
         LastAction = result.Succeeded
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Set frame failed - {result.Message}";
@@ -96,6 +135,11 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         CurrentFrame = normalizedFrame;
         var result = await adapter.CenterFrameAsync(normalizedFrame, CancellationToken.None).ConfigureAwait(true);
         Status = result.Succeeded ? adapter.Status : PureTimelineStatus.Error;
+        if (!result.Succeeded)
+        {
+            LastError = result.Message;
+        }
+
         LastAction = result.Succeeded
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Center frame failed - {result.Message}";
@@ -115,6 +159,59 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Dispose failed - {result.Message}";
         adapter.Dispose();
+    }
+
+    public void SwitchAdapter(PureTimelineAdapterKind kind)
+    {
+        if (disposed || kind == AdapterKind)
+        {
+            return;
+        }
+
+        adapter.Dispose();
+        fallbackAdapter?.Dispose();
+        fallbackAdapter = null;
+        FallbackActive = false;
+        LastError = null;
+        AdapterKind = kind;
+        adapter = CreateAdapter(kind);
+        UpdateAdapterProperties();
+        InitializeAsync().GetAwaiter().GetResult();
+    }
+
+    private async Task ActivateFallbackAsync(string reason)
+    {
+        fallbackAdapter ??= new PlaceholderPureTimelineAdapter();
+        var init = await fallbackAdapter.InitializeAsync(CancellationToken.None).ConfigureAwait(true);
+        if (!init.Succeeded)
+        {
+            Status = PureTimelineStatus.Error;
+            LastAction = $"Last Sync: Fallback initialize failed - {init.Message}";
+            return;
+        }
+
+        adapter = fallbackAdapter;
+        FallbackActive = true;
+        Status = adapter.Status;
+        UpdateAdapterProperties();
+        LastAction = $"Last Sync: {reason}";
+    }
+
+    private static IPureTimelineAdapter CreateAdapter(PureTimelineAdapterKind kind)
+    {
+        return kind switch
+        {
+            PureTimelineAdapterKind.FutureYmmTimeline => new FutureYmmTimelineAdapter(),
+            _ => new PlaceholderPureTimelineAdapter(),
+        };
+    }
+
+    private void UpdateAdapterProperties()
+    {
+        DisplayName = adapter.DisplayName;
+        AdapterDisplayName = adapter.DisplayName;
+        IsAvailable = adapter.IsAvailable;
+        Status = adapter.Status;
     }
 
     public void Dispose()
