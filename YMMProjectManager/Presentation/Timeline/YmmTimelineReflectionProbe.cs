@@ -2,6 +2,8 @@ namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmTimelineReflectionProbe
 {
+    private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
+
     public YmmTimelineReflectionResult Probe(ICollection<YmmTimelineReflectionLog>? logs = null)
     {
         var sw = Stopwatch.StartNew();
@@ -22,8 +24,13 @@ public sealed class YmmTimelineReflectionProbe
             var name = assembly.GetName().Name ?? "(unknown)";
             foundAssemblies.Add(name);
         }
+        var processName = runtimeEnvironmentDetector.GetProcessName();
+        var runtimeKind = runtimeEnvironmentDetector.Detect(foundAssemblies, processName);
+        var ymmRelatedAssemblies = runtimeEnvironmentDetector.GetYmmRelatedAssemblyNames(foundAssemblies);
+        var candidateAssemblies = runtimeEnvironmentDetector.GetCandidateAssemblyNames(foundAssemblies);
 
         Log("Probe", $"Assembly count: {assemblies.Length}");
+        Log("Probe", $"Runtime: {runtimeKind}, Process: {processName}");
 
         var timelineViewType = ResolveType(assemblies, "YukkuriMovieMaker.Views.TimelineView");
         if (timelineViewType is not null)
@@ -117,6 +124,8 @@ public sealed class YmmTimelineReflectionProbe
 
         return new YmmTimelineReflectionResult
         {
+            RuntimeKind = runtimeKind,
+            ProcessName = processName,
             TimelineViewFound = timelineViewType is not null,
             TimelineViewModelFound = timelineViewModelType is not null,
             UndoRedoManagerFound = undoRedoManagerType is not null,
@@ -129,6 +138,8 @@ public sealed class YmmTimelineReflectionProbe
             MissingDependencies = missing,
             Notes = notes,
             FoundAssemblies = foundAssemblies,
+            YmmRelatedAssemblyNames = ymmRelatedAssemblies,
+            CandidateAssemblyNames = candidateAssemblies,
             AssemblyCount = assemblies.Length,
             TypeFoundCount = typeFoundCount,
             ProbeMs = sw.ElapsedMilliseconds,

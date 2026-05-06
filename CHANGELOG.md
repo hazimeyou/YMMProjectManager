@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview16
+
+- Added runtime environment detection (`Benchmark` / `YMM4Plugin` / `Standalone` / `Unknown`)
+- Added manual runtime probe actions in experimental host UI
+- Added runtime-aware diagnostics output names:
+  - `timeline-probe-<runtime>-*.json`
+  - `timeline-binding-<runtime>-*.json`
+- Added runtime metadata to diagnostics JSON (`runtimeKind`, `processName`, `ymmAssemblyNames`)
+- Added runtime context messaging in future adapter initialization path
+- Kept generation attempt default-disabled and fallback-safe behavior
+
 ## v0.2.9-history-preview15
 
 - Added isolated TimelineViewModel generation-attempt gate in experimental host
@@ -67,5 +78,6 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 

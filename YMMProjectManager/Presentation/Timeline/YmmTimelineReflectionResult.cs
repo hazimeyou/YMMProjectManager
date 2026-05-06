@@ -2,6 +2,10 @@ namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmTimelineReflectionResult
 {
+    public RuntimeEnvironmentKind RuntimeKind { get; set; } = RuntimeEnvironmentKind.Unknown;
+
+    public string ProcessName { get; set; } = string.Empty;
+
     public bool TimelineViewFound { get; set; }
 
     public bool TimelineViewModelFound { get; set; }
@@ -25,6 +29,8 @@ public sealed class YmmTimelineReflectionResult
     public IReadOnlyList<string> Notes { get; set; } = [];
 
     public IReadOnlyList<string> FoundAssemblies { get; set; } = [];
+    public IReadOnlyList<string> YmmRelatedAssemblyNames { get; set; } = [];
+    public IReadOnlyList<string> CandidateAssemblyNames { get; set; } = [];
 
     public int AssemblyCount { get; set; }
 

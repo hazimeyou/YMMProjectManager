@@ -107,6 +107,8 @@
                                 <TextBlock Text="{Binding PureTimelineActiveScene}" Margin="0,0,12,0" />
                                 <TextBlock Text="タイムライン:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineActiveTimeline}" />
+                                <TextBlock Text="実行環境:" Margin="12,0,4,0" />
+                                <TextBlock Text="{Binding RuntimeEnvironmentText}" />
                             </StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,6,0,0">

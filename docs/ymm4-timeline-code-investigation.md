@@ -93,3 +93,9 @@ Proceed only when:
 - Added immediate dispose verification (`IDisposable` / `IAsyncDisposable` / reflection `Dispose`).
 - Kept `TimelineView` generation intentionally disabled in this phase.
 - Failure path remains non-fatal and fallback-safe.
+
+## preview16 Runtime Probe Notes
+
+- Added runtime classification to reflection probe results.
+- Added process and assembly-group metadata for investigation.
+- Added manual probe buttons in experimental host to run diagnostics in YMM4 runtime.

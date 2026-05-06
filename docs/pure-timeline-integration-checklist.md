@@ -21,3 +21,5 @@
 - Generation attempt uses isolated host only; no ProjectDiffWindow formal embed
 - Immediate dispose verification result is recorded per attempt
 - Generation failure must not break DiffTL standalone fallback
+- RuntimeKind should be visible in host diagnostics (`Benchmark` / `YMM4Plugin` / `Standalone` / `Unknown`)
+- Probe/binding diagnostics filenames should include runtime kind

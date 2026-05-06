@@ -7,6 +7,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     private readonly YmmTimelineReflectionProbe probe = new();
     private readonly YmmTimelineConstructorBinder constructorBinder = new();
     private readonly YmmTimelineViewModelGenerationAttempt generationAttempt = new();
+    private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
     private readonly Stopwatch initializeStopwatch = new();
     private readonly Stopwatch disposeStopwatch = new();
     private readonly ObservableCollection<YmmTimelineReflectionLog> logs = [];
@@ -16,6 +17,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     private readonly ObservableCollection<string> readinessWarnings = [];
     private readonly ObservableCollection<string> missingDependencies = [];
     private readonly ObservableCollection<string> foundAssemblies = [];
+    private readonly ObservableCollection<string> ymmRelatedAssemblies = [];
+    private readonly ObservableCollection<string> candidateAssemblies = [];
     private string status = "Not initialized";
     private string summary = string.Empty;
     private bool disposed;
@@ -27,6 +30,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public ReadOnlyObservableCollection<string> ReadinessWarnings { get; }
     public ReadOnlyObservableCollection<string> MissingDependencies { get; }
     public ReadOnlyObservableCollection<string> FoundAssemblies { get; }
+    public ReadOnlyObservableCollection<string> YmmRelatedAssemblies { get; }
+    public ReadOnlyObservableCollection<string> CandidateAssemblies { get; }
 
     public string Status
     {
@@ -59,6 +64,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public string TimelineViewType => ReflectionResult?.TimelineViewTypeName ?? "(not found)";
     public string TimelineViewModelType => ReflectionResult?.TimelineViewModelTypeName ?? "(not found)";
     public string SetTimelineToolInfoOwnerType => ReflectionResult?.SetTimelineToolInfoOwnerTypeName ?? "(not found)";
+    public string RuntimeKindText => ReflectionResult?.RuntimeKind.ToString() ?? runtimeEnvironmentDetector.Detect().ToString();
+    public string RuntimeProcessName => ReflectionResult?.ProcessName ?? runtimeEnvironmentDetector.GetProcessName();
     public int ReadinessScore => GenerationReadiness?.Score ?? 0;
     public bool CanAttemptViewModelGeneration => GenerationReadiness?.CanAttemptViewModelGeneration ?? false;
     public bool CanAttemptViewGeneration => GenerationReadiness?.CanAttemptViewGeneration ?? false;
@@ -98,11 +105,15 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             ReplaceCollection(constructorSignatures, result.ConstructorSignatures);
             ReplaceCollection(missingDependencies, result.MissingDependencies);
             ReplaceCollection(foundAssemblies, result.FoundAssemblies);
+            ReplaceCollection(ymmRelatedAssemblies, result.YmmRelatedAssemblyNames);
+            ReplaceCollection(candidateAssemblies, result.CandidateAssemblyNames);
             OnPropertyChanged(nameof(ReflectionResult));
             OnPropertyChanged(nameof(ReflectionSummary));
             OnPropertyChanged(nameof(TimelineViewType));
             OnPropertyChanged(nameof(TimelineViewModelType));
             OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
+            OnPropertyChanged(nameof(RuntimeKindText));
+            OnPropertyChanged(nameof(RuntimeProcessName));
 
             var bindingStopwatch = Stopwatch.StartNew();
             var timelineViewType = ResolveType(result.TimelineViewTypeName);
@@ -179,6 +190,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
 
             Status = "Unavailable";
             Summary = $"Readiness: {GenerationReadiness.Score} / {string.Join(" ; ", GenerationReadiness.BlockingReasons.DefaultIfEmpty("Required dependencies are missing."))}";
+            if (result.RuntimeKind == RuntimeEnvironmentKind.Benchmark)
+            {
+                Summary += " / Benchmark環境ではYMM Timeline型は通常見つかりません。";
+            }
             return false;
         }
         catch (Exception ex)
@@ -212,6 +227,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             var output = new
             {
                 timestamp = DateTimeOffset.Now,
+                runtimeKind = result.RuntimeKind.ToString(),
+                processName = result.ProcessName,
+                loadedAssemblyCount = result.AssemblyCount,
+                ymmAssemblyNames = result.YmmRelatedAssemblyNames,
                 reflection = result,
                 timelineViewConstructorBindings = viewBindings,
                 timelineViewModelConstructorBindings = viewModelBindings,
@@ -219,8 +238,12 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
             };
             var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
-            var path = Path.Combine(dir, $"timeline-binding-{DateTime.Now:yyyyMMdd-HHmmss}.json");
-            File.WriteAllText(path, json, Encoding.UTF8);
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+            var runtime = result.RuntimeKind.ToString();
+            var bindingPath = Path.Combine(dir, $"timeline-binding-{runtime}-{stamp}.json");
+            var probePath = Path.Combine(dir, $"timeline-probe-{runtime}-{stamp}.json");
+            File.WriteAllText(bindingPath, json, Encoding.UTF8);
+            File.WriteAllText(probePath, json, Encoding.UTF8);
         }
         catch
         {
@@ -243,6 +266,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             var output = new
             {
                 timestamp = DateTimeOffset.Now,
+                runtimeKind = result.RuntimeKind.ToString(),
+                processName = result.ProcessName,
+                loadedAssemblyCount = result.AssemblyCount,
+                ymmAssemblyNames = result.YmmRelatedAssemblyNames,
                 reflection = result,
                 timelineViewConstructorBindings = viewBindings,
                 timelineViewModelConstructorBindings = viewModelBindings,
@@ -251,7 +278,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
             };
             var json = JsonSerializer.Serialize(output, new JsonSerializerOptions { WriteIndented = true });
-            var path = Path.Combine(dir, $"timeline-generation-attempt-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            var path = Path.Combine(dir, $"timeline-generation-attempt-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(path, json, Encoding.UTF8);
         }
         catch
@@ -282,6 +309,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             readinessWarnings.Clear();
             missingDependencies.Clear();
             foundAssemblies.Clear();
+            ymmRelatedAssemblies.Clear();
+            candidateAssemblies.Clear();
             Status = "Disposed";
             Summary = "Disposed experimental host view model.";
             OnPropertyChanged(nameof(ReflectionResult));
@@ -289,6 +318,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(TimelineViewType));
             OnPropertyChanged(nameof(TimelineViewModelType));
             OnPropertyChanged(nameof(SetTimelineToolInfoOwnerType));
+            OnPropertyChanged(nameof(RuntimeKindText));
+            OnPropertyChanged(nameof(RuntimeProcessName));
             OnPropertyChanged(nameof(ReadinessScore));
             OnPropertyChanged(nameof(CanAttemptViewModelGeneration));
             OnPropertyChanged(nameof(CanAttemptViewGeneration));
@@ -321,6 +352,19 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         ReadinessWarnings = new ReadOnlyObservableCollection<string>(readinessWarnings);
         MissingDependencies = new ReadOnlyObservableCollection<string>(missingDependencies);
         FoundAssemblies = new ReadOnlyObservableCollection<string>(foundAssemblies);
+        YmmRelatedAssemblies = new ReadOnlyObservableCollection<string>(ymmRelatedAssemblies);
+        CandidateAssemblies = new ReadOnlyObservableCollection<string>(candidateAssemblies);
+    }
+
+    public void RedetectRuntime()
+    {
+        OnPropertyChanged(nameof(RuntimeKindText));
+        OnPropertyChanged(nameof(RuntimeProcessName));
+        logs.Add(new YmmTimelineReflectionLog
+        {
+            Category = "Runtime",
+            Message = $"Runtime redetected: {runtimeEnvironmentDetector.Detect()}, process={runtimeEnvironmentDetector.GetProcessName()}",
+        });
     }
 
     private static void ReplaceCollection(ObservableCollection<string> target, IEnumerable<string> source)

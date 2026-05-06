@@ -38,3 +38,9 @@ Track at minimum:
 - Even when generation gate passes, failure of generation or dispose must not close Diff window.
 - Generation attempt failure keeps adapter unavailable and allows fallback/standalone continuity.
 - `TimelineView` remains ungenerated in preview15 to reduce integration risk.
+
+## preview16 Runtime-aware Fallback
+
+- Runtime detection is informational; it must not break fallback behavior.
+- Benchmark runtime type-missing outcomes are treated as non-fatal expected results.
+- YMM4 plugin runtime probe failures remain non-fatal and keep DiffTL usable.

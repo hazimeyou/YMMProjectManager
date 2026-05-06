@@ -52,3 +52,8 @@ Outputs:
 ## License
 
 MIT License
+
+- Runtime environment detection (preview16)
+- YMM4 plugin runtime reflection probe actions (preview16)
+- Diagnostics output with runtime kind (preview16)
+

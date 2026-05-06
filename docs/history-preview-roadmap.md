@@ -75,3 +75,15 @@
 - Optional isolated `TimelineView` generation attempt (still no formal embed)
 - Broader constructor value resolver experiments (still runtime-safe)
 - Repeated generation/dispose stress diagnostics
+
+### preview16
+
+- RuntimeEnvironmentDetector added (`Benchmark` / `YMM4Plugin` / `Standalone` / `Unknown`)
+- Manual probe actions added to experimental host UI
+- Diagnostics filenames now include runtime kind
+- Runtime metadata included in diagnostics JSON
+
+## preview17 Candidates
+
+- Validate probe results from real YMM4 plugin runtime session
+- Evaluate guarded next-step for ViewModel generation only in YMM4 runtime

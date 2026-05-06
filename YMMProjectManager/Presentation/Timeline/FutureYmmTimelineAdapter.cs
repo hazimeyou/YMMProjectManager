@@ -4,6 +4,7 @@ namespace YMMProjectManager.Presentation.Timeline;
 public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
 {
     private readonly PureTimelineExperimentalOptions options;
+    private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
     private ExperimentalYmmTimelineHostViewModel? experimentalHostViewModel;
     private ExperimentalYmmTimelineHostWindow? experimentalHostWindow;
     private bool disposed;
@@ -43,8 +44,9 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
         {
             Status = PureTimelineStatus.Unavailable;
             IsAvailable = false;
+            var runtime = runtimeEnvironmentDetector.Detect();
             return Task.FromResult(
-                PureTimelineAdapterResult.Fail("Experimental YMM host is disabled by default (preview15)."));
+                PureTimelineAdapterResult.Fail($"Runtime: {runtime}. Experimental YMM host is disabled by default (preview16)."));
         }
 
         var sw = Stopwatch.StartNew();
@@ -57,8 +59,9 @@ public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
                 Status = PureTimelineStatus.Unavailable;
                 IsAvailable = false;
                 PureTimelineDiagnostics.IncrementExperimentalYmmHostFailureCount();
+                var runtime = runtimeEnvironmentDetector.Detect();
                 return Task.FromResult(PureTimelineAdapterResult.Fail(
-                    $"Experimental host dry-run failed: {experimentalHostViewModel.Summary}"));
+                    $"Runtime: {runtime}. Experimental host dry-run failed: {experimentalHostViewModel.Summary}"));
             }
 
             if (options.OpenIsolatedHostWindow && System.Windows.Application.Current is not null)

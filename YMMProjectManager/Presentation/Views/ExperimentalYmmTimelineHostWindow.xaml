@@ -31,12 +31,21 @@
             <TextBlock Text="{Binding CanAttemptViewGeneration}" />
         </StackPanel>
 
+        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="実行環境を再判定" Width="140" Margin="0,0,6,0" Click="OnRedetectRuntimeClick" />
+            <Button Content="Reflection Probe 実行" Width="150" Margin="0,0,6,0" Click="OnRunProbeClick" />
+            <Button Content="Binding Dry-run 実行" Width="150" Click="OnRunBindingDryRunClick" />
+        </StackPanel>
+
         <StackPanel Grid.Row="1" Margin="0,0,0,8">
             <TextBlock Text="Experimental generation attempt is disabled by default." FontWeight="SemiBold" />
+            <TextBlock Text="{Binding RuntimeKindText, StringFormat=実行環境: {0}}" />
+            <TextBlock Text="{Binding RuntimeProcessName, StringFormat=プロセス: {0}}" />
             <TextBlock Text="{Binding ReflectionSummary}" FontWeight="SemiBold" />
             <TextBlock Text="{Binding TimelineViewType, StringFormat=TimelineView: {0}}" />
             <TextBlock Text="{Binding TimelineViewModelType, StringFormat=TimelineViewModel: {0}}" />
             <TextBlock Text="{Binding SetTimelineToolInfoOwnerType, StringFormat=SetTimelineToolInfo Owner: {0}}" />
+            <TextBlock Text="これは実験的な診断です。TimelineView / TimelineViewModel の型探索のみを行います。既定では生成は行いません。失敗してもDiffTimelineは継続利用できます。" TextWrapping="Wrap" />
         </StackPanel>
 
         <Grid Grid.Row="2">
@@ -59,17 +68,21 @@
 
         <Grid Grid.Row="3" Margin="0,8,0,0">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="2*" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
             <GroupBox Header="Constructor Binding Results" Margin="0,0,8,0">
                 <ListBox ItemsSource="{Binding ConstructorBindingSummary}" />
             </GroupBox>
-            <GroupBox Grid.Column="1" Header="Blocking Reasons" Margin="0,0,8,0">
+            <GroupBox Grid.Column="1" Header="YMM Related Assemblies" Margin="0,0,8,0">
+                <ListBox ItemsSource="{Binding YmmRelatedAssemblies}" />
+            </GroupBox>
+            <GroupBox Grid.Column="2" Header="Blocking Reasons" Margin="0,0,8,0">
                 <ListBox ItemsSource="{Binding BlockingReasons}" />
             </GroupBox>
-            <GroupBox Grid.Column="2" Header="Warnings">
+            <GroupBox Grid.Column="3" Header="Warnings">
                 <ListBox ItemsSource="{Binding ReadinessWarnings}" />
             </GroupBox>
         </Grid>

@@ -49,3 +49,10 @@ Define objective criteria for whether preview14 should attempt actual `TimelineV
 - If gate passes, only `TimelineViewModel` generation is attempted in isolated host.
 - `TimelineView` generation is still out-of-scope.
 - Successful generation is followed by immediate dispose verification.
+
+## preview16 Runtime Guidance
+
+- Benchmark runtime does not usually load YMM4 internal assemblies.
+- `RuntimeKind=Benchmark` and missing Timeline types is expected.
+- Run probe inside YMM4 plugin runtime to validate Timeline type visibility.
+- Diagnostics now include runtime metadata and runtime-aware filenames.

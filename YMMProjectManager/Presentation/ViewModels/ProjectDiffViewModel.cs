@@ -8,6 +8,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly JsonNormalizeService normalizeService;
     private readonly JsonDiffService jsonDiffService;
     private readonly YmmProjectDiffService ymmDiffService;
+    private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
     private readonly PureTimelineExperimentalOptions pureTimelineExperimentalOptions = new();
 
     private string title = "差分";
@@ -129,6 +130,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
     public string PureTimelineSyncState => ToSyncStateLabel(TimelineViewModel.SyncState);
     public string PureTimelineMode => ToTimelineModeLabel(TimelineViewModel.Mode);
+    public string RuntimeEnvironmentText => runtimeEnvironmentDetector.Detect().ToString();
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
