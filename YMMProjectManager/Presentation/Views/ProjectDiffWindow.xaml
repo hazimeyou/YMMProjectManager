@@ -133,6 +133,17 @@
                                 <TextBlock Text="{Binding PureTimelineMode}" />
                             </StackPanel>
 
+                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                <TextBlock Text="InitCount:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.InitializeCount}" Margin="0,0,12,0" />
+                                <TextBlock Text="DisposeCount:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.DisposeCount}" Margin="0,0,12,0" />
+                                <TextBlock Text="DisposeFail:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.DisposeFailureCount}" Margin="0,0,12,0" />
+                                <TextBlock Text="ActiveHost:" Margin="0,0,4,0" />
+                                <TextBlock Text="{Binding PureTimelineHost.ActiveHostCount}" />
+                            </StackPanel>
+
                             <TextBlock Text="{Binding PureTimelineSelection, StringFormat=Selected: {0}}" Margin="0,6,0,0" />
                             <TextBlock Text="{Binding PureTimelineHost.LastError, StringFormat=Last Error: {0}}" Margin="0,2,0,0" />
                             <TextBlock Text="{Binding PureTimelineHost.LastAction}" Margin="0,2,0,0" />

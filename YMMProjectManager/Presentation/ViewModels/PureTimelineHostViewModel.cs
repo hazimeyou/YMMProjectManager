@@ -4,6 +4,7 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
 {
+    private readonly PureTimelineExperimentalOptions options;
     private IPureTimelineAdapter adapter;
     private PlaceholderPureTimelineAdapter? fallbackAdapter;
     private PureTimelineAdapterKind adapterKind;
@@ -71,10 +72,16 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         private set => SetProperty(ref lastError, value);
     }
 
-    public PureTimelineHostViewModel(PureTimelineAdapterKind kind)
+    public int InitializeCount => PureTimelineDiagnostics.InitializeCount;
+    public int DisposeCount => PureTimelineDiagnostics.DisposeCount;
+    public int DisposeFailureCount => PureTimelineDiagnostics.DisposeFailureCount;
+    public int ActiveHostCount => PureTimelineDiagnostics.ActiveHostCount;
+
+    public PureTimelineHostViewModel(PureTimelineAdapterKind kind, PureTimelineExperimentalOptions? options = null)
     {
+        this.options = options ?? new PureTimelineExperimentalOptions();
         AdapterKind = kind;
-        adapter = CreateAdapter(kind);
+        adapter = CreateAdapter(kind, this.options);
         UpdateAdapterProperties();
     }
 
@@ -101,6 +108,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         {
             LastError = null;
         }
+        RefreshDiagnostics();
     }
 
     public async Task SetCurrentFrameAsync(int frame)
@@ -122,6 +130,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         LastAction = result.Succeeded
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Set frame failed - {result.Message}";
+        RefreshDiagnostics();
     }
 
     public async Task CenterFrameAsync(int frame)
@@ -143,6 +152,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         LastAction = result.Succeeded
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Center frame failed - {result.Message}";
+        RefreshDiagnostics();
     }
 
     public async Task DisposeAsync()
@@ -159,6 +169,7 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
             ? $"Last Sync: {result.Message}"
             : $"Last Sync: Dispose failed - {result.Message}";
         adapter.Dispose();
+        RefreshDiagnostics();
     }
 
     public void SwitchAdapter(PureTimelineAdapterKind kind)
@@ -174,9 +185,10 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         FallbackActive = false;
         LastError = null;
         AdapterKind = kind;
-        adapter = CreateAdapter(kind);
+        adapter = CreateAdapter(kind, options);
         UpdateAdapterProperties();
         InitializeAsync().GetAwaiter().GetResult();
+        RefreshDiagnostics();
     }
 
     private async Task ActivateFallbackAsync(string reason)
@@ -195,13 +207,14 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         Status = adapter.Status;
         UpdateAdapterProperties();
         LastAction = $"Last Sync: {reason}";
+        RefreshDiagnostics();
     }
 
-    private static IPureTimelineAdapter CreateAdapter(PureTimelineAdapterKind kind)
+    private static IPureTimelineAdapter CreateAdapter(PureTimelineAdapterKind kind, PureTimelineExperimentalOptions options)
     {
         return kind switch
         {
-            PureTimelineAdapterKind.FutureYmmTimeline => new FutureYmmTimelineAdapter(),
+            PureTimelineAdapterKind.FutureYmmTimeline => new FutureYmmTimelineAdapter(options),
             _ => new PlaceholderPureTimelineAdapter(),
         };
     }
@@ -222,5 +235,13 @@ public sealed class PureTimelineHostViewModel : ViewModelBase, IDisposable
         }
 
         DisposeAsync().GetAwaiter().GetResult();
+    }
+
+    private void RefreshDiagnostics()
+    {
+        OnPropertyChanged(nameof(InitializeCount));
+        OnPropertyChanged(nameof(DisposeCount));
+        OnPropertyChanged(nameof(DisposeFailureCount));
+        OnPropertyChanged(nameof(ActiveHostCount));
     }
 }

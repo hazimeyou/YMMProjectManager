@@ -37,12 +37,12 @@ async Task RunPerformanceBenchmarksAsync()
 
     var lines = new List<string>
     {
-        "# YMMProjectManager Benchmark (preview11)",
+        "# YMMProjectManager Benchmark (preview12)",
         "",
         $"Date: {DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss zzz}",
         "",
-        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | futureYmmTimelineInitializeMs | futureYmmTimelineFailureCount | fallbackToPlaceholderCount | matchingMsApprox |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
+        "| scenario | snapshotMs | normalizeMs | jsonDiffMs | ymmDiffMs | projectionMs | visibleFilterMs | zoomRecalcMs | groupingMs | visibleCount | frameCenterMs | nearestDiffSearchMs | frameJumpMs | syncStateChangeCount | pureTimelineInitializeMs | pureTimelineSetFrameMs | pureTimelineCenterFrameMs | pureTimelineFailureCount | futureYmmTimelineInitializeMs | futureYmmTimelineFailureCount | fallbackToPlaceholderCount | experimentalYmmHostInitializeMs | experimentalYmmHostSuccessCount | experimentalYmmHostFailureCount | experimentalYmmHostDisposeMs | experimentalYmmHostDisposeFailureCount | matchingMsApprox |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
     };
 
     foreach (var s in scenarios)
@@ -80,10 +80,11 @@ async Task RunPerformanceBenchmarksAsync()
         var syncMetrics = BenchmarkSyncMetrics(ymmResult);
         var pureTimelineMetrics = await BenchmarkPureTimelineAdapterMetricsAsync();
         var futureMetrics = await BenchmarkFutureYmmAdapterMetricsAsync();
+        var experimentalMetrics = await BenchmarkExperimentalYmmHostMetricsAsync();
 
         var matchingApprox = Math.Max(0, swYmmDiff.ElapsedMilliseconds - swJsonDiff.ElapsedMilliseconds);
 
-        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {futureMetrics.initializeMs} | {futureMetrics.failureCount} | {futureMetrics.fallbackToPlaceholderCount} | {matchingApprox} |");
+        lines.Add($"| {s.Name} | {swSnapshot.ElapsedMilliseconds} | {swNormalize.ElapsedMilliseconds} | {swJsonDiff.ElapsedMilliseconds} | {swYmmDiff.ElapsedMilliseconds} | {timelineMetrics.projectionMs} | {timelineMetrics.filteringMs} | {timelineMetrics.zoomRecalcMs} | {groupingMs} | {timelineMetrics.visibleCount} | {syncMetrics.frameCenterMs} | {syncMetrics.nearestDiffSearchMs} | {syncMetrics.frameJumpMs} | {syncMetrics.syncStateChangeCount} | {pureTimelineMetrics.initializeMs} | {pureTimelineMetrics.setFrameMs} | {pureTimelineMetrics.centerFrameMs} | {pureTimelineMetrics.failureCount} | {futureMetrics.initializeMs} | {futureMetrics.failureCount} | {futureMetrics.fallbackToPlaceholderCount} | {experimentalMetrics.initializeMs} | {experimentalMetrics.successCount} | {experimentalMetrics.failureCount} | {experimentalMetrics.disposeMs} | {experimentalMetrics.disposeFailureCount} | {matchingApprox} |");
     }
 
     await File.WriteAllLinesAsync(logFile, lines, Encoding.UTF8);
@@ -266,6 +267,31 @@ static async Task<(long initializeMs, int failureCount, int fallbackToPlaceholde
 
     await adapter.DisposeAsync();
     return (swInit.ElapsedMilliseconds, failureCount, fallbackToPlaceholderCount);
+}
+
+static async Task<(long initializeMs, int successCount, int failureCount, long disposeMs, int disposeFailureCount)> BenchmarkExperimentalYmmHostMetricsAsync()
+{
+    var options = new PureTimelineExperimentalOptions
+    {
+        EnableExperimentalYmmTimelineHost = true,
+        UseReflection = true,
+        OpenIsolatedHostWindow = false,
+    };
+
+    var adapter = new FutureYmmTimelineAdapter(options);
+    var swInit = Stopwatch.StartNew();
+    var init = await adapter.InitializeAsync(CancellationToken.None);
+    swInit.Stop();
+
+    var successCount = init.Succeeded ? 1 : 0;
+    var failureCount = init.Succeeded ? 0 : 1;
+
+    var swDispose = Stopwatch.StartNew();
+    var dispose = await adapter.DisposeAsync();
+    swDispose.Stop();
+    var disposeFailureCount = dispose.Succeeded ? 0 : 1;
+
+    return (swInit.ElapsedMilliseconds, successCount, failureCount, swDispose.ElapsedMilliseconds, disposeFailureCount);
 }
 
 static string GenerateProjectJson(int itemCount, int timelineCount, bool moved)

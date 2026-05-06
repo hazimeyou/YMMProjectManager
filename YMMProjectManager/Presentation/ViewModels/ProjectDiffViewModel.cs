@@ -14,6 +14,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly JsonNormalizeService normalizeService;
     private readonly JsonDiffService jsonDiffService;
     private readonly YmmProjectDiffService ymmDiffService;
+    private readonly PureTimelineExperimentalOptions pureTimelineExperimentalOptions = new();
 
     private string title = "差分";
     private string matchStatisticsText = string.Empty;
@@ -176,7 +177,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         this.normalizeService = normalizeService;
         this.jsonDiffService = jsonDiffService;
         this.ymmDiffService = ymmDiffService;
-        PureTimelineHost = new PureTimelineHostViewModel(PureTimelineAdapterKind.Placeholder);
+        PureTimelineHost = new PureTimelineHostViewModel(PureTimelineAdapterKind.Placeholder, pureTimelineExperimentalOptions);
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
         ApplySyncModeAndState();
