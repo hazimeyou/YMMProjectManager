@@ -190,6 +190,31 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                     return false;
                 }
             }
+            else if (options.AllowViewModelGenerationAttempt)
+            {
+                GenerationAttemptResult = new YmmTimelineGenerationAttemptResult
+                {
+                    Attempted = false,
+                    Succeeded = false,
+                    TargetTypeName = result.TimelineViewModelTypeName ?? string.Empty,
+                    ConstructorSignature = "(not attempted)",
+                    FailureReason = $"Generation skipped by gate: score={GenerationReadiness.Score}, threshold={options.MinimumReadinessScoreForGeneration}, canAttemptVm={GenerationReadiness.CanAttemptViewModelGeneration}",
+                };
+                OnPropertyChanged(nameof(GenerationAttempted));
+                OnPropertyChanged(nameof(GenerationSucceeded));
+                OnPropertyChanged(nameof(GenerationFailureReason));
+                OnPropertyChanged(nameof(GenerationConstructorSignature));
+                OnPropertyChanged(nameof(GenerationException));
+                OnPropertyChanged(nameof(GenerationStackTrace));
+                OnPropertyChanged(nameof(NullInjectedParameters));
+                OnPropertyChanged(nameof(DisposeAttempted));
+                OnPropertyChanged(nameof(DisposeSucceeded));
+                OnPropertyChanged(nameof(DisposeFailureReason));
+                OnPropertyChanged(nameof(GcVerificationAttempted));
+                OnPropertyChanged(nameof(WeakReferenceAfterGc));
+                OnPropertyChanged(nameof(FinalizationNote));
+                SaveGenerationAttemptDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, GenerationAttemptResult, logs);
+            }
 
             if (GenerationReadiness.Score >= 70 && GenerationReadiness.CanAttemptViewModelGeneration)
             {
