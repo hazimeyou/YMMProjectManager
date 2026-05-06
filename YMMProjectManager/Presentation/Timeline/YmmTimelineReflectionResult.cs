@@ -45,4 +45,10 @@ public sealed class YmmTimelineReflectionResult
     public IReadOnlyList<YmmRuntimeDependencyCandidate> UndoRedoManagerCandidates { get; set; } = [];
 
     public IReadOnlyList<YmmRuntimeDependencyCandidate> AsyncAwaitStatusCandidates { get; set; } = [];
+
+    public YmmRuntimeDependencyDiscoverySummary SceneDiscovery { get; set; } = new();
+
+    public YmmRuntimeDependencyDiscoverySummary UndoRedoManagerDiscovery { get; set; } = new();
+
+    public YmmRuntimeDependencyDiscoverySummary AsyncAwaitStatusDiscovery { get; set; } = new();
 }

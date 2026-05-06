@@ -34,6 +34,8 @@ Current preview capabilities include:
 - Immediate dispose + GC reachability verification diagnostics (preview18)
 - Strict dependency resolution gate for generation attempts (preview19)
 - `Scene / UndoRedoManager / AsyncAwaitStatus` are treated as required YMM runtime dependencies (preview19)
+- Runtime dependency instance discovery diagnostics (preview20)
+- Added owner/property/field/method route candidates and discovery summaries (preview20)
 
 ### Experimental Mode Safety
 

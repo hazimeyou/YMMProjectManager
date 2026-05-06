@@ -154,6 +154,10 @@ public sealed class YmmTimelineReflectionProbe
             Log("Discovery", $"AsyncAwaitStatus instance route: {candidate.OwnerTypeName}.{candidate.MemberName} ({candidate.MemberKind})");
         }
 
+        var sceneDiscovery = BuildDiscoverySummary("Scene", sceneCandidates);
+        var undoDiscovery = BuildDiscoverySummary("UndoRedoManager", undoRedoCandidates);
+        var asyncDiscovery = BuildDiscoverySummary("AsyncAwaitStatus", asyncAwaitCandidates);
+
         Log("Probe", $"Probe completed in {sw.ElapsedMilliseconds} ms");
 
         return new YmmTimelineReflectionResult
@@ -181,6 +185,9 @@ public sealed class YmmTimelineReflectionProbe
             SceneCandidates = sceneCandidates,
             UndoRedoManagerCandidates = undoRedoCandidates,
             AsyncAwaitStatusCandidates = asyncAwaitCandidates,
+            SceneDiscovery = sceneDiscovery,
+            UndoRedoManagerDiscovery = undoDiscovery,
+            AsyncAwaitStatusDiscovery = asyncDiscovery,
         };
     }
 
@@ -237,5 +244,47 @@ public sealed class YmmTimelineReflectionProbe
             constructorInfo.IsPrivate ? "private" : "internal";
         var args = string.Join(", ", constructorInfo.GetParameters().Select(p => $"{p.ParameterType.Name} {p.Name}"));
         return $"{access} .ctor({args})";
+    }
+
+    private static YmmRuntimeDependencyDiscoverySummary BuildDiscoverySummary(
+        string dependencyType,
+        IReadOnlyList<YmmRuntimeDependencyCandidate> candidates)
+    {
+        return new YmmRuntimeDependencyDiscoverySummary
+        {
+            DependencyType = dependencyType,
+            CandidateCount = candidates.Count,
+            Resolved = candidates.Any(x => x.ExistingInstanceFound),
+            ResolutionAttempts = candidates
+                .Where(x => !string.IsNullOrWhiteSpace(x.AccessError))
+                .Select(x => $"{x.OwnerTypeName}.{x.MemberName}: {x.AccessError}")
+                .Distinct(StringComparer.Ordinal)
+                .Take(20)
+                .ToArray(),
+            CandidateOwners = candidates
+                .Select(x => x.OwnerTypeName)
+                .Distinct(StringComparer.Ordinal)
+                .Take(50)
+                .ToArray(),
+            StaticProperties = candidates
+                .Where(x => x.MemberKind == "Property" && x.IsStatic)
+                .Select(x => $"{x.OwnerTypeName}.{x.MemberName}")
+                .Distinct(StringComparer.Ordinal)
+                .Take(50)
+                .ToArray(),
+            InstanceFields = candidates
+                .Where(x => x.MemberKind == "Field" && !x.IsStatic)
+                .Select(x => $"{x.OwnerTypeName}.{x.MemberName}")
+                .Distinct(StringComparer.Ordinal)
+                .Take(50)
+                .ToArray(),
+            ServiceProviders = candidates
+                .Where(x => x.OwnerTypeName.Contains("Service", StringComparison.OrdinalIgnoreCase)
+                    || x.OwnerTypeName.Contains("Provider", StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.OwnerTypeName)
+                .Distinct(StringComparer.Ordinal)
+                .Take(50)
+                .ToArray(),
+        };
     }
 }

@@ -19,4 +19,8 @@ public sealed class YmmRuntimeDependencyCandidate
     public bool ExistingInstanceFound { get; set; }
 
     public string? AccessError { get; set; }
+
+    public string? RoutePath { get; set; }
+
+    public int Depth { get; set; }
 }

@@ -101,3 +101,10 @@
 - Scene / UndoRedoManager / AsyncAwaitStatus are handled as required YMM runtime dependencies
 - Null injection is no longer treated as generation-safe for required YMM runtime dependencies
 - Generation is skipped when required YMM runtime dependencies are unresolved (with diagnostics reason)
+
+### preview20
+
+- Added runtime dependency instance discovery phase diagnostics
+- Added safe Application.Current.Windows / DataContext graph traversal with depth limits
+- Added owner/property/field/method route candidates for Scene, UndoRedoManager, AsyncAwaitStatus
+- Added dependency discovery summaries for feasibility analysis

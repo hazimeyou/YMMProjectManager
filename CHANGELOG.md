@@ -1,5 +1,12 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview20
+
+- Added runtime dependency instance discovery for Scene, UndoRedoManager, and AsyncAwaitStatus
+- Added safe traversal from Application.Current.Windows and DataContext chain (no new/attach/mutation)
+- Added dependency route candidates with owner/member metadata (property/field/method/object path)
+- Added discovery summaries (esolved, candidateOwners, staticProperties, instanceFields, serviceProviders)
+- Kept strict generation gate and fallback-first behavior
 ## v0.2.9-history-preview19
 
 - Added strict dependency resolution gate for isolated generation attempts
@@ -96,6 +103,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 

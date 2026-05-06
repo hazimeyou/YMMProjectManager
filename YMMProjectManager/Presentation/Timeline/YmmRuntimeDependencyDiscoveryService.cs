@@ -38,6 +38,8 @@ public sealed class YmmRuntimeDependencyDiscoveryService
             }
         }
 
+        DiscoverLiveInstanceCandidates(dependencyName, dependencyType, candidates);
+
         return candidates;
     }
 
@@ -146,5 +148,177 @@ public sealed class YmmRuntimeDependencyDiscoveryService
         {
             candidate.AccessError = $"{ex.GetType().Name}: {ex.Message}";
         }
+    }
+
+    private static void DiscoverLiveInstanceCandidates(
+        string dependencyName,
+        Type dependencyType,
+        ICollection<YmmRuntimeDependencyCandidate> candidates)
+    {
+        var app = System.Windows.Application.Current;
+        if (app is null)
+        {
+            return;
+        }
+
+        const int maxDepth = 4;
+        const int maxNodes = 2000;
+        var queue = new Queue<(object Node, string Path, int Depth)>();
+        var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+        foreach (var window in app.Windows.OfType<System.Windows.Window>())
+        {
+            Enqueue(window, $"Window[{window.GetType().FullName}]");
+            if (window.DataContext is not null)
+            {
+                Enqueue(window.DataContext, $"Window[{window.GetType().FullName}].DataContext");
+            }
+        }
+
+        var processed = 0;
+        while (queue.Count > 0 && processed < maxNodes)
+        {
+            var (node, path, depth) = queue.Dequeue();
+            processed++;
+
+            if (dependencyType.IsInstanceOfType(node))
+            {
+                candidates.Add(new YmmRuntimeDependencyCandidate
+                {
+                    DependencyName = dependencyName,
+                    TargetTypeName = dependencyType.FullName ?? dependencyType.Name,
+                    OwnerTypeName = node.GetType().FullName ?? node.GetType().Name,
+                    MemberKind = "Object",
+                    MemberName = "(self)",
+                    IsStatic = false,
+                    CanReadExistingInstance = true,
+                    ExistingInstanceFound = true,
+                    RoutePath = path,
+                    Depth = depth,
+                });
+            }
+
+            if (depth >= maxDepth)
+            {
+                continue;
+            }
+
+            var nodeType = node.GetType();
+            foreach (var property in nodeType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                if (property.GetIndexParameters().Length > 0)
+                {
+                    continue;
+                }
+
+                object? value;
+                try
+                {
+                    value = property.GetValue(node);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (value is null)
+                {
+                    continue;
+                }
+
+                if (dependencyType.IsInstanceOfType(value))
+                {
+                    candidates.Add(new YmmRuntimeDependencyCandidate
+                    {
+                        DependencyName = dependencyName,
+                        TargetTypeName = dependencyType.FullName ?? dependencyType.Name,
+                        OwnerTypeName = nodeType.FullName ?? nodeType.Name,
+                        MemberKind = "Property",
+                        MemberName = property.Name,
+                        IsStatic = false,
+                        CanReadExistingInstance = true,
+                        ExistingInstanceFound = true,
+                        RoutePath = $"{path}.{property.Name}",
+                        Depth = depth + 1,
+                    });
+                }
+
+                if (ShouldTraverse(value))
+                {
+                    Enqueue(value, $"{path}.{property.Name}", depth + 1);
+                }
+            }
+
+            foreach (var field in nodeType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+            {
+                object? value;
+                try
+                {
+                    value = field.GetValue(node);
+                }
+                catch
+                {
+                    continue;
+                }
+
+                if (value is null)
+                {
+                    continue;
+                }
+
+                if (dependencyType.IsInstanceOfType(value))
+                {
+                    candidates.Add(new YmmRuntimeDependencyCandidate
+                    {
+                        DependencyName = dependencyName,
+                        TargetTypeName = dependencyType.FullName ?? dependencyType.Name,
+                        OwnerTypeName = nodeType.FullName ?? nodeType.Name,
+                        MemberKind = "Field",
+                        MemberName = field.Name,
+                        IsStatic = false,
+                        CanReadExistingInstance = true,
+                        ExistingInstanceFound = true,
+                        RoutePath = $"{path}.{field.Name}",
+                        Depth = depth + 1,
+                    });
+                }
+
+                if (ShouldTraverse(value))
+                {
+                    Enqueue(value, $"{path}.{field.Name}", depth + 1);
+                }
+            }
+        }
+
+        void Enqueue(object value, string route, int depth = 0)
+        {
+            if (!seen.Add(value))
+            {
+                return;
+            }
+
+            queue.Enqueue((value, route, depth));
+        }
+    }
+
+    private static bool ShouldTraverse(object value)
+    {
+        var type = value.GetType();
+        if (type.IsPrimitive || type.IsEnum)
+        {
+            return false;
+        }
+
+        if (value is string)
+        {
+            return false;
+        }
+
+        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type) && type != typeof(System.Windows.WindowCollection))
+        {
+            return false;
+        }
+
+        return true;
     }
 }
