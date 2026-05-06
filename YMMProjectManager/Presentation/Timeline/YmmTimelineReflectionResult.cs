@@ -39,4 +39,10 @@ public sealed class YmmTimelineReflectionResult
     public long ProbeMs { get; set; }
 
     public bool CanAttemptExperimentalHost { get; set; }
+
+    public IReadOnlyList<YmmRuntimeDependencyCandidate> SceneCandidates { get; set; } = [];
+
+    public IReadOnlyList<YmmRuntimeDependencyCandidate> UndoRedoManagerCandidates { get; set; } = [];
+
+    public IReadOnlyList<YmmRuntimeDependencyCandidate> AsyncAwaitStatusCandidates { get; set; } = [];
 }

@@ -3,6 +3,7 @@ namespace YMMProjectManager.Presentation.Timeline;
 public sealed class YmmTimelineReflectionProbe
 {
     private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
+    private readonly YmmRuntimeDependencyDiscoveryService runtimeDependencyDiscoveryService = new();
 
     public YmmTimelineReflectionResult Probe(ICollection<YmmTimelineReflectionLog>? logs = null)
     {
@@ -68,7 +69,9 @@ public sealed class YmmTimelineReflectionProbe
             Log("Missing", "TimelineViewModel type not found.");
         }
 
-        var undoRedoManagerType = ResolveType(assemblies, "YukkuriMovieMaker.Commons.UndoRedoManager");
+        var sceneType = ResolveType(assemblies, "YukkuriMovieMaker.Project.Scene");
+        var undoRedoManagerType = ResolveType(assemblies, "YukkuriMovieMaker.UndoRedo.UndoRedoManager")
+            ?? ResolveType(assemblies, "YukkuriMovieMaker.Commons.UndoRedoManager");
         if (undoRedoManagerType is not null)
         {
             typeFoundCount++;
@@ -80,7 +83,8 @@ public sealed class YmmTimelineReflectionProbe
             Log("Missing", "UndoRedoManager type not found.");
         }
 
-        var asyncAwaitStatusType = ResolveType(assemblies, "YukkuriMovieMaker.Commons.AsyncAwaitStatus");
+        var asyncAwaitStatusType = ResolveType(assemblies, "YukkuriMovieMaker.Project.AsyncAwaitStatus")
+            ?? ResolveType(assemblies, "YukkuriMovieMaker.Commons.AsyncAwaitStatus");
         if (asyncAwaitStatusType is not null)
         {
             typeFoundCount++;
@@ -120,6 +124,36 @@ public sealed class YmmTimelineReflectionProbe
         }
 
         sw.Stop();
+        var sceneCandidates = runtimeDependencyDiscoveryService.DiscoverCandidates(
+            assemblies,
+            "Scene",
+            sceneType);
+        var undoRedoCandidates = runtimeDependencyDiscoveryService.DiscoverCandidates(
+            assemblies,
+            "UndoRedoManager",
+            undoRedoManagerType);
+        var asyncAwaitCandidates = runtimeDependencyDiscoveryService.DiscoverCandidates(
+            assemblies,
+            "AsyncAwaitStatus",
+            asyncAwaitStatusType);
+
+        Log("Discovery", $"Scene candidates: {sceneCandidates.Count}");
+        Log("Discovery", $"UndoRedoManager candidates: {undoRedoCandidates.Count}");
+        Log("Discovery", $"AsyncAwaitStatus candidates: {asyncAwaitCandidates.Count}");
+
+        foreach (var candidate in sceneCandidates.Where(x => x.ExistingInstanceFound).Take(5))
+        {
+            Log("Discovery", $"Scene instance route: {candidate.OwnerTypeName}.{candidate.MemberName} ({candidate.MemberKind})");
+        }
+        foreach (var candidate in undoRedoCandidates.Where(x => x.ExistingInstanceFound).Take(5))
+        {
+            Log("Discovery", $"UndoRedoManager instance route: {candidate.OwnerTypeName}.{candidate.MemberName} ({candidate.MemberKind})");
+        }
+        foreach (var candidate in asyncAwaitCandidates.Where(x => x.ExistingInstanceFound).Take(5))
+        {
+            Log("Discovery", $"AsyncAwaitStatus instance route: {candidate.OwnerTypeName}.{candidate.MemberName} ({candidate.MemberKind})");
+        }
+
         Log("Probe", $"Probe completed in {sw.ElapsedMilliseconds} ms");
 
         return new YmmTimelineReflectionResult
@@ -144,6 +178,9 @@ public sealed class YmmTimelineReflectionProbe
             TypeFoundCount = typeFoundCount,
             ProbeMs = sw.ElapsedMilliseconds,
             CanAttemptExperimentalHost = canAttemptExperimentalHost,
+            SceneCandidates = sceneCandidates,
+            UndoRedoManagerCandidates = undoRedoCandidates,
+            AsyncAwaitStatusCandidates = asyncAwaitCandidates,
         };
     }
 
