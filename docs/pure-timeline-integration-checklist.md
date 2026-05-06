@@ -1,22 +1,15 @@
-﻿# Pure Timeline Integration Checklist (preview12)
+﻿# Pure Timeline Integration Checklist (preview13)
 
-- TimelineView / TimelineViewModel can be resolved safely
-- Current scene and timeline context can be obtained
-- Scene switch can trigger safe recreate
-- Dispose leaks are prevented
-- `UndoRedoManager` / `AsyncAwaitStatus` can be passed safely
-- YMM4 version drift can be tolerated
-- MIT attribution path is documented for future source import
-- Standalone distribution remains valid
-- PureTL failure does not break DiffTL standalone
-- Adapter boundary (`IPureTimelineAdapter`) exists
-- Placeholder fallback exists
-- Initialize failure keeps `ProjectDiffWindow` alive
-- Dispose failure does not crash app
-- Adapter replacement to `FutureYmmTimelineAdapter` is possible
-- Adapter kind switching (`PureTimelineAdapterKind`) works
-- Future adapter can fail safely by default
-- Fallback activates after future-adapter failure
-- `LastError` and `FallbackActive` are visible in host UI
+- TimelineView type can be resolved
+- TimelineViewModel type can be resolved
+- Constructor signatures can be discovered
+- `UndoRedoManager` type can be resolved
+- `AsyncAwaitStatus` type can be resolved
+- `SetTimelineToolInfo` method owner can be located
+- Reflection probe result is persisted for diagnostics
 - Experimental mode is disabled by default
-- Isolated host path can be executed without formal integration
+- Adapter can enter `ExperimentalReady`
+- Reflection failure does not crash host window
+- Placeholder fallback remains available
+- DiffTL standalone remains usable
+- Dispose path remains safe under repeated init/dispose

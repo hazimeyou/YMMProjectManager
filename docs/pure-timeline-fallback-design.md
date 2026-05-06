@@ -1,47 +1,34 @@
-﻿# Pure Timeline Fallback Design (preview12)
+﻿# Pure Timeline Fallback Design (preview13)
 
 ## Goal
 
-Even if Pure Timeline integration fails, DiffTimeline (DiffTL) must remain usable in standalone mode.
+Keep DiffTimeline usable even when pure timeline probing/initialization fails.
 
-## Must Not Break
+## Mandatory Behavior
 
-- `ProjectDiffWindow` stays open
-- DiffTL rendering and selection continue
-- CurrentFrame line remains available
-- List/Timeline tab usage continues
+- `ProjectDiffWindow` does not close on probe failure
+- DiffTL standalone continues to work
+- Error is surfaced in host status (`LastError`)
+- Placeholder fallback can be activated
 
-## Failure Policy
+## Reflection Failure Policy
 
-- `InitializeAsync` failure:
-  - keep window alive
-  - store reason in `LastError`
-  - switch to placeholder fallback
-- `SetCurrentFrameAsync` / `CenterFrameAsync` failure:
-  - isolate error in pure timeline side
-  - keep DiffTL navigation active
-- `DisposeAsync` failure:
-  - never crash app
-  - increment dispose-failure diagnostics
+- Missing type/member is treated as normal failure
+- Status may remain `Unavailable` (not fatal)
+- Exceptions are captured and logged
 
-## preview12 Additions
+## ExperimentalReady Policy
 
-- Added isolated experimental host probe:
-  - `ExperimentalYmmTimelineHostWindow`
-  - `ExperimentalYmmTimelineHostViewModel`
-- Added guarded future adapter options:
-  - `EnableExperimentalYmmTimelineHost` (default false)
-  - `UseReflection`
-  - `OpenIsolatedHostWindow`
-- Added diagnostics counters:
-  - initialize count
-  - dispose count
-  - dispose failure count
-  - active host count
-  - experimental host success/failure count
+- Enter `ExperimentalReady` only when probe prerequisites are satisfied
+- `ExperimentalReady` does not imply formal integration
+- Actual generation remains out-of-scope in preview13
 
-## Runtime Modes
+## Diagnostics
 
-- `Placeholder`: safe default
-- `FutureYmmTimeline` disabled path: intentional fail + fallback
-- `FutureYmmTimeline` experimental path: isolated probe only (no formal integration)
+Track at minimum:
+
+- `timelineReflectionProbeMs`
+- `timelineReflectionAssemblyCount`
+- `timelineReflectionTypeFoundCount`
+- `timelineReflectionFailureCount`
+- `experimentalReadyCount`

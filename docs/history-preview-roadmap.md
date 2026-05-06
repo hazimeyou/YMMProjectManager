@@ -2,76 +2,60 @@
 
 ## Positioning
 
-`v0.2.9-history-preview` is an experimental track for architecture validation before formal v0.3.0.
+`v0.2.9-history-preview` is an experimental track before formal `v0.3.0`.
 
-## Priorities
+## Core Priorities
 
 1. Foundation stability
 2. Semantic diff accuracy
-3. Gradual PureTL + DiffTL architecture
+3. PureTL + DiffTL staged architecture
 
-## Timeline Policy
+## Timeline Direction
 
-- PureTL side: reference YMM4-Timeline patterns (SetTimelineToolInfo, scene rebind, dispose)
-- DiffTL side: custom read-only timeline for snapshot diffs
+- PureTL side: investigate and isolate YMM timeline access
+- DiffTL side: keep custom read-only diff timeline
 
-## Investigation Summary
+## Preview Progress
 
-Reusable ideas:
-
-- `SetTimelineToolInfo` entry contract
-- `TimelineViewModel(scene, UndoRedoManager, AsyncAwaitStatus)` creation flow
-- recreate-before-rebind with explicit dispose
-
-Not reused directly:
-
-- direct plugin embedding model
-- direct compile-time dependency for DiffTL
-
-## Release Plan
-
-### v0.3.x
-
-- Stabilize history/diff core and measurements
-- Keep UI changes incremental
-
-### v0.4.0
-
-- Evaluate full `PureTL + DiffTL + Detail` composition
-- Keep restore/branch/merge out of scope
-
-## Preview8 Additions
+### preview8
 
 - Pure timeline investigation docs
-- Timeline sync design doc
+- Timeline sync design
 - One-way frame sync PoC
 
-## Preview9 Additions
+### preview9
 
 - CurrentFrame navigation
 - SyncState/TimelineMode switching
-- Pure timeline integration checklist
 
-## Preview10 Additions
+### preview10
 
 - Adapter boundary (`IPureTimelineAdapter`)
 - Placeholder host model
-- Fallback design doc
+- Fallback design
 
-## Preview11 Additions
+### preview11
 
-- `FutureYmmTimelineAdapter` scaffold
-- Adapter kind switching base
-- Future-failure fallback verification
+- Future adapter scaffold
+- Adapter-kind switching base
+- Failure-to-fallback verification
 
-## Preview12 Additions
+### preview12
 
-- Experimental isolated host PoC for TimelineView probing
-- Guarded future adapter initialization (default disabled)
-- Dispose safety diagnostics and active host counters
-- Criteria documentation for go/no-go full integration
+- Isolated experimental host window
+- Guarded initialize path (default disabled)
+- Dispose safety diagnostics
 
-## Preview13 Candidates
+### preview13
 
-- Optional runtime bridge for one-way frame sync from PureTL probe
-- Reinitialize test harness for repeated scene switch simulation
+- Reflection-based timeline access probe
+- Structured probe result model
+- `ExperimentalReady` state transition
+- Reflection diagnostics output (`logs/diagnostics`)
+- Generation criteria doc for preview14 decision
+
+## preview14 Candidates
+
+- Optional actual TimelineView generation attempt (still isolated)
+- Runtime object wiring experiment (`scene`, `UndoRedoManager`, `AsyncAwaitStatus`)
+- Repeated initialize/dispose stress checks

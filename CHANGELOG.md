@@ -1,5 +1,17 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview13
+
+- Added reflection-based timeline probe:
+  - `YmmTimelineReflectionProbe`
+  - `YmmTimelineReflectionResult`
+  - `YmmTimelineReflectionLog`
+- Added `ExperimentalReady` state to `PureTimelineStatus`
+- Future adapter now transitions to `ExperimentalReady` when probe prerequisites are satisfied
+- Experimental host window now displays structured probe output (assemblies/types/constructors/missing dependencies)
+- Added reflection diagnostics metrics and JSON output (`logs/diagnostics`)
+- Added generation criteria doc for preview14 decision
+
 ## v0.2.9-history-preview12
 
 - Added `ExperimentalYmmTimelineHostWindow` and `ExperimentalYmmTimelineHostViewModel`
@@ -7,42 +19,28 @@
 - Added guarded experimental initialize path in `FutureYmmTimelineAdapter`
 - Added dispose-safety diagnostics (`initialize/dispose/active host/failure counts`)
 - Added benchmark metrics for experimental host initialize/dispose
-- Updated timeline investigation and integration decision docs
 
 ## v0.2.9-history-preview11
 
-- Added `FutureYmmTimelineAdapter` experimental scaffold
+- Added `FutureYmmTimelineAdapter` scaffold
 - Added `PureTimelineAdapterKind` and adapter-kind switching base
 - Added fallback verification path (future adapter failure to placeholder)
-- Added host UI status details (`AdapterKind`, `Fallback`, `LastError`)
-- Expanded YMM4-Timeline code investigation docs
-- Added third-party MIT usage notes
 
 ## v0.2.9-history-preview10
 
-- Added Pure Timeline adapter boundary (`IPureTimelineAdapter`)
+- Added pure timeline adapter boundary (`IPureTimelineAdapter`)
 - Added `PureTimelineHostViewModel` and `PlaceholderPureTimelineAdapter`
-- Added fallback-safe host behavior for Pure Timeline failures
-- Added Pure Timeline fallback design doc
-- Added YMM4-Timeline code investigation plan doc
 
 ## v0.2.9-history-preview9
 
 - Timeline sync UX improvements
-- CurrentFrame navigation (go/center/nearest)
-- Frame jump operations (first/last/prev-from-frame/next-from-frame)
-- SyncState and TimelineMode UI switching
-- Pure Timeline integration checklist added
-- Benchmark diagnostics for sync operations
+- CurrentFrame navigation and frame-based jumps
 
 ## v0.2.9-history-preview8
 
-- Pure Timeline investigation docs added
-- ProjectDiffWindow pure timeline placeholder panel added
-- Timeline sync PoC (one-way frame sync)
-- DiffTimeline sync-ready architecture update
+- Pure timeline investigation docs
+- Timeline sync PoC
 
 ## v0.2.9-history-preview7
 
-- Timeline UX improvements (zoom, ruler, grouping)
-- Visible range filtering and benchmark expansion
+- Timeline UX improvements (zoom/ruler/grouping)

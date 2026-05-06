@@ -1,67 +1,61 @@
-﻿# YMM4-Timeline Code Investigation (preview12)
+﻿# YMM4-Timeline Code Investigation (preview13)
 
 Target repository: [routersys/YMM4-Timeline](https://github.com/routersys/YMM4-Timeline)
 Checked date: 2026-05-06 (JST)
 
-## Confirmed Classes and Flow
+## Confirmed Code Flow (from YMM4-Timeline)
 
-- Plugin entry: `Timeline/TimelineToolPlugin.cs`
-  - Implements `IToolPlugin`
-  - Publishes `ViewModelType` and `ViewType`
-- View host: `Timeline/TimelineToolView.xaml`
-  - Hosts `YukkuriMovieMaker.Views.TimelineView`
-- ViewModel bridge: `Timeline/TimelineToolViewModel.cs`
-  - Implements `IToolViewModel`, `ITimelineToolViewModel`, `IDisposable`
-
-## Timeline Creation Path
-
+- Entry plugin: `TimelineToolPlugin : IToolPlugin`
+- View host: `TimelineToolView` with `YukkuriMovieMaker.Views.TimelineView`
+- VM bridge: `TimelineToolViewModel : IToolViewModel, ITimelineToolViewModel, IDisposable`
 - Entry method: `SetTimelineToolInfo(TimelineToolInfo info)`
-- Scene resolution:
-  - `info.Scenes.AllScenes.FirstOrDefault(s => s.Timeline == info.Timeline)`
-- ViewModel creation:
+- VM create pattern:
   - `new TimelineViewModel(scene, info.UndoRedoManager, info.AsyncAwaitStatus)`
 
-## Scene Switch / Dispose Handling
+## Reflection Probe Added in preview13
 
-- Recreate path calls `DisposeTimelineViewModel()` before rebuilding
-- `Timeline` property changed event is unsubscribed on dispose
-- `TimelineViewModel.Dispose()` is called explicitly
+Added:
 
-## Multi-Panel Behavior
+- `YmmTimelineReflectionProbe`
+- `YmmTimelineReflectionResult`
+- `YmmTimelineReflectionLog`
 
-- `AllowMultipleInstances => true`
-- Uses panel id tracking (`usedIds`)
-- Creates additional tool views via `CreateNewToolViewRequested`
+Probe responsibilities:
 
-## Dependency Findings
+- Enumerate loaded assemblies
+- Search target types (`TimelineView`, `TimelineViewModel`, `UndoRedoManager`, `AsyncAwaitStatus`)
+- Enumerate `TimelineViewModel` constructors (public/non-public)
+- Search method owner for `SetTimelineToolInfo`
+- Produce structured readiness result
 
-`Timeline.csproj` references many YMM4 runtime assemblies:
+## Result Interpretation
 
-- `YukkuriMovieMaker.dll`
-- `YukkuriMovieMaker.Controls.dll`
-- `YukkuriMovieMaker.Plugin.dll`
-- `AvalonDock`, `NAudio`, `Vortice.*`, `SharpGen.*` and others
+- `CanAttemptExperimentalHost = true`
+  - type-level prerequisites are present
+  - constructor candidates found
+  - adapter can transition to `ExperimentalReady`
+- `CanAttemptExperimentalHost = false`
+  - treated as normal failure
+  - fallback path remains active
 
-This confirms strong version-coupling risk for direct embed.
+## Access Modifier / Dependency Notes
 
-## preview12 PoC Result (Isolated Host)
+- Constructor discovery includes non-public constructors for risk visibility
+- Internal/private-only runtime requirements are considered a stop signal for formal integration
+- Strong YMM4 runtime coupling remains the primary risk
 
-- Reflection-based probing added in `ExperimentalYmmTimelineHostViewModel`
-- TimelineView type resolution and instance creation can be attempted in isolation
-- TimelineViewModel constructor signatures are enumerated for dependency mapping
-- The adapter remains guarded by default:
-  - `EnableExperimentalYmmTimelineHost = false`
+## Go / No-Go for Generation Step
 
-## Integration Judgment
+Proceed to generation trial only when:
 
-Proceed only when:
-
-- Required runtime objects (`scene`, `UndoRedoManager`, `AsyncAwaitStatus`) are resolvable safely
-- Dispose/reinitialize path is repeatable without leaks
-- Failure path keeps DiffTL standalone and window alive
+- `TimelineView` type found
+- `TimelineViewModel` type found
+- constructor candidates exist
+- required dependency types are available
+- dispose path is observable
 
 Do not proceed when:
 
-- Any hard crash occurs on initialize/dispose
-- Runtime type binding depends on unstable private internals
-- Optional adapter boundary cannot absorb YMM version drift
+- probe cannot resolve key runtime types
+- dependency chain requires unstable private internals
+- fallback safety cannot be preserved
