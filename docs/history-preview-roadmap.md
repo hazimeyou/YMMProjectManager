@@ -2,90 +2,76 @@
 
 ## Positioning
 
-`v0.2.9-history-preview` は正式仕様ではなく、設計検証のための preview 系列です。
+`v0.2.9-history-preview` is an experimental track for architecture validation before formal v0.3.0.
 
 ## Priorities
 
-1. 基盤安定化（最優先）
-2. YMM意味差分の精度向上
-3. 純正TL + DiffTL 構成の段階導入
+1. Foundation stability
+2. Semantic diff accuracy
+3. Gradual PureTL + DiffTL architecture
 
 ## Timeline Policy
 
-- 純正TL側: YMM4-Timeline の設計（SetTimelineToolInfo, Dispose, scene切替処理）を参考に再実装
-- DiffTL側: Snapshot差分専用の自作読み取り専用Timeline
+- PureTL side: reference YMM4-Timeline patterns (SetTimelineToolInfo, scene rebind, dispose)
+- DiffTL side: custom read-only timeline for snapshot diffs
 
-preview7 で追加したUX:
+## Investigation Summary
 
-- Zoom / Scale UI
-- Timeline ruler/header
-- 実験的 grouping
-- 選択同期とナビゲーション強化
+Reusable ideas:
 
-## YMM4-Timeline Investigation Status
+- `SetTimelineToolInfo` entry contract
+- `TimelineViewModel(scene, UndoRedoManager, AsyncAwaitStatus)` creation flow
+- recreate-before-rebind with explicit dispose
 
-使える部分:
+Not reused directly:
 
-- `SetTimelineToolInfo` による scene 解決パターン
-- `TimelineViewModel(scene, UndoRedoManager, AsyncAwaitStatus)` の生成フロー
-- scene切替時の `Dispose + PropertyChanged解除`
-
-使わない部分:
-
-- そのままの plugin 依存構成
-- DiffTimeline への直接流用
-
-依存リスク:
-
-- YMM4 本体DLL依存が多く、直接参照は更新耐性を下げる
-- YMM4 バージョン差異で破綻しやすい
-
-YMMProjectManager 方針:
-
-- `YMM4-Timeline ≠ DiffTimeline`
-- DiffTimeline は自作継続
-- 純正TL連携は将来 optional に段階導入
+- direct plugin embedding model
+- direct compile-time dependency for DiffTL
 
 ## Release Plan
 
 ### v0.3.x
 
-- 基盤安定化と計測
-- 差分モデル改善
-- UIは必要最小限の改善に留める
+- Stabilize history/diff core and measurements
+- Keep UI changes incremental
 
 ### v0.4.0
 
-- `純正TL + DiffTL + DiffDetailPanel` 構成の本格導入
-- DiffTLの可視化強化
-- restore / branch / merge は対象外のまま
-
+- Evaluate full `PureTL + DiffTL + Detail` composition
+- Keep restore/branch/merge out of scope
 
 ## Preview8 Additions
 
-- Pure Timeline investigation doc: docs/pure-timeline-investigation.md`n- Timeline sync design doc: docs/timeline-sync-design.md`n- One-way frame sync PoC added via placeholder panel.
-
-
+- Pure timeline investigation docs
+- Timeline sync design doc
+- One-way frame sync PoC
 
 ## Preview9 Additions
 
-- CurrentFrame navigation commands and frame-based diff jump
-- SyncState/TimelineMode manual UI switching
-- Pure timeline integration checklist (docs/pure-timeline-integration-checklist.md)
+- CurrentFrame navigation
+- SyncState/TimelineMode switching
+- Pure timeline integration checklist
 
 ## Preview10 Additions
 
-- Pure Timeline integration boundary (`IPureTimelineAdapter`)
-- Placeholder host model (`PureTimelineHostViewModel`)
-- DiffTL standalone fallback design doc
-- YMM4-Timeline code-level investigation plan
-- preview11候補: FutureYmmTimelineAdapter PoC / adapter diagnostics強化
+- Adapter boundary (`IPureTimelineAdapter`)
+- Placeholder host model
+- Fallback design doc
 
 ## Preview11 Additions
 
-- `FutureYmmTimelineAdapter` investigation scaffold
-- Adapter kind switching base (`Placeholder` / `FutureYmmTimeline`)
-- Future adapter failure fallback verification
-- YMM4-Timeline code investigation update with concrete class flow
-- preview12候補: optional runtime binding PoC + partial one-way frame sync bridge
+- `FutureYmmTimelineAdapter` scaffold
+- Adapter kind switching base
+- Future-failure fallback verification
 
+## Preview12 Additions
+
+- Experimental isolated host PoC for TimelineView probing
+- Guarded future adapter initialization (default disabled)
+- Dispose safety diagnostics and active host counters
+- Criteria documentation for go/no-go full integration
+
+## Preview13 Candidates
+
+- Optional runtime bridge for one-way frame sync from PureTL probe
+- Reinitialize test harness for repeated scene switch simulation

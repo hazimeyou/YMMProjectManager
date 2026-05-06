@@ -1,20 +1,22 @@
-# Pure Timeline Integration Checklist (preview11)
+﻿# Pure Timeline Integration Checklist (preview12)
 
-- TimelineView / TimelineViewModel を安全に生成できるか
-- YMM本体の現在シーンを取得できるか
-- Scene切替を検出できるか
-- Dispose漏れを防げるか
-- UndoRedoManager / AsyncAwaitStatus を安全に受け渡せるか
-- YMM4本体のバージョン差に耐えられるか
-- YMM4-Timelineのコードを参考利用する場合のMIT表記が整理されているか
-- YMMProjectManager単体配布を壊さないか
-- PureTLが失敗してもDiffTL単体で動くか
-- Adapter境界（`IPureTimelineAdapter`）があるか
-- Placeholder fallback（`PlaceholderPureTimelineAdapter`）があるか
-- Initialize失敗時に `ProjectDiffWindow` を閉じず継続できるか
-- Dispose失敗時にアプリを落とさないか
-- 将来 `FutureYmmTimelineAdapter` へ差し替え可能か
-- `PureTimelineAdapterKind` で切替できるか
-- `FutureYmmTimelineAdapter` が安全に Fail するか
-- Fail 後に Placeholder fallback が有効化されるか
-- `LastError` / `FallbackActive` が UI で確認できるか
+- TimelineView / TimelineViewModel can be resolved safely
+- Current scene and timeline context can be obtained
+- Scene switch can trigger safe recreate
+- Dispose leaks are prevented
+- `UndoRedoManager` / `AsyncAwaitStatus` can be passed safely
+- YMM4 version drift can be tolerated
+- MIT attribution path is documented for future source import
+- Standalone distribution remains valid
+- PureTL failure does not break DiffTL standalone
+- Adapter boundary (`IPureTimelineAdapter`) exists
+- Placeholder fallback exists
+- Initialize failure keeps `ProjectDiffWindow` alive
+- Dispose failure does not crash app
+- Adapter replacement to `FutureYmmTimelineAdapter` is possible
+- Adapter kind switching (`PureTimelineAdapterKind`) works
+- Future adapter can fail safely by default
+- Fallback activates after future-adapter failure
+- `LastError` and `FallbackActive` are visible in host UI
+- Experimental mode is disabled by default
+- Isolated host path can be executed without formal integration

@@ -1,52 +1,47 @@
-# Pure Timeline Fallback Design (preview11)
+﻿# Pure Timeline Fallback Design (preview12)
 
 ## Goal
 
-Pure Timeline 統合が失敗しても、DiffTimeline（DiffTL）単体運用を維持する。
+Even if Pure Timeline integration fails, DiffTimeline (DiffTL) must remain usable in standalone mode.
 
 ## Must Not Break
 
-- `ProjectDiffWindow` が閉じない
-- DiffTL の表示・選択・ナビゲーションが継続する
-- CurrentFrame line が表示継続する
-- List View / Timeline View の切替が継続する
+- `ProjectDiffWindow` stays open
+- DiffTL rendering and selection continue
+- CurrentFrame line remains available
+- List/Timeline tab usage continues
 
-## Adapter Failure Behavior
+## Failure Policy
 
-- `IPureTimelineAdapter.InitializeAsync` 失敗時:
-  - `PureTimelineHost.Status = Error`
-  - `PureTimelineHost.LastAction` に失敗理由を保存
-  - `TimelineSyncState = Detached` へ切り替え
-  - DiffTL は standalone 継続
+- `InitializeAsync` failure:
+  - keep window alive
+  - store reason in `LastError`
+  - switch to placeholder fallback
+- `SetCurrentFrameAsync` / `CenterFrameAsync` failure:
+  - isolate error in pure timeline side
+  - keep DiffTL navigation active
+- `DisposeAsync` failure:
+  - never crash app
+  - increment dispose-failure diagnostics
 
-- `SetCurrentFrameAsync` / `CenterFrameAsync` 失敗時:
-  - Pure Timeline 側のみ Error 状態化
-  - DiffTL ナビゲーションは継続
+## preview12 Additions
 
-- `DisposeAsync` 失敗時:
-  - 例外でアプリを落とさない
-  - Error 状態を表示して終了処理を継続
+- Added isolated experimental host probe:
+  - `ExperimentalYmmTimelineHostWindow`
+  - `ExperimentalYmmTimelineHostViewModel`
+- Added guarded future adapter options:
+  - `EnableExperimentalYmmTimelineHost` (default false)
+  - `UseReflection`
+  - `OpenIsolatedHostWindow`
+- Added diagnostics counters:
+  - initialize count
+  - dispose count
+  - dispose failure count
+  - active host count
+  - experimental host success/failure count
 
-## Retrieval Failure (Future Adapter)
+## Runtime Modes
 
-- TimelineView 取得失敗時は Error として扱う
-- 再試行可能な設計を維持する（再初期化導線）
-- 失敗中も DiffTL の機能は制限しない
-
-## Fallback Modes
-
-- `Synced`: Pure TL 側が利用可能な前提
-- `Detached`: Pure TL 不可 or 手動切断
-- `Standalone`: DiffTL 単独の安全運転モード
-
-## Preview10 Output
-
-- `IPureTimelineAdapter` 境界を導入
-- `PlaceholderPureTimelineAdapter` を基準実装として使用
-- 本統合未実装でも UI と操作導線を維持
-
-## Preview11 Additions
-
-- `FutureYmmTimelineAdapter` が初期化失敗しても fallback できる構造を追加
-- `PureTimelineAdapterKind` で Adapter を切替可能にした
-- Host UI に `AdapterKind`, `FallbackActive`, `LastError` を表示
+- `Placeholder`: safe default
+- `FutureYmmTimeline` disabled path: intentional fail + fallback
+- `FutureYmmTimeline` experimental path: isolated probe only (no formal integration)

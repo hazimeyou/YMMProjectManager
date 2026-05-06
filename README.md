@@ -46,11 +46,11 @@ YukkuriMovieMaker 用の補助ツールです。
 - Internal Item ID PoC（互換保証なし）
 - Internal ID 精度統計（match by id / fallback / unmatched）
 - DiffTimeline prototype（experimental）
-- DiffTimeline visible-range filtering + navigation（preview6）
-- Zoom / Scale support（preview7）
-- Timeline ruler（preview7）
-- Experimental grouping（preview7）
-- Timeline UX improvements（preview7）
+- DiffTimeline visible-range filtering + navigation
+- Timeline sync UX (CurrentFrame / jump / selection sync)
+- PureTimeline adapter boundary and fallback
+- FutureYmmTimelineAdapter scaffold
+- Experimental YMM TimelineView host PoC（default disabled）
 
 履歴保存先:
 
@@ -72,14 +72,6 @@ YukkuriMovieMaker 用の補助ツールです。
 
 Diff/Snapshot の性能検証と correctness 検証のため `YMMProjectManager.Benchmarks` を追加しています。
 
-preview7 では以下を追加しました。
-
-- DiffTimeline projection time
-- visible item filtering time（Frame/Layer filtering）
-- zoom recalculation time
-- grouping time
-- visible item count
-
 実行:
 
 `dotnet run --project YMMProjectManager.Benchmarks/YMMProjectManager.Benchmarks.csproj`
@@ -89,74 +81,15 @@ preview7 では以下を追加しました。
 - `logs/benchmarks/benchmark-yyyyMMdd-HHmmss.md`
 - `logs/benchmarks/correctness-yyyyMMdd-HHmmss.json`
 
-correctness fixture:
-
-- `same-text-multiple`
-- `same-filepath-multiple`
-- `moved-frame`
-- `moved-layer`
-- `modified-text`
-
----
-
-## 再リンクの使い方
-
-1. プロジェクトを開きます
-2. `開いているPFを再リンク`をクリックして、素材再リンクウインドウを開きます
-3. `ファイル検索`をクリックして、素材の再リンク処理を開始します
-4. 結果を確認して、必要に応じて候補を選択して修正します
-5. `更新内容を保存`をクリックして、プロジェクトを更新します
-6. 自動でタイムライン上の素材リンクが更新され、再リンクされます
-
----
-
-## サムネイル生成
-
-プロジェクトのプレビューからサムネイルを生成します。
-
-- 64点サンプリング
-- 非同期処理
-- UI操作に影響を与えない設計
-
-注意:
-
-- YMM の表示状態に依存します
-- プレビューが更新されない場合は取得できないことがあります
-
 ---
 
 # ライセンス
 
 本ソフトウェアは MIT License のもとで公開されています。
 
+## preview12 Notes
 
-## preview8 Notes
-
-- Pure Timeline investigation を追加
-- Timeline sync design を追加
-- Experimental sync-ready architecture (Pure Timeline Placeholder + DiffTL current frame line) を追加
-
-
-
-## preview9 Notes
-
-- Timeline sync UX improvements
-- CurrentFrame navigation
-- Pure Timeline integration checklist
-
-
-## preview10 Notes
-
-- PureTimeline Adapter boundary (`IPureTimelineAdapter`) を追加
-- Placeholder PureTimelineHost (`PureTimelineHostViewModel`) を追加
-- DiffTL standalone fallback design を追加
-- YMM4-Timeline code-level investigation plan を追加
-
-
-## preview11 Notes
-
-- FutureYmmTimelineAdapter experimental scaffold を追加
-- Adapter kind selection scaffold（Placeholder / FutureYmmTimeline）を追加
-- Adapter fallback verification（Future adapter failure -> Placeholder fallback）
-- YMM4-Timeline code investigation を実測結果で更新
-
+- Experimental YMM TimelineView host PoC
+- Disabled by default (`EnableExperimentalYmmTimelineHost = false`)
+- Isolated host + fallback design
+- Dispose safety diagnostics
