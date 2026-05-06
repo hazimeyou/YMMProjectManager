@@ -144,6 +144,7 @@
                                 <TextBlock Text="{Binding PureTimelineHost.DisposeFailureCount}" Margin="0,0,12,0" />
                                 <TextBlock Text="アクティブホスト:" Margin="0,0,4,0" />
                                 <TextBlock Text="{Binding PureTimelineHost.ActiveHostCount}" />
+                                <Button Content="診断ホストを開く" Width="130" Margin="12,0,0,0" Click="OnOpenExperimentalHostClick" />
                             </StackPanel>
 
                             <TextBlock Text="{Binding PureTimelineSelection, StringFormat=選択中: {0}}" Margin="0,6,0,0" />

@@ -263,6 +263,37 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         }
     }
 
+    public void OpenExperimentalDiagnosticsHost()
+    {
+        try
+        {
+            var vm = new ExperimentalYmmTimelineHostViewModel();
+            var options = new PureTimelineExperimentalOptions
+            {
+                EnableExperimentalYmmTimelineHost = true,
+                UseReflection = true,
+                OpenIsolatedHostWindow = false,
+                AllowViewModelGenerationAttempt = false,
+                MinimumReadinessScoreForGeneration = 80,
+                DisposeImmediatelyAfterGeneration = true,
+            };
+            vm.TryInitialize(options);
+
+            var window = new ExperimentalYmmTimelineHostWindow(vm);
+            var owner = System.Windows.Application.Current?.Windows.OfType<System.Windows.Window>().FirstOrDefault(x => x.IsActive);
+            if (owner is not null && !ReferenceEquals(owner, window))
+            {
+                window.Owner = owner;
+            }
+
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "OpenExperimentalDiagnosticsHost failed");
+        }
+    }
+
     public async Task LoadSnapshotsDiffAsync(string projectPath, string leftSnapshotId, string rightSnapshotId)
     {
         var leftPath = snapshotService.TryGetNormalizedPath(projectPath, leftSnapshotId);

@@ -21,6 +21,7 @@ public partial class ProjectDiffWindow : Window
     private void OnLastDiffClick(object sender, RoutedEventArgs e) => Vm?.JumpToLastDiff();
     private void OnPrevFromFrameClick(object sender, RoutedEventArgs e) => Vm?.JumpToPreviousDiffFromCurrentFrame();
     private void OnNextFromFrameClick(object sender, RoutedEventArgs e) => Vm?.JumpToNextDiffFromCurrentFrame();
+    private void OnOpenExperimentalHostClick(object sender, RoutedEventArgs e) => Vm?.OpenExperimentalDiagnosticsHost();
 
     private void OnClosed(object? sender, EventArgs e)
     {
