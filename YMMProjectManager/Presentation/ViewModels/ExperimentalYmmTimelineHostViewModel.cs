@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -192,7 +192,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             Summary = $"Readiness: {GenerationReadiness.Score} / {string.Join(" ; ", GenerationReadiness.BlockingReasons.DefaultIfEmpty("Required dependencies are missing."))}";
             if (result.RuntimeKind == RuntimeEnvironmentKind.Benchmark)
             {
-                Summary += " / Benchmark環境ではYMM Timeline型は通常見つかりません。";
+                Summary += " / Benchmark環境では YMM Timeline 型は通常見つかりません。";
             }
             return false;
         }
@@ -287,7 +287,29 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         }
     }
 
-    public void Dispose()
+    
+    public void SaveDiagnosticsSnapshot()
+    {
+        if (ReflectionResult is null)
+        {
+            logs.Add(new YmmTimelineReflectionLog { Category = "Diagnostics", Message = "Save skipped: no reflection result." });
+            return;
+        }
+
+        SaveDiagnostics(
+            ReflectionResult,
+            TimelineViewBindingResults,
+            TimelineViewModelBindingResults,
+            GenerationReadiness,
+            logs);
+
+        logs.Add(new YmmTimelineReflectionLog
+        {
+            Category = "Diagnostics",
+            Message = $"Diagnostics saved (runtime={ReflectionResult.RuntimeKind}).",
+        });
+    }
+public void Dispose()
     {
         if (disposed)
         {
@@ -412,3 +434,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         return null;
     }
 }
+
+
+
+
+

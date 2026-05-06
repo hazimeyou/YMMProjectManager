@@ -40,4 +40,9 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         };
         Vm?.TryInitialize(options);
     }
+
+    private void OnSaveDiagnosticsClick(object sender, RoutedEventArgs e)
+    {
+        Vm?.SaveDiagnosticsSnapshot();
+    }
 }
