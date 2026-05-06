@@ -1,5 +1,12 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview19
+
+- Added strict dependency resolution gate for isolated generation attempts
+- Treated Scene, UndoRedoManager, and AsyncAwaitStatus as RequiredYmmRuntimeDependency
+- Stopped treating nullable YMM runtime dependencies as resolvable by null injection
+- Generation attempt now skips when required YMM runtime dependencies are unresolved
+- Kept diagnostics skip-reason output and fallback-safe behavior
 ## v0.2.9-history-preview18
 
 - Added explicit user-action button for isolated TimelineViewModel generation attempt (生成試行(即破棄))
@@ -89,6 +96,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 

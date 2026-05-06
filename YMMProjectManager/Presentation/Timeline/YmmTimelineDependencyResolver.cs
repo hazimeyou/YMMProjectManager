@@ -18,6 +18,21 @@ public sealed class YmmTimelineDependencyResolver
             IsNullable = nullable,
         };
 
+        var parameterTypeName = result.ParameterTypeName;
+        var isRequiredYmmRuntimeDependency = ContainsAny(
+            parameterTypeName,
+            "YukkuriMovieMaker.Project.Scene",
+            "YukkuriMovieMaker.UndoRedo.UndoRedoManager",
+            "YukkuriMovieMaker.Project.AsyncAwaitStatus");
+
+        if (isRequiredYmmRuntimeDependency)
+        {
+            result.IsRequiredYmmRuntimeDependency = true;
+            result.CanResolve = false;
+            result.FailureReason = "RequiredYmmRuntimeDependency is unresolved in isolated host context.";
+            return result;
+        }
+
         if (parameterInfo.IsOptional)
         {
             result.CanResolve = true;
@@ -32,7 +47,6 @@ public sealed class YmmTimelineDependencyResolver
             return result;
         }
 
-        var parameterTypeName = result.ParameterTypeName;
         if (parameterTypeName.Contains("Dispatcher", StringComparison.Ordinal))
         {
             result.CanResolve = true;

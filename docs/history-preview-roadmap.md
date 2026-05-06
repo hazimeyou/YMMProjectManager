@@ -94,3 +94,10 @@
 - Added immediate dispose verification with post-dispose GC reachability note
 - Extended generation diagnostics (null-injected parameters, stack trace)
 - Maintained fallback-first behavior and default-disabled experimental execution
+
+### preview19
+
+- Added strict dependency resolution gate for isolated generation attempt
+- Scene / UndoRedoManager / AsyncAwaitStatus are handled as required YMM runtime dependencies
+- Null injection is no longer treated as generation-safe for required YMM runtime dependencies
+- Generation is skipped when required YMM runtime dependencies are unresolved (with diagnostics reason)

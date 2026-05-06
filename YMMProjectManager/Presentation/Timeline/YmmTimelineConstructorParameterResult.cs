@@ -12,6 +12,8 @@ public sealed class YmmTimelineConstructorParameterResult
 
     public bool CanResolve { get; set; }
 
+    public bool IsRequiredYmmRuntimeDependency { get; set; }
+
     public string? ResolutionSource { get; set; }
 
     public string? FailureReason { get; set; }

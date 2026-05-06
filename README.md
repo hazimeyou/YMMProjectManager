@@ -32,6 +32,8 @@ Current preview capabilities include:
 - Immediate dispose verification after generation attempt (preview15)
 - Explicit isolated ViewModel generation action in experimental host (preview18)
 - Immediate dispose + GC reachability verification diagnostics (preview18)
+- Strict dependency resolution gate for generation attempts (preview19)
+- `Scene / UndoRedoManager / AsyncAwaitStatus` are treated as required YMM runtime dependencies (preview19)
 
 ### Experimental Mode Safety
 
