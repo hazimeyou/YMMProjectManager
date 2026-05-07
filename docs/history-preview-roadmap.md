@@ -115,3 +115,11 @@
 - Added diagnostics summary section for quick triage (`resolved`, top owner candidates)
 - Added discovery cost tuning (depth/node limits and owner-prefix excludes)
 - Consolidated run steps and log locations in `docs/runtime-diagnostics-playbook.md`
+
+### preview17
+
+- Isolated TimelineView generation attempt (no visual attach)
+- Added TimelineView generation gate option (default disabled)
+- Added timeline-view-generation-attempt diagnostics output
+- Kept fallback-first behavior
+

@@ -115,6 +115,9 @@
             </GroupBox>
             <GroupBox Grid.Column="1" Header="Dispose Result">
                 <StackPanel>
+                    <TextBlock Text="{Binding TimelineViewGenerationAttempted, StringFormat=ViewAttempted: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewGenerationSucceeded, StringFormat=ViewSucceeded: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewGenerationFailureReason, StringFormat=ViewFailure: {0}}" TextWrapping="Wrap" />
                     <TextBlock Text="{Binding DisposeAttempted, StringFormat=DisposeAttempted: {0}}" />
                     <TextBlock Text="{Binding DisposeSucceeded, StringFormat=DisposeSucceeded: {0}}" />
                     <TextBlock Text="{Binding DisposeFailureReason, StringFormat=DisposeFailure: {0}}" TextWrapping="Wrap" />

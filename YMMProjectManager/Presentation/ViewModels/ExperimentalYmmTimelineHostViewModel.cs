@@ -7,6 +7,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     private readonly YmmTimelineReflectionProbe probe = new();
     private readonly YmmTimelineConstructorBinder constructorBinder = new();
     private readonly YmmTimelineViewModelGenerationAttempt generationAttempt = new();
+    private readonly YmmTimelineViewGenerationAttempt timelineViewGenerationAttempt = new();
     private readonly RuntimeEnvironmentDetector runtimeEnvironmentDetector = new();
     private readonly Stopwatch initializeStopwatch = new();
     private readonly Stopwatch disposeStopwatch = new();
@@ -55,6 +56,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewModelBindingResults { get; private set; } = [];
     public YmmTimelineGenerationReadiness? GenerationReadiness { get; private set; }
     public YmmTimelineGenerationAttemptResult? GenerationAttemptResult { get; private set; }
+    public YmmTimelineViewGenerationAttemptResult? TimelineViewGenerationAttemptResult { get; private set; }
 
     public string ReflectionSummary =>
         ReflectionResult is null
@@ -85,6 +87,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public bool GcVerificationAttempted => GenerationAttemptResult?.GcVerificationAttempted ?? false;
     public string WeakReferenceAfterGc => GenerationAttemptResult?.WeakReferenceAliveAfterGc?.ToString() ?? string.Empty;
     public string FinalizationNote => GenerationAttemptResult?.FinalizationNote ?? string.Empty;
+    public bool TimelineViewGenerationAttempted => TimelineViewGenerationAttemptResult?.Attempted ?? false;
+    public bool TimelineViewGenerationSucceeded => TimelineViewGenerationAttemptResult?.Succeeded ?? false;
+    public string TimelineViewGenerationFailureReason => TimelineViewGenerationAttemptResult?.FailureReason ?? string.Empty;
 
     public bool TryInitialize(PureTimelineExperimentalOptions options)
     {
@@ -134,6 +139,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                 progress?.Report(75);
 
                 YmmTimelineGenerationAttemptResult? generation = null;
+                YmmTimelineViewGenerationAttemptResult? viewGeneration = null;
                 var gatePassed =
                     options.EnableExperimentalYmmTimelineHost &&
                     options.AllowViewModelGenerationAttempt &&
@@ -156,6 +162,28 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                                 options.DisposeImmediatelyAfterGeneration,
                                 runtimeDependencyInstances)
                             .ConfigureAwait(false);
+
+                        if (options.AllowTimelineViewGenerationAttempt &&
+                            options.AllowViewModelGenerationAttempt &&
+                            generation.Succeeded &&
+                            timelineViewType is not null &&
+                            YmmTimelineVisualSafetyGuard.IsVisualAttachAllowed(options) == false)
+                        {
+                            var selectedViewBinding = viewBindings
+                                .Where(x => x.CanAttemptGeneration)
+                                .OrderByDescending(x => x.Parameters.Count)
+                                .FirstOrDefault();
+                            if (selectedViewBinding is not null)
+                            {
+                                viewGeneration = await timelineViewGenerationAttempt
+                                    .TryGenerateAndDisposeAsync(
+                                        timelineViewType,
+                                        selectedViewBinding,
+                                        runtimeDependencyInstances,
+                                        options)
+                                    .ConfigureAwait(false);
+                            }
+                        }
                     }
                 }
                 else if (options.AllowViewModelGenerationAttempt)
@@ -178,6 +206,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                     TimelineViewModelBindings = vmBindings,
                     Readiness = readiness,
                     GenerationAttempt = generation,
+                    TimelineViewGenerationAttempt = viewGeneration,
                     Logs = localLogs,
                 };
             }).ConfigureAwait(true);
@@ -201,6 +230,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             TimelineViewModelBindingResults = computed.TimelineViewModelBindings;
             GenerationReadiness = computed.Readiness;
             GenerationAttemptResult = computed.GenerationAttempt;
+            TimelineViewGenerationAttemptResult = computed.TimelineViewGenerationAttempt;
 
             ReplaceCollection(constructorSignatures, result.ConstructorSignatures);
             ReplaceCollection(missingDependencies, result.MissingDependencies);
@@ -233,6 +263,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(GcVerificationAttempted));
             OnPropertyChanged(nameof(WeakReferenceAfterGc));
             OnPropertyChanged(nameof(FinalizationNote));
+            OnPropertyChanged(nameof(TimelineViewGenerationAttempted));
+            OnPropertyChanged(nameof(TimelineViewGenerationSucceeded));
+            OnPropertyChanged(nameof(TimelineViewGenerationFailureReason));
 
             PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);
             PureTimelineDiagnostics.UpdateTimelineConstructorBindingMetrics(
@@ -247,6 +280,10 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             {
                 PureTimelineDiagnostics.UpdateTimelineViewModelGenerationMetrics(GenerationAttemptResult);
                 SaveGenerationAttemptDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, GenerationAttemptResult, computed.Logs);
+            }
+            if (TimelineViewGenerationAttemptResult is not null)
+            {
+                SaveTimelineViewGenerationAttemptDiagnostics(result, TimelineViewBindingResults, TimelineViewModelBindingResults, GenerationReadiness, GenerationAttemptResult, TimelineViewGenerationAttemptResult, computed.Logs);
             }
 
             if (GenerationAttemptResult?.Attempted == true)
@@ -310,6 +347,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
         public IReadOnlyList<YmmTimelineConstructorBindingResult> TimelineViewModelBindings { get; set; } = [];
         public YmmTimelineGenerationReadiness Readiness { get; set; } = new();
         public YmmTimelineGenerationAttemptResult? GenerationAttempt { get; set; }
+        public YmmTimelineViewGenerationAttemptResult? TimelineViewGenerationAttempt { get; set; }
         public List<YmmTimelineReflectionLog> Logs { get; set; } = [];
     }
 
@@ -518,6 +556,47 @@ public void Dispose()
             Category = "Runtime",
             Message = $"Runtime redetected: {runtimeEnvironmentDetector.Detect()}, process={runtimeEnvironmentDetector.GetProcessName()}",
         });
+    }
+
+    private static void SaveTimelineViewGenerationAttemptDiagnostics(
+        YmmTimelineReflectionResult result,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewBindings,
+        IReadOnlyList<YmmTimelineConstructorBindingResult> viewModelBindings,
+        YmmTimelineGenerationReadiness? readiness,
+        YmmTimelineGenerationAttemptResult? generationAttemptResult,
+        YmmTimelineViewGenerationAttemptResult? timelineViewGenerationAttemptResult,
+        IEnumerable<YmmTimelineReflectionLog> logs)
+    {
+        try
+        {
+            var dir = Path.Combine(Environment.CurrentDirectory, "logs", "diagnostics");
+            Directory.CreateDirectory(dir);
+            var output = new
+            {
+                timestamp = DateTimeOffset.Now,
+                runtimeKind = result.RuntimeKind.ToString(),
+                processName = result.ProcessName,
+                reflection = result,
+                timelineViewConstructorBindings = viewBindings,
+                timelineViewModelConstructorBindings = viewModelBindings,
+                readiness,
+                generationAttempt = generationAttemptResult,
+                timelineViewGenerationAttempt = timelineViewGenerationAttemptResult,
+                visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
+                visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
+                logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
+            };
+            var json = JsonSerializer.Serialize(output, new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+            var path = Path.Combine(dir, $"timeline-view-generation-attempt-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(path, json, Encoding.UTF8);
+        }
+        catch
+        {
+        }
     }
 
     public bool TryRunGenerationAttempt()
@@ -783,6 +862,9 @@ public void Dispose()
             $"Exception: {GenerationException}",
             $"StackTrace: {GenerationStackTrace}",
             $"NullInjected: {NullInjectedParameters}",
+            $"TimelineViewAttempted: {TimelineViewGenerationAttempted}",
+            $"TimelineViewSucceeded: {TimelineViewGenerationSucceeded}",
+            $"TimelineViewFailure: {TimelineViewGenerationFailureReason}",
         };
         return string.Join(Environment.NewLine, lines);
     }

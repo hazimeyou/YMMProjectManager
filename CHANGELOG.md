@@ -1,5 +1,13 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview17
+
+- Added isolated TimelineView generation attempt PoC (no visual attach)
+- Added AllowTimelineViewGenerationAttempt and ForbidVisualTreeAttach options (default safe)
+- Added TimelineView generation diagnostics output:
+  - logs/diagnostics/timeline-view-generation-attempt-*.json`r
+- Kept fallback-first behavior and default-disabled experimental path
+
 ## v0.2.9-history-preview21
 
 - Added live runtime dependency resolution analysis outputs for Scene, UndoRedoManager, and AsyncAwaitStatus
@@ -113,6 +121,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 

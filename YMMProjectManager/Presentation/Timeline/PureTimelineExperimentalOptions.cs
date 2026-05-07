@@ -9,8 +9,10 @@ public sealed class PureTimelineExperimentalOptions
     public bool OpenIsolatedHostWindow { get; set; } = true;
 
     public bool AllowViewModelGenerationAttempt { get; set; } = false;
+    public bool AllowTimelineViewGenerationAttempt { get; set; } = false;
 
     public int MinimumReadinessScoreForGeneration { get; set; } = 80;
 
     public bool DisposeImmediatelyAfterGeneration { get; set; } = true;
+    public bool ForbidVisualTreeAttach { get; set; } = true;
 }

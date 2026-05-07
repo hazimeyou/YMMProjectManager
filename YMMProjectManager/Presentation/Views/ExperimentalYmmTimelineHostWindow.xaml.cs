@@ -75,8 +75,10 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
                 UseReflection = true,
                 OpenIsolatedHostWindow = false,
                 AllowViewModelGenerationAttempt = true,
+                AllowTimelineViewGenerationAttempt = true,
                 MinimumReadinessScoreForGeneration = 80,
                 DisposeImmediatelyAfterGeneration = true,
+                ForbidVisualTreeAttach = true,
             }, progress) ?? Task.FromResult(false);
         });
     }

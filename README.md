@@ -39,11 +39,13 @@ Current preview capabilities include:
 - Runtime dependency live resolution analysis support (preview21)
 - Diagnostics `summary` section (resolved counts + top owners) (preview21)
 - Discovery cost controls (depth/node bounds + owner prefix excludes) (preview21)
+- Isolated TimelineView generation attempt PoC (no visual attach) (preview17)
 
 ### Experimental Mode Safety
 
 - `EnableExperimentalYmmTimelineHost = false` by default
 - `AllowViewModelGenerationAttempt = false` by default
+- `AllowTimelineViewGenerationAttempt = false` by default
 - Experimental failures are treated as normal failures
 - DiffTL standalone must remain usable
 
