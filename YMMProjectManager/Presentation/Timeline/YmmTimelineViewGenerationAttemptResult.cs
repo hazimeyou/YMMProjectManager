@@ -21,6 +21,15 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public bool TemplateAppliedObserved { get; set; }
     public bool LayoutUpdatedObserved { get; set; }
     public bool RenderingObserved { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public string DesiredSize { get; set; } = string.Empty;
+    public string RenderSize { get; set; } = string.Empty;
+    public bool IsVisible { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool DispatcherRenderPriorityReached { get; set; }
+    public bool MinimalRenderObserved { get; set; }
     public bool DisposeAttempted { get; set; }
     public bool DisposeSucceeded { get; set; }
     public string? DisposeFailureReason { get; set; }

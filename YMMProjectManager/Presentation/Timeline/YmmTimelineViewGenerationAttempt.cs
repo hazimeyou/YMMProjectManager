@@ -110,6 +110,24 @@ public sealed class YmmTimelineViewGenerationAttempt
                             }
                         }
 
+                        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                            () => { result.DispatcherRenderPriorityReached = true; },
+                            System.Windows.Threading.DispatcherPriority.Render);
+
+                        result.ActualWidth = view.ActualWidth;
+                        result.ActualHeight = view.ActualHeight;
+                        result.DesiredSize = view.DesiredSize.ToString();
+                        result.RenderSize = view.RenderSize.ToString();
+                        result.IsVisible = view.IsVisible;
+                        result.IsLoaded = view.IsLoaded;
+                        result.PresentationSourceAvailable = PresentationSource.FromVisual(view) is not null;
+                        result.MinimalRenderObserved =
+                            result.ActualWidth > 0 ||
+                            result.ActualHeight > 0 ||
+                            view.RenderSize.Width > 0 ||
+                            view.RenderSize.Height > 0 ||
+                            result.PresentationSourceAvailable;
+
                         if (view is Control c)
                         {
                             templateAppliedObserved = c.Template is not null;
