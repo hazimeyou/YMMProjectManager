@@ -26,7 +26,10 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
             AllowViewModelGenerationAttempt = false,
             OpenIsolatedHostWindow = false,
         };
-        await RunWithProgressAsync("Reflection Probe を実行しています...", () => Vm?.TryInitialize(options));
+        await RunWithProgressAsync("Reflection Probe を実行しています...", (progress) =>
+        {
+            return Vm?.TryInitializeAsync(options, progress) ?? Task.FromResult(false);
+        });
     }
 
     private async void OnRunBindingDryRunClick(object sender, RoutedEventArgs e)
@@ -38,12 +41,26 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
             AllowViewModelGenerationAttempt = false,
             OpenIsolatedHostWindow = false,
         };
-        await RunWithProgressAsync("Binding Dry-run を実行しています...", () => Vm?.TryInitialize(options));
+        await RunWithProgressAsync("Binding Dry-run を実行しています...", (progress) =>
+        {
+            return Vm?.TryInitializeAsync(options, progress) ?? Task.FromResult(false);
+        });
     }
 
     private async void OnRunGenerationAttemptClick(object sender, RoutedEventArgs e)
     {
-        await RunWithProgressAsync("生成試行(即破棄)を実行しています...", () => Vm?.TryRunGenerationAttempt());
+        await RunWithProgressAsync("生成試行(即破棄)を実行しています...", (progress) =>
+        {
+            return Vm?.TryInitializeAsync(new PureTimelineExperimentalOptions
+            {
+                EnableExperimentalYmmTimelineHost = true,
+                UseReflection = true,
+                OpenIsolatedHostWindow = false,
+                AllowViewModelGenerationAttempt = true,
+                MinimumReadinessScoreForGeneration = 80,
+                DisposeImmediatelyAfterGeneration = true,
+            }, progress) ?? Task.FromResult(false);
+        });
     }
 
     private void OnSaveDiagnosticsClick(object sender, RoutedEventArgs e)
@@ -51,7 +68,7 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         Vm?.SaveDiagnosticsSnapshot();
     }
 
-    private async Task RunWithProgressAsync(string message, Action action)
+    private async Task RunWithProgressAsync(string message, Func<IProgress<int>, Task<bool>> workAsync)
     {
         var popup = new ProgressPopupWindow
         {
@@ -59,21 +76,14 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
             Message = message,
             Percent = 5,
         };
+        var progress = new Progress<int>(v => popup.Percent = Math.Max(0, Math.Min(100, v)));
 
         try
         {
             popup.Show();
-            popup.Percent = 15;
             await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-
-            popup.Percent = 35;
-            await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-
-            action();
-
-            popup.Percent = 90;
-            await Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-
+            popup.Percent = 10;
+            await workAsync(progress);
             popup.Percent = 100;
             await Task.Delay(80);
         }
