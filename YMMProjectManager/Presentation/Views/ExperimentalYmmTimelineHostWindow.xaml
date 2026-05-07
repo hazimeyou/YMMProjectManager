@@ -118,6 +118,14 @@
                     <TextBlock Text="{Binding TimelineViewGenerationAttempted, StringFormat=ViewAttempted: {0}}" />
                     <TextBlock Text="{Binding TimelineViewGenerationSucceeded, StringFormat=ViewSucceeded: {0}}" />
                     <TextBlock Text="{Binding TimelineViewGenerationFailureReason, StringFormat=ViewFailure: {0}}" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding TimelineViewVisualAttachAttempted, StringFormat=ViewAttachAttempted: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewVisualAttachSucceeded, StringFormat=ViewAttachSucceeded: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewDetachSucceeded, StringFormat=ViewDetachSucceeded: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewAttachDurationMs, StringFormat=ViewAttachDurationMs: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewLoadedObserved, StringFormat=ViewLoadedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewInitializedObserved, StringFormat=ViewInitializedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewDataContextChangedObserved, StringFormat=ViewDataContextChangedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewWeakReferenceAfterGc, StringFormat=ViewWeakRefAliveAfterGc: {0}}" />
                     <TextBlock Text="{Binding DisposeAttempted, StringFormat=DisposeAttempted: {0}}" />
                     <TextBlock Text="{Binding DisposeSucceeded, StringFormat=DisposeSucceeded: {0}}" />
                     <TextBlock Text="{Binding DisposeFailureReason, StringFormat=DisposeFailure: {0}}" TextWrapping="Wrap" />

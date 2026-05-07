@@ -78,7 +78,8 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
                 AllowTimelineViewGenerationAttempt = true,
                 MinimumReadinessScoreForGeneration = 80,
                 DisposeImmediatelyAfterGeneration = true,
-                ForbidVisualTreeAttach = true,
+                ForbidVisualTreeAttach = false,
+                AllowPassiveVisualTreeParticipation = true,
             }, progress) ?? Task.FromResult(false);
         });
     }

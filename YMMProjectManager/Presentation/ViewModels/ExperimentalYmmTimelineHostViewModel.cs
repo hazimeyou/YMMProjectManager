@@ -90,6 +90,14 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public bool TimelineViewGenerationAttempted => TimelineViewGenerationAttemptResult?.Attempted ?? false;
     public bool TimelineViewGenerationSucceeded => TimelineViewGenerationAttemptResult?.Succeeded ?? false;
     public string TimelineViewGenerationFailureReason => TimelineViewGenerationAttemptResult?.FailureReason ?? string.Empty;
+    public bool TimelineViewVisualAttachAttempted => TimelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false;
+    public bool TimelineViewVisualAttachSucceeded => TimelineViewGenerationAttemptResult?.VisualAttachSucceeded ?? false;
+    public bool TimelineViewDetachSucceeded => TimelineViewGenerationAttemptResult?.DetachSucceeded ?? false;
+    public long TimelineViewAttachDurationMs => TimelineViewGenerationAttemptResult?.AttachDurationMs ?? 0;
+    public bool TimelineViewLoadedObserved => TimelineViewGenerationAttemptResult?.LoadedEventObserved ?? false;
+    public bool TimelineViewInitializedObserved => TimelineViewGenerationAttemptResult?.InitializedEventObserved ?? false;
+    public bool TimelineViewDataContextChangedObserved => TimelineViewGenerationAttemptResult?.DataContextChangedObserved ?? false;
+    public string TimelineViewWeakReferenceAfterGc => TimelineViewGenerationAttemptResult?.WeakReferenceAliveAfterGc?.ToString() ?? string.Empty;
 
     public bool TryInitialize(PureTimelineExperimentalOptions options)
     {
@@ -274,6 +282,14 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(TimelineViewGenerationAttempted));
             OnPropertyChanged(nameof(TimelineViewGenerationSucceeded));
             OnPropertyChanged(nameof(TimelineViewGenerationFailureReason));
+            OnPropertyChanged(nameof(TimelineViewVisualAttachAttempted));
+            OnPropertyChanged(nameof(TimelineViewVisualAttachSucceeded));
+            OnPropertyChanged(nameof(TimelineViewDetachSucceeded));
+            OnPropertyChanged(nameof(TimelineViewAttachDurationMs));
+            OnPropertyChanged(nameof(TimelineViewLoadedObserved));
+            OnPropertyChanged(nameof(TimelineViewInitializedObserved));
+            OnPropertyChanged(nameof(TimelineViewDataContextChangedObserved));
+            OnPropertyChanged(nameof(TimelineViewWeakReferenceAfterGc));
 
             PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);
             PureTimelineDiagnostics.UpdateTimelineConstructorBindingMetrics(

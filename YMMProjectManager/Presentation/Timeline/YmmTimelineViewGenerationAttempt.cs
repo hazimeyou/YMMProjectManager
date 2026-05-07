@@ -1,3 +1,6 @@
+using System.Windows;
+using System.Windows.Controls;
+
 namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmTimelineViewGenerationAttempt
@@ -18,6 +21,7 @@ public sealed class YmmTimelineViewGenerationAttempt
         };
 
         object? instance = null;
+        WeakReference? weakRef = null;
         var sw = Stopwatch.StartNew();
         try
         {
@@ -60,7 +64,50 @@ public sealed class YmmTimelineViewGenerationAttempt
                 }
 
                 instance = constructor.Invoke(args);
+                weakRef = new WeakReference(instance);
                 result.Succeeded = true;
+
+                if (!options.ForbidVisualTreeAttach && options.AllowPassiveVisualTreeParticipation && instance is FrameworkElement view)
+                {
+                    result.VisualAttachAttempted = true;
+                    var host = new ContentControl();
+                    var attachSw = Stopwatch.StartNew();
+                    var loadedObserved = false;
+                    var initializedObserved = false;
+                    var dataContextChangedObserved = false;
+                    try
+                    {
+                        RoutedEventHandler loaded = (_, _) => loadedObserved = true;
+                        EventHandler initialized = (_, _) => initializedObserved = true;
+                        DependencyPropertyChangedEventHandler dcc = (_, _) => dataContextChangedObserved = true;
+                        view.Loaded += loaded;
+                        view.Initialized += initialized;
+                        view.DataContextChanged += dcc;
+
+                        host.Content = view;
+                        result.VisualAttachSucceeded = true;
+                        result.DataContextAssigned = false;
+
+                        host.Content = null;
+                        result.DetachSucceeded = true;
+
+                        view.Loaded -= loaded;
+                        view.Initialized -= initialized;
+                        view.DataContextChanged -= dcc;
+                    }
+                    catch
+                    {
+                        result.VisualAttachSucceeded = false;
+                    }
+                    finally
+                    {
+                        attachSw.Stop();
+                        result.AttachDurationMs = attachSw.ElapsedMilliseconds;
+                        result.LoadedEventObserved = loadedObserved;
+                        result.InitializedEventObserved = initializedObserved;
+                        result.DataContextChangedObserved = dataContextChangedObserved;
+                    }
+                }
             }
 
             var dispatcher = System.Windows.Application.Current.Dispatcher;
@@ -99,6 +146,17 @@ public sealed class YmmTimelineViewGenerationAttempt
         result.DisposeMs = dsw.ElapsedMilliseconds;
         result.DisposeSucceeded = disposeResult.Succeeded;
         result.DisposeFailureReason = disposeResult.FailureReason;
+        try
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            result.WeakReferenceAliveAfterGc = weakRef?.IsAlive;
+        }
+        catch
+        {
+            result.WeakReferenceAliveAfterGc = null;
+        }
         return result;
     }
 
