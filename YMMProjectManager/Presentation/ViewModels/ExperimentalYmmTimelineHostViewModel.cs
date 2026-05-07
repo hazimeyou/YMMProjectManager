@@ -631,6 +631,7 @@ public void Dispose()
                 generationAttempt = generationAttemptResult,
                 timelineViewGenerationAttempt = timelineViewGenerationAttemptResult,
                 dataContextBoundary = timelineViewGenerationAttemptResult?.DataContextBoundaryPatterns ?? [],
+                commandRouteBoundary = timelineViewGenerationAttemptResult?.CommandRouteBoundary,
                 bindingErrorObservationUnavailable = timelineViewGenerationAttemptResult?.BindingErrorObservationUnavailable ?? true,
                 visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
                 visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
@@ -645,6 +646,8 @@ public void Dispose()
             File.WriteAllText(path, json, Encoding.UTF8);
             var passivePath = Path.Combine(dir, $"timeline-view-passive-event-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(passivePath, json, Encoding.UTF8);
+            var commandPath = Path.Combine(dir, $"timeline-view-command-route-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(commandPath, json, Encoding.UTF8);
         }
         catch
         {

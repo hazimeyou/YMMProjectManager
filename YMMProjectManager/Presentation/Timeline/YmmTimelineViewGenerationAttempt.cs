@@ -1,5 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Input;
 using System.Windows.Media;
 
 namespace YMMProjectManager.Presentation.Timeline;
@@ -142,6 +144,14 @@ public sealed class YmmTimelineViewGenerationAttempt
                             GeneratedViewModelTypeName = generatedVmTypeName,
                             FallbackPreserved = true,
                         };
+                        var commandRouteBoundary = new YmmTimelineCommandRouteBoundaryResult
+                        {
+                            Attempted = false,
+                            Succeeded = false,
+                            HostCreated = offscreenHost is not null,
+                            GeneratedViewModelAvailable = hasVm,
+                            FallbackPreserved = true,
+                        };
                         foreach (var pattern in patterns)
                         {
                             if (pattern.Skip)
@@ -264,6 +274,28 @@ public sealed class YmmTimelineViewGenerationAttempt
                                     passiveEventResult.ExceptionCount = eventExceptions.Count;
                                     passiveEventResult.ExceptionTypes = eventExceptions;
                                     passiveEventResult.DetachSucceeded = pr.DetachSucceeded;
+
+                                    commandRouteBoundary.Attempted = options.EnableExperimentalYmmTimelineHost && options.AllowViewModelGenerationAttempt;
+                                    commandRouteBoundary.Succeeded = pr.AttachSucceeded;
+                                    commandRouteBoundary.ViewAttachedToHost = pr.AttachSucceeded;
+                                    commandRouteBoundary.PresentationSourceAvailable = pr.PresentationSourceAvailable;
+                                    commandRouteBoundary.IsLoaded = pr.IsLoaded;
+                                    commandRouteBoundary.IsVisible = pr.IsVisible;
+                                    commandRouteBoundary.Focusable = view.Focusable;
+                                    commandRouteBoundary.IsKeyboardFocusWithin = view.IsKeyboardFocusWithin;
+                                    commandRouteBoundary.FocusScopeType = FocusManager.GetFocusScope(view)?.GetType().FullName ?? string.Empty;
+                                    commandRouteBoundary.TraversalRequestAvailable = new TraversalRequest(FocusNavigationDirection.Next) is not null;
+                                    commandRouteBoundary.KeyboardNavigationObserved = KeyboardNavigation.GetTabNavigation(view) != KeyboardNavigationMode.None;
+                                    commandRouteBoundary.ContextMenuPresent = view.ContextMenu is not null;
+                                    commandRouteBoundary.ToolTipPresent = ToolTipService.GetToolTip(view) is not null;
+                                    commandRouteBoundary.InputBindingCount = view.InputBindings.Count;
+                                    commandRouteBoundary.CommandBindingCount = view.CommandBindings.Count;
+                                    commandRouteBoundary.RoutedCommandCount = view.InputBindings.OfType<InputBinding>().Count(x => x.Command is RoutedCommand);
+                                    commandRouteBoundary.CommandSourceCount = CountVisualTreeCommandSources(view);
+                                    commandRouteBoundary.CommandInfrastructureObserved =
+                                        commandRouteBoundary.InputBindingCount >= 0 &&
+                                        commandRouteBoundary.CommandBindingCount >= 0;
+                                    commandRouteBoundary.DetachSucceeded = pr.DetachSucceeded;
                                 }
 
                                 view.Unloaded -= unloaded;
@@ -286,6 +318,10 @@ public sealed class YmmTimelineViewGenerationAttempt
                                     passiveEventResult.Succeeded = false;
                                     passiveEventResult.ExceptionCount = 1;
                                     passiveEventResult.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+                                    commandRouteBoundary.Attempted = options.EnableExperimentalYmmTimelineHost && options.AllowViewModelGenerationAttempt;
+                                    commandRouteBoundary.Succeeded = false;
+                                    commandRouteBoundary.ExceptionCount = 1;
+                                    commandRouteBoundary.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
                                 }
                             }
                             finally
@@ -300,7 +336,14 @@ public sealed class YmmTimelineViewGenerationAttempt
                                 ? "Generated TimelineViewModel is unavailable."
                                 : "AllowViewModelGenerationAttempt=false";
                         }
+                        if (!commandRouteBoundary.Attempted)
+                        {
+                            commandRouteBoundary.SkippedReason = options.AllowViewModelGenerationAttempt
+                                ? "Generated TimelineViewModel is unavailable."
+                                : "AllowViewModelGenerationAttempt=false";
+                        }
                         result.PassiveEventBoundary = passiveEventResult;
+                        result.CommandRouteBoundary = commandRouteBoundary;
 
                         var first = patternResults.FirstOrDefault(x => x.Attempted);
                         if (first is not null)
@@ -385,6 +428,10 @@ public sealed class YmmTimelineViewGenerationAttempt
         {
             result.PassiveEventBoundary.DisposeSucceeded = result.DisposeSucceeded;
         }
+        if (result.CommandRouteBoundary is not null)
+        {
+            result.CommandRouteBoundary.DisposeSucceeded = result.DisposeSucceeded;
+        }
         try
         {
             GC.Collect();
@@ -407,5 +454,27 @@ public sealed class YmmTimelineViewGenerationAttempt
         var args = string.Join(", ", constructorInfo.GetParameters()
             .Select(p => $"{p.ParameterType.Name} {p.Name}"));
         return $"{access} .ctor({args})";
+    }
+
+    private static int CountVisualTreeCommandSources(FrameworkElement root)
+    {
+        var count = 0;
+        var queue = new Queue<DependencyObject>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            if (node is ICommandSource)
+            {
+                count++;
+            }
+
+            var children = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < children; i++)
+            {
+                queue.Enqueue(VisualTreeHelper.GetChild(node, i));
+            }
+        }
+        return count;
     }
 }

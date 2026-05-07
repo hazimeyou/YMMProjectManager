@@ -43,6 +43,7 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public bool BindingErrorObservationUnavailable { get; set; } = true;
     public IReadOnlyList<YmmTimelineDataContextBoundaryPatternResult> DataContextBoundaryPatterns { get; set; } = [];
     public YmmTimelinePassiveEventBoundaryResult? PassiveEventBoundary { get; set; }
+    public YmmTimelineCommandRouteBoundaryResult? CommandRouteBoundary { get; set; }
 }
 
 public sealed class YmmTimelineDataContextBoundaryPatternResult
@@ -97,6 +98,36 @@ public sealed class YmmTimelinePassiveEventBoundaryResult
     public IReadOnlyDictionary<string, int> EventCounts { get; set; } = new Dictionary<string, int>();
     public string FirstEventName { get; set; } = string.Empty;
     public string LastEventName { get; set; } = string.Empty;
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+    public bool FallbackPreserved { get; set; } = true;
+}
+
+public sealed class YmmTimelineCommandRouteBoundaryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public string SkippedReason { get; set; } = string.Empty;
+    public bool HostCreated { get; set; }
+    public bool ViewAttachedToHost { get; set; }
+    public bool GeneratedViewModelAvailable { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public bool CommandInfrastructureObserved { get; set; }
+    public int InputBindingCount { get; set; }
+    public int CommandBindingCount { get; set; }
+    public int RoutedCommandCount { get; set; }
+    public int CommandSourceCount { get; set; }
+    public bool Focusable { get; set; }
+    public bool IsKeyboardFocusWithin { get; set; }
+    public string FocusScopeType { get; set; } = string.Empty;
+    public bool TraversalRequestAvailable { get; set; }
+    public bool KeyboardNavigationObserved { get; set; }
+    public bool ContextMenuPresent { get; set; }
+    public bool ToolTipPresent { get; set; }
     public int ExceptionCount { get; set; }
     public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
     public bool DetachSucceeded { get; set; }
