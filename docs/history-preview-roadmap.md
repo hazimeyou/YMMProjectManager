@@ -123,3 +123,10 @@
 - Added timeline-view-generation-attempt diagnostics output
 - Kept fallback-first behavior
 
+
+### preview22
+
+- Added runtime dependency confidence analysis for Scene/UndoRedoManager/AsyncAwaitStatus
+- Added confidence fields to discovery summary (confidence, owner paths, risks)
+- Continued fallback-first diagnostics phase (no integration)
+

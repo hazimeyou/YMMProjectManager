@@ -1,5 +1,16 @@
 ﻿# Changelog
 
+## v0.2.9-history-preview22
+
+- Added dependency resolution confidence analysis for runtime discoveries
+- Added discovery summary fields:
+  - confidence (Low|Medium|High)
+  - ctiveWindowRelated`r
+  - minDataContextDepth`r
+  - ownerPaths`r
+  - iskFlags`r
+- Kept fallback-first, no-visual-attach investigation posture
+
 ## v0.2.9-history-preview17
 
 - Added isolated TimelineView generation attempt PoC (no visual attach)
@@ -121,6 +132,7 @@
 ## v0.2.9-history-preview7
 
 - Timeline UX improvements (zoom/ruler/grouping)
+
 
 
 

@@ -39,6 +39,7 @@ Current preview capabilities include:
 - Runtime dependency live resolution analysis support (preview21)
 - Diagnostics `summary` section (resolved counts + top owners) (preview21)
 - Discovery cost controls (depth/node bounds + owner prefix excludes) (preview21)
+- Dependency resolution confidence analysis (`Low/Medium/High`) (preview22)
 - Isolated TimelineView generation attempt PoC (no visual attach) (preview17)
 
 ### Experimental Mode Safety

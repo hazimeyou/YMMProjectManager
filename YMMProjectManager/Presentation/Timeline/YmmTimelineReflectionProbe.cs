@@ -255,6 +255,47 @@ public sealed class YmmTimelineReflectionProbe
         string dependencyType,
         IReadOnlyList<YmmRuntimeDependencyCandidate> candidates)
     {
+        var resolvedCandidates = candidates.Where(x => x.ExistingInstanceFound).ToArray();
+        var ownerPaths = resolvedCandidates
+            .Select(x => x.RoutePath)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .Take(30)
+            .ToArray();
+        var activeWindowRelated = ownerPaths.Any(x =>
+            x.Contains("Window[", StringComparison.Ordinal) &&
+            x.Contains(".DataContext", StringComparison.Ordinal));
+        var minDepth = resolvedCandidates.Length == 0 ? -1 : resolvedCandidates.Min(x => x.Depth);
+
+        var riskFlags = new List<string>();
+        if (resolvedCandidates.Length == 0)
+        {
+            riskFlags.Add("NoLiveInstanceResolved");
+        }
+        if (!activeWindowRelated)
+        {
+            riskFlags.Add("NoActiveWindowDataContextPath");
+        }
+        if (candidates.Any(x => x.IsStatic && x.ExistingInstanceFound))
+        {
+            riskFlags.Add("StaticInstanceMayBeStale");
+        }
+        if (minDepth >= 3 && minDepth != -1)
+        {
+            riskFlags.Add("DeepOwnerPath");
+        }
+
+        var confidence = "Low";
+        if (resolvedCandidates.Length > 0 && activeWindowRelated && minDepth >= 0 && minDepth <= 2)
+        {
+            confidence = riskFlags.Count == 0 ? "High" : "Medium";
+        }
+        else if (resolvedCandidates.Length > 0)
+        {
+            confidence = "Medium";
+        }
+
         return new YmmRuntimeDependencyDiscoverySummary
         {
             DependencyType = dependencyType,
@@ -290,6 +331,11 @@ public sealed class YmmTimelineReflectionProbe
                 .Distinct(StringComparer.Ordinal)
                 .Take(50)
                 .ToArray(),
+            Confidence = confidence,
+            ActiveWindowRelated = activeWindowRelated,
+            MinDataContextDepth = minDepth,
+            OwnerPaths = ownerPaths,
+            RiskFlags = riskFlags.ToArray(),
         };
     }
 }
