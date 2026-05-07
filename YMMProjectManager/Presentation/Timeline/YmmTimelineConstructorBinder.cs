@@ -4,7 +4,10 @@ public sealed class YmmTimelineConstructorBinder
 {
     private readonly YmmTimelineDependencyResolver dependencyResolver = new();
 
-    public IReadOnlyList<YmmTimelineConstructorBindingResult> DryRunForType(Type? targetType, ICollection<YmmTimelineReflectionLog>? logs = null)
+    public IReadOnlyList<YmmTimelineConstructorBindingResult> DryRunForType(
+        Type? targetType,
+        YmmTimelineReflectionResult? reflectionResult = null,
+        ICollection<YmmTimelineReflectionLog>? logs = null)
     {
         if (targetType is null)
         {
@@ -16,7 +19,7 @@ public sealed class YmmTimelineConstructorBinder
         foreach (var constructor in constructors)
         {
             var parameters = constructor.GetParameters()
-                .Select(dependencyResolver.Evaluate)
+                .Select(p => dependencyResolver.Evaluate(p, reflectionResult))
                 .ToList();
 
             var unresolvedRequired = parameters.Where(x => !x.IsOptional && !x.CanResolve).ToList();

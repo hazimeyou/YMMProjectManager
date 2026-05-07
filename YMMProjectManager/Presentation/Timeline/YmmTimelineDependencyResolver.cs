@@ -4,7 +4,9 @@ public sealed class YmmTimelineDependencyResolver
 {
     private readonly NullabilityInfoContext nullabilityInfoContext = new();
 
-    public YmmTimelineConstructorParameterResult Evaluate(ParameterInfo parameterInfo)
+    public YmmTimelineConstructorParameterResult Evaluate(
+        ParameterInfo parameterInfo,
+        YmmTimelineReflectionResult? reflectionResult = null)
     {
         var parameterType = parameterInfo.ParameterType;
         var parameterName = parameterInfo.Name ?? "(unknown)";
@@ -28,8 +30,16 @@ public sealed class YmmTimelineDependencyResolver
         if (isRequiredYmmRuntimeDependency)
         {
             result.IsRequiredYmmRuntimeDependency = true;
-            result.CanResolve = false;
-            result.FailureReason = "RequiredYmmRuntimeDependency is unresolved in isolated host context.";
+            if (IsRequiredRuntimeDependencyResolved(parameterTypeName, reflectionResult))
+            {
+                result.CanResolve = true;
+                result.ResolutionSource = "Resolved live runtime instance candidate";
+            }
+            else
+            {
+                result.CanResolve = false;
+                result.FailureReason = "RequiredYmmRuntimeDependency is unresolved in isolated host context.";
+            }
             return result;
         }
 
@@ -113,6 +123,33 @@ public sealed class YmmTimelineDependencyResolver
             {
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    private static bool IsRequiredRuntimeDependencyResolved(
+        string parameterTypeName,
+        YmmTimelineReflectionResult? reflectionResult)
+    {
+        if (reflectionResult is null)
+        {
+            return false;
+        }
+
+        if (parameterTypeName.Contains("YukkuriMovieMaker.Project.Scene", StringComparison.Ordinal))
+        {
+            return reflectionResult.SceneDiscovery.Resolved;
+        }
+
+        if (parameterTypeName.Contains("YukkuriMovieMaker.UndoRedo.UndoRedoManager", StringComparison.Ordinal))
+        {
+            return reflectionResult.UndoRedoManagerDiscovery.Resolved;
+        }
+
+        if (parameterTypeName.Contains("YukkuriMovieMaker.Project.AsyncAwaitStatus", StringComparison.Ordinal))
+        {
+            return reflectionResult.AsyncAwaitStatusDiscovery.Resolved;
         }
 
         return false;

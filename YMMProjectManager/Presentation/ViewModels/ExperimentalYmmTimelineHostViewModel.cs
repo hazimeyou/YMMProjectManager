@@ -128,8 +128,8 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
 
                 var timelineViewType = ResolveType(result.TimelineViewTypeName);
                 var timelineViewModelType = ResolveType(result.TimelineViewModelTypeName);
-                var viewBindings = constructorBinder.DryRunForType(timelineViewType, localLogs);
-                var vmBindings = constructorBinder.DryRunForType(timelineViewModelType, localLogs);
+                var viewBindings = constructorBinder.DryRunForType(timelineViewType, result, localLogs);
+                var vmBindings = constructorBinder.DryRunForType(timelineViewModelType, result, localLogs);
                 var readiness = constructorBinder.BuildReadiness(result, viewBindings, vmBindings);
                 progress?.Report(75);
 
