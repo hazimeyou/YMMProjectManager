@@ -21,35 +21,57 @@ public sealed class YmmTimelineViewGenerationAttempt
         var sw = Stopwatch.StartNew();
         try
         {
-            var constructor = targetType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
-                .FirstOrDefault(x => FormatConstructor(x) == bindingResult.ConstructorSignature);
-            if (constructor is null)
+            if (System.Windows.Application.Current is null)
             {
                 result.Succeeded = false;
-                result.FailureReason = "Constructor not found.";
+                result.FailureReason = "WPF Application.Current is null.";
                 return result;
             }
 
-            var args = constructor.GetParameters().Select(p =>
+            void GenerateOnUiThread()
             {
-                var tn = p.ParameterType.FullName ?? p.ParameterType.Name;
-                if (runtimeDependencyInstances.TryGetValue(tn, out var dep) && dep is not null) return dep;
-                if (p.IsOptional) return p.DefaultValue;
-                if (p.ParameterType == typeof(CancellationToken)) return CancellationToken.None;
-                if (p.ParameterType == typeof(SynchronizationContext)) return SynchronizationContext.Current;
-                if (tn.Contains("Dispatcher", StringComparison.Ordinal)) return System.Windows.Application.Current?.Dispatcher;
-                return null;
-            }).ToArray();
+                result.ExecutedOnStaThread = Thread.CurrentThread.GetApartmentState() == ApartmentState.STA;
 
-            if (args.Any(x => x is null))
-            {
-                result.Succeeded = false;
-                result.FailureReason = "Required constructor arguments are unresolved.";
-                return result;
+                var constructor = targetType.GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    .FirstOrDefault(x => FormatConstructor(x) == bindingResult.ConstructorSignature);
+                if (constructor is null)
+                {
+                    result.Succeeded = false;
+                    result.FailureReason = "Constructor not found.";
+                    return;
+                }
+
+                var args = constructor.GetParameters().Select(p =>
+                {
+                    var tn = p.ParameterType.FullName ?? p.ParameterType.Name;
+                    if (runtimeDependencyInstances.TryGetValue(tn, out var dep) && dep is not null) return dep;
+                    if (p.IsOptional) return p.DefaultValue;
+                    if (p.ParameterType == typeof(CancellationToken)) return CancellationToken.None;
+                    if (p.ParameterType == typeof(SynchronizationContext)) return SynchronizationContext.Current;
+                    if (tn.Contains("Dispatcher", StringComparison.Ordinal)) return System.Windows.Application.Current?.Dispatcher;
+                    return null;
+                }).ToArray();
+
+                if (args.Any(x => x is null))
+                {
+                    result.Succeeded = false;
+                    result.FailureReason = "Required constructor arguments are unresolved.";
+                    return;
+                }
+
+                instance = constructor.Invoke(args);
+                result.Succeeded = true;
             }
 
-            instance = constructor.Invoke(args);
-            result.Succeeded = true;
+            var dispatcher = System.Windows.Application.Current.Dispatcher;
+            if (dispatcher.CheckAccess())
+            {
+                GenerateOnUiThread();
+            }
+            else
+            {
+                await dispatcher.InvokeAsync(GenerateOnUiThread);
+            }
         }
         catch (Exception ex)
         {

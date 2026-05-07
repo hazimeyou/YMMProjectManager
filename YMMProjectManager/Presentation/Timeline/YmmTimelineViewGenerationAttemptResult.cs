@@ -16,4 +16,5 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public string? DisposeFailureReason { get; set; }
     public long GenerationAttemptMs { get; set; }
     public long DisposeMs { get; set; }
+    public bool ExecutedOnStaThread { get; set; }
 }
