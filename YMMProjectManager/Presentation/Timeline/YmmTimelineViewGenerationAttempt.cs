@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Media;
 
 namespace YMMProjectManager.Presentation.Timeline;
 
@@ -75,18 +76,44 @@ public sealed class YmmTimelineViewGenerationAttempt
                     var loadedObserved = false;
                     var initializedObserved = false;
                     var dataContextChangedObserved = false;
+                    var layoutUpdatedObserved = false;
+                    var renderingObserved = false;
+                    var templateAppliedObserved = false;
                     try
                     {
                         RoutedEventHandler loaded = (_, _) => loadedObserved = true;
                         EventHandler initialized = (_, _) => initializedObserved = true;
                         DependencyPropertyChangedEventHandler dcc = (_, _) => dataContextChangedObserved = true;
+                        EventHandler layoutUpdated = (_, _) => layoutUpdatedObserved = true;
+                        EventHandler rendering = (_, _) => renderingObserved = true;
                         view.Loaded += loaded;
                         view.Initialized += initialized;
                         view.DataContextChanged += dcc;
+                        view.LayoutUpdated += layoutUpdated;
+                        CompositionTarget.Rendering += rendering;
 
                         host.Content = view;
                         result.VisualAttachSucceeded = true;
                         result.DataContextAssigned = false;
+                        if (options.AllowControlledLifecycleObservation)
+                        {
+                            var hold = Math.Max(0, options.PassiveAttachHoldMs);
+                            if (hold > 0)
+                            {
+                                var until = DateTime.UtcNow.AddMilliseconds(hold);
+                                while (DateTime.UtcNow < until)
+                                {
+                                    System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                                        () => { },
+                                        System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                                }
+                            }
+                        }
+
+                        if (view is Control c)
+                        {
+                            templateAppliedObserved = c.Template is not null;
+                        }
 
                         host.Content = null;
                         result.DetachSucceeded = true;
@@ -94,6 +121,8 @@ public sealed class YmmTimelineViewGenerationAttempt
                         view.Loaded -= loaded;
                         view.Initialized -= initialized;
                         view.DataContextChanged -= dcc;
+                        view.LayoutUpdated -= layoutUpdated;
+                        CompositionTarget.Rendering -= rendering;
                     }
                     catch
                     {
@@ -106,6 +135,9 @@ public sealed class YmmTimelineViewGenerationAttempt
                         result.LoadedEventObserved = loadedObserved;
                         result.InitializedEventObserved = initializedObserved;
                         result.DataContextChangedObserved = dataContextChangedObserved;
+                        result.TemplateAppliedObserved = templateAppliedObserved;
+                        result.LayoutUpdatedObserved = layoutUpdatedObserved;
+                        result.RenderingObserved = renderingObserved;
                     }
                 }
             }

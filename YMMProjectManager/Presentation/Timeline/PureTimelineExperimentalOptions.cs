@@ -16,4 +16,6 @@ public sealed class PureTimelineExperimentalOptions
     public bool DisposeImmediatelyAfterGeneration { get; set; } = true;
     public bool ForbidVisualTreeAttach { get; set; } = true;
     public bool AllowPassiveVisualTreeParticipation { get; set; } = false;
+    public bool AllowControlledLifecycleObservation { get; set; } = false;
+    public int PassiveAttachHoldMs { get; set; } = 100;
 }

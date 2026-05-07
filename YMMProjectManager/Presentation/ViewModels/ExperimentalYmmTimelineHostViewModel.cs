@@ -97,6 +97,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
     public bool TimelineViewLoadedObserved => TimelineViewGenerationAttemptResult?.LoadedEventObserved ?? false;
     public bool TimelineViewInitializedObserved => TimelineViewGenerationAttemptResult?.InitializedEventObserved ?? false;
     public bool TimelineViewDataContextChangedObserved => TimelineViewGenerationAttemptResult?.DataContextChangedObserved ?? false;
+    public bool TimelineViewTemplateAppliedObserved => TimelineViewGenerationAttemptResult?.TemplateAppliedObserved ?? false;
+    public bool TimelineViewLayoutUpdatedObserved => TimelineViewGenerationAttemptResult?.LayoutUpdatedObserved ?? false;
+    public bool TimelineViewRenderingObserved => TimelineViewGenerationAttemptResult?.RenderingObserved ?? false;
     public string TimelineViewWeakReferenceAfterGc => TimelineViewGenerationAttemptResult?.WeakReferenceAliveAfterGc?.ToString() ?? string.Empty;
 
     public bool TryInitialize(PureTimelineExperimentalOptions options)
@@ -288,6 +291,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
             OnPropertyChanged(nameof(TimelineViewLoadedObserved));
             OnPropertyChanged(nameof(TimelineViewInitializedObserved));
             OnPropertyChanged(nameof(TimelineViewDataContextChangedObserved));
+            OnPropertyChanged(nameof(TimelineViewTemplateAppliedObserved));
+            OnPropertyChanged(nameof(TimelineViewLayoutUpdatedObserved));
+            OnPropertyChanged(nameof(TimelineViewRenderingObserved));
             OnPropertyChanged(nameof(TimelineViewWeakReferenceAfterGc));
 
             PureTimelineDiagnostics.UpdateTimelineReflectionMetrics(result.ProbeMs, result.AssemblyCount, result.TypeFoundCount);

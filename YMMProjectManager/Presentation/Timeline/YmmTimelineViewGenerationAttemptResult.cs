@@ -18,6 +18,8 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public bool LoadedEventObserved { get; set; }
     public bool InitializedEventObserved { get; set; }
     public bool DataContextChangedObserved { get; set; }
+    public bool TemplateAppliedObserved { get; set; }
+    public bool LayoutUpdatedObserved { get; set; }
     public bool RenderingObserved { get; set; }
     public bool DisposeAttempted { get; set; }
     public bool DisposeSucceeded { get; set; }

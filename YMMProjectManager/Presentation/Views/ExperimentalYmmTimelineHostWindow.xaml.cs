@@ -80,6 +80,8 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
                 DisposeImmediatelyAfterGeneration = true,
                 ForbidVisualTreeAttach = false,
                 AllowPassiveVisualTreeParticipation = true,
+                AllowControlledLifecycleObservation = true,
+                PassiveAttachHoldMs = 100,
             }, progress) ?? Task.FromResult(false);
         });
     }

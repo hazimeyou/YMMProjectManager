@@ -125,6 +125,9 @@
                     <TextBlock Text="{Binding TimelineViewLoadedObserved, StringFormat=ViewLoadedObserved: {0}}" />
                     <TextBlock Text="{Binding TimelineViewInitializedObserved, StringFormat=ViewInitializedObserved: {0}}" />
                     <TextBlock Text="{Binding TimelineViewDataContextChangedObserved, StringFormat=ViewDataContextChangedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewTemplateAppliedObserved, StringFormat=ViewTemplateAppliedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewLayoutUpdatedObserved, StringFormat=ViewLayoutUpdatedObserved: {0}}" />
+                    <TextBlock Text="{Binding TimelineViewRenderingObserved, StringFormat=ViewRenderingObserved: {0}}" />
                     <TextBlock Text="{Binding TimelineViewWeakReferenceAfterGc, StringFormat=ViewWeakRefAliveAfterGc: {0}}" />
                     <TextBlock Text="{Binding DisposeAttempted, StringFormat=DisposeAttempted: {0}}" />
                     <TextBlock Text="{Binding DisposeSucceeded, StringFormat=DisposeSucceeded: {0}}" />
