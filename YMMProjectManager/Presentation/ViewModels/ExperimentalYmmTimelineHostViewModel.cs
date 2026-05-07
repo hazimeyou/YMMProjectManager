@@ -178,8 +178,7 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                         if (options.AllowTimelineViewGenerationAttempt &&
                             options.AllowViewModelGenerationAttempt &&
                             generation.Succeeded &&
-                            timelineViewType is not null &&
-                            YmmTimelineVisualSafetyGuard.IsVisualAttachAllowed(options) == false)
+                            timelineViewType is not null)
                         {
                             var selectedViewBinding = viewBindings
                                 .Where(x => x.CanAttemptGeneration)
