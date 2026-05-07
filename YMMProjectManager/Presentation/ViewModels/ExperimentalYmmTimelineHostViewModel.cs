@@ -632,6 +632,10 @@ public void Dispose()
                 timelineViewGenerationAttempt = timelineViewGenerationAttemptResult,
                 dataContextBoundary = timelineViewGenerationAttemptResult?.DataContextBoundaryPatterns ?? [],
                 commandRouteBoundary = timelineViewGenerationAttemptResult?.CommandRouteBoundary,
+                visualTreeInventory = timelineViewGenerationAttemptResult?.VisualTreeInventory,
+                bindingSurfaceInventory = timelineViewGenerationAttemptResult?.BindingSurfaceInventory,
+                resourceInventory = timelineViewGenerationAttemptResult?.ResourceInventory,
+                lifecycleRepeatability = timelineViewGenerationAttemptResult?.LifecycleRepeatability,
                 bindingErrorObservationUnavailable = timelineViewGenerationAttemptResult?.BindingErrorObservationUnavailable ?? true,
                 visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
                 visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
@@ -648,6 +652,14 @@ public void Dispose()
             File.WriteAllText(passivePath, json, Encoding.UTF8);
             var commandPath = Path.Combine(dir, $"timeline-view-command-route-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(commandPath, json, Encoding.UTF8);
+            var p32 = Path.Combine(dir, $"timeline-view-visual-tree-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p32, json, Encoding.UTF8);
+            var p33 = Path.Combine(dir, $"timeline-view-binding-surface-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p33, json, Encoding.UTF8);
+            var p34 = Path.Combine(dir, $"timeline-view-resource-style-template-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p34, json, Encoding.UTF8);
+            var p35 = Path.Combine(dir, $"timeline-view-lifecycle-repeatability-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p35, json, Encoding.UTF8);
         }
         catch
         {

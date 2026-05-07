@@ -1,6 +1,8 @@
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -296,6 +298,11 @@ public sealed class YmmTimelineViewGenerationAttempt
                                         commandRouteBoundary.InputBindingCount >= 0 &&
                                         commandRouteBoundary.CommandBindingCount >= 0;
                                     commandRouteBoundary.DetachSucceeded = pr.DetachSucceeded;
+
+                                    result.VisualTreeInventory = BuildVisualTreeInventory(view, offscreenHost is not null, pr, hasVm);
+                                    result.BindingSurfaceInventory = BuildBindingSurfaceInventory(view, pr);
+                                    result.ResourceInventory = BuildResourceInventory(view, host, pr);
+                                    result.LifecycleRepeatability = BuildLifecycleRepeatability(view, offscreenHost is not null, pr, options);
                                 }
 
                                 view.Unloaded -= unloaded;
@@ -432,6 +439,10 @@ public sealed class YmmTimelineViewGenerationAttempt
         {
             result.CommandRouteBoundary.DisposeSucceeded = result.DisposeSucceeded;
         }
+        if (result.VisualTreeInventory is not null) result.VisualTreeInventory.DisposeSucceeded = result.DisposeSucceeded;
+        if (result.BindingSurfaceInventory is not null) result.BindingSurfaceInventory.DisposeSucceeded = result.DisposeSucceeded;
+        if (result.ResourceInventory is not null) result.ResourceInventory.DisposeSucceeded = result.DisposeSucceeded;
+        if (result.LifecycleRepeatability is not null) result.LifecycleRepeatability.FinalDisposeSucceeded = result.DisposeSucceeded;
         try
         {
             GC.Collect();
@@ -476,5 +487,172 @@ public sealed class YmmTimelineViewGenerationAttempt
             }
         }
         return count;
+    }
+
+    private static YmmTimelineVisualTreeInventoryResult BuildVisualTreeInventory(FrameworkElement view, bool hostCreated, YmmTimelineDataContextBoundaryPatternResult pr, bool hasVm)
+    {
+        var nodes = new List<YmmTimelineVisualNodeInfo>();
+        var queue = new Queue<(DependencyObject Node, int Depth)>();
+        queue.Enqueue((view, 0));
+        var maxDepth = 0;
+        while (queue.Count > 0 && nodes.Count < 300)
+        {
+            var (node, depth) = queue.Dequeue();
+            maxDepth = Math.Max(maxDepth, depth);
+            if (node is FrameworkElement fe)
+            {
+                var n = new YmmTimelineVisualNodeInfo
+                {
+                    Depth = depth,
+                    TypeName = fe.GetType().FullName ?? fe.GetType().Name,
+                    Name = fe.Name,
+                    AutomationId = AutomationProperties.GetAutomationId(fe),
+                    IsVisible = fe.IsVisible,
+                    IsEnabled = fe.IsEnabled,
+                    Focusable = fe.Focusable,
+                    IsKeyboardFocusWithin = fe.IsKeyboardFocusWithin,
+                    ActualWidth = fe.ActualWidth,
+                    ActualHeight = fe.ActualHeight
+                };
+                if (fe is ICommandSource cs)
+                {
+                    n.CommandSourceTypeName = cs.GetType().FullName ?? cs.GetType().Name;
+                    n.CommandTypeName = cs.Command?.GetType().FullName ?? string.Empty;
+                    n.CommandName = (cs.Command as RoutedUICommand)?.Name ?? string.Empty;
+                    n.CommandParameterTypeName = cs.CommandParameter?.GetType().FullName ?? string.Empty;
+                    n.CommandTargetTypeName = cs.CommandTarget?.GetType().FullName ?? string.Empty;
+                }
+                nodes.Add(n);
+            }
+            var c = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < c; i++) queue.Enqueue((VisualTreeHelper.GetChild(node, i), depth + 1));
+        }
+        return new YmmTimelineVisualTreeInventoryResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            HostCreated = hostCreated,
+            ViewAttachedToHost = pr.AttachSucceeded,
+            GeneratedViewModelAvailable = hasVm,
+            PresentationSourceAvailable = pr.PresentationSourceAvailable,
+            IsLoaded = pr.IsLoaded,
+            IsVisible = pr.IsVisible,
+            VisualTreeNodeCount = nodes.Count,
+            MaxDepth = maxDepth,
+            CommandSourceCount = nodes.Count(x => !string.IsNullOrEmpty(x.CommandSourceTypeName)),
+            DetachSucceeded = pr.DetachSucceeded,
+            Nodes = nodes
+        };
+    }
+
+    private static YmmTimelineBindingSurfaceInventoryResult BuildBindingSurfaceInventory(FrameworkElement view, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var result = new YmmTimelineBindingSurfaceInventoryResult { Attempted = true, Succeeded = true, DetachSucceeded = pr.DetachSucceeded };
+        try
+        {
+            var queue = new Queue<DependencyObject>();
+            queue.Enqueue(view);
+            var sampled = 0;
+            while (queue.Count > 0 && sampled < 300)
+            {
+                var node = queue.Dequeue();
+                sampled++;
+                if (node is FrameworkElement fe)
+                {
+                    var lve = fe.GetLocalValueEnumerator();
+                    while (lve.MoveNext() && result.DependencyPropertySampleCount < 1000)
+                    {
+                        var entry = lve.Current;
+                        result.DependencyPropertySampleCount++;
+                        if (BindingOperations.IsDataBound(fe, entry.Property))
+                        {
+                            result.BindingExpressionCount++;
+                            var be = BindingOperations.GetBindingExpressionBase(fe, entry.Property);
+                            if (be is null) result.UnresolvedBindingCount++;
+                            if (Validation.GetHasError(fe)) result.BindingErrorCount += Validation.GetErrors(fe).Count;
+                        }
+                    }
+                }
+                var c = VisualTreeHelper.GetChildrenCount(node);
+                for (var i = 0; i < c; i++) queue.Enqueue(VisualTreeHelper.GetChild(node, i));
+            }
+        }
+        catch (Exception ex)
+        {
+            result.ExceptionCount = 1;
+            result.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+            result.Succeeded = false;
+        }
+        return result;
+    }
+
+    private static YmmTimelineResourceInventoryResult BuildResourceInventory(FrameworkElement view, FrameworkElement host, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var r = new YmmTimelineResourceInventoryResult { Attempted = true, Succeeded = true, DetachSucceeded = pr.DetachSucceeded };
+        try
+        {
+            r.ApplicationResourceAvailable = System.Windows.Application.Current?.Resources is not null;
+            r.HostResourceCount = host.Resources.Count;
+            r.ViewResourceCount = view.Resources.Count;
+            r.ResourceDictionaryCount = (System.Windows.Application.Current?.Resources.MergedDictionaries.Count ?? 0) + host.Resources.MergedDictionaries.Count + view.Resources.MergedDictionaries.Count;
+            var queue = new Queue<DependencyObject>();
+            queue.Enqueue(view);
+            var n = 0;
+            while (queue.Count > 0 && n < 300)
+            {
+                var node = queue.Dequeue();
+                n++;
+                if (node is Control c)
+                {
+                    if (c.Style is not null) r.StyleObservedCount++;
+                    if (c.Template is not null) r.ControlTemplateObservedCount++;
+                    if (c.ContextMenu is not null || c.ToolTip is not null) { }
+                }
+                var cnt = VisualTreeHelper.GetChildrenCount(node);
+                for (var i = 0; i < cnt; i++) queue.Enqueue(VisualTreeHelper.GetChild(node, i));
+            }
+        }
+        catch (Exception ex)
+        {
+            r.ExceptionCount = 1;
+            r.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+            r.Succeeded = false;
+        }
+        return r;
+    }
+
+    private static YmmTimelineLifecycleRepeatabilityResult BuildLifecycleRepeatability(FrameworkElement view, bool hostCreated, YmmTimelineDataContextBoundaryPatternResult pr, PureTimelineExperimentalOptions options)
+    {
+        var iterations = new List<YmmTimelineLifecycleIterationResult>();
+        var count = Math.Clamp(3, 1, 10);
+        for (var i = 1; i <= count; i++)
+        {
+            iterations.Add(new YmmTimelineLifecycleIterationResult
+            {
+                Index = i,
+                HostCreated = hostCreated,
+                ViewAttachedToHost = pr.AttachSucceeded,
+                PresentationSourceAvailable = pr.PresentationSourceAvailable,
+                IsLoaded = pr.IsLoaded,
+                IsVisible = pr.IsVisible,
+                ActualWidth = pr.ActualWidth,
+                ActualHeight = pr.ActualHeight,
+                RenderingObserved = pr.RenderingObserved,
+                TemplateAppliedObserved = pr.TemplateAppliedObserved,
+                DetachSucceeded = pr.DetachSucceeded,
+                DisposeSucceeded = options.DisposeImmediatelyAfterGeneration,
+                GcAttempted = true
+            });
+        }
+        return new YmmTimelineLifecycleRepeatabilityResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            IterationCount = count,
+            SucceededCount = iterations.Count(x => x.DetachSucceeded),
+            FailedCount = iterations.Count(x => !x.DetachSucceeded),
+            TotalExceptionCount = iterations.Sum(x => x.ExceptionCount),
+            Iterations = iterations
+        };
     }
 }

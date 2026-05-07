@@ -44,6 +44,10 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public IReadOnlyList<YmmTimelineDataContextBoundaryPatternResult> DataContextBoundaryPatterns { get; set; } = [];
     public YmmTimelinePassiveEventBoundaryResult? PassiveEventBoundary { get; set; }
     public YmmTimelineCommandRouteBoundaryResult? CommandRouteBoundary { get; set; }
+    public YmmTimelineVisualTreeInventoryResult? VisualTreeInventory { get; set; }
+    public YmmTimelineBindingSurfaceInventoryResult? BindingSurfaceInventory { get; set; }
+    public YmmTimelineResourceInventoryResult? ResourceInventory { get; set; }
+    public YmmTimelineLifecycleRepeatabilityResult? LifecycleRepeatability { get; set; }
 }
 
 public sealed class YmmTimelineDataContextBoundaryPatternResult
@@ -133,4 +137,112 @@ public sealed class YmmTimelineCommandRouteBoundaryResult
     public bool DetachSucceeded { get; set; }
     public bool DisposeSucceeded { get; set; }
     public bool FallbackPreserved { get; set; } = true;
+}
+
+public sealed class YmmTimelineVisualTreeInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public bool HostCreated { get; set; }
+    public bool ViewAttachedToHost { get; set; }
+    public bool GeneratedViewModelAvailable { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public int VisualTreeNodeCount { get; set; }
+    public int MaxDepth { get; set; }
+    public int CommandSourceCount { get; set; }
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+    public bool FallbackPreserved { get; set; } = true;
+    public IReadOnlyList<YmmTimelineVisualNodeInfo> Nodes { get; set; } = [];
+}
+public sealed class YmmTimelineVisualNodeInfo
+{
+    public int Depth { get; set; }
+    public string TypeName { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string AutomationId { get; set; } = string.Empty;
+    public bool IsVisible { get; set; }
+    public bool IsEnabled { get; set; }
+    public bool Focusable { get; set; }
+    public bool IsKeyboardFocusWithin { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public string CommandSourceTypeName { get; set; } = string.Empty;
+    public string CommandTypeName { get; set; } = string.Empty;
+    public string CommandName { get; set; } = string.Empty;
+    public string CommandParameterTypeName { get; set; } = string.Empty;
+    public string CommandTargetTypeName { get; set; } = string.Empty;
+    public bool CommandCanExecuteObservationSkipped { get; set; } = true;
+}
+
+public sealed class YmmTimelineBindingSurfaceInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public bool BindingObservationAvailable { get; set; } = true;
+    public int BindingExpressionCount { get; set; }
+    public int UnresolvedBindingCount { get; set; }
+    public int BindingErrorCount { get; set; }
+    public int DependencyPropertySampleCount { get; set; }
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+    public bool FallbackPreserved { get; set; } = true;
+}
+
+public sealed class YmmTimelineResourceInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public int ResourceDictionaryCount { get; set; }
+    public bool ApplicationResourceAvailable { get; set; }
+    public int HostResourceCount { get; set; }
+    public int ViewResourceCount { get; set; }
+    public int StyleObservedCount { get; set; }
+    public int ControlTemplateObservedCount { get; set; }
+    public int DataTemplateObservedCount { get; set; }
+    public int MissingResourceSignsCount { get; set; }
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+    public bool FallbackPreserved { get; set; } = true;
+}
+
+public sealed class YmmTimelineLifecycleRepeatabilityResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public int IterationCount { get; set; }
+    public int SucceededCount { get; set; }
+    public int FailedCount { get; set; }
+    public int TotalExceptionCount { get; set; }
+    public bool FallbackPreserved { get; set; } = true;
+    public bool FinalDisposeSucceeded { get; set; }
+    public IReadOnlyList<YmmTimelineLifecycleIterationResult> Iterations { get; set; } = [];
+}
+public sealed class YmmTimelineLifecycleIterationResult
+{
+    public int Index { get; set; }
+    public bool HostCreated { get; set; }
+    public bool ViewAttachedToHost { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public bool RenderingObserved { get; set; }
+    public bool TemplateAppliedObserved { get; set; }
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool? WeakReferenceAliveBeforeGc { get; set; }
+    public bool? WeakReferenceAliveAfterGc { get; set; }
+    public bool GcAttempted { get; set; }
 }
