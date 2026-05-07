@@ -611,6 +611,7 @@ public void Dispose()
                 readiness,
                 generationAttempt = generationAttemptResult,
                 timelineViewGenerationAttempt = timelineViewGenerationAttemptResult,
+                dataContextBoundary = BuildDataContextBoundaryObservation(generationAttemptResult, timelineViewGenerationAttemptResult),
                 visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
                 visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
                 logs = logs.Select(x => new { x.Timestamp, x.Category, x.Message }).ToList(),
@@ -626,6 +627,61 @@ public void Dispose()
         catch
         {
         }
+    }
+
+    private static object BuildDataContextBoundaryObservation(
+        YmmTimelineGenerationAttemptResult? generationAttemptResult,
+        YmmTimelineViewGenerationAttemptResult? viewResult)
+    {
+        static object Pattern(
+            string name,
+            bool attempted,
+            string skippedReason,
+            string dataContextType,
+            YmmTimelineViewGenerationAttemptResult? view)
+        {
+            return new
+            {
+                name,
+                attempted,
+                skippedReason,
+                dataContextType,
+                attachSucceeded = view?.VisualAttachSucceeded ?? false,
+                presentationSourceAvailable = view?.PresentationSourceAvailable ?? false,
+                isLoaded = view?.IsLoaded ?? false,
+                isVisible = view?.IsVisible ?? false,
+                actualWidth = view?.ActualWidth ?? 0,
+                actualHeight = view?.ActualHeight ?? 0,
+                desiredSize = view?.DesiredSize ?? string.Empty,
+                renderSize = view?.RenderSize ?? string.Empty,
+                dispatcherRenderPriorityReached = view?.DispatcherRenderPriorityReached ?? false,
+                renderingObserved = view?.RenderingObserved ?? false,
+                templateAppliedObserved = view?.TemplateAppliedObserved ?? false,
+                bindingErrorCount = 0,
+                bindingErrorObservationUnavailable = true,
+                exceptionCount = string.IsNullOrWhiteSpace(view?.ExceptionType) ? 0 : 1,
+                exceptionTypes = string.IsNullOrWhiteSpace(view?.ExceptionType) ? Array.Empty<string>() : new[] { view!.ExceptionType! },
+                minimalRenderObserved = view?.MinimalRenderObserved ?? false,
+                detachSucceeded = view?.DetachSucceeded ?? false,
+                disposeSucceeded = view?.DisposeSucceeded ?? false,
+            };
+        }
+
+        var vmAllowed = generationAttemptResult?.Attempted == true && generationAttemptResult.Succeeded;
+        return new
+        {
+            patterns = new object[]
+            {
+                Pattern("DataContext=null", viewResult is not null, viewResult is null ? "TimelineView attempt not executed." : string.Empty, "null", viewResult),
+                Pattern("DataContext=PlaceholderAdapter", viewResult is not null, viewResult is null ? "TimelineView attempt not executed." : string.Empty, "PlaceholderAdapter", viewResult),
+                Pattern(
+                    "DataContext=generated TimelineViewModel",
+                    vmAllowed && viewResult is not null,
+                    vmAllowed ? string.Empty : "AllowViewModelGenerationAttempt=false or generation skipped.",
+                    "TimelineViewModel",
+                    vmAllowed ? viewResult : null),
+            }
+        };
     }
 
     public bool TryRunGenerationAttempt()
