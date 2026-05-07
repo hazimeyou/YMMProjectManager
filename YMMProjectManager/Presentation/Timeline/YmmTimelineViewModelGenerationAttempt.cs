@@ -39,6 +39,8 @@ public sealed class YmmTimelineViewModelGenerationAttempt
             instance = constructor.Invoke(args);
             weakReference = new WeakReference(instance);
             result.Succeeded = true;
+            result.GeneratedInstance = instance;
+            result.GeneratedInstanceTypeName = instance.GetType().FullName ?? instance.GetType().Name;
         }
         catch (Exception ex)
         {

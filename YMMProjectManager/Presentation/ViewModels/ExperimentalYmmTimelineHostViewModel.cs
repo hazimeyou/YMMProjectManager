@@ -171,12 +171,19 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                             .TryGenerateAndDisposeAsync(
                                 timelineViewModelType,
                                 selectedBinding,
-                                options.DisposeImmediatelyAfterGeneration,
+                                options.DisposeImmediatelyAfterGeneration && !options.AllowTimelineViewGenerationAttempt,
                                 runtimeDependencyInstances)
                             .ConfigureAwait(false);
                         generation.StrictConfidenceGatePassed = true;
                         generation.StrictConfidenceGateReason = "Passed";
                         generation.InjectedDependencies = BuildInjectedDependencySummaries(runtimeDependencyInstances, result);
+                        if (generation.Succeeded && generation.GeneratedInstance is not null)
+                        {
+                            runtimeDependencyInstances = new Dictionary<string, object?>(runtimeDependencyInstances, StringComparer.Ordinal)
+                            {
+                                ["YukkuriMovieMaker.ViewModels.TimelineViewModel"] = generation.GeneratedInstance
+                            };
+                        }
 
                         if (options.AllowTimelineViewGenerationAttempt &&
                             options.AllowViewModelGenerationAttempt &&
@@ -196,6 +203,18 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                                         runtimeDependencyInstances,
                                         options)
                                     .ConfigureAwait(false);
+
+                                if (generation.GeneratedInstance is not null && !generation.DisposeAttempted)
+                                {
+                                    generation.DisposeAttempted = true;
+                                    var vmDisposeSw = Stopwatch.StartNew();
+                                    var vmDisposeResult = await YmmTimelineInstanceDisposer.DisposeAsync(generation.GeneratedInstance).ConfigureAwait(false);
+                                    vmDisposeSw.Stop();
+                                    generation.DisposeMs = vmDisposeSw.ElapsedMilliseconds;
+                                    generation.DisposeSucceeded = vmDisposeResult.Succeeded;
+                                    generation.DisposeFailureReason = vmDisposeResult.FailureReason;
+                                    generation.GeneratedInstance = null;
+                                }
                             }
                         }
                     }

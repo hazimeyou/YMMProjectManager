@@ -43,4 +43,7 @@ public sealed class YmmTimelineGenerationAttemptResult
     public string? FinalizationNote { get; set; }
 
     public IReadOnlyList<string> InjectedDependencies { get; set; } = Array.Empty<string>();
+    public string? GeneratedInstanceTypeName { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public object? GeneratedInstance { get; set; }
 }

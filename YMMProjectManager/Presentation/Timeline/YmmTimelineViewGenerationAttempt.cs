@@ -124,6 +124,7 @@ public sealed class YmmTimelineViewGenerationAttempt
                         }
 
                         var hasVm = runtimeDependencyInstances.TryGetValue("YukkuriMovieMaker.ViewModels.TimelineViewModel", out var generatedVm) && generatedVm is not null;
+                        var generatedVmTypeName = generatedVm?.GetType().FullName ?? string.Empty;
                         var patterns = new List<(string Name, object? DataContext, bool Skip, string SkipReason, string DataContextType)>
                         {
                             ("DataContext=null", null, false, string.Empty, "null"),
@@ -142,6 +143,9 @@ public sealed class YmmTimelineViewGenerationAttempt
                                     Attempted = false,
                                     SkippedReason = pattern.SkipReason,
                                     DataContextType = pattern.DataContextType,
+                                    GeneratedViewModelAvailable = hasVm,
+                                    GeneratedViewModelTypeName = generatedVmTypeName,
+                                    PatternDisposeManagedByOuterScope = true,
                                 });
                                 continue;
                             }
@@ -151,6 +155,9 @@ public sealed class YmmTimelineViewGenerationAttempt
                                 Name = pattern.Name,
                                 Attempted = true,
                                 DataContextType = pattern.DataContextType,
+                                GeneratedViewModelAvailable = hasVm,
+                                GeneratedViewModelTypeName = generatedVmTypeName,
+                                PatternDisposeManagedByOuterScope = true,
                             };
                             try
                             {
