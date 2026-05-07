@@ -86,6 +86,36 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         Vm?.SaveDiagnosticsSnapshot();
     }
 
+    private void OnCopyReflectionClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Clipboard.SetText(Vm.BuildReflectionClipboardText());
+    }
+
+    private void OnCopyBindingClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Clipboard.SetText(Vm.BuildBindingClipboardText());
+    }
+
+    private void OnCopyGenerationClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Clipboard.SetText(Vm.BuildGenerationClipboardText());
+    }
+
+    private void OnCopyDisposeClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Clipboard.SetText(Vm.BuildDisposeClipboardText());
+    }
+
+    private void OnCopyLogsClick(object sender, RoutedEventArgs e)
+    {
+        if (Vm is null) return;
+        Clipboard.SetText(Vm.BuildLogsClipboardText());
+    }
+
     private async Task RunWithProgressAsync(string message, Func<IProgress<int>, Task<bool>> workAsync)
     {
         var popup = new ProgressPopupWindow

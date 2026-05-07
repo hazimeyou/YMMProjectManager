@@ -579,6 +579,77 @@ public void Dispose()
 
         return null;
     }
+
+    public string BuildReflectionClipboardText()
+    {
+        var lines = new List<string>
+        {
+            $"Status: {Status}",
+            $"Runtime: {RuntimeKindText}",
+            $"Process: {RuntimeProcessName}",
+            $"ReadinessScore: {ReadinessScore}",
+            $"CanAttemptViewModelGeneration: {CanAttemptViewModelGeneration}",
+            $"CanAttemptViewGeneration: {CanAttemptViewGeneration}",
+            $"TimelineView: {TimelineViewType}",
+            $"TimelineViewModel: {TimelineViewModelType}",
+            $"SetTimelineToolInfoOwner: {SetTimelineToolInfoOwnerType}",
+            "FoundAssemblies:",
+        };
+        lines.AddRange(FoundAssemblies.Select(x => $"  - {x}"));
+        lines.Add("MissingDependencies:");
+        lines.AddRange(MissingDependencies.Select(x => $"  - {x}"));
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public string BuildBindingClipboardText()
+    {
+        var lines = new List<string>
+        {
+            "ConstructorBindings:",
+        };
+        lines.AddRange(ConstructorBindingSummary);
+        lines.Add("BlockingReasons:");
+        lines.AddRange(BlockingReasons.Select(x => $"  - {x}"));
+        lines.Add("Warnings:");
+        lines.AddRange(ReadinessWarnings.Select(x => $"  - {x}"));
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public string BuildGenerationClipboardText()
+    {
+        var lines = new List<string>
+        {
+            $"Attempted: {GenerationAttempted}",
+            $"Succeeded: {GenerationSucceeded}",
+            $"Constructor: {GenerationConstructorSignature}",
+            $"FailureReason: {GenerationFailureReason}",
+            $"Exception: {GenerationException}",
+            $"StackTrace: {GenerationStackTrace}",
+            $"NullInjected: {NullInjectedParameters}",
+        };
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public string BuildDisposeClipboardText()
+    {
+        var lines = new List<string>
+        {
+            $"DisposeAttempted: {DisposeAttempted}",
+            $"DisposeSucceeded: {DisposeSucceeded}",
+            $"DisposeFailureReason: {DisposeFailureReason}",
+            $"GcVerificationAttempted: {GcVerificationAttempted}",
+            $"WeakReferenceAliveAfterGc: {WeakReferenceAfterGc}",
+            $"FinalizationNote: {FinalizationNote}",
+        };
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    public string BuildLogsClipboardText()
+    {
+        return string.Join(
+            Environment.NewLine,
+            Logs.Select(x => $"[{x.Timestamp:yyyy-MM-dd HH:mm:ss.fff}] {x.Category}: {x.Message}"));
+    }
 }
 
 

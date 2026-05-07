@@ -39,6 +39,13 @@
             <Button Content="生成試行(即破棄)" Width="130" Margin="0,0,6,0" Click="OnRunGenerationAttemptClick" />
             <Button Content="Diagnostics JSON 保存" Width="170" Click="OnSaveDiagnosticsClick" />
         </StackPanel>
+        <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Left">
+            <Button Content="Reflection コピー" Width="120" Margin="0,0,6,0" Click="OnCopyReflectionClick" />
+            <Button Content="Binding コピー" Width="110" Margin="0,0,6,0" Click="OnCopyBindingClick" />
+            <Button Content="Generation コピー" Width="120" Margin="0,0,6,0" Click="OnCopyGenerationClick" />
+            <Button Content="Dispose コピー" Width="100" Margin="0,0,6,0" Click="OnCopyDisposeClick" />
+            <Button Content="Logs コピー" Width="90" Click="OnCopyLogsClick" />
+        </StackPanel>
 
         <StackPanel Grid.Row="1" Margin="0,0,0,8">
             <TextBlock Text="Experimental generation attempt is disabled by default." FontWeight="SemiBold" />
