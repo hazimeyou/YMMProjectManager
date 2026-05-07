@@ -123,51 +123,104 @@ public sealed class YmmTimelineViewGenerationAttempt
                                 System.Windows.Threading.DispatcherPriority.Loaded);
                         }
 
-                        host.Content = view;
-                        result.VisualAttachSucceeded = true;
-                        result.ViewAttachedToHost = true;
-                        result.DataContextAssigned = false;
-                        if (options.AllowControlledLifecycleObservation)
+                        var hasVm = runtimeDependencyInstances.TryGetValue("YukkuriMovieMaker.ViewModels.TimelineViewModel", out var generatedVm) && generatedVm is not null;
+                        var patterns = new List<(string Name, object? DataContext, bool Skip, string SkipReason, string DataContextType)>
                         {
-                            var hold = Math.Max(0, options.PassiveAttachHoldMs);
-                            if (hold > 0)
+                            ("DataContext=null", null, false, string.Empty, "null"),
+                            ("DataContext=PlaceholderAdapter", new { Adapter = "PlaceholderAdapter" }, false, string.Empty, "PlaceholderAdapter"),
+                            ("DataContext=generated TimelineViewModel", generatedVm, !options.AllowViewModelGenerationAttempt || !hasVm, !options.AllowViewModelGenerationAttempt ? "AllowViewModelGenerationAttempt=false" : "Generated TimelineViewModel is unavailable", "TimelineViewModel"),
+                        };
+
+                        var patternResults = new List<YmmTimelineDataContextBoundaryPatternResult>();
+                        foreach (var pattern in patterns)
+                        {
+                            if (pattern.Skip)
                             {
-                                var until = DateTime.UtcNow.AddMilliseconds(hold);
-                                while (DateTime.UtcNow < until)
+                                patternResults.Add(new YmmTimelineDataContextBoundaryPatternResult
                                 {
-                                    System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
-                                        () => { },
-                                        System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                                    Name = pattern.Name,
+                                    Attempted = false,
+                                    SkippedReason = pattern.SkipReason,
+                                    DataContextType = pattern.DataContextType,
+                                });
+                                continue;
+                            }
+
+                            var pr = new YmmTimelineDataContextBoundaryPatternResult
+                            {
+                                Name = pattern.Name,
+                                Attempted = true,
+                                DataContextType = pattern.DataContextType,
+                            };
+                            try
+                            {
+                                view.DataContext = pattern.DataContext;
+                                host.Content = view;
+                                pr.AttachSucceeded = true;
+                                result.VisualAttachSucceeded = true;
+                                result.ViewAttachedToHost = true;
+                                result.DataContextAssigned = true;
+
+                                if (options.AllowControlledLifecycleObservation)
+                                {
+                                    var hold = Math.Max(0, options.PassiveAttachHoldMs);
+                                    if (hold > 0)
+                                    {
+                                        var until = DateTime.UtcNow.AddMilliseconds(hold);
+                                        while (DateTime.UtcNow < until)
+                                        {
+                                            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { }, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+                                        }
+                                    }
                                 }
+
+                                System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(() => { pr.DispatcherRenderPriorityReached = true; result.DispatcherRenderPriorityReached = true; }, System.Windows.Threading.DispatcherPriority.Render);
+
+                                pr.ActualWidth = view.ActualWidth;
+                                pr.ActualHeight = view.ActualHeight;
+                                pr.DesiredSize = view.DesiredSize.ToString();
+                                pr.RenderSize = view.RenderSize.ToString();
+                                pr.IsVisible = view.IsVisible;
+                                pr.IsLoaded = view.IsLoaded;
+                                pr.PresentationSourceAvailable = PresentationSource.FromVisual(view) is not null;
+                                pr.RenderingObserved = renderingObserved;
+                                pr.TemplateAppliedObserved = view is Control c2 && c2.Template is not null;
+                                pr.MinimalRenderObserved =
+                                    pr.PresentationSourceAvailable ||
+                                    pr.IsLoaded ||
+                                    (pr.ActualWidth > 0 && pr.ActualHeight > 0) ||
+                                    view.RenderSize.Width > 0 ||
+                                    view.RenderSize.Height > 0;
+
+                                host.Content = null;
+                                pr.DetachSucceeded = true;
+                            }
+                            catch (Exception ex)
+                            {
+                                pr.ExceptionCount = 1;
+                                pr.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+                            }
+                            finally
+                            {
+                                patternResults.Add(pr);
                             }
                         }
+                        result.DataContextBoundaryPatterns = patternResults;
 
-                        System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
-                            () => { result.DispatcherRenderPriorityReached = true; },
-                            System.Windows.Threading.DispatcherPriority.Render);
-
-                        result.ActualWidth = view.ActualWidth;
-                        result.ActualHeight = view.ActualHeight;
-                        result.DesiredSize = view.DesiredSize.ToString();
-                        result.RenderSize = view.RenderSize.ToString();
-                        result.IsVisible = view.IsVisible;
-                        result.IsLoaded = view.IsLoaded;
-                        result.PresentationSourceAvailable = PresentationSource.FromVisual(view) is not null;
-                        result.MinimalRenderObserved =
-                            result.ActualWidth > 0 ||
-                            result.ActualHeight > 0 ||
-                            view.RenderSize.Width > 0 ||
-                            view.RenderSize.Height > 0 ||
-                            result.PresentationSourceAvailable ||
-                            result.IsLoaded;
-
-                        if (view is Control c)
+                        var first = patternResults.FirstOrDefault(x => x.Attempted);
+                        if (first is not null)
                         {
-                            templateAppliedObserved = c.Template is not null;
+                            result.ActualWidth = first.ActualWidth;
+                            result.ActualHeight = first.ActualHeight;
+                            result.DesiredSize = first.DesiredSize;
+                            result.RenderSize = first.RenderSize;
+                            result.IsVisible = first.IsVisible;
+                            result.IsLoaded = first.IsLoaded;
+                            result.PresentationSourceAvailable = first.PresentationSourceAvailable;
+                            result.MinimalRenderObserved = first.MinimalRenderObserved;
+                            result.DetachSucceeded = first.DetachSucceeded;
                         }
 
-                        host.Content = null;
-                        result.DetachSucceeded = true;
                         if (offscreenHost is not null)
                         {
                             offscreenHost.Close();

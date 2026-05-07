@@ -40,4 +40,31 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public long DisposeMs { get; set; }
     public bool ExecutedOnStaThread { get; set; }
     public bool? WeakReferenceAliveAfterGc { get; set; }
+    public bool BindingErrorObservationUnavailable { get; set; } = true;
+    public IReadOnlyList<YmmTimelineDataContextBoundaryPatternResult> DataContextBoundaryPatterns { get; set; } = [];
+}
+
+public sealed class YmmTimelineDataContextBoundaryPatternResult
+{
+    public string Name { get; set; } = string.Empty;
+    public bool Attempted { get; set; }
+    public string SkippedReason { get; set; } = string.Empty;
+    public string DataContextType { get; set; } = string.Empty;
+    public bool AttachSucceeded { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public string DesiredSize { get; set; } = string.Empty;
+    public string RenderSize { get; set; } = string.Empty;
+    public bool DispatcherRenderPriorityReached { get; set; }
+    public bool RenderingObserved { get; set; }
+    public bool TemplateAppliedObserved { get; set; }
+    public int BindingErrorCount { get; set; }
+    public int ExceptionCount { get; set; }
+    public IReadOnlyList<string> ExceptionTypes { get; set; } = [];
+    public bool MinimalRenderObserved { get; set; }
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
 }
