@@ -1,0 +1,74 @@
+﻿# YMM Project Manager
+
+YukkuriMovieMaker support tool.
+
+Main features:
+
+- Media relink support
+- Thumbnail generation
+- `.ymmp` history/diff (preview)
+
+## History/Diff (Preview)
+
+History/Diff is experimental and may change in internal model/UI/spec.
+
+Current preview capabilities include:
+
+- Snapshot create/list/delete
+- Snapshot vs snapshot diff
+- Current vs snapshot diff
+- JSON diff + semantic diff (`Text / FilePath / Frame / Layer / Length`)
+- Internal Item ID PoC
+- DiffTimeline prototype and navigation
+- PureTimeline adapter boundary and fallback
+- FutureYmmTimelineAdapter scaffold
+- Experimental isolated host PoC (default disabled)
+- Reflection-based timeline probe (preview13)
+- `ExperimentalReady` state for future adapter (preview13)
+- Timeline constructor binding dry-run (preview14)
+- Generation readiness score (preview14)
+- Disabled-by-default experimental generation investigation (preview14)
+- Isolated TimelineViewModel generation attempt PoC (preview15)
+- Immediate dispose verification after generation attempt (preview15)
+- Explicit isolated ViewModel generation action in experimental host (preview18)
+- Immediate dispose + GC reachability verification diagnostics (preview18)
+- Strict dependency resolution gate for generation attempts (preview19)
+- `Scene / UndoRedoManager / AsyncAwaitStatus` are treated as required YMM runtime dependencies (preview19)
+- Runtime dependency instance discovery diagnostics (preview20)
+- Added owner/property/field/method route candidates and discovery summaries (preview20)
+- Runtime dependency live resolution analysis support (preview21)
+- Diagnostics `summary` section (resolved counts + top owners) (preview21)
+- Discovery cost controls (depth/node bounds + owner prefix excludes) (preview21)
+- Isolated TimelineView generation attempt PoC (no visual attach) (preview17)
+
+### Experimental Mode Safety
+
+- `EnableExperimentalYmmTimelineHost = false` by default
+- `AllowViewModelGenerationAttempt = false` by default
+- `AllowTimelineViewGenerationAttempt = false` by default
+- Experimental failures are treated as normal failures
+- DiffTL standalone must remain usable
+
+## Benchmarks
+
+Run:
+
+`dotnet run --project YMMProjectManager.Benchmarks/YMMProjectManager.Benchmarks.csproj`
+
+Outputs:
+
+- `logs/benchmarks/benchmark-yyyyMMdd-HHmmss.md`
+- `logs/benchmarks/correctness-yyyyMMdd-HHmmss.json`
+
+## Diagnostics Guide
+
+- [Runtime Diagnostics Playbook](docs/runtime-diagnostics-playbook.md)
+
+## License
+
+MIT License
+
+- Runtime environment detection (preview16)
+- YMM4 plugin runtime reflection probe actions (preview16)
+- Diagnostics output with runtime kind (preview16)
+

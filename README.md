@@ -1,74 +1,60 @@
 ﻿# YMM Project Manager
 
-YukkuriMovieMaker support tool.
+YukkuriMovieMaker 用の補助ツールです。
 
-Main features:
+本ツールは以下の機能を提供します。
 
-- Media relink support
-- Thumbnail generation
-- `.ymmp` history/diff (preview)
+* 素材再リンク（自動探索）
+* サムネイル生成
 
-## History/Diff (Preview)
+---
 
-History/Diff is experimental and may change in internal model/UI/spec.
+# インストール方法
 
-Current preview capabilities include:
+1. GitHub の Release ページから `.ymme` ファイルをダウンロードします
+2. ダウンロードした `.ymme` を起動します
+3. YukkuriMovieMaker の「ツール」タブから本ツールを実行します
 
-- Snapshot create/list/delete
-- Snapshot vs snapshot diff
-- Current vs snapshot diff
-- JSON diff + semantic diff (`Text / FilePath / Frame / Layer / Length`)
-- Internal Item ID PoC
-- DiffTimeline prototype and navigation
-- PureTimeline adapter boundary and fallback
-- FutureYmmTimelineAdapter scaffold
-- Experimental isolated host PoC (default disabled)
-- Reflection-based timeline probe (preview13)
-- `ExperimentalReady` state for future adapter (preview13)
-- Timeline constructor binding dry-run (preview14)
-- Generation readiness score (preview14)
-- Disabled-by-default experimental generation investigation (preview14)
-- Isolated TimelineViewModel generation attempt PoC (preview15)
-- Immediate dispose verification after generation attempt (preview15)
-- Explicit isolated ViewModel generation action in experimental host (preview18)
-- Immediate dispose + GC reachability verification diagnostics (preview18)
-- Strict dependency resolution gate for generation attempts (preview19)
-- `Scene / UndoRedoManager / AsyncAwaitStatus` are treated as required YMM runtime dependencies (preview19)
-- Runtime dependency instance discovery diagnostics (preview20)
-- Added owner/property/field/method route candidates and discovery summaries (preview20)
-- Runtime dependency live resolution analysis support (preview21)
-- Diagnostics `summary` section (resolved counts + top owners) (preview21)
-- Discovery cost controls (depth/node bounds + owner prefix excludes) (preview21)
-- Isolated TimelineView generation attempt PoC (no visual attach) (preview17)
+---
 
-### Experimental Mode Safety
+# 主な機能
 
-- `EnableExperimentalYmmTimelineHost = false` by default
-- `AllowViewModelGenerationAttempt = false` by default
-- `AllowTimelineViewGenerationAttempt = false` by default
-- Experimental failures are treated as normal failures
-- DiffTL standalone must remain usable
+## 素材再リンク
 
-## Benchmarks
+.ymmp ファイル内の素材（画像 / 動画 / 音声）のリンク切れを検出し、自動探索で修復します。
 
-Run:
+## プロジェクト一覧表示
 
-`dotnet run --project YMMProjectManager.Benchmarks/YMMProjectManager.Benchmarks.csproj`
+.ymmp ファイルを登録してプロジェクトの一覧を表示します。登録したプロジェクトはサムネイル付きで管理できます。
 
-Outputs:
+---
 
-- `logs/benchmarks/benchmark-yyyyMMdd-HHmmss.md`
-- `logs/benchmarks/correctness-yyyyMMdd-HHmmss.json`
+## 再リンクの使い方
 
-## Diagnostics Guide
+1. プロジェクトを開きます
+2. `開いているPFを再リンク`をクリックして、素材再リンクウインドウを開きます
+3. `ファイル検索`をクリックして、素材の再リンク処理を開始します
+4. 結果を確認して、必要に応じて候補を選択して修正します
+5. `更新内容を保存`をクリックして、プロジェクトを更新します
+6. 自動でタイムライン上の素材リンクが更新され、再リンクされます
 
-- [Runtime Diagnostics Playbook](docs/runtime-diagnostics-playbook.md)
+---
 
-## License
+## サムネイル生成
 
-MIT License
+プロジェクトのプレビューからサムネイルを生成します。
 
-- Runtime environment detection (preview16)
-- YMM4 plugin runtime reflection probe actions (preview16)
-- Diagnostics output with runtime kind (preview16)
+* 64点サンプリング
+* 非同期処理
+* UI操作に影響を与えない設計
 
+注意：
+
+* YMM の表示状態に依存します
+* プレビューが更新されない場合は取得できないことがあります
+
+---
+
+# ライセンス
+
+本ソフトウェアは MIT License のもとで公開されています。
