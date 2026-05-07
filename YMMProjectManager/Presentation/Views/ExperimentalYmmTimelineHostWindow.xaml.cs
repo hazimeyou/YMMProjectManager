@@ -32,6 +32,24 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         });
     }
 
+    private async void OnRunAllDiagnosticsClick(object sender, RoutedEventArgs e)
+    {
+        Vm?.RedetectRuntime();
+        await RunWithProgressAsync("再判定から保存までを実行しています...", async (progress) =>
+        {
+            var ok = await (Vm?.TryInitializeAsync(new PureTimelineExperimentalOptions
+            {
+                EnableExperimentalYmmTimelineHost = true,
+                UseReflection = true,
+                OpenIsolatedHostWindow = false,
+                AllowViewModelGenerationAttempt = false,
+            }, progress) ?? Task.FromResult(false));
+
+            Vm?.SaveDiagnosticsSnapshot();
+            return ok;
+        });
+    }
+
     private async void OnRunBindingDryRunClick(object sender, RoutedEventArgs e)
     {
         var options = new PureTimelineExperimentalOptions
