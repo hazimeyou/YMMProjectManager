@@ -55,7 +55,15 @@ public sealed class YmmRuntimeDependencyDiscoveryService
             }
         }
 
-        DiscoverLiveInstanceCandidates(dependencyName, dependencyType, candidates);
+        var app = System.Windows.Application.Current;
+        if (app?.Dispatcher is { } dispatcher && !dispatcher.CheckAccess())
+        {
+            dispatcher.Invoke(() => DiscoverLiveInstanceCandidates(dependencyName, dependencyType, candidates));
+        }
+        else
+        {
+            DiscoverLiveInstanceCandidates(dependencyName, dependencyType, candidates);
+        }
 
         return candidates;
     }
