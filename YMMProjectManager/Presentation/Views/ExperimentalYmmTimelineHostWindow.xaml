@@ -33,6 +33,7 @@
 
         <StackPanel Grid.Row="0" Orientation="Horizontal" HorizontalAlignment="Right">
             <Button Content="再判定〜保存を一括実行" Width="180" Margin="0,0,6,0" Click="OnRunAllDiagnosticsClick" />
+            <Button Content="生成試行〜保存を一括実行" Width="190" Margin="0,0,6,0" Click="OnRunGenerationAndSaveClick" />
             <Button Content="実行環境を再判定" Width="140" Margin="0,0,6,0" Click="OnRedetectRuntimeClick" />
             <Button Content="Reflection Probe 実行" Width="150" Margin="0,0,6,0" Click="OnRunProbeClick" />
             <Button Content="Binding Dry-run 実行" Width="150" Margin="0,0,6,0" Click="OnRunBindingDryRunClick" />

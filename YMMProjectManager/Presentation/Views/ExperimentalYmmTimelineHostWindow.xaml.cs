@@ -50,6 +50,32 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
         });
     }
 
+    private async void OnRunGenerationAndSaveClick(object sender, RoutedEventArgs e)
+    {
+        Vm?.RedetectRuntime();
+        await RunWithProgressAsync("生成試行から保存までを実行しています...", async (progress) =>
+        {
+            var ok = await (Vm?.TryInitializeAsync(new PureTimelineExperimentalOptions
+            {
+                EnableExperimentalYmmTimelineHost = true,
+                UseReflection = true,
+                OpenIsolatedHostWindow = false,
+                AllowViewModelGenerationAttempt = true,
+                AllowTimelineViewGenerationAttempt = true,
+                MinimumReadinessScoreForGeneration = 80,
+                DisposeImmediatelyAfterGeneration = true,
+                ForbidVisualTreeAttach = false,
+                AllowPassiveVisualTreeParticipation = true,
+                AllowControlledLifecycleObservation = true,
+                PassiveAttachHoldMs = 100,
+                AllowOffscreenHostInvestigation = true,
+            }, progress) ?? Task.FromResult(false));
+
+            Vm?.SaveDiagnosticsSnapshot();
+            return ok;
+        });
+    }
+
     private async void OnRunBindingDryRunClick(object sender, RoutedEventArgs e)
     {
         var options = new PureTimelineExperimentalOptions
