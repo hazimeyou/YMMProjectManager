@@ -643,6 +643,8 @@ public void Dispose()
             });
             var path = Path.Combine(dir, $"timeline-view-datacontext-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(path, json, Encoding.UTF8);
+            var passivePath = Path.Combine(dir, $"timeline-view-passive-event-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(passivePath, json, Encoding.UTF8);
         }
         catch
         {

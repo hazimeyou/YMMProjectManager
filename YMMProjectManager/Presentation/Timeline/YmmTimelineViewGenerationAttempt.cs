@@ -133,6 +133,15 @@ public sealed class YmmTimelineViewGenerationAttempt
                         };
 
                         var patternResults = new List<YmmTimelineDataContextBoundaryPatternResult>();
+                        var passiveEventResult = new YmmTimelinePassiveEventBoundaryResult
+                        {
+                            Attempted = false,
+                            Succeeded = false,
+                            HostCreated = offscreenHost is not null,
+                            GeneratedViewModelAvailable = hasVm,
+                            GeneratedViewModelTypeName = generatedVmTypeName,
+                            FallbackPreserved = true,
+                        };
                         foreach (var pattern in patterns)
                         {
                             if (pattern.Skip)
@@ -161,6 +170,35 @@ public sealed class YmmTimelineViewGenerationAttempt
                             };
                             try
                             {
+                                var observedEvents = new List<string>();
+                                var eventCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+                                var eventExceptions = new List<string>();
+                                void Track(string name)
+                                {
+                                    observedEvents.Add(name);
+                                    eventCounts[name] = eventCounts.TryGetValue(name, out var c) ? c + 1 : 1;
+                                }
+
+                                RoutedEventHandler unloaded = (_, _) => Track("Unloaded");
+                                SizeChangedEventHandler sizeChanged = (_, _) => Track("SizeChanged");
+                                RoutedEventHandler gotFocus = (_, _) => Track("GotFocus");
+                                RoutedEventHandler lostFocus = (_, _) => Track("LostFocus");
+                                MouseButtonEventHandler pmd = (_, _) => Track("PreviewMouseDown");
+                                MouseEventHandler pmm = (_, _) => Track("PreviewMouseMove");
+                                MouseButtonEventHandler pmu = (_, _) => Track("PreviewMouseUp");
+                                KeyEventHandler pkd = (_, _) => Track("PreviewKeyDown");
+                                KeyEventHandler pku = (_, _) => Track("PreviewKeyUp");
+
+                                view.Unloaded += unloaded;
+                                view.SizeChanged += sizeChanged;
+                                view.GotFocus += gotFocus;
+                                view.LostFocus += lostFocus;
+                                view.PreviewMouseDown += pmd;
+                                view.PreviewMouseMove += pmm;
+                                view.PreviewMouseUp += pmu;
+                                view.PreviewKeyDown += pkd;
+                                view.PreviewKeyUp += pku;
+
                                 view.DataContext = pattern.DataContext;
                                 host.Content = view;
                                 pr.AttachSucceeded = true;
@@ -201,11 +239,54 @@ public sealed class YmmTimelineViewGenerationAttempt
 
                                 host.Content = null;
                                 pr.DetachSucceeded = true;
+
+                                if (pattern.Name == "DataContext=generated TimelineViewModel")
+                                {
+                                    passiveEventResult.Attempted = options.EnableExperimentalYmmTimelineHost && options.AllowViewModelGenerationAttempt;
+                                    passiveEventResult.Succeeded = pr.AttachSucceeded;
+                                    passiveEventResult.SkippedReason = string.Empty;
+                                    passiveEventResult.ViewAttachedToHost = true;
+                                    passiveEventResult.PresentationSourceAvailable = pr.PresentationSourceAvailable;
+                                    passiveEventResult.IsLoaded = pr.IsLoaded;
+                                    passiveEventResult.IsVisible = pr.IsVisible;
+                                    passiveEventResult.ActualWidth = pr.ActualWidth;
+                                    passiveEventResult.ActualHeight = pr.ActualHeight;
+                                    passiveEventResult.DesiredSize = pr.DesiredSize;
+                                    passiveEventResult.RenderSize = pr.RenderSize;
+                                    passiveEventResult.DispatcherLoadedPriorityReached = offscreenHost is not null;
+                                    passiveEventResult.DispatcherRenderPriorityReached = pr.DispatcherRenderPriorityReached;
+                                    passiveEventResult.RenderingObserved = pr.RenderingObserved;
+                                    passiveEventResult.TemplateAppliedObserved = pr.TemplateAppliedObserved;
+                                    passiveEventResult.ObservedEvents = observedEvents;
+                                    passiveEventResult.EventCounts = eventCounts;
+                                    passiveEventResult.FirstEventName = observedEvents.FirstOrDefault() ?? string.Empty;
+                                    passiveEventResult.LastEventName = observedEvents.LastOrDefault() ?? string.Empty;
+                                    passiveEventResult.ExceptionCount = eventExceptions.Count;
+                                    passiveEventResult.ExceptionTypes = eventExceptions;
+                                    passiveEventResult.DetachSucceeded = pr.DetachSucceeded;
+                                }
+
+                                view.Unloaded -= unloaded;
+                                view.SizeChanged -= sizeChanged;
+                                view.GotFocus -= gotFocus;
+                                view.LostFocus -= lostFocus;
+                                view.PreviewMouseDown -= pmd;
+                                view.PreviewMouseMove -= pmm;
+                                view.PreviewMouseUp -= pmu;
+                                view.PreviewKeyDown -= pkd;
+                                view.PreviewKeyUp -= pku;
                             }
                             catch (Exception ex)
                             {
                                 pr.ExceptionCount = 1;
                                 pr.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+                                if (pattern.Name == "DataContext=generated TimelineViewModel")
+                                {
+                                    passiveEventResult.Attempted = options.EnableExperimentalYmmTimelineHost && options.AllowViewModelGenerationAttempt;
+                                    passiveEventResult.Succeeded = false;
+                                    passiveEventResult.ExceptionCount = 1;
+                                    passiveEventResult.ExceptionTypes = [ex.GetType().FullName ?? ex.GetType().Name];
+                                }
                             }
                             finally
                             {
@@ -213,6 +294,13 @@ public sealed class YmmTimelineViewGenerationAttempt
                             }
                         }
                         result.DataContextBoundaryPatterns = patternResults;
+                        if (!passiveEventResult.Attempted)
+                        {
+                            passiveEventResult.SkippedReason = options.AllowViewModelGenerationAttempt
+                                ? "Generated TimelineViewModel is unavailable."
+                                : "AllowViewModelGenerationAttempt=false";
+                        }
+                        result.PassiveEventBoundary = passiveEventResult;
 
                         var first = patternResults.FirstOrDefault(x => x.Attempted);
                         if (first is not null)
@@ -293,6 +381,10 @@ public sealed class YmmTimelineViewGenerationAttempt
         result.DisposeMs = dsw.ElapsedMilliseconds;
         result.DisposeSucceeded = disposeResult.Succeeded;
         result.DisposeFailureReason = disposeResult.FailureReason;
+        if (result.PassiveEventBoundary is not null)
+        {
+            result.PassiveEventBoundary.DisposeSucceeded = result.DisposeSucceeded;
+        }
         try
         {
             GC.Collect();
