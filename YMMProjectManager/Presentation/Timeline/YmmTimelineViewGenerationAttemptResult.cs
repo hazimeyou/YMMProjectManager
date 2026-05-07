@@ -48,6 +48,12 @@ public sealed class YmmTimelineViewGenerationAttemptResult
     public YmmTimelineBindingSurfaceInventoryResult? BindingSurfaceInventory { get; set; }
     public YmmTimelineResourceInventoryResult? ResourceInventory { get; set; }
     public YmmTimelineLifecycleRepeatabilityResult? LifecycleRepeatability { get; set; }
+    public YmmTimelineExpandedVisualTreeInventoryResult? ExpandedVisualTreeInventory { get; set; }
+    public YmmTimelineLayoutSizeSweepResult? LayoutSizeSweep { get; set; }
+    public YmmTimelineDispatcherPriorityBoundaryResult? DispatcherPriorityBoundary { get; set; }
+    public YmmTimelineScrollContentInventoryResult? ScrollContentInventory { get; set; }
+    public YmmTimelineViewModelSurfaceInventoryResult? ViewModelSurfaceInventory { get; set; }
+    public YmmTimelineThemeResourceSmokeResult? ThemeResourceSmoke { get; set; }
 }
 
 public sealed class YmmTimelineDataContextBoundaryPatternResult
@@ -245,4 +251,106 @@ public sealed class YmmTimelineLifecycleIterationResult
     public bool? WeakReferenceAliveBeforeGc { get; set; }
     public bool? WeakReferenceAliveAfterGc { get; set; }
     public bool GcAttempted { get; set; }
+}
+
+public sealed class YmmTimelineExpandedVisualTreeInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public int MaxVisualNodes { get; set; } = 1000;
+    public int VisualTreeNodeCount { get; set; }
+    public int MaxDepth { get; set; }
+    public IReadOnlyDictionary<string, int> TypeHistogram { get; set; } = new Dictionary<string, int>();
+    public IReadOnlyDictionary<int, int> DepthHistogram { get; set; } = new Dictionary<int, int>();
+    public IReadOnlyDictionary<string, int> CommandSourceTypeHistogram { get; set; } = new Dictionary<string, int>();
+    public int ControlTypeCount { get; set; }
+    public int PanelTypeCount { get; set; }
+    public int ItemsControlCount { get; set; }
+    public int ScrollViewerCount { get; set; }
+    public int TextBlockCount { get; set; }
+    public int ButtonLikeCount { get; set; }
+}
+
+public sealed class YmmTimelineLayoutSizeSweepResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public IReadOnlyList<YmmTimelineLayoutSizeSweepEntry> Entries { get; set; } = [];
+}
+public sealed class YmmTimelineLayoutSizeSweepEntry
+{
+    public string Size { get; set; } = string.Empty;
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public string DesiredSize { get; set; } = string.Empty;
+    public string RenderSize { get; set; } = string.Empty;
+    public int VisualTreeNodeCount { get; set; }
+    public int BindingErrorCount { get; set; }
+    public int ExceptionCount { get; set; }
+    public bool RenderingObserved { get; set; }
+    public bool TemplateAppliedObserved { get; set; }
+    public bool DetachSucceeded { get; set; }
+    public bool DisposeSucceeded { get; set; }
+}
+
+public sealed class YmmTimelineDispatcherPriorityBoundaryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public IReadOnlyList<YmmTimelineDispatcherPriorityEntry> Entries { get; set; } = [];
+}
+public sealed class YmmTimelineDispatcherPriorityEntry
+{
+    public string PriorityName { get; set; } = string.Empty;
+    public bool Reached { get; set; }
+    public bool PresentationSourceAvailable { get; set; }
+    public bool IsLoaded { get; set; }
+    public bool IsVisible { get; set; }
+    public double ActualWidth { get; set; }
+    public double ActualHeight { get; set; }
+    public string DesiredSize { get; set; } = string.Empty;
+    public string RenderSize { get; set; } = string.Empty;
+    public int BindingExpressionCount { get; set; }
+    public int BindingErrorCount { get; set; }
+    public int ObservedEventCount { get; set; }
+    public int ExceptionCount { get; set; }
+}
+
+public sealed class YmmTimelineScrollContentInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public IReadOnlyDictionary<string, int> TypeCounts { get; set; } = new Dictionary<string, int>();
+}
+
+public sealed class YmmTimelineViewModelSurfaceInventoryResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public string ViewModelTypeName { get; set; } = string.Empty;
+    public int PublicPropertyCount { get; set; }
+    public int PublicMethodCount { get; set; }
+    public int PublicCommandLikePropertyCount { get; set; }
+    public int CollectionLikePropertyCount { get; set; }
+    public int ObservablePropertyCount { get; set; }
+    public IReadOnlyDictionary<string, int> PropertyTypeHistogram { get; set; } = new Dictionary<string, int>();
+    public IReadOnlyList<string> ICommandPropertyNames { get; set; } = [];
+    public IReadOnlyList<string> CollectionPropertyNames { get; set; } = [];
+    public bool ImplementsINotifyPropertyChanged { get; set; }
+    public bool ImplementsIDisposable { get; set; }
+}
+
+public sealed class YmmTimelineThemeResourceSmokeResult
+{
+    public bool Attempted { get; set; }
+    public bool Succeeded { get; set; }
+    public bool ApplicationCurrentExists { get; set; }
+    public int MergedDictionariesCount { get; set; }
+    public IReadOnlyList<string> ApplicationResourceKeys { get; set; } = [];
+    public IReadOnlyList<string> ViewResourceKeys { get; set; } = [];
+    public IReadOnlyList<string> HostResourceKeys { get; set; } = [];
+    public int MissingResourceSignsCount { get; set; }
 }

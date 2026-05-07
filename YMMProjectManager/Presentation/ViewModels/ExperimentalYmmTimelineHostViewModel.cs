@@ -636,6 +636,12 @@ public void Dispose()
                 bindingSurfaceInventory = timelineViewGenerationAttemptResult?.BindingSurfaceInventory,
                 resourceInventory = timelineViewGenerationAttemptResult?.ResourceInventory,
                 lifecycleRepeatability = timelineViewGenerationAttemptResult?.LifecycleRepeatability,
+                expandedVisualTreeInventory = timelineViewGenerationAttemptResult?.ExpandedVisualTreeInventory,
+                layoutSizeSweep = timelineViewGenerationAttemptResult?.LayoutSizeSweep,
+                dispatcherPriorityBoundary = timelineViewGenerationAttemptResult?.DispatcherPriorityBoundary,
+                scrollContentInventory = timelineViewGenerationAttemptResult?.ScrollContentInventory,
+                viewModelSurfaceInventory = timelineViewGenerationAttemptResult?.ViewModelSurfaceInventory,
+                themeResourceSmoke = timelineViewGenerationAttemptResult?.ThemeResourceSmoke,
                 bindingErrorObservationUnavailable = timelineViewGenerationAttemptResult?.BindingErrorObservationUnavailable ?? true,
                 visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
                 visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
@@ -660,6 +666,50 @@ public void Dispose()
             File.WriteAllText(p34, json, Encoding.UTF8);
             var p35 = Path.Combine(dir, $"timeline-view-lifecycle-repeatability-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(p35, json, Encoding.UTF8);
+            var p36 = Path.Combine(dir, $"timeline-view-expanded-visual-tree-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p36, json, Encoding.UTF8);
+            var p37 = Path.Combine(dir, $"timeline-view-layout-size-sweep-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p37, json, Encoding.UTF8);
+            var p38 = Path.Combine(dir, $"timeline-view-dispatcher-priority-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p38, json, Encoding.UTF8);
+            var p39 = Path.Combine(dir, $"timeline-view-scroll-content-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p39, json, Encoding.UTF8);
+            var p40 = Path.Combine(dir, $"timeline-viewmodel-member-surface-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p40, json, Encoding.UTF8);
+            var p41 = Path.Combine(dir, $"timeline-view-theme-resource-smoke-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p41, json, Encoding.UTF8);
+            SaveInvestigationSummary(dir, result.RuntimeKind.ToString());
+        }
+        catch
+        {
+        }
+    }
+
+    private static void SaveInvestigationSummary(string dir, string runtimeKind)
+    {
+        try
+        {
+            var files = Directory.GetFiles(dir, "*YMM4Plugin-*.json")
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(f => f.LastWriteTimeUtc)
+                .Take(200)
+                .ToArray();
+            var summary = new
+            {
+                timestamp = DateTimeOffset.Now,
+                runtimeKind,
+                latestTimestamp = files.FirstOrDefault()?.LastWriteTimeUtc,
+                fileCount = files.Length,
+                previews = files.Select(f => new
+                {
+                    name = f.Name,
+                    size = f.Length,
+                    lastWriteTime = f.LastWriteTimeUtc
+                }).ToArray(),
+            };
+            var json = JsonSerializer.Serialize(summary, new JsonSerializerOptions { WriteIndented = true });
+            var p42 = Path.Combine(dir, $"timeline-investigation-summary-{runtimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p42, json, Encoding.UTF8);
         }
         catch
         {

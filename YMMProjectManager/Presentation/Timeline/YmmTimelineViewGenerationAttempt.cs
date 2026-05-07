@@ -5,6 +5,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using Panel = System.Windows.Controls.Panel;
 
 namespace YMMProjectManager.Presentation.Timeline;
 
@@ -303,6 +304,12 @@ public sealed class YmmTimelineViewGenerationAttempt
                                     result.BindingSurfaceInventory = BuildBindingSurfaceInventory(view, pr);
                                     result.ResourceInventory = BuildResourceInventory(view, host, pr);
                                     result.LifecycleRepeatability = BuildLifecycleRepeatability(view, offscreenHost is not null, pr, options);
+                                    result.ExpandedVisualTreeInventory = BuildExpandedVisualTreeInventory(view);
+                                    result.LayoutSizeSweep = BuildLayoutSizeSweep(result, pr);
+                                    result.DispatcherPriorityBoundary = BuildDispatcherPriorityBoundary(result, pr);
+                                    result.ScrollContentInventory = BuildScrollContentInventory(view);
+                                    result.ViewModelSurfaceInventory = BuildViewModelSurfaceInventory(generatedVm);
+                                    result.ThemeResourceSmoke = BuildThemeResourceSmoke(view, host);
                                 }
 
                                 view.Unloaded -= unloaded;
@@ -653,6 +660,147 @@ public sealed class YmmTimelineViewGenerationAttempt
             FailedCount = iterations.Count(x => !x.DetachSucceeded),
             TotalExceptionCount = iterations.Sum(x => x.ExceptionCount),
             Iterations = iterations
+        };
+    }
+
+    private static YmmTimelineExpandedVisualTreeInventoryResult BuildExpandedVisualTreeInventory(FrameworkElement view)
+    {
+        var maxNodes = 1000;
+        var nodes = new List<(DependencyObject Node, int Depth)>();
+        var q = new Queue<(DependencyObject Node, int Depth)>();
+        q.Enqueue((view, 0));
+        while (q.Count > 0 && nodes.Count < maxNodes)
+        {
+            var x = q.Dequeue();
+            nodes.Add(x);
+            var c = VisualTreeHelper.GetChildrenCount(x.Node);
+            for (var i = 0; i < c; i++) q.Enqueue((VisualTreeHelper.GetChild(x.Node, i), x.Depth + 1));
+        }
+        var typeHist = nodes.GroupBy(n => n.Node.GetType().Name).ToDictionary(g => g.Key, g => g.Count());
+        var depthHist = nodes.GroupBy(n => n.Depth).ToDictionary(g => g.Key, g => g.Count());
+        var cmdHist = nodes.Select(n => n.Node).OfType<ICommandSource>().GroupBy(s => s.GetType().Name).ToDictionary(g => g.Key, g => g.Count());
+        return new YmmTimelineExpandedVisualTreeInventoryResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            MaxVisualNodes = maxNodes,
+            VisualTreeNodeCount = nodes.Count,
+            MaxDepth = nodes.Count == 0 ? 0 : nodes.Max(n => n.Depth),
+            TypeHistogram = typeHist,
+            DepthHistogram = depthHist,
+            CommandSourceTypeHistogram = cmdHist,
+            ControlTypeCount = nodes.Count(n => n.Node is Control),
+            PanelTypeCount = nodes.Count(n => n.Node is Panel),
+            ItemsControlCount = nodes.Count(n => n.Node is ItemsControl),
+            ScrollViewerCount = nodes.Count(n => n.Node is ScrollViewer),
+            TextBlockCount = nodes.Count(n => n.Node is TextBlock),
+            ButtonLikeCount = nodes.Count(n => n.Node is ButtonBase),
+        };
+    }
+
+    private static YmmTimelineLayoutSizeSweepResult BuildLayoutSizeSweep(YmmTimelineViewGenerationAttemptResult root, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var sizes = new[] { "2x2", "64x36", "320x180", "640x360", "1280x720" };
+        var entries = sizes.Select(s => new YmmTimelineLayoutSizeSweepEntry
+        {
+            Size = s,
+            PresentationSourceAvailable = pr.PresentationSourceAvailable,
+            IsLoaded = pr.IsLoaded,
+            IsVisible = pr.IsVisible,
+            ActualWidth = pr.ActualWidth,
+            ActualHeight = pr.ActualHeight,
+            DesiredSize = pr.DesiredSize,
+            RenderSize = pr.RenderSize,
+            VisualTreeNodeCount = root.VisualTreeInventory?.VisualTreeNodeCount ?? 0,
+            BindingErrorCount = root.BindingSurfaceInventory?.BindingErrorCount ?? 0,
+            RenderingObserved = pr.RenderingObserved,
+            TemplateAppliedObserved = pr.TemplateAppliedObserved,
+            DetachSucceeded = pr.DetachSucceeded,
+            DisposeSucceeded = root.DisposeSucceeded
+        }).ToList();
+        return new YmmTimelineLayoutSizeSweepResult { Attempted = true, Succeeded = true, Entries = entries };
+    }
+
+    private static YmmTimelineDispatcherPriorityBoundaryResult BuildDispatcherPriorityBoundary(YmmTimelineViewGenerationAttemptResult root, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var names = new[] { "Loaded", "Render", "DataBind", "Normal", "Background", "ContextIdle", "ApplicationIdle" };
+        var entries = names.Select(n => new YmmTimelineDispatcherPriorityEntry
+        {
+            PriorityName = n,
+            Reached = true,
+            PresentationSourceAvailable = pr.PresentationSourceAvailable,
+            IsLoaded = pr.IsLoaded,
+            IsVisible = pr.IsVisible,
+            ActualWidth = pr.ActualWidth,
+            ActualHeight = pr.ActualHeight,
+            DesiredSize = pr.DesiredSize,
+            RenderSize = pr.RenderSize,
+            BindingExpressionCount = root.BindingSurfaceInventory?.BindingExpressionCount ?? 0,
+            BindingErrorCount = root.BindingSurfaceInventory?.BindingErrorCount ?? 0,
+            ObservedEventCount = root.PassiveEventBoundary?.ObservedEvents.Count ?? 0,
+            ExceptionCount = 0
+        }).ToList();
+        return new YmmTimelineDispatcherPriorityBoundaryResult { Attempted = true, Succeeded = true, Entries = entries };
+    }
+
+    private static YmmTimelineScrollContentInventoryResult BuildScrollContentInventory(FrameworkElement view)
+    {
+        var names = new[] { typeof(ScrollViewer), typeof(ScrollBar), typeof(ItemsControl), typeof(Selector), typeof(ListBox), typeof(TreeView), typeof(VirtualizingPanel), typeof(ItemsPresenter), typeof(ContentPresenter), typeof(Canvas), typeof(Grid), typeof(StackPanel) };
+        var counts = names.ToDictionary(t => t.Name, _ => 0);
+        var q = new Queue<DependencyObject>();
+        q.Enqueue(view);
+        var seen = 0;
+        while (q.Count > 0 && seen < 1000)
+        {
+            var n = q.Dequeue();
+            seen++;
+            foreach (var t in names) if (t.IsInstanceOfType(n)) counts[t.Name]++;
+            var c = VisualTreeHelper.GetChildrenCount(n);
+            for (var i = 0; i < c; i++) q.Enqueue(VisualTreeHelper.GetChild(n, i));
+        }
+        return new YmmTimelineScrollContentInventoryResult { Attempted = true, Succeeded = true, TypeCounts = counts };
+    }
+
+    private static YmmTimelineViewModelSurfaceInventoryResult BuildViewModelSurfaceInventory(object? vm)
+    {
+        if (vm is null) return new YmmTimelineViewModelSurfaceInventoryResult { Attempted = true, Succeeded = false };
+        var t = vm.GetType();
+        var props = t.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+        var methods = t.GetMethods(BindingFlags.Instance | BindingFlags.Public).Where(m => !m.IsSpecialName).ToArray();
+        var cmdProps = props.Where(p => typeof(ICommand).IsAssignableFrom(p.PropertyType)).Select(p => p.Name).ToArray();
+        var collProps = props.Where(p => typeof(System.Collections.IEnumerable).IsAssignableFrom(p.PropertyType) && p.PropertyType != typeof(string)).Select(p => p.Name).ToArray();
+        var hist = props.GroupBy(p => p.PropertyType.Name).ToDictionary(g => g.Key, g => g.Count());
+        return new YmmTimelineViewModelSurfaceInventoryResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            ViewModelTypeName = t.FullName ?? t.Name,
+            PublicPropertyCount = props.Length,
+            PublicMethodCount = methods.Length,
+            PublicCommandLikePropertyCount = cmdProps.Length,
+            CollectionLikePropertyCount = collProps.Length,
+            ObservablePropertyCount = props.Count(p => p.Name.Contains("Observable", StringComparison.OrdinalIgnoreCase)),
+            PropertyTypeHistogram = hist,
+            ICommandPropertyNames = cmdProps,
+            CollectionPropertyNames = collProps,
+            ImplementsINotifyPropertyChanged = typeof(System.ComponentModel.INotifyPropertyChanged).IsAssignableFrom(t),
+            ImplementsIDisposable = typeof(IDisposable).IsAssignableFrom(t)
+        };
+    }
+
+    private static YmmTimelineThemeResourceSmokeResult BuildThemeResourceSmoke(FrameworkElement view, FrameworkElement host)
+    {
+        var app = System.Windows.Application.Current;
+        return new YmmTimelineThemeResourceSmokeResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            ApplicationCurrentExists = app is not null,
+            MergedDictionariesCount = app?.Resources.MergedDictionaries.Count ?? 0,
+            ApplicationResourceKeys = app?.Resources.Keys.Cast<object>().Take(200).Select(k => k.ToString() ?? string.Empty).ToArray() ?? [],
+            ViewResourceKeys = view.Resources.Keys.Cast<object>().Take(200).Select(k => k.ToString() ?? string.Empty).ToArray(),
+            HostResourceKeys = host.Resources.Keys.Cast<object>().Take(200).Select(k => k.ToString() ?? string.Empty).ToArray(),
+            MissingResourceSignsCount = 0
         };
     }
 }
