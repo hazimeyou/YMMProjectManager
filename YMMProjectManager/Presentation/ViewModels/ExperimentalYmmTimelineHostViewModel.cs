@@ -145,8 +145,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                     options.AllowViewModelGenerationAttempt &&
                     readiness.Score >= options.MinimumReadinessScoreForGeneration &&
                     readiness.CanAttemptViewModelGeneration;
+                var (strictGatePassed, strictGateReason) = EvaluateStrictConfidenceGate(result, readiness);
 
-                if (gatePassed)
+                if (gatePassed && strictGatePassed)
                 {
                     var selectedBinding = vmBindings
                         .Where(x => x.CanAttemptGeneration)
@@ -162,6 +163,9 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                                 options.DisposeImmediatelyAfterGeneration,
                                 runtimeDependencyInstances)
                             .ConfigureAwait(false);
+                        generation.StrictConfidenceGatePassed = true;
+                        generation.StrictConfidenceGateReason = "Passed";
+                        generation.InjectedDependencies = BuildInjectedDependencySummaries(runtimeDependencyInstances, result);
 
                         if (options.AllowTimelineViewGenerationAttempt &&
                             options.AllowViewModelGenerationAttempt &&
@@ -194,7 +198,11 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                         Succeeded = false,
                         TargetTypeName = result.TimelineViewModelTypeName ?? string.Empty,
                         ConstructorSignature = "(not attempted)",
-                        FailureReason = $"Generation skipped by gate: score={readiness.Score}, threshold={options.MinimumReadinessScoreForGeneration}, canAttemptVm={readiness.CanAttemptViewModelGeneration}",
+                        FailureReason = gatePassed
+                            ? $"Generation skipped by strict confidence gate: {strictGateReason}"
+                            : $"Generation skipped by gate: score={readiness.Score}, threshold={options.MinimumReadinessScoreForGeneration}, canAttemptVm={readiness.CanAttemptViewModelGeneration}",
+                        StrictConfidenceGatePassed = strictGatePassed,
+                        StrictConfidenceGateReason = strictGateReason,
                     };
                 }
 
@@ -814,6 +822,55 @@ public void Dispose()
         }
 
         return true;
+    }
+
+    private static (bool Passed, string Reason) EvaluateStrictConfidenceGate(
+        YmmTimelineReflectionResult result,
+        YmmTimelineGenerationReadiness readiness)
+    {
+        var reasons = new List<string>();
+        if (result.RuntimeKind != RuntimeEnvironmentKind.YMM4Plugin) reasons.Add("runtimeKind!=YMM4Plugin");
+        if (!result.TimelineViewModelFound) reasons.Add("TimelineViewModelFound=false");
+        if (!readiness.TimelineViewModelConstructorBindable) reasons.Add("TimelineViewModelConstructorBindable=false");
+        if (!readiness.CanAttemptViewModelGeneration) reasons.Add("CanAttemptViewModelGeneration=false");
+        if (readiness.Score < 100) reasons.Add($"readiness.Score={readiness.Score} (<100)");
+
+        ValidateDiscovery("Scene", result.SceneDiscovery, reasons);
+        ValidateDiscovery("UndoRedoManager", result.UndoRedoManagerDiscovery, reasons);
+        ValidateDiscovery("AsyncAwaitStatus", result.AsyncAwaitStatusDiscovery, reasons);
+
+        return reasons.Count == 0 ? (true, "Passed") : (false, string.Join("; ", reasons));
+    }
+
+    private static void ValidateDiscovery(string name, YmmRuntimeDependencyDiscoverySummary summary, ICollection<string> reasons)
+    {
+        if (!summary.Resolved) reasons.Add($"{name}.resolved=false");
+        if (!string.Equals(summary.Confidence, "High", StringComparison.OrdinalIgnoreCase))
+        {
+            reasons.Add($"{name}.confidence={summary.Confidence}");
+        }
+        if (summary.RiskFlags.Count > 0)
+        {
+            reasons.Add($"{name}.riskFlags={string.Join(",", summary.RiskFlags)}");
+        }
+    }
+
+    private static IReadOnlyList<string> BuildInjectedDependencySummaries(
+        IReadOnlyDictionary<string, object?> runtimeDependencyInstances,
+        YmmTimelineReflectionResult result)
+    {
+        var list = new List<string>();
+        Add("scene", "YukkuriMovieMaker.Project.Scene", result.SceneDiscovery);
+        Add("undoRedoManager", "YukkuriMovieMaker.UndoRedo.UndoRedoManager", result.UndoRedoManagerDiscovery);
+        Add("asyncAwaitStatus", "YukkuriMovieMaker.Project.AsyncAwaitStatus", result.AsyncAwaitStatusDiscovery);
+        return list;
+
+        void Add(string name, string key, YmmRuntimeDependencyDiscoverySummary summary)
+        {
+            var has = runtimeDependencyInstances.TryGetValue(key, out var v) && v is not null;
+            var owner = summary.OwnerPaths.FirstOrDefault() ?? "(unknown)";
+            list.Add($"{name}: injected={has}, confidence={summary.Confidence}, ownerPath={owner}");
+        }
     }
 
     public string BuildReflectionClipboardText()

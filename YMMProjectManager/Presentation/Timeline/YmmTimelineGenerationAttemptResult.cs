@@ -2,6 +2,10 @@ namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmTimelineGenerationAttemptResult
 {
+    public bool StrictConfidenceGatePassed { get; set; }
+
+    public string StrictConfidenceGateReason { get; set; } = string.Empty;
+
     public bool Attempted { get; set; }
 
     public bool Succeeded { get; set; }
@@ -37,4 +41,6 @@ public sealed class YmmTimelineGenerationAttemptResult
     public bool? WeakReferenceAliveAfterGc { get; set; }
 
     public string? FinalizationNote { get; set; }
+
+    public IReadOnlyList<string> InjectedDependencies { get; set; } = Array.Empty<string>();
 }
