@@ -4,6 +4,9 @@ public sealed class YmmTimelineViewGenerationAttemptResult
 {
     public bool Attempted { get; set; }
     public bool Succeeded { get; set; }
+    public bool HostCreated { get; set; }
+    public bool HostShownOrInitialized { get; set; }
+    public bool ViewAttachedToHost { get; set; }
     public string TargetTypeName { get; set; } = string.Empty;
     public string ConstructorSignature { get; set; } = string.Empty;
     public string? FailureReason { get; set; }

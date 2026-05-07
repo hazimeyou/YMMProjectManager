@@ -71,7 +71,29 @@ public sealed class YmmTimelineViewGenerationAttempt
                 if (!options.ForbidVisualTreeAttach && options.AllowPassiveVisualTreeParticipation && instance is FrameworkElement view)
                 {
                     result.VisualAttachAttempted = true;
-                    var host = new ContentControl();
+                    ContentControl host;
+                    Window? offscreenHost = null;
+                    if (options.AllowOffscreenHostInvestigation)
+                    {
+                        offscreenHost = new Window
+                        {
+                            Width = 1,
+                            Height = 1,
+                            Left = -20000,
+                            Top = -20000,
+                            ShowInTaskbar = false,
+                            WindowStyle = WindowStyle.None,
+                            ResizeMode = ResizeMode.NoResize,
+                            ShowActivated = false,
+                        };
+                        host = new ContentControl();
+                        offscreenHost.Content = host;
+                        result.HostCreated = true;
+                    }
+                    else
+                    {
+                        host = new ContentControl();
+                    }
                     var attachSw = Stopwatch.StartNew();
                     var loadedObserved = false;
                     var initializedObserved = false;
@@ -92,8 +114,18 @@ public sealed class YmmTimelineViewGenerationAttempt
                         view.LayoutUpdated += layoutUpdated;
                         CompositionTarget.Rendering += rendering;
 
+                        if (offscreenHost is not null)
+                        {
+                            offscreenHost.Show();
+                            result.HostShownOrInitialized = true;
+                            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                                () => { },
+                                System.Windows.Threading.DispatcherPriority.Loaded);
+                        }
+
                         host.Content = view;
                         result.VisualAttachSucceeded = true;
+                        result.ViewAttachedToHost = true;
                         result.DataContextAssigned = false;
                         if (options.AllowControlledLifecycleObservation)
                         {
@@ -126,7 +158,8 @@ public sealed class YmmTimelineViewGenerationAttempt
                             result.ActualHeight > 0 ||
                             view.RenderSize.Width > 0 ||
                             view.RenderSize.Height > 0 ||
-                            result.PresentationSourceAvailable;
+                            result.PresentationSourceAvailable ||
+                            result.IsLoaded;
 
                         if (view is Control c)
                         {
@@ -135,6 +168,10 @@ public sealed class YmmTimelineViewGenerationAttempt
 
                         host.Content = null;
                         result.DetachSucceeded = true;
+                        if (offscreenHost is not null)
+                        {
+                            offscreenHost.Close();
+                        }
 
                         view.Loaded -= loaded;
                         view.Initialized -= initialized;

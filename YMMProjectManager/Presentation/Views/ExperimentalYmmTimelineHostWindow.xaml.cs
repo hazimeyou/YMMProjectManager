@@ -82,6 +82,7 @@ public partial class ExperimentalYmmTimelineHostWindow : Window
                 AllowPassiveVisualTreeParticipation = true,
                 AllowControlledLifecycleObservation = true,
                 PassiveAttachHoldMs = 100,
+                AllowOffscreenHostInvestigation = true,
             }, progress) ?? Task.FromResult(false);
         });
     }

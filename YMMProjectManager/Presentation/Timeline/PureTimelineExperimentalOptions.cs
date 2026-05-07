@@ -18,4 +18,5 @@ public sealed class PureTimelineExperimentalOptions
     public bool AllowPassiveVisualTreeParticipation { get; set; } = false;
     public bool AllowControlledLifecycleObservation { get; set; } = false;
     public int PassiveAttachHoldMs { get; set; } = 100;
+    public bool AllowOffscreenHostInvestigation { get; set; } = false;
 }

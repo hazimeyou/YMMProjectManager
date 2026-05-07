@@ -620,7 +620,7 @@ public void Dispose()
                 WriteIndented = true,
                 Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
             });
-            var path = Path.Combine(dir, $"timeline-view-minimal-passive-render-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            var path = Path.Combine(dir, $"timeline-view-offscreen-host-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(path, json, Encoding.UTF8);
         }
         catch
