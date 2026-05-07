@@ -5,7 +5,8 @@ public sealed class YmmTimelineViewModelGenerationAttempt
     public async Task<YmmTimelineGenerationAttemptResult> TryGenerateAndDisposeAsync(
         Type targetType,
         YmmTimelineConstructorBindingResult bindingResult,
-        bool disposeImmediatelyAfterGeneration)
+        bool disposeImmediatelyAfterGeneration,
+        IReadOnlyDictionary<string, object?>? runtimeDependencyInstances = null)
     {
         var result = new YmmTimelineGenerationAttemptResult
         {
@@ -32,7 +33,7 @@ public sealed class YmmTimelineViewModelGenerationAttempt
                 .Select(x => $"{x.ParameterType.FullName ?? x.ParameterType.Name} {x.Name}")
                 .ToArray();
 
-            var build = BuildArguments(constructorParameters);
+            var build = BuildArguments(constructorParameters, runtimeDependencyInstances);
             var args = build.Args;
             result.NullInjectedParameters = build.NullInjectedParameters;
             instance = constructor.Invoke(args);
@@ -84,13 +85,15 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         return null;
     }
 
-    private static (object?[] Args, IReadOnlyList<string> NullInjectedParameters) BuildArguments(IReadOnlyList<ParameterInfo> parameters)
+    private static (object?[] Args, IReadOnlyList<string> NullInjectedParameters) BuildArguments(
+        IReadOnlyList<ParameterInfo> parameters,
+        IReadOnlyDictionary<string, object?>? runtimeDependencyInstances)
     {
         var args = new object?[parameters.Count];
         var nullInjected = new List<string>();
         for (var i = 0; i < parameters.Count; i++)
         {
-            var value = ResolveArgument(parameters[i]);
+            var value = ResolveArgument(parameters[i], runtimeDependencyInstances);
             args[i] = value;
             if (value is null)
             {
@@ -101,7 +104,9 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         return (args, nullInjected);
     }
 
-    private static object? ResolveArgument(ParameterInfo parameterInfo)
+    private static object? ResolveArgument(
+        ParameterInfo parameterInfo,
+        IReadOnlyDictionary<string, object?>? runtimeDependencyInstances)
     {
         if (parameterInfo.IsOptional)
         {
@@ -109,6 +114,14 @@ public sealed class YmmTimelineViewModelGenerationAttempt
         }
 
         var parameterType = parameterInfo.ParameterType;
+        var parameterTypeName = parameterType.FullName ?? parameterType.Name;
+        if (runtimeDependencyInstances is not null &&
+            runtimeDependencyInstances.TryGetValue(parameterTypeName, out var runtimeInstance) &&
+            runtimeInstance is not null)
+        {
+            return runtimeInstance;
+        }
+
         if (parameterType == typeof(CancellationToken))
         {
             return CancellationToken.None;

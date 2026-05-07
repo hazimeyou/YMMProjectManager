@@ -148,8 +148,13 @@ public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDispo
                         .FirstOrDefault();
                     if (selectedBinding is not null && timelineViewModelType is not null)
                     {
+                        var runtimeDependencyInstances = ResolveRuntimeDependencyInstances(localLogs);
                         generation = await generationAttempt
-                            .TryGenerateAndDisposeAsync(timelineViewModelType, selectedBinding, options.DisposeImmediatelyAfterGeneration)
+                            .TryGenerateAndDisposeAsync(
+                                timelineViewModelType,
+                                selectedBinding,
+                                options.DisposeImmediatelyAfterGeneration,
+                                runtimeDependencyInstances)
                             .ConfigureAwait(false);
                     }
                 }
@@ -578,6 +583,158 @@ public void Dispose()
         }
 
         return null;
+    }
+
+    private static IReadOnlyDictionary<string, object?> ResolveRuntimeDependencyInstances(
+        ICollection<YmmTimelineReflectionLog> logs)
+    {
+        var map = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["YukkuriMovieMaker.Project.Scene"] = ResolveRuntimeDependencyInstance("YukkuriMovieMaker.Project.Scene"),
+            ["YukkuriMovieMaker.UndoRedo.UndoRedoManager"] = ResolveRuntimeDependencyInstance("YukkuriMovieMaker.UndoRedo.UndoRedoManager"),
+            ["YukkuriMovieMaker.Project.AsyncAwaitStatus"] = ResolveRuntimeDependencyInstance("YukkuriMovieMaker.Project.AsyncAwaitStatus"),
+        };
+
+        foreach (var pair in map)
+        {
+            logs.Add(new YmmTimelineReflectionLog
+            {
+                Category = "RuntimeDependency",
+                Message = $"{pair.Key}: {(pair.Value is null ? "unresolved" : "resolved")}",
+            });
+        }
+
+        return map;
+    }
+
+    private static object? ResolveRuntimeDependencyInstance(string typeName)
+    {
+        var targetType = ResolveType(typeName);
+        if (targetType is null)
+        {
+            return null;
+        }
+
+        var app = System.Windows.Application.Current;
+        if (app is null)
+        {
+            return null;
+        }
+
+        object? found = null;
+        void Search()
+        {
+            var queue = new Queue<(object Node, int Depth)>();
+            var seen = new HashSet<object>(ReferenceEqualityComparer.Instance);
+
+            foreach (var window in app.Windows.OfType<System.Windows.Window>())
+            {
+                Enqueue(window, 0);
+                if (window.DataContext is not null)
+                {
+                    Enqueue(window.DataContext, 0);
+                }
+            }
+
+            while (queue.Count > 0)
+            {
+                var (node, depth) = queue.Dequeue();
+                if (targetType.IsInstanceOfType(node))
+                {
+                    found = node;
+                    return;
+                }
+
+                if (depth >= 5)
+                {
+                    continue;
+                }
+
+                var nodeType = node.GetType();
+                foreach (var property in nodeType.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    if (property.GetIndexParameters().Length > 0)
+                    {
+                        continue;
+                    }
+
+                    object? value;
+                    try
+                    {
+                        value = property.GetValue(node);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (ShouldTraverse(value))
+                    {
+                        Enqueue(value!, depth + 1);
+                    }
+                }
+
+                foreach (var field in nodeType.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    object? value;
+                    try
+                    {
+                        value = field.GetValue(node);
+                    }
+                    catch
+                    {
+                        continue;
+                    }
+
+                    if (ShouldTraverse(value))
+                    {
+                        Enqueue(value!, depth + 1);
+                    }
+                }
+            }
+
+            void Enqueue(object value, int depth)
+            {
+                if (!seen.Add(value))
+                {
+                    return;
+                }
+
+                queue.Enqueue((value, depth));
+            }
+        }
+
+        if (app.Dispatcher.CheckAccess())
+        {
+            Search();
+        }
+        else
+        {
+            app.Dispatcher.Invoke(Search);
+        }
+
+        return found;
+    }
+
+    private static bool ShouldTraverse(object? value)
+    {
+        if (value is null || value is string)
+        {
+            return false;
+        }
+
+        var type = value.GetType();
+        if (type.IsPrimitive || type.IsEnum)
+        {
+            return false;
+        }
+
+        if (value is System.Collections.IEnumerable && value is not System.Windows.WindowCollection)
+        {
+            return false;
+        }
+
+        return true;
     }
 
     public string BuildReflectionClipboardText()
