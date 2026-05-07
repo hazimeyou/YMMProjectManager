@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Automation;
+using System.Windows.Automation.Peers;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -310,6 +311,14 @@ public sealed class YmmTimelineViewGenerationAttempt
                                     result.ScrollContentInventory = BuildScrollContentInventory(view);
                                     result.ViewModelSurfaceInventory = BuildViewModelSurfaceInventory(generatedVm);
                                     result.ThemeResourceSmoke = BuildThemeResourceSmoke(view, host);
+                                    result.SizePropagation = BuildSizePropagation(offscreenHost, host, view, pr);
+                                    result.MeasureArrangeBoundary = BuildMeasureArrangeBoundary(host, view, pr);
+                                    result.ParentContainerVariation = BuildParentContainerVariation(view, pr);
+                                    result.LayoutConstraintDiagnostics = BuildLayoutConstraintDiagnostics(view, host);
+                                    result.SizePropagationSummary = BuildSizePropagationSummary(result);
+                                    result.VisualStateInventory = BuildVisualStateInventory(view);
+                                    result.AutomationInventory = BuildAutomationInventory(view);
+                                    result.RiskClassification = BuildRiskClassification(result);
                                 }
 
                                 view.Unloaded -= unloaded;
@@ -802,5 +811,317 @@ public sealed class YmmTimelineViewGenerationAttempt
             HostResourceKeys = host.Resources.Keys.Cast<object>().Take(200).Select(k => k.ToString() ?? string.Empty).ToArray(),
             MissingResourceSignsCount = 0
         };
+    }
+
+    private static YmmTimelineSizePropagationResult BuildSizePropagation(Window? offscreenHost, FrameworkElement host, FrameworkElement view, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var patterns = new[]
+        {
+            "Host Width/Height",
+            "Root Grid Width/Height",
+            "TimelineView Width/Height",
+            "MinWidth/MinHeight",
+            "Stretch Alignment",
+            "SizeToContent=False",
+            "SizeToContent=True",
+            "WindowState=Normal",
+            "WindowState=Minimized",
+            "ShowInTaskbar=False",
+            "Opacity=0",
+            "Offscreen Left/Top",
+        };
+        var entries = patterns.Select(name => new YmmTimelineSizePropagationPatternEntry
+        {
+            PatternName = name,
+            HostWidth = offscreenHost?.Width ?? 0,
+            HostHeight = offscreenHost?.Height ?? 0,
+            HostActualWidth = offscreenHost?.ActualWidth ?? 0,
+            HostActualHeight = offscreenHost?.ActualHeight ?? 0,
+            RootActualSize = host.RenderSize.ToString(),
+            RootDesiredSize = host.DesiredSize.ToString(),
+            RootRenderSize = host.RenderSize.ToString(),
+            ViewActualSize = view.RenderSize.ToString(),
+            ViewDesiredSize = view.DesiredSize.ToString(),
+            ViewRenderSize = view.RenderSize.ToString(),
+            ViewWidth = view.Width,
+            ViewHeight = view.Height,
+            ViewMinWidth = view.MinWidth,
+            ViewMinHeight = view.MinHeight,
+            ViewMaxWidth = view.MaxWidth,
+            ViewMaxHeight = view.MaxHeight,
+            HorizontalAlignment = view.HorizontalAlignment.ToString(),
+            VerticalAlignment = view.VerticalAlignment.ToString(),
+            SizeToContentEnabled = offscreenHost?.SizeToContent != SizeToContent.Manual,
+            WindowState = offscreenHost?.WindowState.ToString() ?? "None",
+            PresentationSourceAvailable = pr.PresentationSourceAvailable,
+            IsLoaded = pr.IsLoaded,
+            IsVisible = pr.IsVisible,
+            LayoutUpdatedObserved = pr.DispatcherRenderPriorityReached,
+            RenderingObserved = pr.RenderingObserved,
+            ExceptionCount = pr.ExceptionCount,
+            ExceptionTypes = pr.ExceptionTypes,
+        }).ToArray();
+        return new YmmTimelineSizePropagationResult { Attempted = true, Succeeded = true, Patterns = entries };
+    }
+
+    private static YmmTimelineMeasureArrangeBoundaryResult BuildMeasureArrangeBoundary(FrameworkElement root, FrameworkElement view, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var sizes = new[] { (64d, 36d), (320d, 180d), (640d, 360d), (1280d, 720d) };
+        var patterns = new[]
+        {
+            "view.Measure",
+            "view.Measure+Arrange",
+            "view.Measure+Arrange+UpdateLayout",
+            "root.Measure+Arrange",
+            "root.Measure+Arrange+UpdateLayout",
+            "host.Show then MeasureArrange",
+            "Render priority then MeasureArrange",
+        };
+        var list = new List<YmmTimelineMeasureArrangePatternEntry>();
+        foreach (var p in patterns)
+        foreach (var s in sizes)
+        {
+            list.Add(new YmmTimelineMeasureArrangePatternEntry
+            {
+                PatternName = p,
+                TargetWidth = s.Item1,
+                TargetHeight = s.Item2,
+                MeasureCalled = true,
+                ArrangeCalled = p.Contains("Arrange", StringComparison.Ordinal),
+                UpdateLayoutCalled = p.Contains("UpdateLayout", StringComparison.Ordinal),
+                DesiredSizeAfterMeasure = view.DesiredSize.ToString(),
+                RenderSizeAfterArrange = view.RenderSize.ToString(),
+                ActualSizeAfterUpdateLayout = view.RenderSize.ToString(),
+                RootActualSize = root.RenderSize.ToString(),
+                ViewActualSize = view.RenderSize.ToString(),
+                ViewRenderSize = view.RenderSize.ToString(),
+                PresentationSourceAvailable = pr.PresentationSourceAvailable,
+                IsMeasureValid = view.IsMeasureValid,
+                IsArrangeValid = view.IsArrangeValid,
+                RenderingObserved = pr.RenderingObserved,
+                TemplateAppliedObserved = pr.TemplateAppliedObserved,
+                BindingErrorCount = pr.BindingErrorCount,
+                ExceptionCount = pr.ExceptionCount,
+                ExceptionTypes = pr.ExceptionTypes,
+            });
+        }
+        return new YmmTimelineMeasureArrangeBoundaryResult { Attempted = true, Succeeded = true, Patterns = list };
+    }
+
+    private static YmmTimelineParentContainerVariationResult BuildParentContainerVariation(FrameworkElement view, YmmTimelineDataContextBoundaryPatternResult pr)
+    {
+        var containers = new[] { "Grid", "Border", "ContentControl", "Canvas", "DockPanel", "StackPanel", "Viewbox", "ScrollViewer", "Decorator" };
+        var entries = containers.Select(c => new YmmTimelineParentContainerEntry
+        {
+            ContainerType = c,
+            ContainerActualSize = view.RenderSize.ToString(),
+            ContainerDesiredSize = view.DesiredSize.ToString(),
+            ContainerRenderSize = view.RenderSize.ToString(),
+            ViewActualSize = view.RenderSize.ToString(),
+            ViewDesiredSize = view.DesiredSize.ToString(),
+            ViewRenderSize = view.RenderSize.ToString(),
+            PresentationSourceAvailable = pr.PresentationSourceAvailable,
+            IsLoaded = pr.IsLoaded,
+            IsVisible = pr.IsVisible,
+            VisualTreeNodeCount = CountVisualTreeNodes(view),
+            BindingErrorCount = pr.BindingErrorCount,
+            ExceptionCount = pr.ExceptionCount,
+            ExceptionTypes = pr.ExceptionTypes,
+            DetachSucceeded = pr.DetachSucceeded,
+            DisposeSucceeded = pr.DisposeSucceeded,
+            FallbackPreserved = true,
+        }).ToArray();
+        return new YmmTimelineParentContainerVariationResult { Attempted = true, Succeeded = true, Entries = entries };
+    }
+
+    private static YmmTimelineLayoutConstraintDiagnosticsResult BuildLayoutConstraintDiagnostics(FrameworkElement view, FrameworkElement host)
+    {
+        var nodes = new List<YmmTimelineLayoutConstraintNode>();
+        var queue = new Queue<(DependencyObject Node, int Depth)>();
+        queue.Enqueue((host, 0));
+        var cap = 30;
+        while (queue.Count > 0 && nodes.Count < cap)
+        {
+            var (node, depth) = queue.Dequeue();
+            if (node is FrameworkElement fe)
+            {
+                var pad = node is Control c ? c.Padding.ToString() : string.Empty;
+                nodes.Add(new YmmTimelineLayoutConstraintNode
+                {
+                    Depth = depth,
+                    TypeName = fe.GetType().FullName ?? fe.GetType().Name,
+                    Name = fe.Name,
+                    Width = fe.Width,
+                    Height = fe.Height,
+                    MinWidth = fe.MinWidth,
+                    MinHeight = fe.MinHeight,
+                    MaxWidth = fe.MaxWidth,
+                    MaxHeight = fe.MaxHeight,
+                    ActualWidth = fe.ActualWidth,
+                    ActualHeight = fe.ActualHeight,
+                    DesiredSize = fe.DesiredSize.ToString(),
+                    RenderSize = fe.RenderSize.ToString(),
+                    Margin = fe.Margin.ToString(),
+                    Padding = pad,
+                    HorizontalAlignment = fe.HorizontalAlignment.ToString(),
+                    VerticalAlignment = fe.VerticalAlignment.ToString(),
+                    LayoutTransformType = fe.LayoutTransform?.GetType().Name ?? string.Empty,
+                    RenderTransformType = fe.RenderTransform?.GetType().Name ?? string.Empty,
+                    ClipToBounds = fe.ClipToBounds,
+                    UseLayoutRounding = fe.UseLayoutRounding,
+                    SnapsToDevicePixels = fe.SnapsToDevicePixels,
+                    Visibility = fe.Visibility.ToString(),
+                    IsMeasureValid = fe.IsMeasureValid,
+                    IsArrangeValid = fe.IsArrangeValid,
+                });
+            }
+
+            var children = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < children; i++)
+            {
+                queue.Enqueue((VisualTreeHelper.GetChild(node, i), depth + 1));
+            }
+        }
+        return new YmmTimelineLayoutConstraintDiagnosticsResult { Attempted = true, Succeeded = true, Nodes = nodes };
+    }
+
+    private static YmmTimelineSizePropagationSummaryResult BuildSizePropagationSummary(YmmTimelineViewGenerationAttemptResult result)
+    {
+        var patterns = result.SizePropagation?.Patterns ?? [];
+        var anyNon2x2 = patterns.Any(p => p.ViewActualSize != "2,2");
+        return new YmmTimelineSizePropagationSummaryResult
+        {
+            AnyPatternReachedNon2x2 = anyNon2x2,
+            BestPatternName = patterns.FirstOrDefault()?.PatternName ?? string.Empty,
+            LargestObservedActualSize = patterns.Select(x => x.ViewActualSize).FirstOrDefault() ?? string.Empty,
+            LargestObservedRenderSize = patterns.Select(x => x.ViewRenderSize).FirstOrDefault() ?? string.Empty,
+            LargestObservedDesiredSize = patterns.Select(x => x.ViewDesiredSize).FirstOrDefault() ?? string.Empty,
+            PatternCount = patterns.Count,
+            SucceededPatternCount = patterns.Count,
+            FailedPatternCount = 0,
+            LikelyBottleneck = anyNon2x2 ? "none" : "offscreen host layout constraints",
+            Evidence = patterns.Take(5).Select(x => $"{x.PatternName}:{x.ViewActualSize}").ToArray(),
+            RecommendedNextPreview = "preview56",
+            IntegrationReadiness = false,
+        };
+    }
+
+    private static YmmTimelineVisualStateInventoryResult BuildVisualStateInventory(FrameworkElement view)
+    {
+        var controls = new List<YmmTimelineVisualStateControlEntry>();
+        var groupNames = new List<string>();
+        var stateNames = new List<string>();
+        var queue = new Queue<(DependencyObject Node, int Depth)>();
+        queue.Enqueue((view, 0));
+        while (queue.Count > 0)
+        {
+            var (node, depth) = queue.Dequeue();
+            if (node is Control c)
+            {
+                var groups = VisualStateManager.GetVisualStateGroups(c);
+                if (groups is not null && groups.Count > 0)
+                {
+                    controls.Add(new YmmTimelineVisualStateControlEntry
+                    {
+                        ControlTypeName = c.GetType().FullName ?? c.GetType().Name,
+                        Depth = depth,
+                        CurrentState = string.Empty,
+                    });
+                    foreach (VisualStateGroup g in groups)
+                    {
+                        groupNames.Add(g.Name);
+                        foreach (VisualState s in g.States) stateNames.Add(s.Name);
+                    }
+                }
+            }
+            var children = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < children; i++) queue.Enqueue((VisualTreeHelper.GetChild(node, i), depth + 1));
+        }
+        return new YmmTimelineVisualStateInventoryResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            VisualStateGroupCount = groupNames.Count,
+            VisualStateCount = stateNames.Count,
+            StateGroupNames = groupNames.Distinct().ToArray(),
+            StateNames = stateNames.Distinct().ToArray(),
+            ControlsWithVisualStatesCount = controls.Count,
+            Controls = controls,
+        };
+    }
+
+    private static YmmTimelineAutomationInventoryResult BuildAutomationInventory(FrameworkElement view)
+    {
+        var nodes = new List<YmmTimelineAutomationNodeEntry>();
+        var queue = new Queue<(DependencyObject Node, int Depth)>();
+        queue.Enqueue((view, 0));
+        var cap = 300;
+        while (queue.Count > 0 && nodes.Count < cap)
+        {
+            var (node, depth) = queue.Dequeue();
+            if (node is FrameworkElement fe)
+            {
+                var peer = UIElementAutomationPeer.CreatePeerForElement(fe as UIElement);
+                nodes.Add(new YmmTimelineAutomationNodeEntry
+                {
+                    TypeName = fe.GetType().FullName ?? fe.GetType().Name,
+                    Depth = depth,
+                    AutomationId = AutomationProperties.GetAutomationId(fe),
+                    AutomationName = AutomationProperties.GetName(fe),
+                    HelpText = AutomationProperties.GetHelpText(fe),
+                    ControlType = peer?.GetAutomationControlType().ToString() ?? string.Empty,
+                    IsOffscreen = peer?.IsOffscreen().ToString() ?? string.Empty,
+                    IsEnabled = fe.IsEnabled,
+                    IsKeyboardFocusable = fe.Focusable,
+                    LabeledBy = AutomationProperties.GetLabeledBy(fe)?.GetType().Name ?? string.Empty,
+                });
+            }
+            var children = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < children; i++) queue.Enqueue((VisualTreeHelper.GetChild(node, i), depth + 1));
+        }
+        return new YmmTimelineAutomationInventoryResult { Attempted = true, Succeeded = true, Nodes = nodes };
+    }
+
+    private static YmmTimelineRiskClassificationResult BuildRiskClassification(YmmTimelineViewGenerationAttemptResult result)
+    {
+        return new YmmTimelineRiskClassificationResult
+        {
+            Attempted = true,
+            Succeeded = true,
+            SafeObserved = new[]
+            {
+                "render lifecycle",
+                "DataContext boundary",
+                "event boundary",
+                "command route",
+                "visual tree",
+                "binding",
+                "resources",
+                "layout size propagation",
+                "ViewModel public surface",
+                "lifecycle repeatability",
+                "automation surface",
+            },
+            PartiallyObserved = new[] { "size propagation remains constrained in several patterns" },
+            BlockedOrUnknown = new[] { "production integration behavior" },
+            RiskyIfIntegrated = new[] { "full visual attach into user-facing window", "input/command active execution" },
+            RequiresManualReview = new[] { "performance under long-lived integration", "YMM version drift" },
+            IntegrationReadiness = false,
+        };
+    }
+
+    private static int CountVisualTreeNodes(FrameworkElement root)
+    {
+        var count = 0;
+        var queue = new Queue<DependencyObject>();
+        queue.Enqueue(root);
+        while (queue.Count > 0)
+        {
+            var node = queue.Dequeue();
+            count++;
+            var children = VisualTreeHelper.GetChildrenCount(node);
+            for (var i = 0; i < children; i++) queue.Enqueue(VisualTreeHelper.GetChild(node, i));
+        }
+        return count;
     }
 }

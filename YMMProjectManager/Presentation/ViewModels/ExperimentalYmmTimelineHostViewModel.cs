@@ -642,6 +642,14 @@ public void Dispose()
                 scrollContentInventory = timelineViewGenerationAttemptResult?.ScrollContentInventory,
                 viewModelSurfaceInventory = timelineViewGenerationAttemptResult?.ViewModelSurfaceInventory,
                 themeResourceSmoke = timelineViewGenerationAttemptResult?.ThemeResourceSmoke,
+                sizePropagation = timelineViewGenerationAttemptResult?.SizePropagation,
+                measureArrangeBoundary = timelineViewGenerationAttemptResult?.MeasureArrangeBoundary,
+                parentContainerVariation = timelineViewGenerationAttemptResult?.ParentContainerVariation,
+                layoutConstraintDiagnostics = timelineViewGenerationAttemptResult?.LayoutConstraintDiagnostics,
+                sizePropagationSummary = timelineViewGenerationAttemptResult?.SizePropagationSummary,
+                visualStateInventory = timelineViewGenerationAttemptResult?.VisualStateInventory,
+                automationInventory = timelineViewGenerationAttemptResult?.AutomationInventory,
+                riskClassification = timelineViewGenerationAttemptResult?.RiskClassification,
                 bindingErrorObservationUnavailable = timelineViewGenerationAttemptResult?.BindingErrorObservationUnavailable ?? true,
                 visualAttachAttempted = timelineViewGenerationAttemptResult?.VisualAttachAttempted ?? false,
                 visualAttachForbidden = timelineViewGenerationAttemptResult?.VisualAttachForbidden ?? true,
@@ -678,6 +686,22 @@ public void Dispose()
             File.WriteAllText(p40, json, Encoding.UTF8);
             var p41 = Path.Combine(dir, $"timeline-view-theme-resource-smoke-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
             File.WriteAllText(p41, json, Encoding.UTF8);
+            var p48 = Path.Combine(dir, $"timeline-view-size-propagation-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p48, json, Encoding.UTF8);
+            var p49 = Path.Combine(dir, $"timeline-view-measure-arrange-boundary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p49, json, Encoding.UTF8);
+            var p50 = Path.Combine(dir, $"timeline-view-parent-container-variation-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p50, json, Encoding.UTF8);
+            var p51 = Path.Combine(dir, $"timeline-view-layout-constraint-diagnostics-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p51, json, Encoding.UTF8);
+            var p52 = Path.Combine(dir, $"timeline-view-size-propagation-summary-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p52, json, Encoding.UTF8);
+            var p53 = Path.Combine(dir, $"timeline-view-visual-state-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p53, json, Encoding.UTF8);
+            var p54 = Path.Combine(dir, $"timeline-view-automation-inventory-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p54, json, Encoding.UTF8);
+            var p55 = Path.Combine(dir, $"timeline-view-risk-classification-{result.RuntimeKind}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+            File.WriteAllText(p55, json, Encoding.UTF8);
             SaveInvestigationSummary(dir, result.RuntimeKind.ToString());
         }
         catch
