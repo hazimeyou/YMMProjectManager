@@ -32,4 +32,52 @@ public static class DiffTimelineCoreBuilder
 
         return new DiffTimelineCoreSnapshot(items);
     }
+
+    public static DiffTimelineCoreResult BuildResult(
+        IReadOnlyList<YmmProjectDiffEntry> entries,
+        DiffTimelineCoreBuildOptions options)
+    {
+        var snapshot = Build(entries, options.KindLabel, options.FieldLabel, options.DisplayText);
+        var filtered = options.ItemFilter is null
+            ? snapshot.Items
+            : snapshot.Items.Where(options.ItemFilter).ToList();
+        var groupResolver = options.GroupResolver ?? DefaultGroupResolver;
+        var groups = filtered
+            .GroupBy(groupResolver)
+            .OrderByDescending(x => x.Count())
+            .Select(x => new DiffTimelineCoreGroup(
+                GroupName: x.Key,
+                ItemIds: x.Select(y => y.Id).ToList(),
+                Count: x.Count()))
+            .ToList();
+        return new DiffTimelineCoreResult(
+            Snapshot: new DiffTimelineCoreSnapshot(filtered.ToList()),
+            Groups: groups);
+    }
+
+    private static string DefaultGroupResolver(DiffTimelineCoreItem item)
+    {
+        if (item.DisplayName.Contains("テキスト", StringComparison.Ordinal))
+        {
+            return "テキスト変更";
+        }
+
+        if (item.DisplayName.Contains("素材パス", StringComparison.Ordinal))
+        {
+            return "素材パス変更";
+        }
+
+        if (item.DisplayName.Contains("フレーム", StringComparison.Ordinal) ||
+            item.DisplayName.Contains("レイヤー", StringComparison.Ordinal))
+        {
+            return "タイムライン移動";
+        }
+
+        if (item.DisplayName.Contains("長さ", StringComparison.Ordinal))
+        {
+            return "長さ変更";
+        }
+
+        return "その他";
+    }
 }

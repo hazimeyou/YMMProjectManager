@@ -336,31 +336,31 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
-            var timelineItems = new List<DiffTimelineItemViewModel>(ymmResult.Entries.Count);
-            var coreSnapshot = DiffTimelineCoreBuilder.Build(
+            var coreResult = DiffTimelineCoreBuilder.BuildResult(
                 ymmResult.Entries,
-                kindLabel: x => ToDiffKindLabel(x),
-                fieldLabel: x => ToFieldLabel(x),
-                displayText: x => DiffDisplayTextService.ToDisplayText(x?.ToString()));
-            for (var i = 0; i < ymmResult.Entries.Count; i++)
+                new DiffTimelineCoreBuildOptions(
+                    KindLabel: x => ToDiffKindLabel(x),
+                    FieldLabel: x => ToFieldLabel(x),
+                    DisplayText: x => DiffDisplayTextService.ToDisplayText(x?.ToString())));
+
+            var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.Snapshot.Items.Count);
+            for (var i = 0; i < coreResult.Snapshot.Items.Count; i++)
             {
-                var x = ymmResult.Entries[i];
-                var id = $"diff-{i}";
+                var core = coreResult.Snapshot.Items[i];
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
-                    Id = id,
-                    Kind = ToDiffKindLabel(x.Kind.ToString()),
-                    Scope = x.Scope,
-                    Field = ToFieldLabel(x.Field),
-                    Before = DiffDisplayTextService.ToDisplayText(x.Before),
-                    After = DiffDisplayTextService.ToDisplayText(x.After),
-                    TimelineIndex = x.TimelineIndex,
-                    Layer = x.Layer,
-                    Frame = x.Frame,
-                    Length = x.Length,
+                    Id = core.Id,
+                    Kind = core.KindLabel,
+                    Scope = core.Category,
+                    Field = ResolveFieldFromDisplayName(core.DisplayName),
+                    Before = core.OldValue,
+                    After = core.NewValue,
+                    TimelineIndex = core.TimelineIndex,
+                    Layer = core.Layer,
+                    Frame = core.Frame,
+                    Length = core.Length,
                 });
 
-                var core = coreSnapshot.Items[i];
                 timelineItems.Add(TimelineViewModel.CreateItem(
                     id: core.Id,
                     kind: core.KindLabel,
@@ -374,7 +374,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     newValue: core.NewValue));
             }
 
-            BuildGroups();
+            BuildGroups(coreResult.Groups);
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
@@ -397,29 +397,31 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(PureTimelineMode));
     }
 
-    private void BuildGroups()
+    private void BuildGroups(IReadOnlyList<DiffTimelineCoreGroup> coreGroups)
     {
-        static string ResolveGroupName(DiffEntryViewModel item)
+        foreach (var group in coreGroups)
         {
-            return item.Field switch
-            {
-                "テキスト" => "テキスト変更",
-                "素材パス" => "素材パス変更",
-                "フレーム" or "レイヤー" => "タイムライン移動",
-                "長さ" => "長さ変更",
-                _ => "その他",
-            };
-        }
-
-        foreach (var group in YmmDiffEntries.GroupBy(ResolveGroupName).OrderByDescending(x => x.Count()))
-        {
+            var items = YmmDiffEntries
+                .Where(x => group.ItemIds.Contains(x.Id))
+                .ToList();
             DiffGroups.Add(new DiffGroupViewModel
             {
-                GroupName = group.Key,
-                Items = group.ToList(),
-                Count = group.Count(),
+                GroupName = group.GroupName,
+                Items = items,
+                Count = group.Count,
             });
         }
+    }
+
+    private static string ResolveFieldFromDisplayName(string displayName)
+    {
+        var index = displayName.IndexOf(' ');
+        if (index < 0 || index >= displayName.Length - 1)
+        {
+            return displayName;
+        }
+
+        return displayName[(index + 1)..];
     }
 
     private void OnTimelineSelectedDiffItemChanged(DiffTimelineItemViewModel? item)
