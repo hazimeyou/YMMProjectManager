@@ -180,6 +180,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
         ApplySyncModeAndState();
         TryInitializeHost();
+        TryValidateStandalonePipeline();
     }
 
     public void SyncFrameFromPlaceholder()
@@ -312,6 +313,36 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         var snapshot = await File.ReadAllTextAsync(snapshotPath).ConfigureAwait(true);
         ApplyDiff(snapshot, current);
         Title = $"差分: {snapshotId} -> 現在";
+    }
+
+    private void TryValidateStandalonePipeline()
+    {
+        try
+        {
+            var (oldSnapshot, newSnapshot) = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck();
+            var pipelineResult = DiffTimelineStandalonePipeline.BuildFromSnapshots(
+                oldSnapshot,
+                newSnapshot,
+                new DiffTimelineStandalonePipelineOptions(
+                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["caller"] = nameof(ProjectDiffViewModel),
+                        ["entry"] = nameof(TryValidateStandalonePipeline),
+                    }));
+
+            var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
+            var diagnosticsPath = DiffTimelineStandalonePipelineDiagnosticsWriter.WriteToFile(
+                directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
+                result: pipelineResult,
+                roundTrip: selfCheck.RoundTrip,
+                fallbackReason: "none");
+
+            logger.Info($"Standalone pipeline validation succeeded: {diagnosticsPath}");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Standalone pipeline validation skipped. fallback remains active.");
+        }
     }
 
     private void ApplyDiff(string before, string after)
