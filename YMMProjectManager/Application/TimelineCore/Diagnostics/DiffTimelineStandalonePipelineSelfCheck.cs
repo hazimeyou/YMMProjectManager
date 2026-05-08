@@ -45,6 +45,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             Keys: pipeline.CoreResult.RowSet.Rows.Select(x => $"{x.DiffKind}|{x.Path}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}").ToList());
         var comparer = DiffTimelineValidationComparer.Compare(existingSummary, pipeline);
         var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelopeMiss);
+        var gateSuccess = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
+        var blockedReadiness = readiness with { CanPromote = false, Blockers = ["forced-blocker"] };
+        var gateBlocked = DiffTimelineStandalonePromotionGate.Evaluate(blockedReadiness);
 
         var keyA = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
         var keyB = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
@@ -72,6 +75,8 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["comparerReady"] = (comparer.KeyMatchRate >= 0.99).ToString(),
             ["promotionReadinessEvaluated"] = (!string.IsNullOrWhiteSpace(readiness.CacheStatus)).ToString(),
             ["blockerWarningEvaluated"] = (readiness.Blockers.Count >= 0 && readiness.Warnings.Count >= 0).ToString(),
+            ["gateSuccessOrBlocked"] = (gateSuccess.Allowed || !gateBlocked.Allowed).ToString(),
+            ["routeSelectionFallback"] = (!gateBlocked.Allowed).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

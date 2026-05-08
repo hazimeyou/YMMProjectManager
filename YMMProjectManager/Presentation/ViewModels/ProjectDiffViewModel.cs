@@ -6,8 +6,10 @@ namespace YMMProjectManager.Presentation.ViewModels;
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 {
     private readonly bool enableStandaloneShadowValidation = ResolveStandaloneShadowValidationEnabled();
+    private readonly bool enableStandaloneRoute = ResolveStandaloneRouteEnabled();
     private readonly InMemoryDiffTimelineSnapshotCache standalonePipelineCache = new();
     private DiffTimelineStandaloneValidationStatus? standaloneValidationStatus;
+    private DiffTimelineRouteSelectionResult? standaloneRouteSelectionResult;
     private readonly FileLogger logger;
     private readonly ProjectSnapshotService snapshotService;
     private readonly JsonNormalizeService normalizeService;
@@ -111,6 +113,12 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         get => standaloneValidationStatus;
         set => standaloneValidationStatus = value;
+    }
+
+    private DiffTimelineRouteSelectionResult? StandaloneRouteSelectionResult
+    {
+        get => standaloneRouteSelectionResult;
+        set => standaloneRouteSelectionResult = value;
     }
 
     public TimelineSyncState SelectedSyncState
@@ -485,17 +493,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
-            var coreResult = DiffTimelineCoreBuilder.BuildResult(
-                ymmResult.Entries,
-                new DiffTimelineCoreBuildOptions(
-                    KindLabelResolver: x => DiffTimelineDisplayLabelResolver.ToDiffKindLabel(x),
-                    FieldLabelResolver: x => DiffTimelineDisplayLabelResolver.ToFieldLabel(x),
-                    ValueDisplayResolver: x => DiffDisplayTextService.ToDisplayText(x?.ToString()),
-                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
-                    {
-                        ["source"] = "ProjectDiffViewModel.ApplyDiff",
-                        ["mode"] = "StandaloneCoreV1",
-                    }));
+            var coreResult = BuildCoreResultFromCurrentRoute(ymmResult);
 
             var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.RowSet.Rows.Count);
             for (var i = 0; i < coreResult.RowSet.Rows.Count; i++)
@@ -565,6 +563,106 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 Count = group.Count,
             });
         }
+    }
+
+    private DiffTimelineCoreResult BuildCoreResultFromCurrentRoute(YmmProjectDiffResult ymmResult)
+    {
+        var requestedRoute = enableStandaloneRoute ? "standalone" : "legacy-core-builder";
+        if (!enableStandaloneRoute)
+        {
+            StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                RequestedRoute: requestedRoute,
+                SelectedRoute: "legacy-core-builder",
+                FallbackRoute: "legacy-core-builder",
+                Reason: "standalone-route-disabled",
+                PromotionReadiness: null,
+                DiagnosticsPath: string.Empty);
+            return BuildLegacyCoreResult(ymmResult);
+        }
+
+        try
+        {
+            var snapshots = TryBuildSnapshotsFromProjectFiles(null, null);
+            if (snapshots is null)
+            {
+                snapshots = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck();
+            }
+
+            var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+                snapshots.Value.OldSnapshot,
+                snapshots.Value.NewSnapshot,
+                new DiffTimelineStandalonePipelineOptions(
+                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["requestedRoute"] = requestedRoute,
+                        ["envRouteFlag"] = enableStandaloneRoute ? "1" : "0",
+                    },
+                    SnapshotCache: standalonePipelineCache));
+
+            if (!envelope.IsSuccess || envelope.Result is null)
+            {
+                StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                    RequestedRoute: requestedRoute,
+                    SelectedRoute: "legacy-core-builder",
+                    FallbackRoute: "legacy-core-builder",
+                    Reason: envelope.FallbackReason,
+                    PromotionReadiness: null,
+                    DiagnosticsPath: string.Empty);
+                return BuildLegacyCoreResult(ymmResult);
+            }
+
+            var existingSummary = BuildExistingRouteSummary();
+            var comparer = DiffTimelineValidationComparer.Compare(existingSummary, envelope.Result);
+            var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelope);
+            var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
+            if (!gate.Allowed)
+            {
+                StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                    RequestedRoute: requestedRoute,
+                    SelectedRoute: "legacy-core-builder",
+                    FallbackRoute: "legacy-core-builder",
+                    Reason: gate.Reason,
+                    PromotionReadiness: readiness,
+                    DiagnosticsPath: string.Empty);
+                return BuildLegacyCoreResult(ymmResult);
+            }
+
+            StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                RequestedRoute: requestedRoute,
+                SelectedRoute: "standalone",
+                FallbackRoute: "legacy-core-builder",
+                Reason: gate.Reason,
+                PromotionReadiness: readiness,
+                DiagnosticsPath: string.Empty);
+            return envelope.Result.CoreResult;
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Standalone route failed; fallback to legacy route.");
+            StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                RequestedRoute: requestedRoute,
+                SelectedRoute: "legacy-core-builder",
+                FallbackRoute: "legacy-core-builder",
+                Reason: "exception",
+                PromotionReadiness: null,
+                DiagnosticsPath: string.Empty);
+            return BuildLegacyCoreResult(ymmResult);
+        }
+    }
+
+    private static DiffTimelineCoreResult BuildLegacyCoreResult(YmmProjectDiffResult ymmResult)
+    {
+        return DiffTimelineCoreBuilder.BuildResult(
+            ymmResult.Entries,
+            new DiffTimelineCoreBuildOptions(
+                KindLabelResolver: x => DiffTimelineDisplayLabelResolver.ToDiffKindLabel(x),
+                FieldLabelResolver: x => DiffTimelineDisplayLabelResolver.ToFieldLabel(x),
+                ValueDisplayResolver: x => DiffDisplayTextService.ToDisplayText(x?.ToString()),
+                OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["source"] = "ProjectDiffViewModel.ApplyDiff",
+                    ["mode"] = "StandaloneCoreV1",
+                }));
     }
 
     private void OnTimelineSelectedDiffItemChanged(DiffTimelineItemViewModel? item)
@@ -662,6 +760,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         return string.Equals(
             Environment.GetEnvironmentVariable("YMM_STANDALONE_SHADOW_VALIDATION"),
+            "1",
+            StringComparison.Ordinal);
+    }
+
+    private static bool ResolveStandaloneRouteEnabled()
+    {
+        return string.Equals(
+            Environment.GetEnvironmentVariable("YMM_STANDALONE_DIFFTIMELINE_ROUTE"),
             "1",
             StringComparison.Ordinal);
     }

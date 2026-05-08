@@ -16,7 +16,9 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
         string fallbackReason,
         DiffTimelineExistingRouteSummary? existingRouteSummary = null,
         DiffTimelineValidationComparerResult? comparerResult = null,
-        DiffTimelineStandalonePromotionReadiness? promotionReadiness = null)
+        DiffTimelineStandalonePromotionReadiness? promotionReadiness = null,
+        DiffTimelineRouteSelectionResult? routeSelection = null,
+        IReadOnlyDictionary<string, string>? environmentFlags = null)
     {
         Directory.CreateDirectory(directory);
         var timestamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss");
@@ -77,6 +79,8 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
             },
             comparerResult,
             promotionReadiness,
+            routeSelection,
+            environmentFlags,
         };
 
         File.WriteAllText(path, JsonSerializer.Serialize(payload, JsonOptions));
