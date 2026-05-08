@@ -1,4 +1,4 @@
-using YMMProjectManager.Infrastructure.Diff;
+﻿using YMMProjectManager.Infrastructure.Diff;
 
 namespace YMMProjectManager.Application.TimelineCore;
 
@@ -8,7 +8,8 @@ public static class DiffTimelineCoreBuilder
         IReadOnlyList<YmmProjectDiffEntry> entries,
         Func<string, string> kindLabel,
         Func<object?, string> fieldLabel,
-        Func<object?, string> displayText)
+        Func<object?, string> displayText,
+        Func<string, string>? scopeLabel = null)
     {
         var items = new List<DiffTimelineCoreItem>(entries.Count);
         for (var i = 0; i < entries.Count; i++)
@@ -17,10 +18,13 @@ public static class DiffTimelineCoreBuilder
             var id = $"diff-{i}";
             var kind = kindLabel(x.Kind.ToString());
             var field = fieldLabel(x.Field);
+            var scope = scopeLabel?.Invoke(x.Scope) ?? x.Scope;
             items.Add(new DiffTimelineCoreItem(
                 Id: id,
                 KindLabel: kind,
+                FieldLabel: field,
                 Category: x.Category,
+                ScopeLabel: scope,
                 DisplayName: $"{kind} {field}",
                 TimelineIndex: x.TimelineIndex,
                 Layer: x.Layer,
@@ -37,7 +41,7 @@ public static class DiffTimelineCoreBuilder
         IReadOnlyList<YmmProjectDiffEntry> entries,
         DiffTimelineCoreBuildOptions options)
     {
-        var snapshot = Build(entries, options.KindLabel, options.FieldLabel, options.DisplayText);
+        var snapshot = Build(entries, options.KindLabel, options.FieldLabel, options.DisplayText, options.ScopeLabel);
         var filtered = options.ItemFilter is null
             ? snapshot.Items
             : snapshot.Items.Where(options.ItemFilter).ToList();
@@ -50,6 +54,7 @@ public static class DiffTimelineCoreBuilder
                 ItemIds: x.Select(y => y.Id).ToList(),
                 Count: x.Count()))
             .ToList();
+
         return new DiffTimelineCoreResult(
             Snapshot: new DiffTimelineCoreSnapshot(filtered.ToList()),
             Groups: groups);
@@ -57,27 +62,13 @@ public static class DiffTimelineCoreBuilder
 
     private static string DefaultGroupResolver(DiffTimelineCoreItem item)
     {
-        if (item.DisplayName.Contains("テキスト", StringComparison.Ordinal))
+        return item.FieldLabel switch
         {
-            return "テキスト変更";
-        }
-
-        if (item.DisplayName.Contains("素材パス", StringComparison.Ordinal))
-        {
-            return "素材パス変更";
-        }
-
-        if (item.DisplayName.Contains("フレーム", StringComparison.Ordinal) ||
-            item.DisplayName.Contains("レイヤー", StringComparison.Ordinal))
-        {
-            return "タイムライン移動";
-        }
-
-        if (item.DisplayName.Contains("長さ", StringComparison.Ordinal))
-        {
-            return "長さ変更";
-        }
-
-        return "その他";
+            "テキスト" => "テキスト変更",
+            "素材パス" => "素材パス変更",
+            "フレーム" or "レイヤー" => "タイムライン移動",
+            "長さ" => "長さ変更",
+            _ => "その他",
+        };
     }
 }

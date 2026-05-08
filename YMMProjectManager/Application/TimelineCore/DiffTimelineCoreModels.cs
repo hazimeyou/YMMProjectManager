@@ -3,7 +3,9 @@ namespace YMMProjectManager.Application.TimelineCore;
 public sealed record DiffTimelineCoreItem(
     string Id,
     string KindLabel,
+    string FieldLabel,
     string Category,
+    string ScopeLabel,
     string DisplayName,
     int TimelineIndex,
     int Layer,
@@ -28,5 +30,6 @@ public sealed record DiffTimelineCoreBuildOptions(
     Func<string, string> KindLabel,
     Func<object?, string> FieldLabel,
     Func<object?, string> DisplayText,
+    Func<string, string>? ScopeLabel = null,
     Func<DiffTimelineCoreItem, bool>? ItemFilter = null,
     Func<DiffTimelineCoreItem, string>? GroupResolver = null);

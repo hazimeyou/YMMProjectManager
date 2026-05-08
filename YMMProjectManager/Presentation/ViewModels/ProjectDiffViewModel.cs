@@ -327,7 +327,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 JsonDiffEntries.Add(new DiffEntryViewModel
                 {
                     Id = $"json-{JsonDiffEntries.Count}",
-                    Kind = ToDiffKindLabel(x.Kind.ToString()),
+                    Kind = DiffTimelineCoreLabelResolver.ToDiffKindLabel(x.Kind.ToString()),
                     Scope = x.Path,
                     Field = "JSON",
                     Before = DiffDisplayTextService.ToDisplayText(x.Before),
@@ -339,8 +339,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var coreResult = DiffTimelineCoreBuilder.BuildResult(
                 ymmResult.Entries,
                 new DiffTimelineCoreBuildOptions(
-                    KindLabel: x => ToDiffKindLabel(x),
-                    FieldLabel: x => ToFieldLabel(x),
+                    KindLabel: x => DiffTimelineCoreLabelResolver.ToDiffKindLabel(x),
+                    FieldLabel: x => DiffTimelineCoreLabelResolver.ToFieldLabel(x),
                     DisplayText: x => DiffDisplayTextService.ToDisplayText(x?.ToString())));
 
             var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.Snapshot.Items.Count);
@@ -351,8 +351,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 {
                     Id = core.Id,
                     Kind = core.KindLabel,
-                    Scope = core.Category,
-                    Field = ResolveFieldFromDisplayName(core.DisplayName),
+                    Scope = core.ScopeLabel,
+                    Field = core.FieldLabel,
                     Before = core.OldValue,
                     After = core.NewValue,
                     TimelineIndex = core.TimelineIndex,
@@ -413,17 +413,6 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private static string ResolveFieldFromDisplayName(string displayName)
-    {
-        var index = displayName.IndexOf(' ');
-        if (index < 0 || index >= displayName.Length - 1)
-        {
-            return displayName;
-        }
-
-        return displayName[(index + 1)..];
-    }
-
     private void OnTimelineSelectedDiffItemChanged(DiffTimelineItemViewModel? item)
     {
         if (item is null || isSyncingSelection)
@@ -463,32 +452,6 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             $"削除={s.RemovedCount}",
             $"移動={s.MovedCount}",
             $"変更={s.ModifiedCount}");
-    }
-
-    private static string ToDiffKindLabel(string kind)
-    {
-        return kind switch
-        {
-            "Added" => "追加",
-            "Removed" => "削除",
-            "Moved" => "移動",
-            "Changed" => "変更",
-            _ => kind,
-        };
-    }
-
-    private static string ToFieldLabel(object? field)
-    {
-        var value = field?.ToString() ?? string.Empty;
-        return value switch
-        {
-            "Text" => "テキスト",
-            "FilePath" => "素材パス",
-            "Frame" => "フレーム",
-            "Layer" => "レイヤー",
-            "Length" => "長さ",
-            _ => value,
-        };
     }
 
     private static string ToSyncStateLabel(TimelineSyncState state)
