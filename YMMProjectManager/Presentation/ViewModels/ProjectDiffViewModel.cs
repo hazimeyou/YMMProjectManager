@@ -1,4 +1,6 @@
 ﻿
+using YMMProjectManager.Application.TimelineCore;
+
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
@@ -335,6 +337,11 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
             var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
             var timelineItems = new List<DiffTimelineItemViewModel>(ymmResult.Entries.Count);
+            var coreSnapshot = DiffTimelineCoreBuilder.Build(
+                ymmResult.Entries,
+                kindLabel: x => ToDiffKindLabel(x),
+                fieldLabel: x => ToFieldLabel(x),
+                displayText: x => DiffDisplayTextService.ToDisplayText(x?.ToString()));
             for (var i = 0; i < ymmResult.Entries.Count; i++)
             {
                 var x = ymmResult.Entries[i];
@@ -353,17 +360,18 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     Length = x.Length,
                 });
 
+                var core = coreSnapshot.Items[i];
                 timelineItems.Add(TimelineViewModel.CreateItem(
-                    id: id,
-                    kind: ToDiffKindLabel(x.Kind.ToString()),
-                    category: x.Category,
-                    displayName: $"{ToDiffKindLabel(x.Kind.ToString())} {ToFieldLabel(x.Field)}",
-                    timelineIndex: x.TimelineIndex,
-                    layer: x.Layer,
-                    frame: x.Frame,
-                    length: Math.Max(1, x.Length),
-                    oldValue: DiffDisplayTextService.ToDisplayText(x.Before),
-                    newValue: DiffDisplayTextService.ToDisplayText(x.After)));
+                    id: core.Id,
+                    kind: core.KindLabel,
+                    category: core.Category,
+                    displayName: core.DisplayName,
+                    timelineIndex: core.TimelineIndex,
+                    layer: core.Layer,
+                    frame: core.Frame,
+                    length: core.Length,
+                    oldValue: core.OldValue,
+                    newValue: core.NewValue));
             }
 
             BuildGroups();
@@ -467,16 +475,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         };
     }
 
-    private static string ToFieldLabel(string field)
+    private static string ToFieldLabel(object? field)
     {
-        return field switch
+        var value = field?.ToString() ?? string.Empty;
+        return value switch
         {
             "Text" => "テキスト",
             "FilePath" => "素材パス",
             "Frame" => "フレーム",
             "Layer" => "レイヤー",
             "Length" => "長さ",
-            _ => field,
+            _ => value,
         };
     }
 
