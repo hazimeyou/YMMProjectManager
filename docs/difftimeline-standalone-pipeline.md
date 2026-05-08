@@ -87,6 +87,30 @@ Diagnostics export package bundles:
 - standalone config snapshot
 - manifest
 - preview readiness report
+- preview package manifest (`preview-package-manifest.json`)
+
+## Preview Package (v1)
+
+Preview package export includes:
+
+- `preview-package-manifest.json`
+- `preview-readiness-report.json`
+- `validation-dashboard.json`
+- `validation-history.json`
+- `route-validation-report.json`
+- latest standalone pipeline diagnostics JSON (if present)
+- `manifest.json`
+
+Manifest contains:
+
+- version
+- commit hash
+- required env flags
+- default-disabled status
+- fallback preserved status
+- readiness report path
+- diagnostics export path
+- known limitations
 
 ## v1 Preview Validation Procedure
 
@@ -103,6 +127,7 @@ Diagnostics export package bundles:
    - `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
 5. If promotion gate or rollback guard blocks, route must remain legacy.
 6. Collect multiple stable runs before any broader rollout decision.
+7. Share preview package directory with verifier.
 
 ## Required Flags for Preview
 
@@ -118,6 +143,21 @@ Diagnostics export package bundles:
 - Diagnostics quality is a hard dependency for promotion decisions.
 - Regression trend can block preview even when a single run looks healthy.
 - TimelineView integration remains frozen and is out of RouteA scope.
+- Preview package is validation-only; no default route promotion is performed.
+
+## Disable / Rollback Procedure
+
+1. Unset or set `YMM_STANDALONE_DIFFTIMELINE_ROUTE=0`.
+2. Keep `YMM_STANDALONE_SHADOW_VALIDATION=1` only if diagnostics collection is needed.
+3. If rollback guard reports blockers, use legacy route only.
+4. Preserve diagnostics package for postmortem.
+
+## Prohibited Actions During Preview
+
+- Enable standalone route by default
+- Re-enable TimelineView integration/runtime bridge
+- Remove legacy fallback path
+- Treat preview output as production-ready without gate/trend checks
 
 ## Manual Opt-in Usage
 

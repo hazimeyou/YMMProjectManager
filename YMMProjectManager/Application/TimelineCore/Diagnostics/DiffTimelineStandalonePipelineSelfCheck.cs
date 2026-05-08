@@ -91,6 +91,17 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             dashboard,
             new DiffTimelineStandaloneSelfCheckResult(new Dictionary<string, string>(), new Dictionary<string, string> { ["jsonRoundTrip"] = "True", ["configDefaultSafety"] = "True" }, pipeline.Diagnostics, "self"),
             docsPath);
+        var previewRunner = DiffTimelinePreviewValidationRunner.Run(
+            diagnosticsDirectory: tempDir,
+            config: permissiveConfig,
+            routeValidationReport: report,
+            history: new DiffTimelineValidationRunHistory([run1, run2]),
+            dashboard: dashboard,
+            trend: trendGood,
+            rollbackGuard: rollbackPass,
+            docsPath: docsPath,
+            version: "v1-preview-selfcheck",
+            commitHash: "self-check");
 
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
@@ -111,6 +122,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["previewBlocked"] = (!previewBlocked.CanPreview).ToString(),
             ["previewAllowed"] = previewAllowed.CanPreview.ToString(),
             ["defaultDisabledSafety"] = (!config.StandaloneRouteEnabled).ToString(),
+            ["manifestGeneration"] = File.Exists(Path.Combine(previewRunner.ExportPackage.ExportDirectory, "preview-package-manifest.json")).ToString(),
+            ["packageExport"] = previewRunner.ExportPackage.Succeeded.ToString(),
+            ["packageContainsReport"] = previewRunner.ExportPackage.ExportedFiles.Any(x => string.Equals(Path.GetFileName(x), "preview-readiness-report.json", StringComparison.OrdinalIgnoreCase)).ToString(),
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
         };
 
