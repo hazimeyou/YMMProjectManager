@@ -446,12 +446,37 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var guardedReport = routeValidationReport with { DiagnosticsPath = diagnosticsPath };
             var guardedRollback = DiffTimelineStandaloneRollbackGuard.Evaluate(guardedReport, history, standaloneConfig, trend);
             var finalDashboard = DiffTimelineValidationDashboardBuilder.Build(guardedReport, trend, guardedRollback, history);
+            var docsPath = Path.Combine(AppContext.BaseDirectory, "docs", "difftimeline-standalone-pipeline.md");
+            if (!File.Exists(docsPath))
+            {
+                docsPath = Path.Combine(Directory.GetCurrentDirectory(), "docs", "difftimeline-standalone-pipeline.md");
+            }
+            var previewReadiness = DiffTimelinePreviewReadinessChecker.Evaluate(
+                config: standaloneConfig,
+                rollbackGuard: guardedRollback,
+                exportPackage: new DiffTimelineDiagnosticsExportPackageResult(false, string.Empty, string.Empty, [], []),
+                trend: trend,
+                dashboard: finalDashboard,
+                selfCheck: selfCheck,
+                docsPath: docsPath);
             var exportPackage = DiffTimelineDiagnosticsExportPackageWriter.Export(
                 diagnosticsDirectory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 report: guardedReport,
                 history: history,
                 dashboard: finalDashboard,
-                config: standaloneConfig);
+                config: standaloneConfig,
+                previewReadiness: previewReadiness with { DiagnosticsExportPath = Path.Combine(AppContext.BaseDirectory, "diagnostics") });
+            previewReadiness = previewReadiness with
+            {
+                DiagnosticsExportPath = exportPackage.ExportDirectory,
+            };
+            exportPackage = DiffTimelineDiagnosticsExportPackageWriter.Export(
+                diagnosticsDirectory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
+                report: guardedReport,
+                history: history,
+                dashboard: finalDashboard,
+                config: standaloneConfig,
+                previewReadiness: previewReadiness);
 
             StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                 Attempted: true,
@@ -459,7 +484,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 CacheHit: envelope.CacheHit,
                 SnapshotSource: envelope.SnapshotSource,
                 FallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
-                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2} trend={trend.Recommendation} rollback={guardedRollback.Allowed} export={exportPackage.Succeeded}",
+                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2} trend={trend.Recommendation} rollback={guardedRollback.Allowed} export={exportPackage.Succeeded} preview={previewReadiness.CanPreview}",
                 DiagnosticsPath: diagnosticsPath,
                 Errors: envelope.Errors,
                 Warnings: envelope.Warnings);

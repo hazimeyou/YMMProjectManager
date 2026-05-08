@@ -64,8 +64,34 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             trend,
             rollback,
             new DiffTimelineValidationRunHistory([run1, run2]));
-
         var tempDir = Path.Combine(Path.GetTempPath(), "difftimeline-selfcheck");
+        var docsPath = Path.Combine(Directory.GetCurrentDirectory(), "docs", "difftimeline-standalone-pipeline.md");
+        var previewBlocked = DiffTimelinePreviewReadinessChecker.Evaluate(
+            config,
+            rollback,
+            new DiffTimelineDiagnosticsExportPackageResult(true, tempDir, Path.Combine(tempDir, "manifest.json"), [], []),
+            trend,
+            dashboard,
+            new DiffTimelineStandaloneSelfCheckResult(new Dictionary<string, string>(), new Dictionary<string, string> { ["jsonRoundTrip"] = "True", ["configDefaultSafety"] = "True" }, pipeline.Diagnostics, "self"),
+            docsPath);
+        var permissiveConfig = config with
+        {
+            StandaloneRouteEnabled = false,
+            StrictRegressionBlocking = false,
+            StrictCacheAnomalyBlocking = false,
+            StrictDiagnosticsCompleteness = false,
+        };
+        var trendGood = new DiffTimelinePromotionTrendReadiness(true, 5, 5, new DiffTimelineValidationRegressionResult(false, [], [], "no-regression"), "promotion-candidate");
+        var rollbackPass = new DiffTimelineStandaloneRollbackGuardResult(true, [], [], "rollback-guard-passed");
+        var previewAllowed = DiffTimelinePreviewReadinessChecker.Evaluate(
+            permissiveConfig,
+            rollbackPass,
+            new DiffTimelineDiagnosticsExportPackageResult(true, tempDir, Path.Combine(tempDir, "manifest.json"), [], []),
+            trendGood,
+            dashboard,
+            new DiffTimelineStandaloneSelfCheckResult(new Dictionary<string, string>(), new Dictionary<string, string> { ["jsonRoundTrip"] = "True", ["configDefaultSafety"] = "True" }, pipeline.Diagnostics, "self"),
+            docsPath);
+
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
 
@@ -82,6 +108,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["configDefaultSafety"] = (!config.StandaloneRouteEnabled && !config.ShadowValidationEnabled).ToString(),
             ["rollbackGuard"] = rollback.Allowed.ToString(),
             ["dashboardModel"] = (!string.IsNullOrWhiteSpace(dashboard.Recommendation)).ToString(),
+            ["previewBlocked"] = (!previewBlocked.CanPreview).ToString(),
+            ["previewAllowed"] = previewAllowed.CanPreview.ToString(),
+            ["defaultDisabledSafety"] = (!config.StandaloneRouteEnabled).ToString(),
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
         };
 

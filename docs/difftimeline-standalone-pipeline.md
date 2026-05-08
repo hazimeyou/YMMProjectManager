@@ -86,6 +86,38 @@ Diagnostics export package bundles:
 - dashboard snapshot
 - standalone config snapshot
 - manifest
+- preview readiness report
+
+## v1 Preview Validation Procedure
+
+1. Confirm default-safe baseline:
+   - `YMM_STANDALONE_DIFFTIMELINE_ROUTE` is not set (or `0`)
+   - `YMM_STANDALONE_SHADOW_VALIDATION=1`
+2. Run validation and confirm diagnostics export package is generated.
+3. Inspect:
+   - `route-validation-report.json`
+   - `validation-dashboard.json`
+   - `preview-readiness-report.json`
+   - `validation-history.json`
+4. Enable manual route only for verifier sessions:
+   - `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
+5. If promotion gate or rollback guard blocks, route must remain legacy.
+6. Collect multiple stable runs before any broader rollout decision.
+
+## Required Flags for Preview
+
+- Required for route trial:
+  - `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
+- Strongly recommended during preview:
+  - `YMM_STANDALONE_SHADOW_VALIDATION=1`
+  - `YMM_STANDALONE_DIAGNOSTICS_VERBOSITY=standard` (or stricter)
+
+## Known Limitations
+
+- Standalone route remains opt-in and non-default.
+- Diagnostics quality is a hard dependency for promotion decisions.
+- Regression trend can block preview even when a single run looks healthy.
+- TimelineView integration remains frozen and is out of RouteA scope.
 
 ## Manual Opt-in Usage
 

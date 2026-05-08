@@ -11,7 +11,8 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
         DiffTimelineRouteValidationReport report,
         DiffTimelineValidationRunHistory history,
         DiffTimelineValidationDashboard dashboard,
-        DiffTimelineStandaloneConfig config)
+        DiffTimelineStandaloneConfig config,
+        DiffTimelinePreviewReadiness? previewReadiness = null)
     {
         var warnings = new List<string>();
         var exported = new List<string>();
@@ -39,6 +40,13 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
             var configPath = Path.Combine(exportDir, "standalone-config-snapshot.json");
             File.WriteAllText(configPath, JsonSerializer.Serialize(config.ToEnvironmentSnapshot(), JsonOptions));
             exported.Add(configPath);
+            
+            if (previewReadiness is not null)
+            {
+                var previewPath = Path.Combine(exportDir, "preview-readiness-report.json");
+                File.WriteAllText(previewPath, JsonSerializer.Serialize(previewReadiness, JsonOptions));
+                exported.Add(previewPath);
+            }
 
             var manifest = new
             {
