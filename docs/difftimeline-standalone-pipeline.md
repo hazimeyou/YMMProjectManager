@@ -15,6 +15,11 @@ Pipeline flow:
   - Semantic diff models
   - Core result / row models
   - Pipeline diagnostics models
+- Adapters: `Application/TimelineCore/Adapters`
+  - `YmmNormalizedJsonSnapshotAdapter` (normalized JSON -> snapshot)
+- Providers: `Application/TimelineCore/Providers`
+  - `InMemoryDiffTimelineSnapshotProvider`
+  - `SampleDiffTimelineSnapshotFactory`
 - Builders: `Application/TimelineCore/Builders`
   - `DiffTimelineSnapshotDiffBuilder`
   - `DiffTimelineCoreBuilder`
@@ -23,9 +28,25 @@ Pipeline flow:
   - `DiffTimelineStandalonePipeline.BuildFromSnapshots(...)`
 - Serialization: `Application/TimelineCore/Serialization`
   - `DiffTimelineSnapshotJsonSerializer`
+- Caching skeleton: `Application/TimelineCore/Caching`
+  - `IDiffTimelineSnapshotCache`
+  - `DiffTimelineSnapshotCacheKeyFactory`
 - Diagnostics: `Application/TimelineCore/Diagnostics`
   - `DiffTimelineStandalonePipelineSelfCheck`
   - `DiffTimelineStandalonePipelineDiagnosticsWriter`
+
+## Adapter/Hash/Cache Foundation
+
+- Snapshot metadata carries `SnapshotHash` for identity and comparison.
+- Diagnostics include:
+  - snapshot source
+  - adapter source
+  - conversion result
+  - skipped/unsupported fields
+  - old/new snapshot hash
+  - pipeline result hash
+- Cache key foundation:
+  - `key = oldSnapshotHash + newSnapshotHash + optionsHash`
 
 ## Safety and Boundaries
 
@@ -39,14 +60,17 @@ Pipeline flow:
 
 ## Current Validation Path
 
-`ProjectDiffViewModel` includes a private validation helper that runs the standalone pipeline with sample snapshots and writes diagnostics JSON.
+`ProjectDiffViewModel` includes a private validation helper:
 
-- Existing diff display route is preserved.
-- Failure in validation path does not break UI route.
-- Fallback remains active on any exception.
+1. Tries real-data snapshot conversion via normalized-json adapter when paths are available.
+2. Falls back to sample snapshot when unavailable.
+3. Runs standalone pipeline and self-check.
+4. Writes diagnostics JSON.
+
+Existing diff display route is preserved, and any validation failure keeps fallback active.
 
 ## Next Steps
 
-1. Add concrete snapshot provider backed by normalized project snapshots.
+1. Wire project/snapshot path discovery to feed real old/new files automatically.
 2. Increase semantic diff precision while keeping deterministic rules.
-3. Add dedicated unit tests for pipeline diagnostics and summary counts.
+3. Add dedicated unit tests for adapter conversion and cache-key stability.

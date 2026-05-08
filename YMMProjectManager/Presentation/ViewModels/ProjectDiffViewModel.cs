@@ -319,7 +319,18 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var (oldSnapshot, newSnapshot) = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck();
+            var source = "sample-fallback";
+            var snapshots = TryBuildSnapshotsFromProjectFiles(null, null);
+            if (snapshots is null)
+            {
+                snapshots = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck();
+            }
+            else
+            {
+                source = "normalized-json-adapter";
+            }
+
+            var (oldSnapshot, newSnapshot) = snapshots.Value;
             var pipelineResult = DiffTimelineStandalonePipeline.BuildFromSnapshots(
                 oldSnapshot,
                 newSnapshot,
@@ -328,6 +339,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     {
                         ["caller"] = nameof(ProjectDiffViewModel),
                         ["entry"] = nameof(TryValidateStandalonePipeline),
+                        ["snapshotSource"] = source,
                     }));
 
             var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
@@ -335,7 +347,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 result: pipelineResult,
                 roundTrip: selfCheck.RoundTrip,
-                fallbackReason: "none");
+                fallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none");
 
             logger.Info($"Standalone pipeline validation succeeded: {diagnosticsPath}");
         }
@@ -343,6 +355,28 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         {
             logger.Error(ex, "Standalone pipeline validation skipped. fallback remains active.");
         }
+    }
+
+    private (DiffTimelineProjectSnapshot OldSnapshot, DiffTimelineProjectSnapshot NewSnapshot)? TryBuildSnapshotsFromProjectFiles(
+        string? oldProjectPath,
+        string? newProjectPath)
+    {
+        if (string.IsNullOrWhiteSpace(oldProjectPath) || string.IsNullOrWhiteSpace(newProjectPath))
+        {
+            return null;
+        }
+
+        if (!File.Exists(oldProjectPath) || !File.Exists(newProjectPath))
+        {
+            return null;
+        }
+
+        var adapter = new YmmNormalizedJsonSnapshotAdapter();
+        var oldJson = normalizeService.NormalizeFileAsync(oldProjectPath).GetAwaiter().GetResult();
+        var newJson = normalizeService.NormalizeFileAsync(newProjectPath).GetAwaiter().GetResult();
+        var oldSnapshot = adapter.Convert("project-old", Path.GetFileNameWithoutExtension(oldProjectPath), oldProjectPath, oldJson);
+        var newSnapshot = adapter.Convert("project-new", Path.GetFileNameWithoutExtension(newProjectPath), newProjectPath, newJson);
+        return (oldSnapshot, newSnapshot);
     }
 
     private void ApplyDiff(string before, string after)

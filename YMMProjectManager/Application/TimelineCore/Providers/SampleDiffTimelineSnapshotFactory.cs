@@ -56,6 +56,7 @@ public static class SampleDiffTimelineSnapshotFactory
                 SourceKind: "sample",
                 SourcePath: projectId,
                 CapturedAt: DateTimeOffset.UtcNow,
+                SnapshotHash: $"sample-{projectId}-{timelines.Count}",
                 DiagnosticsMetadata: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["factory"] = nameof(SampleDiffTimelineSnapshotFactory),

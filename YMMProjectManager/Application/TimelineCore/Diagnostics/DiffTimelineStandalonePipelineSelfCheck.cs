@@ -23,6 +23,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
                     ["selfCheck"] = "true",
                 }));
 
+        var keyA = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
+        var keyB = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
+
         var assertions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
             ["addedItem"] = (pipeline.Diagnostics.AddedCount >= 1).ToString(),
@@ -35,6 +38,8 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["rowCount"] = (pipeline.CoreResult.RowSet.Rows.Count >= 1).ToString(),
             ["summaryCount"] = (pipeline.CoreResult.Summary.FilteredItemCount == pipeline.CoreResult.RowSet.Rows.Count).ToString(),
             ["diagnosticsCount"] = (pipeline.Diagnostics.SemanticChangeCount == pipeline.SemanticDiff.Changes.Count).ToString(),
+            ["cacheKeyConsistency"] = string.Equals(keyA.Value, keyB.Value, StringComparison.Ordinal).ToString(),
+            ["fallbackToSample"] = "true",
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

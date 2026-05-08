@@ -1,4 +1,6 @@
 ﻿using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace YMMProjectManager.Application.TimelineCore;
 
@@ -65,6 +67,14 @@ public static class DiffTimelineStandalonePipeline
             {
                 ["stage"] = "snapshot->semantic->core->rows",
                 ["schemaVersion"] = newSnapshot.Metadata.SchemaVersion,
+                ["snapshotSource"] = $"{oldSnapshot.Metadata.SourceKind}->{newSnapshot.Metadata.SourceKind}",
+                ["adapterSource"] = "pipeline-input",
+                ["conversionResult"] = "success",
+                ["skippedFields"] = "none",
+                ["unsupportedFields"] = "none",
+                ["oldSnapshotHash"] = oldSnapshot.Metadata.SnapshotHash,
+                ["newSnapshotHash"] = newSnapshot.Metadata.SnapshotHash,
+                ["pipelineResultHash"] = ComputePipelineHash(core, semantic),
             });
     }
 
@@ -87,5 +97,12 @@ public static class DiffTimelineStandalonePipeline
         merged["pipeline"] = "DiffTimelineStandalonePipeline";
         merged["semanticSummary"] = semantic.SummaryText;
         return merged;
+    }
+
+    private static string ComputePipelineHash(DiffTimelineCoreResult core, DiffTimelineSemanticDiffResult semantic)
+    {
+        var source = $"{semantic.Changes.Count}|{core.RowSet.Rows.Count}|{core.Summary.SummaryText}";
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(source));
+        return Convert.ToHexString(bytes);
     }
 }

@@ -5,6 +5,7 @@ public sealed record DiffTimelineSnapshotMetadata(
     string SourceKind,
     string SourcePath,
     DateTimeOffset CapturedAt,
+    string SnapshotHash,
     IReadOnlyDictionary<string, string> DiagnosticsMetadata);
 
 public sealed record DiffTimelineItemPropertySnapshot(
