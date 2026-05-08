@@ -395,6 +395,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var existingSummary = BuildExistingRouteSummary();
             var comparer = DiffTimelineValidationComparer.Compare(existingSummary, envelope.Result);
             var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelope);
+            var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
+            var routeValidationReport = DiffTimelineStandalonePromotionGate.BuildReport(
+                requestedRoute: "shadow-validation",
+                selectedRoute: gate.Allowed ? "standalone-shadow" : "legacy-shadow",
+                readiness: readiness,
+                cacheHit: envelope.CacheHit,
+                diagnosticsPath: string.Empty,
+                rollbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none");
             var diagnosticsPath = DiffTimelineStandalonePipelineDiagnosticsWriter.WriteToFile(
                 directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 result: envelope.Result,
@@ -402,7 +410,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 fallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
                 existingRouteSummary: existingSummary,
                 comparerResult: comparer,
-                promotionReadiness: readiness);
+                promotionReadiness: readiness,
+                routeSelection: StandaloneRouteSelectionResult,
+                environmentFlags: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["YMM_STANDALONE_SHADOW_VALIDATION"] = enableStandaloneShadowValidation ? "1" : "0",
+                    ["YMM_STANDALONE_DIFFTIMELINE_ROUTE"] = enableStandaloneRoute ? "1" : "0",
+                },
+                routeValidationReport: routeValidationReport);
 
             StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                 Attempted: true,

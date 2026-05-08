@@ -18,7 +18,8 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
         DiffTimelineValidationComparerResult? comparerResult = null,
         DiffTimelineStandalonePromotionReadiness? promotionReadiness = null,
         DiffTimelineRouteSelectionResult? routeSelection = null,
-        IReadOnlyDictionary<string, string>? environmentFlags = null)
+        IReadOnlyDictionary<string, string>? environmentFlags = null,
+        DiffTimelineRouteValidationReport? routeValidationReport = null)
     {
         Directory.CreateDirectory(directory);
         var timestamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss");
@@ -81,6 +82,7 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
             promotionReadiness,
             routeSelection,
             environmentFlags,
+            routeValidationReport,
         };
 
         File.WriteAllText(path, JsonSerializer.Serialize(payload, JsonOptions));

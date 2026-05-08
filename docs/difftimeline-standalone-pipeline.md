@@ -1,111 +1,80 @@
 ﻿# DiffTimeline Standalone Pipeline
 
-## Overview
+## Current Stage
 
-RouteA establishes a standalone DiffTimeline pipeline that does not depend on WPF, YMM runtime objects, or TimelineView integration.
+- Shadow validation: ready
+- Manual opt-in standalone route: ready (guarded)
+- Default: disabled
+- Legacy fallback: always preserved
+- TimelineView integration: frozen
 
-Pipeline flow:
+## Manual Opt-in Usage
 
-`DiffTimelineProjectSnapshot -> SnapshotDiffBuilder -> SemanticDiff -> CoreBuilder -> RowSet -> Summary/Diagnostics`
+1. Keep default behavior (legacy route): do not set route env flag.
+2. Enable standalone route request (manual only):
+   - `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
+3. Optional shadow validation diagnostics:
+   - `YMM_STANDALONE_SHADOW_VALIDATION=1`
+4. Route is promoted only if promotion gate allows it.
+5. If gate is blocked or pipeline fails, route automatically falls back to legacy.
 
-## Current Status
+## Promotion Gate Checklist
 
-- RouteA standalone pipeline: **shadow validation ready**
-- Manual opt-in UI route: **ready (guarded)**
-- Formal UI route switch: **not default**
-- TimelineView integration: **frozen**
-- Default state: **disabled by default**
+Promotion gate checks include:
 
-## Guarded Manual Route Selection
+- comparer confidence threshold (`>= 0.95` default)
+- missing row threshold (`<= 0` default)
+- extra row threshold (`<= 20` warning threshold)
+- row count mismatch tolerance (`<= 20` default)
+- diagnostics completeness checks
+- fallback reason presence checks
+- blocker/warning classification
 
-- Env flag for route request: `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
-- Env flag for shadow validation: `YMM_STANDALONE_SHADOW_VALIDATION=1`
-- Standalone route is selected only when:
-  1. manual route flag is enabled
-  2. standalone pipeline envelope succeeds
-  3. promotion gate returns allowed (no blockers)
-- Otherwise, system always falls back to existing route.
+Formal adoption should require:
 
-`DiffTimelineRouteSelectionResult` records:
+1. No blockers in repeated runs
+2. Stable diagnostics output
+3. High comparer confidence over multiple datasets
+4. Consistent cache behavior
 
-- requested route
-- selected route
-- fallback route
-- reason
-- promotion readiness snapshot
-- diagnostics path
+## Rollback Conditions
 
-## Promotion Gate
+Immediate rollback to legacy route when any of these occurs:
 
-`DiffTimelineStandalonePromotionGate` evaluates readiness and blocks route promotion when blockers exist.
+- pipeline envelope failure (`IsSuccess=false`)
+- promotion gate blocked
+- missing rows beyond threshold
+- confidence below threshold
+- unexpected exception during route build
+- diagnostics required fields missing
 
-- blockers => forced fallback
-- warnings => diagnostics only
-
-## Components
-
-- Models: `Application/TimelineCore/Models`
-  - Snapshot DTOs
-  - Semantic diff models
-  - Core/row models
-  - Pipeline diagnostics models
-  - Pipeline envelope models
-  - Validation comparer/readiness/route-selection models
-- Adapters: `Application/TimelineCore/Adapters`
-  - `YmmNormalizedJsonSnapshotAdapter`
-- Providers: `Application/TimelineCore/Providers`
-  - `InMemoryDiffTimelineSnapshotProvider`
-  - `SampleDiffTimelineSnapshotFactory`
-- Builders: `Application/TimelineCore/Builders`
-  - `DiffTimelineSnapshotDiffBuilder`
-  - `DiffTimelineCoreBuilder`
-  - `DiffTimelineCoreRowBuilder`
-- Pipeline: `Application/TimelineCore/Pipeline`
-  - `BuildFromSnapshots(...)`
-  - `BuildEnvelopeFromSnapshots(...)`
-- Caching: `Application/TimelineCore/Caching`
-  - `IDiffTimelineSnapshotCache`
-  - `DiffTimelineSnapshotCacheKeyFactory`
-  - `InMemoryDiffTimelineSnapshotCache`
-- Diagnostics: `Application/TimelineCore/Diagnostics`
-  - `DiffTimelineStandalonePipelineSelfCheck`
-  - `DiffTimelineStandalonePipelineDiagnosticsWriter`
-  - `DiffTimelineValidationComparer`
-  - `DiffTimelinePromotionReadinessEvaluator`
+Rollback is automatic and keeps existing UI route intact.
 
 ## Diagnostics Scope
 
 Diagnostics JSON includes:
 
-- existing route summary
-- standalone route summary
-- comparer result
+- route selection result
+- route validation report
 - promotion readiness
-- route selection
+- comparer summary
 - cache hit/miss
 - adapter diagnostics
-- fallback/failure reason
+- fallback reason
 - environment flag snapshot
+- pipeline hashes
 
-## Safety and Boundaries
+## Safety Boundaries
 
-- Core pipeline is UI-independent and runtime-independent.
-- Experimental outputs remain isolated under Experimental paths.
-- Runtime bridge is intentionally not re-enabled.
-- PlaceholderAdapter fallback is preserved.
-- ProjectDiffWindow route is preserved.
+- No Experimental reactivation
+- No TimelineView integration restart
+- No runtime bridge revival
+- No WPF types in Core
+- No production embedding/timeline replacement
+- PlaceholderAdapter and legacy fallback preserved
 
 ## Default-Disabled Policy
 
 - `EnableExperimentalYmmTimelineHost=false`
 - `AllowViewModelGenerationAttempt=false`
-- Standalone route and shadow mode are opt-in only.
-
-## Formal Promotion Conditions (Draft)
-
-1. Promotion gate passes without blockers.
-2. Comparer confidence above threshold.
-3. Missing rows trend remains near zero.
-4. Diagnostics stability over repeated runs.
-
-Until those conditions are met, existing route remains primary.
+- standalone route flags are opt-in only
