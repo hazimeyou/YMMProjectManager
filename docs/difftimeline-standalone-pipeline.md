@@ -112,6 +112,25 @@ Manifest contains:
 - diagnostics export path
 - known limitations
 
+## Preview Release Checklist (Final)
+
+1. Build passes with `0 warning / 0 error`.
+2. Default-disabled policy remains true.
+3. Legacy fallback path remains selectable and healthy.
+4. Promotion gate and rollback guard both evaluated.
+5. Validation history updated and regression check executed.
+6. Preview readiness report generated.
+7. Preview package manifest generated.
+8. Export package includes:
+   - `manifest.json`
+   - `preview-package-manifest.json`
+   - `preview-readiness-report.json`
+   - `validation-dashboard.json`
+   - `validation-history.json`
+   - `route-validation-report.json`
+9. Known limitations reviewed and accepted for preview scope.
+10. TimelineView integration remains frozen.
+
 ## v1 Preview Validation Procedure
 
 1. Confirm default-safe baseline:
@@ -151,6 +170,7 @@ Manifest contains:
 2. Keep `YMM_STANDALONE_SHADOW_VALIDATION=1` only if diagnostics collection is needed.
 3. If rollback guard reports blockers, use legacy route only.
 4. Preserve diagnostics package for postmortem.
+5. Record rollback reason from preview runner `FailureReasons`.
 
 ## Prohibited Actions During Preview
 
@@ -205,3 +225,13 @@ Rollback to legacy route is mandatory when:
 - `AllowViewModelGenerationAttempt=false`
 - standalone route flags are opt-in only
 - fallback route remains legacy when any guard fails
+
+## Changelog Draft (v1 Preview)
+
+- Added preview readiness checker and report model.
+- Added diagnostics export package with preview artifacts.
+- Added rollback guard integration with validation history trend.
+- Added preview validation runner (self-check + readiness + export orchestration).
+- Added preview package manifest with version/commit/env/fallback metadata.
+- Expanded self-check to cover package readiness assertions.
+- Expanded docs for verifier workflow, rollback, and limits.

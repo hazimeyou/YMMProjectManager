@@ -16,4 +16,5 @@ public sealed record DiffTimelinePreviewValidationRunnerResult(
     DiffTimelinePreviewReadiness PreviewReadiness,
     DiffTimelineDiagnosticsExportPackageResult ExportPackage,
     DiffTimelinePreviewPackageManifest Manifest,
+    IReadOnlyList<string> FailureReasons,
     IReadOnlyList<string> Warnings);

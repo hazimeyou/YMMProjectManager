@@ -63,13 +63,29 @@ public static class DiffTimelinePreviewValidationRunner
         if (!included.Contains("validation-dashboard.json")) warnings.Add("validation-dashboard-missing");
         if (!included.Contains("validation-history.json")) warnings.Add("validation-history-missing");
         if (!included.Contains("preview-readiness-report.json")) warnings.Add("preview-readiness-report-missing");
+        if (!included.Contains("route-validation-report.json")) warnings.Add("route-validation-report-missing");
+
+        var failureReasons = new List<string>();
+        if (!export.Succeeded)
+        {
+            failureReasons.Add("diagnostics-export-failed");
+        }
+
+        if (!readiness.CanPreview)
+        {
+            failureReasons.AddRange(readiness.Blockers.Select(static x => $"readiness:{x}"));
+        }
+
+        failureReasons.AddRange(warnings.Select(static x => $"package:{x}"));
+        var succeeded = export.Succeeded && readiness.CanPreview && failureReasons.Count == 0;
 
         return new DiffTimelinePreviewValidationRunnerResult(
-            Succeeded: export.Succeeded && readiness.CanPreview,
+            Succeeded: succeeded,
             SelfCheck: selfCheck,
             PreviewReadiness: readiness,
             ExportPackage: export,
             Manifest: manifest,
+            FailureReasons: failureReasons,
             Warnings: warnings);
     }
 }
