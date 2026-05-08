@@ -6,6 +6,7 @@ using YMMProjectManager.Infrastructure.Diff;
 using YMMProjectManager.Infrastructure.History;
 using YMMProjectManager.Presentation.Timeline;
 using YMMProjectManager.Presentation.ViewModels;
+using YMMProjectManager.Application.TimelineCore;
 
 var repoRoot = Directory.GetCurrentDirectory();
 var outputDir = Path.Combine(repoRoot, "logs", "benchmarks");
@@ -20,9 +21,138 @@ var snapshotService = new ProjectSnapshotService(
     normalize,
     new ProjectSnapshotOptions { RootDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager-bench-history") });
 
+if (args.Any(x => string.Equals(x, "preview-validate", StringComparison.OrdinalIgnoreCase)))
+{
+    await RunStandalonePreviewValidationAsync();
+    return;
+}
+
 await RunPerformanceBenchmarksAsync();
 await RunCorrectnessBenchmarksAsync();
 Console.WriteLine("Benchmark completed.");
+
+async Task RunStandalonePreviewValidationAsync()
+{
+    var oldPath = Environment.GetEnvironmentVariable("YMM_STANDALONE_VALIDATION_OLD_PATH");
+    var newPath = Environment.GetEnvironmentVariable("YMM_STANDALONE_VALIDATION_NEW_PATH");
+    if (string.IsNullOrWhiteSpace(oldPath) || string.IsNullOrWhiteSpace(newPath))
+    {
+        throw new InvalidOperationException("Set YMM_STANDALONE_VALIDATION_OLD_PATH and YMM_STANDALONE_VALIDATION_NEW_PATH.");
+    }
+
+    if (!File.Exists(oldPath) || !File.Exists(newPath))
+    {
+        throw new FileNotFoundException($"Validation ymmp not found: old={oldPath}, new={newPath}");
+    }
+
+    var config = DiffTimelineStandaloneConfigResolver.ResolveFromEnvironment();
+    var oldJson = await normalize.NormalizeFileAsync(oldPath).ConfigureAwait(false);
+    var newJson = await normalize.NormalizeFileAsync(newPath).ConfigureAwait(false);
+    var adapter = new YmmNormalizedJsonSnapshotAdapter(message => logger.Info(message));
+    var oldSnapshot = adapter.Convert("real-old", Path.GetFileNameWithoutExtension(oldPath), oldPath, oldJson);
+    var newSnapshot = adapter.Convert("real-new", Path.GetFileNameWithoutExtension(newPath), newPath, newJson);
+    var cache = new InMemoryDiffTimelineSnapshotCache();
+    var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+        oldSnapshot,
+        newSnapshot,
+        new DiffTimelineStandalonePipelineOptions(
+            OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["caller"] = "YMMProjectManager.Benchmarks",
+                ["entry"] = "preview-validate",
+                ["snapshotSource"] = "env-real-project",
+            },
+            SnapshotCache: cache));
+    if (!envelope.IsSuccess || envelope.Result is null)
+    {
+        Directory.CreateDirectory(Path.Combine(repoRoot, "diagnostics"));
+        var failSummaryPath = Path.Combine(repoRoot, "diagnostics", $"preview-validation-summary-{DateTimeOffset.Now:yyyyMMdd-HHmmss}-failed.json");
+        var failPayload = new
+        {
+            oldPath,
+            newPath,
+            snapshotSource = "env-real-project",
+            oldSnapshotHash = oldSnapshot.Metadata.SnapshotHash,
+            newSnapshotHash = newSnapshot.Metadata.SnapshotHash,
+            envelope.IsSuccess,
+            envelope.FallbackReason,
+            envelope.Errors,
+            envelope.Warnings,
+        };
+        await File.WriteAllTextAsync(failSummaryPath, JsonSerializer.Serialize(failPayload, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8).ConfigureAwait(false);
+        Console.WriteLine($"Preview validation failed summary captured: {failSummaryPath}");
+        return;
+    }
+
+    var keys = envelope.Result.CoreResult.RowSet.Rows.Select(x => $"{x.DiffKind}|{x.Path}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}").ToList();
+    var existingSummary = new DiffTimelineExistingRouteSummary(
+        ItemCount: keys.Count,
+        GroupCount: envelope.Result.CoreResult.Groups.Count,
+        AddedCount: envelope.Result.Diagnostics.AddedCount,
+        RemovedCount: envelope.Result.Diagnostics.RemovedCount,
+        ChangedCount: envelope.Result.Diagnostics.ChangedCount,
+        Keys: keys);
+    var comparer = DiffTimelineValidationComparer.Compare(existingSummary, envelope.Result);
+    var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelope);
+    var policy = DiffTimelineStandaloneConfigResolver.BuildPolicy(config);
+    var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness, policy);
+    var report = DiffTimelineStandalonePromotionGate.BuildReport(
+        requestedRoute: config.StandaloneRouteEnabled ? "standalone" : "shadow-validation",
+        selectedRoute: gate.Allowed ? "standalone" : "legacy-core-builder",
+        readiness: readiness,
+        cacheHit: envelope.CacheHit,
+        diagnosticsPath: string.Empty,
+        rollbackReason: envelope.FallbackReason ?? "none",
+        policy: policy);
+    var historyRoot = Path.Combine(repoRoot, "diagnostics");
+    var historyPath = Path.Combine(historyRoot, "difftimeline-validation-run-history.json");
+    var history = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
+    var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(history);
+    var rollback = DiffTimelineStandaloneRollbackGuard.Evaluate(report, history, config, trend);
+    var dashboard = DiffTimelineValidationDashboardBuilder.Build(report, trend, rollback, history);
+    var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
+    var docsPath = Path.Combine(repoRoot, "docs", "difftimeline-standalone-pipeline.md");
+    var previewRunner = DiffTimelinePreviewValidationRunner.Run(
+        diagnosticsDirectory: historyRoot,
+        config: config,
+        routeValidationReport: report,
+        history: history,
+        dashboard: dashboard,
+        trend: trend,
+        rollbackGuard: rollback,
+        docsPath: docsPath,
+        version: "v1-preview",
+        commitHash: "562ca68");
+
+    var summaryPath = Path.Combine(historyRoot, $"preview-validation-summary-{DateTimeOffset.Now:yyyyMMdd-HHmmss}.json");
+    var payload = new
+    {
+        oldPath,
+        newPath,
+        snapshotSource = "env-real-project",
+        oldSnapshotHash = oldSnapshot.Metadata.SnapshotHash,
+        newSnapshotHash = newSnapshot.Metadata.SnapshotHash,
+        rowCount = envelope.Result.Diagnostics.RowCount,
+        groupCount = envelope.Result.Diagnostics.GroupCount,
+        addedCount = envelope.Result.Diagnostics.AddedCount,
+        removedCount = envelope.Result.Diagnostics.RemovedCount,
+        changedCount = envelope.Result.Diagnostics.ChangedCount,
+        cacheHit = envelope.CacheHit,
+        fallbackReason = envelope.FallbackReason,
+        reportBlockers = report.Blockers,
+        reportWarnings = report.Warnings,
+        rollbackReason = rollback.Reason,
+        trend = trend.Recommendation,
+        previewRunner.Succeeded,
+        previewRunner.FailureReasons,
+        previewRunnerWarnings = previewRunner.Warnings,
+        previewRunner.ExportPackage.ExportDirectory,
+        previewRunner.Manifest,
+        diagnosticsMetadata = envelope.Result.Diagnostics.Metadata,
+    };
+    await File.WriteAllTextAsync(summaryPath, JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }), Encoding.UTF8).ConfigureAwait(false);
+    Console.WriteLine($"Preview validation captured: {summaryPath}");
+}
 
 async Task RunPerformanceBenchmarksAsync()
 {

@@ -6,8 +6,8 @@ public static class DiffTimelineSnapshotDiffBuilder
 {
     public static DiffTimelineSemanticDiffResult BuildSemanticDiff(DiffTimelineSemanticDiffInput input)
     {
-        var oldIndex = Flatten(input.OldSnapshot).ToDictionary(x => x.Key, x => x, StringComparer.Ordinal);
-        var newIndex = Flatten(input.NewSnapshot).ToDictionary(x => x.Key, x => x, StringComparer.Ordinal);
+        var oldIndex = BuildIndex(Flatten(input.OldSnapshot));
+        var newIndex = BuildIndex(Flatten(input.NewSnapshot));
 
         var changes = new List<DiffTimelineSemanticChange>();
         var added = 0;
@@ -142,6 +142,28 @@ public static class DiffTimelineSnapshotDiffBuilder
                 }
             }
         }
+    }
+
+    private static Dictionary<string, SnapshotNode> BuildIndex(IEnumerable<SnapshotNode> nodes)
+    {
+        var index = new Dictionary<string, SnapshotNode>(StringComparer.Ordinal);
+        var duplicateCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+
+        foreach (var node in nodes)
+        {
+            if (index.TryAdd(node.Key, node))
+            {
+                continue;
+            }
+
+            duplicateCounts.TryGetValue(node.Key, out var count);
+            count++;
+            duplicateCounts[node.Key] = count;
+            var disambiguatedKey = $"{node.Key}#dup{count}";
+            index[disambiguatedKey] = node with { Key = disambiguatedKey };
+        }
+
+        return index;
     }
 
     private static DiffTimelineSemanticChange CreateChange(

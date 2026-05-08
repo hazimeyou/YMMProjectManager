@@ -39,7 +39,10 @@ public static class DiffTimelinePreviewReadinessChecker
             blockers.Add("self-check-failed-roundtrip");
         }
 
-        if (!selfCheck.Assertions.TryGetValue("configDefaultSafety", out var defaultSafety) || !string.Equals(defaultSafety, bool.TrueString, StringComparison.OrdinalIgnoreCase))
+        var hasDefaultRouteSafety =
+            (selfCheck.Assertions.TryGetValue("defaultDisabledSafety", out var defaultRouteSafety) && string.Equals(defaultRouteSafety, bool.TrueString, StringComparison.OrdinalIgnoreCase))
+            || (selfCheck.Assertions.TryGetValue("configDefaultSafety", out var defaultSafety) && string.Equals(defaultSafety, bool.TrueString, StringComparison.OrdinalIgnoreCase));
+        if (!hasDefaultRouteSafety)
         {
             blockers.Add("self-check-default-safety-failed");
         }

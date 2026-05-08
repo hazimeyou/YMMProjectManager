@@ -16,21 +16,36 @@ public static class DiffTimelinePreviewValidationRunner
         DiffTimelineStandaloneRollbackGuardResult rollbackGuard,
         string docsPath,
         string version = "v1-preview",
-        string commitHash = "unknown")
+        string commitHash = "unknown",
+        DiffTimelineStandaloneSelfCheckResult? selfCheckOverride = null,
+        bool evaluateReadinessAfterExport = true)
     {
         var warnings = new List<string>();
-        var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
+        var selfCheck = selfCheckOverride ?? DiffTimelineStandalonePipelineSelfCheck.Run();
         var preliminaryExport = new DiffTimelineDiagnosticsExportPackageResult(true, diagnosticsDirectory, string.Empty, [], []);
-        var readiness = DiffTimelinePreviewReadinessChecker.Evaluate(config, rollbackGuard, preliminaryExport, trend, dashboard, selfCheck, docsPath);
+        var initialReadiness = DiffTimelinePreviewReadinessChecker.Evaluate(config, rollbackGuard, preliminaryExport, trend, dashboard, selfCheck, docsPath);
         var export = DiffTimelineDiagnosticsExportPackageWriter.Export(
             diagnosticsDirectory,
             routeValidationReport,
             history,
             dashboard,
             config,
-            readiness);
+            initialReadiness);
+
+        var diagnosticsPath = string.IsNullOrWhiteSpace(routeValidationReport.DiagnosticsPath)
+            ? export.ManifestPath
+            : routeValidationReport.DiagnosticsPath;
+        var enrichedReport = routeValidationReport with { DiagnosticsPath = diagnosticsPath };
+        var effectiveRollback = evaluateReadinessAfterExport
+            ? DiffTimelineStandaloneRollbackGuard.Evaluate(enrichedReport, history, config, trend)
+            : rollbackGuard;
+        var effectiveDashboard = DiffTimelineValidationDashboardBuilder.Build(enrichedReport, trend, effectiveRollback, history);
+        var readiness = evaluateReadinessAfterExport
+            ? DiffTimelinePreviewReadinessChecker.Evaluate(config, effectiveRollback, export, trend, effectiveDashboard, selfCheck, docsPath)
+            : initialReadiness;
 
         var readinessPath = Path.Combine(export.ExportDirectory, "preview-readiness-report.json");
+        File.WriteAllText(readinessPath, JsonSerializer.Serialize(readiness, JsonOptions));
         var manifest = new DiffTimelinePreviewPackageManifest(
             Version: version,
             CommitHash: commitHash,

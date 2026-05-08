@@ -101,7 +101,16 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             rollbackGuard: rollbackPass,
             docsPath: docsPath,
             version: "v1-preview-selfcheck",
-            commitHash: "self-check");
+            commitHash: "self-check",
+            selfCheckOverride: new DiffTimelineStandaloneSelfCheckResult(
+                new Dictionary<string, string>(StringComparer.Ordinal),
+                new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["jsonRoundTrip"] = bool.TrueString,
+                    ["configDefaultSafety"] = bool.TrueString,
+                },
+                pipeline.Diagnostics,
+                "self-check-override"));
 
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);

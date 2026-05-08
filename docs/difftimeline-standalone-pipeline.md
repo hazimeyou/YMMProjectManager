@@ -259,3 +259,34 @@ Rollback to legacy route is mandatory when:
   - rollback guard reason
   - regression warnings
   - snapshot hash and pipeline hash metadata
+
+### Validation Memo (2026-05-09)
+
+- Execution time:
+  - 2026-05-09 (JST)
+- Input route:
+  - env real-project path
+  - `YMM_STANDALONE_VALIDATION_OLD_PATH=C:\Users\yu-za-hazimeyou\Desktop\YukkuriMovieMaker_v4_Lite\user\backup\2026-05-07 01-57-48-6 差分チェック用.ymmp`
+  - `YMM_STANDALONE_VALIDATION_NEW_PATH=C:\Users\yu-za-hazimeyou\Desktop\YukkuriMovieMaker_v4_Lite\user\backup\2026-05-07 20-04-33-3 無題.ymmp`
+- Flags:
+  - `YMM_STANDALONE_SHADOW_VALIDATION=1`
+  - `YMM_STANDALONE_DIFFTIMELINE_ROUTE` not enabled (default disabled preserved)
+- Export package:
+  - `diagnostics/difftimeline-export-20260509-075012`
+  - included: manifest / preview readiness / dashboard / history / route report / package manifest
+- Summary:
+  - `Succeeded=true`
+  - `FailureReasons=[]`
+  - `preview-readiness-report.CanPreview=true`
+  - warnings: `trend-not-ready` (expected for early run history)
+- Snapshot / hash:
+  - `snapshotSource=env-real-project`
+  - old/new snapshot hash present
+  - `pipelineResultHash` present
+- Blocker status:
+  - promotion blockers: none
+  - rollback guard blockers: none
+  - regression critical warnings: none
+- Preview release judgement:
+  - opt-in preview validation is feasible
+  - continue accumulating history for trend readiness before broader rollout
