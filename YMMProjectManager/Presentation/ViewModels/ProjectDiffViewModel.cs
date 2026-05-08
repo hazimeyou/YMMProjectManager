@@ -5,6 +5,7 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 {
+    private readonly bool enableStandaloneShadowValidation = ResolveStandaloneShadowValidationEnabled();
     private readonly InMemoryDiffTimelineSnapshotCache standalonePipelineCache = new();
     private DiffTimelineStandaloneValidationStatus? standaloneValidationStatus;
     private readonly FileLogger logger;
@@ -327,6 +328,21 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            if (!enableStandaloneShadowValidation)
+            {
+                StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
+                    Attempted: false,
+                    IsSuccess: false,
+                    CacheHit: false,
+                    SnapshotSource: "disabled",
+                    FallbackReason: "shadow-validation-disabled",
+                    StageSummary: "disabled",
+                    DiagnosticsPath: string.Empty,
+                    Errors: [],
+                    Warnings: []);
+                return;
+            }
+
             var source = "sample-fallback";
             var snapshots = TryBuildSnapshotsFromProjectFiles(null, null);
             if (snapshots is null)
@@ -368,11 +384,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
+            var existingSummary = BuildExistingRouteSummary();
+            var comparer = DiffTimelineValidationComparer.Compare(existingSummary, envelope.Result);
+            var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelope);
             var diagnosticsPath = DiffTimelineStandalonePipelineDiagnosticsWriter.WriteToFile(
                 directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 result: envelope.Result,
                 roundTrip: selfCheck.RoundTrip,
-                fallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none");
+                fallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
+                existingRouteSummary: existingSummary,
+                comparerResult: comparer,
+                promotionReadiness: readiness);
 
             StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                 Attempted: true,
@@ -380,7 +402,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 CacheHit: envelope.CacheHit,
                 SnapshotSource: envelope.SnapshotSource,
                 FallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
-                StageSummary: envelope.Result.Diagnostics.StageSummary,
+                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2}",
                 DiagnosticsPath: diagnosticsPath,
                 Errors: envelope.Errors,
                 Warnings: envelope.Warnings);
@@ -400,6 +422,23 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 Warnings: []);
             logger.Error(ex, "Standalone pipeline validation skipped. fallback remains active.");
         }
+    }
+
+    private DiffTimelineExistingRouteSummary BuildExistingRouteSummary()
+    {
+        var keys = YmmDiffEntries
+            .Select(x => $"{x.Kind}|{x.Scope}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}")
+            .ToList();
+        var added = YmmDiffEntries.Count(x => string.Equals(x.Kind, "追加", StringComparison.Ordinal));
+        var removed = YmmDiffEntries.Count(x => string.Equals(x.Kind, "削除", StringComparison.Ordinal));
+        var changed = YmmDiffEntries.Count(x => string.Equals(x.Kind, "変更", StringComparison.Ordinal) || string.Equals(x.Kind, "移動", StringComparison.Ordinal));
+        return new DiffTimelineExistingRouteSummary(
+            ItemCount: YmmDiffEntries.Count,
+            GroupCount: DiffGroups.Count,
+            AddedCount: added,
+            RemovedCount: removed,
+            ChangedCount: changed,
+            Keys: keys);
     }
 
     private (DiffTimelineProjectSnapshot OldSnapshot, DiffTimelineProjectSnapshot NewSnapshot)? TryBuildSnapshotsFromProjectFiles(
@@ -617,6 +656,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Error => "エラー",
             _ => status.ToString(),
         };
+    }
+
+    private static bool ResolveStandaloneShadowValidationEnabled()
+    {
+        return string.Equals(
+            Environment.GetEnvironmentVariable("YMM_STANDALONE_SHADOW_VALIDATION"),
+            "1",
+            StringComparison.Ordinal);
     }
 
     private void TryInitializeHost()

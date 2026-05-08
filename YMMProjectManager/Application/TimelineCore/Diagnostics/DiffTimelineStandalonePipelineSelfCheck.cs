@@ -36,6 +36,15 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             new DiffTimelineStandalonePipelineOptions(
                 OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal) { ["selfCheck"] = "cache" },
                 SnapshotCache: cache));
+        var existingSummary = new DiffTimelineExistingRouteSummary(
+            ItemCount: pipeline.CoreResult.RowSet.Rows.Count,
+            GroupCount: pipeline.CoreResult.Groups.Count,
+            AddedCount: pipeline.Diagnostics.AddedCount,
+            RemovedCount: pipeline.Diagnostics.RemovedCount,
+            ChangedCount: pipeline.Diagnostics.ChangedCount,
+            Keys: pipeline.CoreResult.RowSet.Rows.Select(x => $"{x.DiffKind}|{x.Path}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}").ToList());
+        var comparer = DiffTimelineValidationComparer.Compare(existingSummary, pipeline);
+        var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelopeMiss);
 
         var keyA = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
         var keyB = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
@@ -60,6 +69,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["hashStability"] = string.Equals(oldSnapshot.Metadata.SnapshotHash, oldRoundTrip.Metadata.SnapshotHash, StringComparison.Ordinal).ToString(),
             ["fallbackReason"] = string.Equals(envelopeMiss.FallbackReason, "none", StringComparison.Ordinal).ToString(),
             ["diagnosticsJsonReady"] = (!string.IsNullOrWhiteSpace(pipeline.Diagnostics.StageSummary)).ToString(),
+            ["comparerReady"] = (comparer.KeyMatchRate >= 0.99).ToString(),
+            ["promotionReadinessEvaluated"] = (!string.IsNullOrWhiteSpace(readiness.CacheStatus)).ToString(),
+            ["blockerWarningEvaluated"] = (readiness.Blockers.Count >= 0 && readiness.Warnings.Count >= 0).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

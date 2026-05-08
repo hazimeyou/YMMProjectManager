@@ -8,16 +8,24 @@ Pipeline flow:
 
 `DiffTimelineProjectSnapshot -> SnapshotDiffBuilder -> SemanticDiff -> CoreBuilder -> RowSet -> Summary/Diagnostics`
 
+## Current Status
+
+- RouteA standalone pipeline: **shadow validation ready**
+- Formal UI route switch: **not enabled**
+- TimelineView integration: **frozen**
+- Default state: **disabled by default**
+
 ## Components
 
 - Models: `Application/TimelineCore/Models`
-  - Snapshot DTOs (`DiffTimelineProjectSnapshot`, `DiffTimelineTimelineSnapshot`, `DiffTimelineLayerSnapshot`, `DiffTimelineItemSnapshot`)
+  - Snapshot DTOs
   - Semantic diff models
-  - Core result / row models
+  - Core/row models
   - Pipeline diagnostics models
   - Pipeline envelope models
+  - Validation comparer/readiness models
 - Adapters: `Application/TimelineCore/Adapters`
-  - `YmmNormalizedJsonSnapshotAdapter` (normalized JSON -> snapshot)
+  - `YmmNormalizedJsonSnapshotAdapter`
 - Providers: `Application/TimelineCore/Providers`
   - `InMemoryDiffTimelineSnapshotProvider`
   - `SampleDiffTimelineSnapshotFactory`
@@ -26,10 +34,8 @@ Pipeline flow:
   - `DiffTimelineCoreBuilder`
   - `DiffTimelineCoreRowBuilder`
 - Pipeline: `Application/TimelineCore/Pipeline`
-  - `DiffTimelineStandalonePipeline.BuildFromSnapshots(...)`
-  - `DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(...)`
-- Serialization: `Application/TimelineCore/Serialization`
-  - `DiffTimelineSnapshotJsonSerializer`
+  - `BuildFromSnapshots(...)`
+  - `BuildEnvelopeFromSnapshots(...)`
 - Caching: `Application/TimelineCore/Caching`
   - `IDiffTimelineSnapshotCache`
   - `DiffTimelineSnapshotCacheKeyFactory`
@@ -37,64 +43,55 @@ Pipeline flow:
 - Diagnostics: `Application/TimelineCore/Diagnostics`
   - `DiffTimelineStandalonePipelineSelfCheck`
   - `DiffTimelineStandalonePipelineDiagnosticsWriter`
+  - `DiffTimelineValidationComparer`
+  - `DiffTimelinePromotionReadinessEvaluator`
 
-## Adapter/Hash/Cache Foundation
+## Shadow Validation Mode
 
-- Snapshot metadata carries `SnapshotHash` for identity and comparison.
-- Cache key shape:
-  - `oldSnapshotHash + newSnapshotHash + optionsHash`
-- Hash generation is stable via ordered option serialization.
-- Diagnostics include:
-  - snapshot source
-  - adapter source
-  - conversion result
-  - skipped/unsupported fields
-  - old/new snapshot hash
-  - pipeline result hash
-  - cache hit/miss
-  - cache key
+`ProjectDiffViewModel` keeps existing display route unchanged, and can run standalone pipeline in shadow mode (private/default false).
 
-## Pipeline Result Envelope
+Shadow diagnostics include:
 
-`DiffTimelineStandalonePipelineEnvelope` returns:
+- existing route summary
+- standalone route summary
+- comparer result
+- promotion readiness
+- cache hit/miss
+- adapter diagnostics
+- fallback/failure reason
 
-- `Result` (nullable)
-- `CacheHit`
-- `SnapshotSource`
-- `FallbackReason`
-- `IsSuccess`
-- `Errors`
-- `Warnings`
+## Promotion Readiness
 
-This allows validation and diagnostics even when pipeline processing fails.
+`DiffTimelineStandalonePromotionReadiness` evaluates:
 
-## Validation Status Path
+- `canPromote`
+- blockers/warnings
+- confidence
+- cache status
+- comparer result
+- fallback reason
 
-`ProjectDiffViewModel` private validation helper now:
+This is used only for diagnostics and decision support. It does not switch UI route by itself.
 
-1. Tries normalized-json adapter path if old/new file paths are available.
-2. Falls back to sample snapshot when unavailable.
-3. Uses pipeline envelope + in-memory cache.
-4. Stores a private validation status model (`DiffTimelineStandaloneValidationStatus`).
-5. Writes diagnostics JSON with fallback reason and source details.
+## Safety and Boundaries
 
-Existing display route and fallback behavior are preserved.
-
-## Current Limits
-
-- TimelineView integration remains frozen (research-only / disabled path).
+- Core pipeline is UI-independent and runtime-independent.
 - Experimental outputs remain isolated under Experimental paths.
 - Runtime bridge is intentionally not re-enabled.
-- RouteA is standalone-first; formal UI route switching remains default-off.
+- PlaceholderAdapter fallback is preserved.
+- ProjectDiffWindow route is preserved.
 
 ## Default-Disabled Policy
 
 - `EnableExperimentalYmmTimelineHost=false`
 - `AllowViewModelGenerationAttempt=false`
-- Any standalone switch preparation remains default `false`.
+- Standalone shadow mode switch remains default `false`.
 
-## Next Steps
+## Formal Switch Conditions (Draft)
 
-1. Wire project/snapshot path discovery so validation can use real old/new files automatically.
-2. Persist standalone cache across view-model instances (optional).
-3. Add unit tests for envelope error path and diagnostics metadata completeness.
+1. Comparer key match rate stable above threshold.
+2. Missing rows trend remains near zero.
+3. Promotion readiness has no blockers.
+4. Cache/diagnostics stability confirmed over repeated runs.
+
+Until those conditions are met, existing route remains primary.

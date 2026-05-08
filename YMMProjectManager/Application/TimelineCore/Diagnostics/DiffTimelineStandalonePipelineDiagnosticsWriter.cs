@@ -13,7 +13,10 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
         string directory,
         DiffTimelineStandalonePipelineResult result,
         IReadOnlyDictionary<string, string> roundTrip,
-        string fallbackReason)
+        string fallbackReason,
+        DiffTimelineExistingRouteSummary? existingRouteSummary = null,
+        DiffTimelineValidationComparerResult? comparerResult = null,
+        DiffTimelineStandalonePromotionReadiness? promotionReadiness = null)
     {
         Directory.CreateDirectory(directory);
         var timestamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss");
@@ -63,6 +66,17 @@ public static class DiffTimelineStandalonePipelineDiagnosticsWriter
             stageSummary = result.Diagnostics.StageSummary,
             optionsSnapshot = result.Diagnostics.OptionsSnapshot,
             metadata = result.Diagnostics.Metadata,
+            existingRouteSummary,
+            standaloneRouteSummary = new
+            {
+                result.Diagnostics.RowCount,
+                result.Diagnostics.GroupCount,
+                result.Diagnostics.AddedCount,
+                result.Diagnostics.RemovedCount,
+                result.Diagnostics.ChangedCount,
+            },
+            comparerResult,
+            promotionReadiness,
         };
 
         File.WriteAllText(path, JsonSerializer.Serialize(payload, JsonOptions));
