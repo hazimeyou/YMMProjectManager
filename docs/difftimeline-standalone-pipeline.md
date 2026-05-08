@@ -235,3 +235,27 @@ Rollback to legacy route is mandatory when:
 - Added preview package manifest with version/commit/env/fallback metadata.
 - Expanded self-check to cover package readiness assertions.
 - Expanded docs for verifier workflow, rollback, and limits.
+
+## Real Project Validation Notes
+
+- Execution mode:
+  - `YMM_STANDALONE_SHADOW_VALIDATION=1`
+  - Optional manual route trial: `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
+- Real input source priority:
+  1. explicit parameters
+  2. env paths:
+     - `YMM_STANDALONE_VALIDATION_OLD_PATH`
+     - `YMM_STANDALONE_VALIDATION_NEW_PATH`
+  3. benchmark fixtures fallback (`modified-text/before.ymmp`, `after.ymmp`)
+- Diagnostics package paths:
+  - `diagnostics/difftimeline-export-*/preview-package-manifest.json`
+  - `diagnostics/difftimeline-export-*/preview-readiness-report.json`
+  - `diagnostics/difftimeline-export-*/validation-history.json`
+  - `diagnostics/difftimeline-export-*/validation-dashboard.json`
+  - `diagnostics/difftimeline-export-*/route-validation-report.json`
+- Review focus:
+  - `FailureReasons`
+  - promotion gate blockers/warnings
+  - rollback guard reason
+  - regression warnings
+  - snapshot hash and pipeline hash metadata

@@ -513,22 +513,59 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         string? oldProjectPath,
         string? newProjectPath)
     {
-        if (string.IsNullOrWhiteSpace(oldProjectPath) || string.IsNullOrWhiteSpace(newProjectPath))
+        var (resolvedOldPath, resolvedNewPath, source) = ResolveStandaloneValidationProjectPaths(oldProjectPath, newProjectPath);
+        if (string.IsNullOrWhiteSpace(resolvedOldPath) || string.IsNullOrWhiteSpace(resolvedNewPath))
         {
+            logger.Info("Standalone snapshot input: unresolved project paths. source=none");
             return null;
         }
 
-        if (!File.Exists(oldProjectPath) || !File.Exists(newProjectPath))
+        if (!File.Exists(resolvedOldPath) || !File.Exists(resolvedNewPath))
         {
+            logger.Info($"Standalone snapshot input: file not found. source={source} old={resolvedOldPath} new={resolvedNewPath}");
             return null;
         }
 
+        var oldId = $"project-old:{source}";
+        var newId = $"project-new:{source}";
         var adapter = new YmmNormalizedJsonSnapshotAdapter(message => logger.Info(message));
-        var oldJson = normalizeService.NormalizeFileAsync(oldProjectPath).GetAwaiter().GetResult();
-        var newJson = normalizeService.NormalizeFileAsync(newProjectPath).GetAwaiter().GetResult();
-        var oldSnapshot = adapter.Convert("project-old", Path.GetFileNameWithoutExtension(oldProjectPath), oldProjectPath, oldJson);
-        var newSnapshot = adapter.Convert("project-new", Path.GetFileNameWithoutExtension(newProjectPath), newProjectPath, newJson);
+        var oldJson = normalizeService.NormalizeFileAsync(resolvedOldPath).GetAwaiter().GetResult();
+        var newJson = normalizeService.NormalizeFileAsync(resolvedNewPath).GetAwaiter().GetResult();
+        var oldSnapshot = adapter.Convert(oldId, Path.GetFileNameWithoutExtension(resolvedOldPath), resolvedOldPath, oldJson);
+        var newSnapshot = adapter.Convert(newId, Path.GetFileNameWithoutExtension(resolvedNewPath), resolvedNewPath, newJson);
+        logger.Info($"Standalone snapshot input resolved. source={source} oldHash={oldSnapshot.Metadata.SnapshotHash} newHash={newSnapshot.Metadata.SnapshotHash}");
         return (oldSnapshot, newSnapshot);
+    }
+
+    private (string? OldPath, string? NewPath, string Source) ResolveStandaloneValidationProjectPaths(string? oldProjectPath, string? newProjectPath)
+    {
+        if (!string.IsNullOrWhiteSpace(oldProjectPath) && !string.IsNullOrWhiteSpace(newProjectPath))
+        {
+            return (oldProjectPath, newProjectPath, "explicit");
+        }
+
+        var envOld = Environment.GetEnvironmentVariable("YMM_STANDALONE_VALIDATION_OLD_PATH");
+        var envNew = Environment.GetEnvironmentVariable("YMM_STANDALONE_VALIDATION_NEW_PATH");
+        if (!string.IsNullOrWhiteSpace(envOld) && !string.IsNullOrWhiteSpace(envNew))
+        {
+            return (envOld, envNew, "env");
+        }
+
+        var fixtureOld = Path.Combine(AppContext.BaseDirectory, "YMMProjectManager.Benchmarks", "Fixtures", "modified-text", "before.ymmp");
+        var fixtureNew = Path.Combine(AppContext.BaseDirectory, "YMMProjectManager.Benchmarks", "Fixtures", "modified-text", "after.ymmp");
+        if (File.Exists(fixtureOld) && File.Exists(fixtureNew))
+        {
+            return (fixtureOld, fixtureNew, "fixtures-appbase");
+        }
+
+        var cwdFixtureOld = Path.Combine(Directory.GetCurrentDirectory(), "YMMProjectManager.Benchmarks", "Fixtures", "modified-text", "before.ymmp");
+        var cwdFixtureNew = Path.Combine(Directory.GetCurrentDirectory(), "YMMProjectManager.Benchmarks", "Fixtures", "modified-text", "after.ymmp");
+        if (File.Exists(cwdFixtureOld) && File.Exists(cwdFixtureNew))
+        {
+            return (cwdFixtureOld, cwdFixtureNew, "fixtures-cwd");
+        }
+
+        return (oldProjectPath, newProjectPath, "none");
     }
 
     private void ApplyDiff(string before, string after)
