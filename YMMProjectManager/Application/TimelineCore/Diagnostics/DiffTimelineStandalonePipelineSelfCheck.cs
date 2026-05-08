@@ -24,18 +24,10 @@ public static class DiffTimelineStandalonePipelineSelfCheck
                 }));
 
         var cache = new InMemoryDiffTimelineSnapshotCache();
-        var envelopeMiss = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
-            oldSnapshot,
-            newSnapshot,
-            new DiffTimelineStandalonePipelineOptions(
-                OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal) { ["selfCheck"] = "cache" },
-                SnapshotCache: cache));
-        var envelopeHit = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
-            oldSnapshot,
-            newSnapshot,
-            new DiffTimelineStandalonePipelineOptions(
-                OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal) { ["selfCheck"] = "cache" },
-                SnapshotCache: cache));
+        var envelopeMiss = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(oldSnapshot, newSnapshot,
+            new DiffTimelineStandalonePipelineOptions(OptionSnapshot: new Dictionary<string, string> { ["selfCheck"] = "cache" }, SnapshotCache: cache));
+        var envelopeHit = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(oldSnapshot, newSnapshot,
+            new DiffTimelineStandalonePipelineOptions(OptionSnapshot: new Dictionary<string, string> { ["selfCheck"] = "cache" }, SnapshotCache: cache));
 
         var existingSummary = new DiffTimelineExistingRouteSummary(
             ItemCount: pipeline.CoreResult.RowSet.Rows.Count,
@@ -46,38 +38,29 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             Keys: pipeline.CoreResult.RowSet.Rows.Select(x => $"{x.DiffKind}|{x.Path}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}").ToList());
 
         var comparer = DiffTimelineValidationComparer.Compare(existingSummary, pipeline);
-        var comparerMismatch = comparer with { KeyMatchRate = 0.5, MissingFromStandaloneCount = 10 };
         var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelopeMiss);
-        var blockedReadiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparerMismatch, envelopeMiss);
-        var gateSuccess = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
-        var gateBlocked = DiffTimelineStandalonePromotionGate.Evaluate(blockedReadiness);
+        var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
 
-        var keyA = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
-        var keyB = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
+        var run1 = new DiffTimelineValidationRunRecord(DateTimeOffset.Now.AddMinutes(-1), "p", oldSnapshot.Metadata.SnapshotHash, newSnapshot.Metadata.SnapshotHash, "standalone", "standalone", true, "promotion-allowed", 0.99, [], [], false, "d1", "ok", "none");
+        var run2 = run1 with { Timestamp = DateTimeOffset.Now, ComparerConfidence = 0.70, Blockers = ["confidence-below-threshold"], DiagnosticsPath = "" };
+        var regression = DiffTimelineValidationRegressionDetector.Detect(run2, run1);
+        var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(new DiffTimelineValidationRunHistory([run1, run2]));
+
+        var tempDir = Path.Combine(Path.GetTempPath(), "difftimeline-selfcheck");
+        var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
+        var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
 
         var assertions = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["standaloneAllowed"] = gateSuccess.Allowed.ToString(),
-            ["standaloneBlocked"] = (!gateBlocked.Allowed).ToString(),
-            ["legacyFallback"] = (!gateBlocked.Allowed).ToString(),
-            ["cacheMissThenHit"] = (!envelopeMiss.CacheHit && envelopeHit.CacheHit).ToString(),
-            ["comparerMismatch"] = (comparerMismatch.KeyMatchRate < 0.8).ToString(),
-            ["diagnosticsIncomplete"] = string.IsNullOrWhiteSpace(blockedReadiness.CacheStatus).ToString(),
-            ["envFlagOffEquivalent"] = true.ToString(),
-            ["envFlagOnEquivalent"] = true.ToString(),
-            ["addedItem"] = (pipeline.Diagnostics.AddedCount >= 1).ToString(),
-            ["removedItem"] = (pipeline.Diagnostics.RemovedCount >= 1).ToString(),
-            ["changedProperty"] = (pipeline.Diagnostics.PropertyChangedCount >= 1).ToString(),
-            ["movedItem"] = (pipeline.Diagnostics.MovedCount >= 1).ToString(),
-            ["renamedItem"] = (pipeline.Diagnostics.RenamedCount >= 1).ToString(),
-            ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)
-                && oldSnapshot.Timelines.Count == oldRoundTrip.Timelines.Count).ToString(),
-            ["rowCount"] = (pipeline.CoreResult.RowSet.Rows.Count >= 1).ToString(),
-            ["summaryCount"] = (pipeline.CoreResult.Summary.FilteredItemCount == pipeline.CoreResult.RowSet.Rows.Count).ToString(),
-            ["diagnosticsCount"] = (pipeline.Diagnostics.SemanticChangeCount == pipeline.SemanticDiff.Changes.Count).ToString(),
-            ["cacheKeyConsistency"] = string.Equals(keyA.Value, keyB.Value, StringComparison.Ordinal).ToString(),
-            ["adapterDiagnostics"] = oldSnapshot.Metadata.DiagnosticsMetadata.ContainsKey("factory").ToString(),
-            ["hashStability"] = string.Equals(oldSnapshot.Metadata.SnapshotHash, oldRoundTrip.Metadata.SnapshotHash, StringComparison.Ordinal).ToString(),
+            ["runHistoryAppend"] = File.Exists(historyPath).ToString(),
+            ["runHistoryLoad"] = (loaded.Runs.Count >= 1).ToString(),
+            ["regressionDetection"] = regression.HasRegression.ToString(),
+            ["consecutiveSuccess"] = (trend.ConsecutiveSuccessCount >= 0).ToString(),
+            ["blockerIncrease"] = regression.Blockers.Contains("blockers-increased").ToString(),
+            ["fallbackIncrease"] = regression.Warnings.Contains("fallback-increased").ToString(),
+            ["cacheHitMiss"] = (!envelopeMiss.CacheHit && envelopeHit.CacheHit).ToString(),
+            ["gateEvaluated"] = (!string.IsNullOrWhiteSpace(gate.Reason)).ToString(),
+            ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

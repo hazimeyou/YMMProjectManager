@@ -8,61 +8,68 @@
 - Legacy fallback: always preserved
 - TimelineView integration: frozen
 
+## Validation Run History
+
+Standalone validation now records run history entries containing:
+
+- timestamp
+- project identity
+- old/new snapshot hash
+- requested/selected route
+- gate result
+- comparer confidence
+- blockers/warnings
+- cache hit/miss
+- diagnostics path
+- recommendation/fallback reason
+
+History is saved under `diagnostics/difftimeline-validation-run-history.json`.
+
+## Regression Detector
+
+Regression detection compares latest run with previous run and flags:
+
+- confidence drop
+- blocker increase
+- fallback increase
+- cache behavior anomaly
+- diagnostics incomplete
+
+Trend readiness adds:
+
+- stable run count
+- consecutive success count
+- latest regression summary
+- promotion recommendation
+
 ## Manual Opt-in Usage
 
-1. Keep default behavior (legacy route): do not set route env flag.
-2. Enable standalone route request (manual only):
+1. Keep default behavior (legacy route): no route flag.
+2. Request standalone route:
    - `YMM_STANDALONE_DIFFTIMELINE_ROUTE=1`
-3. Optional shadow validation diagnostics:
+3. Optional shadow diagnostics:
    - `YMM_STANDALONE_SHADOW_VALIDATION=1`
-4. Route is promoted only if promotion gate allows it.
-5. If gate is blocked or pipeline fails, route automatically falls back to legacy.
+4. If gate is blocked, route auto-falls back to legacy.
 
-## Promotion Gate Checklist
+## Formal Adoption Checklist
 
-Promotion gate checks include:
-
-- comparer confidence threshold (`>= 0.95` default)
-- missing row threshold (`<= 0` default)
-- extra row threshold (`<= 20` warning threshold)
-- row count mismatch tolerance (`<= 20` default)
-- diagnostics completeness checks
-- fallback reason presence checks
-- blocker/warning classification
-
-Formal adoption should require:
-
-1. No blockers in repeated runs
-2. Stable diagnostics output
-3. High comparer confidence over multiple datasets
-4. Consistent cache behavior
+1. No blockers across recent runs
+2. Comparer confidence meets threshold consistently
+3. Missing row threshold satisfied
+4. Diagnostics completeness stable
+5. Regression detector reports no critical regression
+6. Consecutive success count reaches target window
 
 ## Rollback Conditions
 
-Immediate rollback to legacy route when any of these occurs:
+Rollback to legacy route is mandatory when:
 
-- pipeline envelope failure (`IsSuccess=false`)
 - promotion gate blocked
-- missing rows beyond threshold
 - confidence below threshold
-- unexpected exception during route build
-- diagnostics required fields missing
-
-Rollback is automatic and keeps existing UI route intact.
-
-## Diagnostics Scope
-
-Diagnostics JSON includes:
-
-- route selection result
-- route validation report
-- promotion readiness
-- comparer summary
-- cache hit/miss
-- adapter diagnostics
-- fallback reason
-- environment flag snapshot
-- pipeline hashes
+- missing rows beyond threshold
+- diagnostics incomplete
+- pipeline envelope failure/exception
+- regression detector reports blocker increase
 
 ## Safety Boundaries
 

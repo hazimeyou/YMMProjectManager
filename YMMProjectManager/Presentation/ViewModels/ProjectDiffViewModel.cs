@@ -419,13 +419,35 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 },
                 routeValidationReport: routeValidationReport);
 
+            var runRecord = new DiffTimelineValidationRunRecord(
+                Timestamp: DateTimeOffset.Now,
+                ProjectIdentity: $"{oldSnapshot.ProjectId}->{newSnapshot.ProjectId}",
+                OldSnapshotHash: oldSnapshot.Metadata.SnapshotHash,
+                NewSnapshotHash: newSnapshot.Metadata.SnapshotHash,
+                RequestedRoute: routeValidationReport.RequestedRoute,
+                SelectedRoute: routeValidationReport.SelectedRoute,
+                GateAllowed: routeValidationReport.GateAllowed,
+                GateReason: routeValidationReport.GateReason,
+                ComparerConfidence: routeValidationReport.ComparerResult.KeyMatchRate,
+                Blockers: routeValidationReport.Blockers,
+                Warnings: routeValidationReport.Warnings,
+                CacheHit: routeValidationReport.CacheHit,
+                DiagnosticsPath: diagnosticsPath,
+                FinalRecommendation: routeValidationReport.FinalRecommendation,
+                FallbackReason: routeValidationReport.RollbackReason);
+            var historyPath = DiffTimelineValidationRunHistoryWriter.Append(
+                Path.Combine(AppContext.BaseDirectory, "diagnostics"),
+                runRecord);
+            var history = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
+            var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(history);
+
             StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                 Attempted: true,
                 IsSuccess: true,
                 CacheHit: envelope.CacheHit,
                 SnapshotSource: envelope.SnapshotSource,
                 FallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
-                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2}",
+                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2} trend={trend.Recommendation}",
                 DiagnosticsPath: diagnosticsPath,
                 Errors: envelope.Errors,
                 Warnings: envelope.Warnings);
