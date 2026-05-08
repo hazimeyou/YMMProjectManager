@@ -327,7 +327,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 JsonDiffEntries.Add(new DiffEntryViewModel
                 {
                     Id = $"json-{JsonDiffEntries.Count}",
-                    Kind = DiffTimelineCoreLabelResolver.ToDiffKindLabel(x.Kind.ToString()),
+                    Kind = DiffTimelineDisplayLabelResolver.ToDiffKindLabel(x.Kind.ToString()),
                     Scope = x.Path,
                     Field = "JSON",
                     Before = DiffDisplayTextService.ToDisplayText(x.Before),
@@ -339,9 +339,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var coreResult = DiffTimelineCoreBuilder.BuildResult(
                 ymmResult.Entries,
                 new DiffTimelineCoreBuildOptions(
-                    KindLabel: x => DiffTimelineCoreLabelResolver.ToDiffKindLabel(x),
-                    FieldLabel: x => DiffTimelineCoreLabelResolver.ToFieldLabel(x),
-                    DisplayText: x => DiffDisplayTextService.ToDisplayText(x?.ToString())));
+                    KindLabelResolver: x => DiffTimelineDisplayLabelResolver.ToDiffKindLabel(x),
+                    FieldLabelResolver: x => DiffTimelineDisplayLabelResolver.ToFieldLabel(x),
+                    ValueDisplayResolver: x => DiffDisplayTextService.ToDisplayText(x?.ToString()),
+                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["source"] = "ProjectDiffViewModel.ApplyDiff",
+                        ["mode"] = "StandaloneCoreV1",
+                    }));
 
             var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.Snapshot.Items.Count);
             for (var i = 0; i < coreResult.Snapshot.Items.Count; i++)
@@ -351,7 +356,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 {
                     Id = core.Id,
                     Kind = core.KindLabel,
-                    Scope = core.ScopeLabel,
+                    Scope = core.PathLabel,
                     Field = core.FieldLabel,
                     Before = core.OldValue,
                     After = core.NewValue,
@@ -365,7 +370,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     id: core.Id,
                     kind: core.KindLabel,
                     category: core.Category,
-                    displayName: core.DisplayName,
+                    displayName: core.DisplayLabel,
                     timelineIndex: core.TimelineIndex,
                     layer: core.Layer,
                     frame: core.Frame,
@@ -375,7 +380,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             BuildGroups(coreResult.Groups);
-            MatchStatisticsText = FormatStatistics(ymmResult.Statistics);
+            MatchStatisticsText = FormatStatistics(ymmResult.Statistics, coreResult.Summary);
             TimelineViewModel.SetItems(timelineItems);
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
             SelectedSyncState = TimelineSyncState.Synced;
@@ -406,7 +411,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 .ToList();
             DiffGroups.Add(new DiffGroupViewModel
             {
-                GroupName = group.GroupName,
+                GroupName = group.GroupDisplayLabel,
                 Items = items,
                 Count = group.Count,
             });
@@ -439,7 +444,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         }
     }
 
-    private static string FormatStatistics(YmmDiffMatchStatistics s)
+    private static string FormatStatistics(YmmDiffMatchStatistics s, DiffTimelineCoreSummary summary)
     {
         return string.Join(" | ",
             $"旧={s.OldItemCount}",
@@ -451,7 +456,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             $"追加={s.AddedCount}",
             $"削除={s.RemovedCount}",
             $"移動={s.MovedCount}",
-            $"変更={s.ModifiedCount}");
+            $"変更={s.ModifiedCount}",
+            $"Core={summary.SummaryText}");
     }
 
     private static string ToSyncStateLabel(TimelineSyncState state)
