@@ -7,14 +7,17 @@ namespace YMMProjectManager.Application.TimelineCore;
 public sealed class YmmNormalizedJsonSnapshotAdapter
 {
     private readonly YmmProjectParser parser;
+    private readonly Action<string>? diagnosticsSink;
 
-    public YmmNormalizedJsonSnapshotAdapter()
+    public YmmNormalizedJsonSnapshotAdapter(Action<string>? diagnosticsSink = null)
     {
         parser = new YmmProjectParser();
+        this.diagnosticsSink = diagnosticsSink;
     }
 
     public DiffTimelineProjectSnapshot Convert(string projectId, string projectName, string sourcePath, string normalizedJson)
     {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
         var model = parser.Parse(normalizedJson);
         var groupedByTimeline = model.Items.GroupBy(x => x.TimelineIndex).OrderBy(x => x.Key);
         var timelines = new List<DiffTimelineTimelineSnapshot>();
@@ -47,6 +50,8 @@ public sealed class YmmNormalizedJsonSnapshotAdapter
         }
 
         var hash = ComputeHash(normalizedJson);
+        sw.Stop();
+        diagnosticsSink?.Invoke($"adapter=YmmNormalizedJsonSnapshotAdapter path={sourcePath} timelines={timelines.Count} items={model.Items.Count} hash={hash} elapsedMs={sw.ElapsedMilliseconds}");
         return new DiffTimelineProjectSnapshot(
             ProjectId: projectId,
             ProjectName: projectName,
@@ -60,8 +65,13 @@ public sealed class YmmNormalizedJsonSnapshotAdapter
                 DiagnosticsMetadata: new Dictionary<string, string>(StringComparer.Ordinal)
                 {
                     ["adapter"] = nameof(YmmNormalizedJsonSnapshotAdapter),
+                    ["normalizedJsonSource"] = sourcePath,
                     ["timelineCount"] = timelines.Count.ToString(),
                     ["itemCount"] = model.Items.Count.ToString(),
+                    ["propertyCount"] = model.Items.Sum(x => x.Fields.Count).ToString(),
+                    ["unsupportedFieldCount"] = "0",
+                    ["skippedFieldCount"] = "0",
+                    ["adapterDurationMs"] = sw.ElapsedMilliseconds.ToString(),
                 }));
     }
 

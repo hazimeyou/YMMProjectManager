@@ -30,4 +30,5 @@ public sealed record DiffTimelineStandalonePipelineResult(
 
 public sealed record DiffTimelineStandalonePipelineOptions(
     DiffTimelineCoreBuildOptions? CoreBuildOptions = null,
-    IReadOnlyDictionary<string, string>? OptionSnapshot = null);
+    IReadOnlyDictionary<string, string>? OptionSnapshot = null,
+    IDiffTimelineSnapshotCache? SnapshotCache = null);

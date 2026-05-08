@@ -5,6 +5,8 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 {
+    private readonly InMemoryDiffTimelineSnapshotCache standalonePipelineCache = new();
+    private DiffTimelineStandaloneValidationStatus? standaloneValidationStatus;
     private readonly FileLogger logger;
     private readonly ProjectSnapshotService snapshotService;
     private readonly JsonNormalizeService normalizeService;
@@ -102,6 +104,12 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string LastSyncAction
     {
         get => PureTimelineHost.LastAction;
+    }
+
+    private DiffTimelineStandaloneValidationStatus? StandaloneValidationStatus
+    {
+        get => standaloneValidationStatus;
+        set => standaloneValidationStatus = value;
     }
 
     public TimelineSyncState SelectedSyncState
@@ -331,7 +339,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             var (oldSnapshot, newSnapshot) = snapshots.Value;
-            var pipelineResult = DiffTimelineStandalonePipeline.BuildFromSnapshots(
+            var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
                 oldSnapshot,
                 newSnapshot,
                 new DiffTimelineStandalonePipelineOptions(
@@ -340,19 +348,56 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                         ["caller"] = nameof(ProjectDiffViewModel),
                         ["entry"] = nameof(TryValidateStandalonePipeline),
                         ["snapshotSource"] = source,
-                    }));
+                    },
+                    SnapshotCache: standalonePipelineCache));
+            if (!envelope.IsSuccess || envelope.Result is null)
+            {
+                var reason = string.IsNullOrWhiteSpace(envelope.FallbackReason) ? "pipeline-envelope-failed" : envelope.FallbackReason;
+                StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
+                    Attempted: true,
+                    IsSuccess: false,
+                    CacheHit: envelope.CacheHit,
+                    SnapshotSource: envelope.SnapshotSource,
+                    FallbackReason: reason,
+                    StageSummary: "pipeline-failed",
+                    DiagnosticsPath: string.Empty,
+                    Errors: envelope.Errors,
+                    Warnings: envelope.Warnings);
+                logger.Info($"Standalone pipeline validation failed: {reason}");
+                return;
+            }
 
             var selfCheck = DiffTimelineStandalonePipelineSelfCheck.Run();
             var diagnosticsPath = DiffTimelineStandalonePipelineDiagnosticsWriter.WriteToFile(
                 directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
-                result: pipelineResult,
+                result: envelope.Result,
                 roundTrip: selfCheck.RoundTrip,
                 fallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none");
 
+            StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
+                Attempted: true,
+                IsSuccess: true,
+                CacheHit: envelope.CacheHit,
+                SnapshotSource: envelope.SnapshotSource,
+                FallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
+                StageSummary: envelope.Result.Diagnostics.StageSummary,
+                DiagnosticsPath: diagnosticsPath,
+                Errors: envelope.Errors,
+                Warnings: envelope.Warnings);
             logger.Info($"Standalone pipeline validation succeeded: {diagnosticsPath}");
         }
         catch (Exception ex)
         {
+            StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
+                Attempted: true,
+                IsSuccess: false,
+                CacheHit: false,
+                SnapshotSource: "unknown",
+                FallbackReason: "exception",
+                StageSummary: "exception",
+                DiagnosticsPath: string.Empty,
+                Errors: [ex.Message],
+                Warnings: []);
             logger.Error(ex, "Standalone pipeline validation skipped. fallback remains active.");
         }
     }
@@ -371,7 +416,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             return null;
         }
 
-        var adapter = new YmmNormalizedJsonSnapshotAdapter();
+        var adapter = new YmmNormalizedJsonSnapshotAdapter(message => logger.Info(message));
         var oldJson = normalizeService.NormalizeFileAsync(oldProjectPath).GetAwaiter().GetResult();
         var newJson = normalizeService.NormalizeFileAsync(newProjectPath).GetAwaiter().GetResult();
         var oldSnapshot = adapter.Convert("project-old", Path.GetFileNameWithoutExtension(oldProjectPath), oldProjectPath, oldJson);

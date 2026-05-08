@@ -11,22 +11,63 @@ public static class DiffTimelineStandalonePipeline
         DiffTimelineProjectSnapshot newSnapshot,
         DiffTimelineStandalonePipelineOptions? options = null)
     {
+        return BuildEnvelopeFromSnapshots(oldSnapshot, newSnapshot, options).Result
+            ?? throw new InvalidOperationException("Pipeline result is null.");
+    }
+
+    public static DiffTimelineStandalonePipelineEnvelope BuildEnvelopeFromSnapshots(
+        DiffTimelineProjectSnapshot oldSnapshot,
+        DiffTimelineProjectSnapshot newSnapshot,
+        DiffTimelineStandalonePipelineOptions? options = null)
+    {
         options ??= new DiffTimelineStandalonePipelineOptions();
+        var warnings = new List<string>();
+        var errors = new List<string>();
 
-        var sw = Stopwatch.StartNew();
-        var semanticInput = new DiffTimelineSemanticDiffInput(oldSnapshot, newSnapshot, options.OptionSnapshot ?? new Dictionary<string, string>());
-        var semantic = DiffTimelineSnapshotDiffBuilder.BuildSemanticDiff(semanticInput);
-        var coreEntries = DiffTimelineSnapshotDiffBuilder.BuildCoreDiffEntries(semantic);
+        try
+        {
+            var key = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, options.OptionSnapshot);
+            if (options.SnapshotCache is not null && options.SnapshotCache.TryGet(key, out var cached) && cached is not null)
+            {
+                var cachedDiagnostics = cached.Diagnostics with
+                {
+                    Metadata = new Dictionary<string, string>(cached.Diagnostics.Metadata, StringComparer.Ordinal)
+                    {
+                        ["cacheHit"] = "true",
+                        ["cacheKey"] = key.Value,
+                    },
+                };
+                var cachedResult = cached with { Diagnostics = cachedDiagnostics };
+                return new DiffTimelineStandalonePipelineEnvelope(cachedResult, true, ResolveSnapshotSource(oldSnapshot, newSnapshot), "none", true, errors, warnings);
+            }
 
-        var coreOptions = options.CoreBuildOptions ?? new DiffTimelineCoreBuildOptions();
-        var mergedSnapshot = MergeOptionSnapshot(coreOptions.OptionSnapshot, options.OptionSnapshot, semantic);
-        coreOptions = coreOptions with { OptionSnapshot = mergedSnapshot };
+            var sw = Stopwatch.StartNew();
+            var semanticInput = new DiffTimelineSemanticDiffInput(oldSnapshot, newSnapshot, options.OptionSnapshot ?? new Dictionary<string, string>());
+            var semantic = DiffTimelineSnapshotDiffBuilder.BuildSemanticDiff(semanticInput);
+            var coreEntries = DiffTimelineSnapshotDiffBuilder.BuildCoreDiffEntries(semantic);
 
-        var coreResult = DiffTimelineCoreBuilder.BuildResult(coreEntries, coreOptions);
-        sw.Stop();
+            var coreOptions = options.CoreBuildOptions ?? new DiffTimelineCoreBuildOptions();
+            var mergedSnapshot = MergeOptionSnapshot(coreOptions.OptionSnapshot, options.OptionSnapshot, semantic);
+            coreOptions = coreOptions with { OptionSnapshot = mergedSnapshot };
 
-        var diagnostics = BuildDiagnostics(oldSnapshot, newSnapshot, semantic, coreResult, sw.ElapsedMilliseconds, mergedSnapshot);
-        return new DiffTimelineStandalonePipelineResult(coreResult, semantic, diagnostics);
+            var coreResult = DiffTimelineCoreBuilder.BuildResult(coreEntries, coreOptions);
+            sw.Stop();
+
+            var diagnostics = BuildDiagnostics(oldSnapshot, newSnapshot, semantic, coreResult, sw.ElapsedMilliseconds, mergedSnapshot, false, key.Value);
+            var result = new DiffTimelineStandalonePipelineResult(coreResult, semantic, diagnostics);
+            options.SnapshotCache?.Set(key, result);
+            return new DiffTimelineStandalonePipelineEnvelope(result, false, ResolveSnapshotSource(oldSnapshot, newSnapshot), "none", true, errors, warnings);
+        }
+        catch (Exception ex)
+        {
+            errors.Add(ex.Message);
+            return new DiffTimelineStandalonePipelineEnvelope(null, false, ResolveSnapshotSource(oldSnapshot, newSnapshot), "pipeline-exception", false, errors, warnings);
+        }
+    }
+
+    private static string ResolveSnapshotSource(DiffTimelineProjectSnapshot oldSnapshot, DiffTimelineProjectSnapshot newSnapshot)
+    {
+        return $"{oldSnapshot.Metadata.SourceKind}->{newSnapshot.Metadata.SourceKind}";
     }
 
     private static DiffTimelineStandalonePipelineDiagnostics BuildDiagnostics(
@@ -35,7 +76,9 @@ public static class DiffTimelineStandalonePipeline
         DiffTimelineSemanticDiffResult semantic,
         DiffTimelineCoreResult core,
         long durationMs,
-        IReadOnlyDictionary<string, string> optionSnapshot)
+        IReadOnlyDictionary<string, string> optionSnapshot,
+        bool cacheHit,
+        string cacheKey)
     {
         var oldLayerCount = oldSnapshot.Timelines.Sum(t => t.Layers.Count);
         var newLayerCount = newSnapshot.Timelines.Sum(t => t.Layers.Count);
@@ -67,7 +110,7 @@ public static class DiffTimelineStandalonePipeline
             {
                 ["stage"] = "snapshot->semantic->core->rows",
                 ["schemaVersion"] = newSnapshot.Metadata.SchemaVersion,
-                ["snapshotSource"] = $"{oldSnapshot.Metadata.SourceKind}->{newSnapshot.Metadata.SourceKind}",
+                ["snapshotSource"] = ResolveSnapshotSource(oldSnapshot, newSnapshot),
                 ["adapterSource"] = "pipeline-input",
                 ["conversionResult"] = "success",
                 ["skippedFields"] = "none",
@@ -75,6 +118,8 @@ public static class DiffTimelineStandalonePipeline
                 ["oldSnapshotHash"] = oldSnapshot.Metadata.SnapshotHash,
                 ["newSnapshotHash"] = newSnapshot.Metadata.SnapshotHash,
                 ["pipelineResultHash"] = ComputePipelineHash(core, semantic),
+                ["cacheHit"] = cacheHit.ToString(),
+                ["cacheKey"] = cacheKey,
             });
     }
 

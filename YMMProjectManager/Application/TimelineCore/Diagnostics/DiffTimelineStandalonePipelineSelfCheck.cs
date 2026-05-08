@@ -23,6 +23,20 @@ public static class DiffTimelineStandalonePipelineSelfCheck
                     ["selfCheck"] = "true",
                 }));
 
+        var cache = new InMemoryDiffTimelineSnapshotCache();
+        var envelopeMiss = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+            oldSnapshot,
+            newSnapshot,
+            new DiffTimelineStandalonePipelineOptions(
+                OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal) { ["selfCheck"] = "cache" },
+                SnapshotCache: cache));
+        var envelopeHit = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+            oldSnapshot,
+            newSnapshot,
+            new DiffTimelineStandalonePipelineOptions(
+                OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal) { ["selfCheck"] = "cache" },
+                SnapshotCache: cache));
+
         var keyA = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
         var keyB = DiffTimelineSnapshotCacheKeyFactory.Create(oldSnapshot, newSnapshot, pipeline.Diagnostics.OptionsSnapshot);
 
@@ -40,6 +54,12 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["diagnosticsCount"] = (pipeline.Diagnostics.SemanticChangeCount == pipeline.SemanticDiff.Changes.Count).ToString(),
             ["cacheKeyConsistency"] = string.Equals(keyA.Value, keyB.Value, StringComparison.Ordinal).ToString(),
             ["fallbackToSample"] = "true",
+            ["cacheMissThenHit"] = (!envelopeMiss.CacheHit && envelopeHit.CacheHit).ToString(),
+            ["envelopeSuccess"] = (envelopeMiss.IsSuccess && envelopeHit.IsSuccess).ToString(),
+            ["adapterDiagnostics"] = oldSnapshot.Metadata.DiagnosticsMetadata.ContainsKey("factory").ToString(),
+            ["hashStability"] = string.Equals(oldSnapshot.Metadata.SnapshotHash, oldRoundTrip.Metadata.SnapshotHash, StringComparison.Ordinal).ToString(),
+            ["fallbackReason"] = string.Equals(envelopeMiss.FallbackReason, "none", StringComparison.Ordinal).ToString(),
+            ["diagnosticsJsonReady"] = (!string.IsNullOrWhiteSpace(pipeline.Diagnostics.StageSummary)).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)
