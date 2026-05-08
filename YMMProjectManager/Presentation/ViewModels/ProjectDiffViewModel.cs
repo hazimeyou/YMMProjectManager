@@ -5,8 +5,7 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 {
-    private readonly bool enableStandaloneShadowValidation = ResolveStandaloneShadowValidationEnabled();
-    private readonly bool enableStandaloneRoute = ResolveStandaloneRouteEnabled();
+    private readonly DiffTimelineStandaloneConfig standaloneConfig = DiffTimelineStandaloneConfigResolver.ResolveFromEnvironment();
     private readonly InMemoryDiffTimelineSnapshotCache standalonePipelineCache = new();
     private DiffTimelineStandaloneValidationStatus? standaloneValidationStatus;
     private DiffTimelineRouteSelectionResult? standaloneRouteSelectionResult;
@@ -336,7 +335,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            if (!enableStandaloneShadowValidation)
+            if (!standaloneConfig.ShadowValidationEnabled)
             {
                 StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                     Attempted: false,
@@ -402,7 +401,12 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 readiness: readiness,
                 cacheHit: envelope.CacheHit,
                 diagnosticsPath: string.Empty,
-                rollbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none");
+                rollbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
+                policy: DiffTimelineStandaloneConfigResolver.BuildPolicy(standaloneConfig));
+            var provisionalHistory = new DiffTimelineValidationRunHistory([]);
+            var provisionalTrend = DiffTimelineValidationRegressionDetector.EvaluateTrend(provisionalHistory);
+            var rollbackGuard = DiffTimelineStandaloneRollbackGuard.Evaluate(routeValidationReport, provisionalHistory, standaloneConfig, provisionalTrend);
+            var dashboard = DiffTimelineValidationDashboardBuilder.Build(routeValidationReport, provisionalTrend, rollbackGuard, provisionalHistory);
             var diagnosticsPath = DiffTimelineStandalonePipelineDiagnosticsWriter.WriteToFile(
                 directory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 result: envelope.Result,
@@ -412,12 +416,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 comparerResult: comparer,
                 promotionReadiness: readiness,
                 routeSelection: StandaloneRouteSelectionResult,
-                environmentFlags: new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["YMM_STANDALONE_SHADOW_VALIDATION"] = enableStandaloneShadowValidation ? "1" : "0",
-                    ["YMM_STANDALONE_DIFFTIMELINE_ROUTE"] = enableStandaloneRoute ? "1" : "0",
-                },
-                routeValidationReport: routeValidationReport);
+                environmentFlags: standaloneConfig.ToEnvironmentSnapshot(),
+                routeValidationReport: routeValidationReport,
+                validationDashboard: dashboard,
+                diagnosticsVerbosity: standaloneConfig.DiagnosticsVerbosity);
 
             var runRecord = new DiffTimelineValidationRunRecord(
                 Timestamp: DateTimeOffset.Now,
@@ -437,9 +439,19 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 FallbackReason: routeValidationReport.RollbackReason);
             var historyPath = DiffTimelineValidationRunHistoryWriter.Append(
                 Path.Combine(AppContext.BaseDirectory, "diagnostics"),
-                runRecord);
+                runRecord,
+                standaloneConfig.HistoryKeepCount);
             var history = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
             var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(history);
+            var guardedReport = routeValidationReport with { DiagnosticsPath = diagnosticsPath };
+            var guardedRollback = DiffTimelineStandaloneRollbackGuard.Evaluate(guardedReport, history, standaloneConfig, trend);
+            var finalDashboard = DiffTimelineValidationDashboardBuilder.Build(guardedReport, trend, guardedRollback, history);
+            var exportPackage = DiffTimelineDiagnosticsExportPackageWriter.Export(
+                diagnosticsDirectory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
+                report: guardedReport,
+                history: history,
+                dashboard: finalDashboard,
+                config: standaloneConfig);
 
             StandaloneValidationStatus = new DiffTimelineStandaloneValidationStatus(
                 Attempted: true,
@@ -447,7 +459,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 CacheHit: envelope.CacheHit,
                 SnapshotSource: envelope.SnapshotSource,
                 FallbackReason: source == "sample-fallback" ? "project-snapshot-unavailable" : "none",
-                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2} trend={trend.Recommendation}",
+                StageSummary: $"{envelope.Result.Diagnostics.StageSummary} | promote={readiness.CanPromote} conf={readiness.Confidence:F2} trend={trend.Recommendation} rollback={guardedRollback.Allowed} export={exportPackage.Succeeded}",
                 DiagnosticsPath: diagnosticsPath,
                 Errors: envelope.Errors,
                 Warnings: envelope.Warnings);
@@ -604,8 +616,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
     private DiffTimelineCoreResult BuildCoreResultFromCurrentRoute(YmmProjectDiffResult ymmResult)
     {
-        var requestedRoute = enableStandaloneRoute ? "standalone" : "legacy-core-builder";
-        if (!enableStandaloneRoute)
+        var requestedRoute = standaloneConfig.StandaloneRouteEnabled ? "standalone" : "legacy-core-builder";
+        if (!standaloneConfig.StandaloneRouteEnabled)
         {
             StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
                 RequestedRoute: requestedRoute,
@@ -632,7 +644,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
                     {
                         ["requestedRoute"] = requestedRoute,
-                        ["envRouteFlag"] = enableStandaloneRoute ? "1" : "0",
+                        ["envRouteFlag"] = standaloneConfig.StandaloneRouteEnabled ? "1" : "0",
                     },
                     SnapshotCache: standalonePipelineCache));
 
@@ -651,7 +663,20 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var existingSummary = BuildExistingRouteSummary();
             var comparer = DiffTimelineValidationComparer.Compare(existingSummary, envelope.Result);
             var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelope);
-            var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
+            var policy = DiffTimelineStandaloneConfigResolver.BuildPolicy(standaloneConfig);
+            var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness, policy);
+            var report = DiffTimelineStandalonePromotionGate.BuildReport(
+                requestedRoute,
+                gate.Allowed ? "standalone" : "legacy-core-builder",
+                readiness,
+                envelope.CacheHit,
+                string.Empty,
+                "none",
+                policy);
+            var historyPath = Path.Combine(AppContext.BaseDirectory, "diagnostics", "difftimeline-validation-run-history.json");
+            var history = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
+            var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(history);
+            var rollbackGuard = DiffTimelineStandaloneRollbackGuard.Evaluate(report, history, standaloneConfig, trend);
             if (!gate.Allowed)
             {
                 StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
@@ -659,6 +684,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     SelectedRoute: "legacy-core-builder",
                     FallbackRoute: "legacy-core-builder",
                     Reason: gate.Reason,
+                    PromotionReadiness: readiness,
+                    DiagnosticsPath: string.Empty);
+                return BuildLegacyCoreResult(ymmResult);
+            }
+            if (!rollbackGuard.Allowed)
+            {
+                StandaloneRouteSelectionResult = new DiffTimelineRouteSelectionResult(
+                    RequestedRoute: requestedRoute,
+                    SelectedRoute: "legacy-core-builder",
+                    FallbackRoute: "legacy-core-builder",
+                    Reason: rollbackGuard.Reason,
                     PromotionReadiness: readiness,
                     DiagnosticsPath: string.Empty);
                 return BuildLegacyCoreResult(ymmResult);
@@ -791,22 +827,6 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             YMMProjectManager.Presentation.Timeline.PureTimelineStatus.Error => "エラー",
             _ => status.ToString(),
         };
-    }
-
-    private static bool ResolveStandaloneShadowValidationEnabled()
-    {
-        return string.Equals(
-            Environment.GetEnvironmentVariable("YMM_STANDALONE_SHADOW_VALIDATION"),
-            "1",
-            StringComparison.Ordinal);
-    }
-
-    private static bool ResolveStandaloneRouteEnabled()
-    {
-        return string.Equals(
-            Environment.GetEnvironmentVariable("YMM_STANDALONE_DIFFTIMELINE_ROUTE"),
-            "1",
-            StringComparison.Ordinal);
     }
 
     private void TryInitializeHost()

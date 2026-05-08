@@ -39,12 +39,31 @@ public static class DiffTimelineStandalonePipelineSelfCheck
 
         var comparer = DiffTimelineValidationComparer.Compare(existingSummary, pipeline);
         var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelopeMiss);
-        var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness);
+        var config = DiffTimelineStandaloneConfigResolver.ResolveFromEnvironment();
+        var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness, DiffTimelineStandaloneConfigResolver.BuildPolicy(config));
 
         var run1 = new DiffTimelineValidationRunRecord(DateTimeOffset.Now.AddMinutes(-1), "p", oldSnapshot.Metadata.SnapshotHash, newSnapshot.Metadata.SnapshotHash, "standalone", "standalone", true, "promotion-allowed", 0.99, [], [], false, "d1", "ok", "none");
         var run2 = run1 with { Timestamp = DateTimeOffset.Now, ComparerConfidence = 0.70, Blockers = ["confidence-below-threshold"], DiagnosticsPath = "" };
         var regression = DiffTimelineValidationRegressionDetector.Detect(run2, run1);
         var trend = DiffTimelineValidationRegressionDetector.EvaluateTrend(new DiffTimelineValidationRunHistory([run1, run2]));
+        var report = DiffTimelineStandalonePromotionGate.BuildReport(
+            requestedRoute: "self-check",
+            selectedRoute: gate.Allowed ? "standalone" : "legacy",
+            readiness: readiness,
+            cacheHit: envelopeMiss.CacheHit,
+            diagnosticsPath: "self-check.json",
+            rollbackReason: "none",
+            policy: DiffTimelineStandaloneConfigResolver.BuildPolicy(config));
+        var rollback = DiffTimelineStandaloneRollbackGuard.Evaluate(
+            report,
+            new DiffTimelineValidationRunHistory([run1, run2]),
+            config,
+            trend);
+        var dashboard = DiffTimelineValidationDashboardBuilder.Build(
+            report,
+            trend,
+            rollback,
+            new DiffTimelineValidationRunHistory([run1, run2]));
 
         var tempDir = Path.Combine(Path.GetTempPath(), "difftimeline-selfcheck");
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
@@ -60,6 +79,9 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["fallbackIncrease"] = regression.Warnings.Contains("fallback-increased").ToString(),
             ["cacheHitMiss"] = (!envelopeMiss.CacheHit && envelopeHit.CacheHit).ToString(),
             ["gateEvaluated"] = (!string.IsNullOrWhiteSpace(gate.Reason)).ToString(),
+            ["configDefaultSafety"] = (!config.StandaloneRouteEnabled && !config.ShadowValidationEnabled).ToString(),
+            ["rollbackGuard"] = rollback.Allowed.ToString(),
+            ["dashboardModel"] = (!string.IsNullOrWhiteSpace(dashboard.Recommendation)).ToString(),
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
         };
 

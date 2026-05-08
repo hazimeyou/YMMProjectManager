@@ -4,9 +4,22 @@
 
 - Shadow validation: ready
 - Manual opt-in standalone route: ready (guarded)
+- Limited opt-in release validation: ready (guarded + rollback guard + history trend)
 - Default: disabled
 - Legacy fallback: always preserved
 - TimelineView integration: frozen
+
+## Environment Flags (Safe Defaults)
+
+- `YMM_STANDALONE_SHADOW_VALIDATION` (`0`/`1`, default `0`)
+- `YMM_STANDALONE_DIFFTIMELINE_ROUTE` (`0`/`1`, default `0`)
+- `YMM_STANDALONE_DIAGNOSTICS_VERBOSITY` (default `standard`)
+- `YMM_STANDALONE_HISTORY_KEEP_COUNT` (default `50`)
+- `YMM_STANDALONE_GATE_POLICY_OVERRIDE` (`0`/`1`, default `0`)
+- `YMM_STANDALONE_CONSECUTIVE_FAILURE_THRESHOLD` (default `2`)
+- `YMM_STANDALONE_STRICT_REGRESSION_BLOCKING` (`0`/`1`, default `1`)
+- `YMM_STANDALONE_STRICT_DIAGNOSTICS_COMPLETENESS` (`0`/`1`, default `1`)
+- `YMM_STANDALONE_STRICT_CACHE_ANOMALY_BLOCKING` (`0`/`1`, default `1`)
 
 ## Validation Run History
 
@@ -42,6 +55,38 @@ Trend readiness adds:
 - latest regression summary
 - promotion recommendation
 
+## Rollback Guard
+
+Even when route gate is technically passable, standalone route is rejected and legacy fallback is forced when:
+
+- consecutive failures reach threshold
+- regression is detected (strict mode)
+- diagnostics are incomplete
+- cache/hash anomaly is detected
+
+This is evaluated before selecting standalone route in manual opt-in mode.
+
+## Validation Dashboard + Export Package
+
+Validation now builds a dashboard model with:
+
+- latest run timestamp
+- selected/requested route
+- gate result + reason
+- trend readiness + regression summary
+- cache status
+- blockers/warnings
+- final recommendation
+
+Diagnostics export package bundles:
+
+- latest diagnostics JSON
+- route validation report
+- validation history
+- dashboard snapshot
+- standalone config snapshot
+- manifest
+
 ## Manual Opt-in Usage
 
 1. Keep default behavior (legacy route): no route flag.
@@ -50,6 +95,7 @@ Trend readiness adds:
 3. Optional shadow diagnostics:
    - `YMM_STANDALONE_SHADOW_VALIDATION=1`
 4. If gate is blocked, route auto-falls back to legacy.
+5. If rollback guard fails, route auto-falls back to legacy even when gate is nominal.
 
 ## Formal Adoption Checklist
 
@@ -59,6 +105,7 @@ Trend readiness adds:
 4. Diagnostics completeness stable
 5. Regression detector reports no critical regression
 6. Consecutive success count reaches target window
+7. Rollback guard remains pass across recent runs
 
 ## Rollback Conditions
 
@@ -85,3 +132,4 @@ Rollback to legacy route is mandatory when:
 - `EnableExperimentalYmmTimelineHost=false`
 - `AllowViewModelGenerationAttempt=false`
 - standalone route flags are opt-in only
+- fallback route remains legacy when any guard fails
