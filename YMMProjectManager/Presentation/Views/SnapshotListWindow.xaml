@@ -1,18 +1,19 @@
-<Window
+﻿<Window
     x:Class="YMMProjectManager.Presentation.Views.SnapshotListWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="履歴 / 差分"
     Width="850"
     Height="560"
+    WindowState="Maximized"
     WindowStartupLocation="CenterOwner"
     Loaded="OnLoaded">
     <DockPanel Margin="10">
         <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,8">
-            <Button Width="100" Margin="0,0,8,0" Content="更新" Click="OnReloadClick" />
-            <Button Width="100" Margin="0,0,8,0" Content="削除" Click="OnDeleteClick" />
+            <Button Width="100" Margin="0,0,8,0" Content="譖ｴ譁ｰ" Click="OnReloadClick" />
+            <Button Width="100" Margin="0,0,8,0" Content="蜑企勁" Click="OnDeleteClick" />
             <Button Width="170" Margin="0,0,8,0" Content="現在と比較" Click="OnCompareCurrentClick" />
-            <Button Width="210" Content="選択2件を比較" Click="OnCompareSelectedClick" />
+            <Button Width="210" Content="選択した2件を比較" Click="OnCompareSelectedClick" />
         </StackPanel>
 
         <DataGrid x:Name="SnapshotGrid" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}" SelectionMode="Extended" AutoGenerateColumns="False" IsReadOnly="True">
@@ -25,3 +26,4 @@
         </DataGrid>
     </DockPanel>
 </Window>
+

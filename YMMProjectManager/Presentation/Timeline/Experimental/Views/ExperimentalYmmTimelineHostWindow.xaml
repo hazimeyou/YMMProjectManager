@@ -3,8 +3,11 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Experimental YMM Timeline Host (Dry-run)"
-    Width="1000"
-    Height="700"
+    Width="1920"
+    Height="1080"
+    MinWidth="1280"
+    MinHeight="720"
+    WindowState="Maximized"
     WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>

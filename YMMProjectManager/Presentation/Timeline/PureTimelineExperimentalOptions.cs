@@ -19,4 +19,9 @@ public sealed class PureTimelineExperimentalOptions
     public bool AllowControlledLifecycleObservation { get; set; } = false;
     public int PassiveAttachHoldMs { get; set; } = 100;
     public bool AllowOffscreenHostInvestigation { get; set; } = false;
+
+    public bool AllowSmallVisibleHostAttempt { get; set; } = false;
+    public bool ManualApprovalForSmallVisibleHost { get; set; } = false;
+    public bool AllowProjectDiffWindowPreintegrationAttempt { get; set; } = true;
+    public bool ManualApprovalForProjectDiffWindowPreintegration { get; set; } = true;
 }

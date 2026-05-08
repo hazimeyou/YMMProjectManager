@@ -6,6 +6,7 @@
     Title="{Binding Title}"
     Width="1400"
     Height="900"
+    WindowState="Maximized"
     WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>
