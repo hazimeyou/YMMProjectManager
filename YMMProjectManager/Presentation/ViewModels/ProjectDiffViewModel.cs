@@ -348,35 +348,35 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                         ["mode"] = "StandaloneCoreV1",
                     }));
 
-            var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.Snapshot.Items.Count);
-            for (var i = 0; i < coreResult.Snapshot.Items.Count; i++)
+            var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.RowSet.Rows.Count);
+            for (var i = 0; i < coreResult.RowSet.Rows.Count; i++)
             {
-                var core = coreResult.Snapshot.Items[i];
+                var row = coreResult.RowSet.Rows[i];
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
-                    Id = core.Id,
-                    Kind = core.KindLabel,
-                    Scope = core.PathLabel,
-                    Field = core.FieldLabel,
-                    Before = core.OldValue,
-                    After = core.NewValue,
-                    TimelineIndex = core.TimelineIndex,
-                    Layer = core.Layer,
-                    Frame = core.Frame,
-                    Length = core.Length,
+                    Id = row.RowId,
+                    Kind = row.DiffKind,
+                    Scope = row.Path,
+                    Field = row.Field,
+                    Before = row.OldValue,
+                    After = row.NewValue,
+                    TimelineIndex = row.TimelineIndex,
+                    Layer = row.Layer,
+                    Frame = row.Frame,
+                    Length = row.Length,
                 });
 
                 timelineItems.Add(TimelineViewModel.CreateItem(
-                    id: core.Id,
-                    kind: core.KindLabel,
-                    category: core.Category,
-                    displayName: core.DisplayLabel,
-                    timelineIndex: core.TimelineIndex,
-                    layer: core.Layer,
-                    frame: core.Frame,
-                    length: core.Length,
-                    oldValue: core.OldValue,
-                    newValue: core.NewValue));
+                    id: row.RowId,
+                    kind: row.DiffKind,
+                    category: row.SemanticCategory,
+                    displayName: row.DisplayLabel,
+                    timelineIndex: row.TimelineIndex,
+                    layer: row.Layer,
+                    frame: row.Frame,
+                    length: row.Length,
+                    oldValue: row.OldValue,
+                    newValue: row.NewValue));
             }
 
             BuildGroups(coreResult.Groups);

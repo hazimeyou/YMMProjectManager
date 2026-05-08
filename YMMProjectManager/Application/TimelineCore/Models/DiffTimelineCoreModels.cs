@@ -53,4 +53,5 @@ public sealed record DiffTimelineCoreSummary(
 public sealed record DiffTimelineCoreResult(
     DiffTimelineCoreSnapshot Snapshot,
     IReadOnlyList<DiffTimelineCoreGroup> Groups,
-    DiffTimelineCoreSummary Summary);
+    DiffTimelineCoreSummary Summary,
+    DiffTimelineCoreRowSet RowSet);

@@ -54,8 +54,9 @@ public static class DiffTimelineCoreBuilder
         var snapshot = new DiffTimelineCoreSnapshot(filtered);
         var optionSnapshot = BuildOptionSnapshot(options);
         var summary = DiffTimelineSummaryBuilder.Build(allItems, filtered, groups, optionSnapshot);
-
-        return new DiffTimelineCoreResult(snapshot, groups, summary);
+        var provisional = new DiffTimelineCoreResult(snapshot, groups, summary, new DiffTimelineCoreRowSet([], new Dictionary<string, int>(), new Dictionary<string, int>()));
+        var rowSet = DiffTimelineCoreRowBuilder.BuildRows(provisional);
+        return provisional with { RowSet = rowSet };
     }
 
     private static DiffTimelineCoreItem CreateDraftItem(
