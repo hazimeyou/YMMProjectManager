@@ -5,6 +5,7 @@ namespace YMMProjectManager.Application.TimelineCore;
 public static class DiffTimelinePreviewValidationRunner
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private const string RcVersion = "RouteA-PreviewWorkspace-RC1";
 
     public static DiffTimelinePreviewValidationRunnerResult Run(
         string diagnosticsDirectory,
@@ -55,7 +56,7 @@ public static class DiffTimelinePreviewValidationRunner
         var readinessPath = Path.Combine(export.ExportDirectory, "preview-readiness-report.json");
         File.WriteAllText(readinessPath, JsonSerializer.Serialize(readiness, JsonOptions));
         var manifest = new DiffTimelinePreviewPackageManifest(
-            Version: version,
+            Version: $"{version}-{RcVersion}",
             CommitHash: commitHash,
             RequiredEnvironmentFlags: readiness.RequiredEnvironmentFlags,
             DefaultDisabled: !config.StandaloneRouteEnabled,

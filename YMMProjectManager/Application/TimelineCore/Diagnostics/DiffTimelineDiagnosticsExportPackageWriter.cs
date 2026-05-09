@@ -5,6 +5,7 @@ namespace YMMProjectManager.Application.TimelineCore;
 public static class DiffTimelineDiagnosticsExportPackageWriter
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private const string RcVersion = "RouteA-PreviewWorkspace-RC1";
 
     public static DiffTimelineDiagnosticsExportPackageResult Export(
         string diagnosticsDirectory,
@@ -93,6 +94,12 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
             var manifest = new
             {
                 createdAt = DateTimeOffset.Now,
+                rcVersion = RcVersion,
+                routeIdentity = "RouteAStandalonePreviewWorkspaceRC",
+                historyPreviewInvestigationCompleted = true,
+                timelineViewIntegrationFrozen = true,
+                defaultDisabled = true,
+                fallbackPreserved = true,
                 exportedFiles = exported,
                 warnings,
                 sections = new

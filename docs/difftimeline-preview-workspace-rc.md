@@ -4,6 +4,15 @@
 
 RouteA Preview Workspace is an experimental-but-usable validation workspace.
 
+## RC Metadata
+
+- RC Version: `RouteA-PreviewWorkspace-RC1`
+- Route Identity: `RouteAStandalonePreviewWorkspaceRC`
+- History-preview investigation: completed
+- TimelineView integration: frozen
+- Default route: disabled
+- Fallback: preserved
+
 ## RC Checklist
 
 - compare success
@@ -28,6 +37,7 @@ RouteA Preview Workspace is an experimental-but-usable validation workspace.
 - `route-validation-report.json`
 - `validation-dashboard.json`
 - `validation-history.json`
+- session metadata (`difftimeline-reusable-compare-sessions.json` source)
 
 ## Unsupported / Frozen
 
@@ -43,3 +53,12 @@ RouteA Preview Workspace is an experimental-but-usable validation workspace.
 - advanced semantic graph
 - full snapshot persistence
 - multi-session compare UX
+
+## Preview Release Tag Draft
+
+- Suggested tag: `routea-preview-workspace-rc1`
+- Naming rule: `routea-preview-workspace-rc<N>`
+- Export naming consistency:
+  - `difftimeline-export-YYYYMMDD-HHMMSS`
+  - `preview-package-manifest.json`
+  - `preview-readiness-report.json`
