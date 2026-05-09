@@ -66,6 +66,26 @@ Current limitation:
 - Standalone route default is still disabled.
 - Legacy fallback remains primary when gate/rollback guard is NG.
 
+### Interaction Validation Notes
+
+- Search input updates filter pipeline state immediately.
+- `changed-only` / `warning-only` toggles are wired to Core filter state.
+- ChangeType/Semantic combo filters are bound through string option lists (no ad-hoc view filter logic).
+- Path/Group text filters feed Core filter pipeline directly.
+- `Clear Filters` resets all preview filter states.
+- Grouping mode switch is connected (`None/Semantic/Timeline/Layer/Field/Path/ChangeType`).
+- Expand/Collapse all actions are safe state toggles and do not mutate core data.
+- Filter diagnostics display:
+  - matched count
+  - filtered-out count
+  - filter duration
+  - active filter summary
+- No-match state text is shown when filtered row count becomes zero.
+- Diagnostics export now includes preview UI state payloads when available:
+  - filter/search state
+  - snapshot browser state
+  - comparison history
+
 ## Snapshot/History Foundation
 
 - Snapshot repository:

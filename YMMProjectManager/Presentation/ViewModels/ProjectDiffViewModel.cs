@@ -182,7 +182,12 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string ActiveFilterSummary => latestFilteredResult is null
         ? "active filters: none"
         : string.Join(" | ", latestFilteredResult.ActiveFilters.Where(x => !string.IsNullOrWhiteSpace(x.Value)).Select(x => $"{x.Key}={x.Value}"));
+    public string NoMatchStateText => latestFilteredResult is null
+        ? string.Empty
+        : latestFilteredResult.MatchedRowCount == 0 ? "一致する差分がありません（フィルター条件を見直してください）" : string.Empty;
     public IReadOnlyList<string> GroupingModeOptions { get; } = ["None", "Semantic", "Timeline", "Layer", "Field", "Path", "ChangeType"];
+    public IReadOnlyList<string> ChangeTypeFilterOptions { get; } = ["All", "追加", "削除", "変更", "移動"];
+    public IReadOnlyList<string> SemanticFilterOptions { get; } = ["All", "Added", "Removed", "TimelinePosition", "Property", "Text"];
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -497,7 +502,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 trend: trend,
                 rollbackGuard: guardedRollback,
                 docsPath: docsPath,
-                commitHash: "99dff2c");
+                commitHash: "99dff2c",
+                filteredResult: latestFilteredResult,
+                snapshotBrowserState: SnapshotBrowserStateForExport(),
+                comparisonHistory: comparisonHistoryStore.Load());
             var previewReadiness = previewRunner.PreviewReadiness;
             var exportPackage = previewRunner.ExportPackage;
 
@@ -768,6 +776,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         lastFilterDuration = sw.Elapsed;
         OnPropertyChanged(nameof(LastFilterDiagnostics));
         OnPropertyChanged(nameof(ActiveFilterSummary));
+        OnPropertyChanged(nameof(NoMatchStateText));
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
@@ -786,6 +795,18 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
     public void CollapseAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = true }).ToList();
     public void ExpandAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = false }).ToList();
+    private DiffTimelineSnapshotBrowserState SnapshotBrowserStateForExport()
+    {
+        var selected = SnapshotBrowser.BuildCompareRequest();
+        var latest = SnapshotBrowser.LatestValidationState;
+        return new DiffTimelineSnapshotBrowserState(
+            Snapshots: SnapshotBrowser.SnapshotList.ToList(),
+            ComparisonCandidates: SnapshotBrowser.ComparisonCandidates.ToList(),
+            SelectedSnapshotDetail: null,
+            LatestValidationState: string.IsNullOrWhiteSpace(latest)
+                ? "unknown"
+                : $"{latest}|selected={(selected is null ? "none" : $"{selected.OldSnapshotHash}->{selected.NewSnapshotHash}")}");
+    }
 
     private void RefreshSnapshotBrowserState(string validationState)
     {

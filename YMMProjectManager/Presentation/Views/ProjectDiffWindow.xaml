@@ -27,22 +27,9 @@
                         <CheckBox Content="Changed only" IsChecked="{Binding ChangedOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
                         <CheckBox Content="Warning only" IsChecked="{Binding WarningOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
                         <TextBlock Text="ChangeType:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Width="120" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0">
-                            <ComboBoxItem Content="All" IsSelected="True"/>
-                            <ComboBoxItem Content="追加"/>
-                            <ComboBoxItem Content="削除"/>
-                            <ComboBoxItem Content="変更"/>
-                            <ComboBoxItem Content="移動"/>
-                        </ComboBox>
+                        <ComboBox Width="120" ItemsSource="{Binding ChangeTypeFilterOptions}" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
                         <TextBlock Text="Semantic:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Width="120" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0">
-                            <ComboBoxItem Content="All" IsSelected="True"/>
-                            <ComboBoxItem Content="Added"/>
-                            <ComboBoxItem Content="Removed"/>
-                            <ComboBoxItem Content="TimelinePosition"/>
-                            <ComboBoxItem Content="Property"/>
-                            <ComboBoxItem Content="Text"/>
-                        </ComboBox>
+                        <ComboBox Width="120" ItemsSource="{Binding SemanticFilterOptions}" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
                     </WrapPanel>
                     <WrapPanel Margin="0,6,0,0">
                         <TextBlock Text="Path:" VerticalAlignment="Center" Margin="0,0,4,0"/>
@@ -57,6 +44,7 @@
                     </WrapPanel>
                     <TextBlock Margin="0,6,0,0" Text="{Binding LastFilterDiagnostics}" FontSize="11" Opacity="0.85"/>
                     <TextBlock Margin="0,2,0,0" Text="{Binding ActiveFilterSummary}" FontSize="11" Opacity="0.85"/>
+                    <TextBlock Margin="0,2,0,0" Text="{Binding NoMatchStateText}" FontSize="11" Foreground="DarkOrange" TextWrapping="Wrap"/>
                     <Separator Margin="0,8,0,8"/>
                     <TextBlock Text="Snapshot Browser (Preview)" FontWeight="SemiBold"/>
                     <WrapPanel Margin="0,4,0,0">

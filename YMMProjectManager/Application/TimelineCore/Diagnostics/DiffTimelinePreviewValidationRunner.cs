@@ -18,7 +18,10 @@ public static class DiffTimelinePreviewValidationRunner
         string version = "v1-preview",
         string commitHash = "unknown",
         DiffTimelineStandaloneSelfCheckResult? selfCheckOverride = null,
-        bool evaluateReadinessAfterExport = true)
+        bool evaluateReadinessAfterExport = true,
+        DiffTimelineFilteredResult? filteredResult = null,
+        DiffTimelineSnapshotBrowserState? snapshotBrowserState = null,
+        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null)
     {
         var warnings = new List<string>();
         var selfCheck = selfCheckOverride ?? DiffTimelineStandalonePipelineSelfCheck.Run();
@@ -31,9 +34,9 @@ public static class DiffTimelinePreviewValidationRunner
             dashboard,
             config,
             initialReadiness,
-            filteredResult: null,
-            snapshotBrowserState: null,
-            comparisonHistory: null);
+            filteredResult: filteredResult,
+            snapshotBrowserState: snapshotBrowserState,
+            comparisonHistory: comparisonHistory);
 
         var diagnosticsPath = string.IsNullOrWhiteSpace(routeValidationReport.DiagnosticsPath)
             ? export.ManifestPath
