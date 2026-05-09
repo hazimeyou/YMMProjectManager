@@ -8,6 +8,7 @@ public sealed record DiffTimelinePreviewPackageManifest(
     bool FallbackPreserved,
     string ReadinessReportPath,
     string DiagnosticsExportPath,
+    string RcValidationSummaryPath,
     IReadOnlyList<string> KnownLimitations);
 
 public sealed record DiffTimelinePreviewValidationRunnerResult(

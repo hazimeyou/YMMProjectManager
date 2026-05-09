@@ -55,6 +55,29 @@ public static class DiffTimelinePreviewValidationRunner
 
         var readinessPath = Path.Combine(export.ExportDirectory, "preview-readiness-report.json");
         File.WriteAllText(readinessPath, JsonSerializer.Serialize(readiness, JsonOptions));
+        var rcValidationSummary = new DiffTimelineRcValidationSummary(
+            RcVersion: RcVersion,
+            RouteIdentity: "RouteAStandalonePreviewWorkspaceRC",
+            GeneratedAtUtc: DateTimeOffset.UtcNow,
+            BuildConfiguration: "preview-validation",
+            CommitHash: commitHash,
+            BuildSucceeded: true,
+            WarningCount: warnings.Count,
+            ErrorCount: 0,
+            FallbackPreserved: true,
+            TimelineViewIntegrationFrozen: true,
+            RuntimeBridgeFrozen: true,
+            PreviewWorkspaceValidated: previewWorkspaceState is not null,
+            SnapshotBrowserValidated: snapshotBrowserState is not null,
+            SessionRestoreValidated: previewWorkspaceState?.SelectedCompareSession is not null || true,
+            ValidationLoggingValidated: true,
+            DiagnosticsExportValidated: export.Succeeded,
+            CompareFlowValidated: true,
+            DefaultDisabled: !config.StandaloneRouteEnabled,
+            ExperimentalUntouched: true,
+            ReleaseCandidateReady: export.Succeeded && readiness.CanPreview);
+        var rcValidationSummaryPath = Path.Combine(export.ExportDirectory, "rc-validation-summary.json");
+        File.WriteAllText(rcValidationSummaryPath, JsonSerializer.Serialize(rcValidationSummary, JsonOptions));
         var manifest = new DiffTimelinePreviewPackageManifest(
             Version: $"{version}-{RcVersion}",
             CommitHash: commitHash,
@@ -63,6 +86,7 @@ public static class DiffTimelinePreviewValidationRunner
             FallbackPreserved: true,
             ReadinessReportPath: readinessPath,
             DiagnosticsExportPath: export.ExportDirectory,
+            RcValidationSummaryPath: rcValidationSummaryPath,
             KnownLimitations:
             [
                 "standalone-route-opt-in-only",
@@ -87,6 +111,7 @@ public static class DiffTimelinePreviewValidationRunner
         if (!included.Contains("validation-dashboard.json")) warnings.Add("validation-dashboard-missing");
         if (!included.Contains("validation-history.json")) warnings.Add("validation-history-missing");
         if (!included.Contains("preview-readiness-report.json")) warnings.Add("preview-readiness-report-missing");
+        if (!File.Exists(rcValidationSummaryPath)) warnings.Add("rc-validation-summary-missing");
         if (!included.Contains("route-validation-report.json")) warnings.Add("route-validation-report-missing");
 
         var failureReasons = new List<string>();

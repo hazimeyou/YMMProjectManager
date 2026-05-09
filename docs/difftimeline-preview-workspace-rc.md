@@ -27,6 +27,7 @@ RouteA Preview Workspace is an experimental-but-usable validation workspace.
 
 ## Required Export Files
 
+- `rc-validation-summary.json`
 - `preview-workspace-state.json`
 - `snapshot-browser-state.json`
 - `comparison-history.json`
@@ -38,6 +39,8 @@ RouteA Preview Workspace is an experimental-but-usable validation workspace.
 - `validation-dashboard.json`
 - `validation-history.json`
 - session metadata (`difftimeline-reusable-compare-sessions.json` source)
+
+`rc-validation-summary.json` is the single-file RC integrity snapshot for later comparison/audit.
 
 ## Unsupported / Frozen
 
