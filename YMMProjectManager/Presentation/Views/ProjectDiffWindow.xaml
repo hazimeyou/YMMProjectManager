@@ -81,7 +81,7 @@
                                 <Button Content="Swap" Width="80" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
                                 <Button Content="Clear" Width="80" Click="OnClearSnapshotSelectionClick"/>
                             </WrapPanel>
-                            <Button Margin="0,6,0,0" Width="220" Content="Compare Selected Snapshots" Click="OnRunSnapshotCompareClick"/>
+                            <Button Margin="0,6,0,0" Width="220" Content="Compare Selected Snapshots" Click="OnRunSnapshotCompareClick" IsEnabled="{Binding SnapshotBrowser.CanCompare}"/>
                             <TextBlock Margin="0,8,0,0" Text="{Binding SnapshotBrowser.CompareSummaryText}" TextWrapping="Wrap" FontSize="11"/>
                             <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.SnapshotBrowserMessage}" TextWrapping="Wrap" FontSize="11" Opacity="0.8"/>
                             <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotCompareSummaryText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkSlateGray"/>
@@ -89,6 +89,7 @@
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareResultSummary}" TextWrapping="Wrap" FontSize="11"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareErrorText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkOrange"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareDiagnosticsPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
+                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareTimestamp, StringFormat=Last Compare: {0:yyyy-MM-dd HH:mm:ss}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                         </StackPanel>
                     </Grid>
                 </StackPanel>

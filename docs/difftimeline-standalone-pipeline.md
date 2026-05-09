@@ -66,6 +66,7 @@
   - compare request summary and empty state message
   - manual `Compare Selected Snapshots` action (preview-only)
   - compare status/result/error/diagnostics path display
+  - compare button is disabled while compare cannot run (missing selection/same snapshot/running)
 
 Current limitation:
 - The panel is intentionally minimal and preview-focused.
@@ -94,6 +95,16 @@ Current limitation:
   - selected old/new snapshot hashes
   - compare summary text and compare availability context
   - latest compare execution status/error summary
+
+### Snapshot Compare Preview Notes
+
+- This compare flow is preview/manual only.
+- Default route remains disabled; legacy fallback remains primary.
+- Typical blocked/no-op conditions:
+  - old/new snapshots not selected
+  - same snapshot selected for old/new
+  - snapshot body missing in repository
+  - pipeline failure/fallback reason returned
 
 ## Snapshot/History Foundation
 

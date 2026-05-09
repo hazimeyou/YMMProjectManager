@@ -828,9 +828,16 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string SnapshotCompareSummaryText => SnapshotBrowser.CompareSummaryText;
     public void RunSelectedSnapshotCompare()
     {
+        if (SnapshotBrowser.IsCompareRunning)
+        {
+            SnapshotBrowser.LastCompareStatusText = "blocked";
+            SnapshotBrowser.LastCompareErrorText = "Compare is already running.";
+            return;
+        }
+
         SnapshotBrowser.IsCompareRunning = true;
         SnapshotBrowser.LastCompareErrorText = string.Empty;
-        SnapshotBrowser.LastCompareStatusText = "running";
+        SnapshotBrowser.LastCompareStatusText = "running (preview/manual)";
         SnapshotBrowser.LastCompareResultSummary = string.Empty;
         try
         {
@@ -838,7 +845,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             if (request is null)
             {
                 SnapshotBrowser.LastCompareStatusText = "blocked";
-                SnapshotBrowser.LastCompareErrorText = "Old/New snapshot selection is incomplete or invalid.";
+                SnapshotBrowser.LastCompareErrorText = "Select valid old/new snapshots before compare.";
                 return;
             }
 
@@ -847,7 +854,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 oldSnapshot is null || newSnapshot is null)
             {
                 SnapshotBrowser.LastCompareStatusText = "no-op";
-                SnapshotBrowser.LastCompareErrorText = "Snapshot body is not available in repository.";
+                SnapshotBrowser.LastCompareErrorText = "Snapshot body is missing in repository. Compare skipped.";
                 return;
             }
 
@@ -908,7 +915,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SnapshotBrowser.LastCompareResultSummary = $"added={d.AddedCount}, removed={d.RemovedCount}, changed={d.ChangedCount}, rows={d.RowCount}, groups={d.GroupCount}, cacheHit={envelope.CacheHit}";
             SnapshotBrowser.LastCompareDiagnosticsPath = Path.Combine(AppContext.BaseDirectory, "diagnostics");
             SnapshotBrowser.LastCompareTimestamp = DateTimeOffset.Now;
-            SnapshotBrowser.LastCompareStatusText = "success";
+            SnapshotBrowser.LastCompareStatusText = "success (preview/manual)";
         }
         catch (Exception ex)
         {

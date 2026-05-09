@@ -45,7 +45,13 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     public bool IsCompareRunning
     {
         get => isCompareRunning;
-        set => SetProperty(ref isCompareRunning, value);
+        set
+        {
+            if (SetProperty(ref isCompareRunning, value))
+            {
+                RefreshComputedState();
+            }
+        }
     }
 
     public string LastCompareStatusText
@@ -79,6 +85,7 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     }
 
     public bool CanCompare =>
+        !IsCompareRunning &&
         SelectedOldSnapshot is not null &&
         SelectedNewSnapshot is not null &&
         !string.Equals(SelectedOldSnapshot.SnapshotHash, SelectedNewSnapshot.SnapshotHash, StringComparison.Ordinal);
@@ -89,17 +96,19 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
         {
             if (SnapshotList.Count == 0)
             {
-                return "Snapshot がありません。";
+                return "No snapshots available.";
             }
 
             if (SelectedOldSnapshot is null || SelectedNewSnapshot is null)
             {
-                return "Old/New を選択してください。";
+                return "Select both old and new snapshots.";
             }
 
             if (!CanCompare)
             {
-                return "同一 Snapshot は比較できません。";
+                return IsCompareRunning
+                    ? "Compare is running..."
+                    : "Same snapshot cannot be compared.";
             }
 
             var oldHash = ToShortHash(SelectedOldSnapshot.SnapshotHash);
@@ -163,8 +172,8 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
 
         LatestValidationState = state.LatestValidationState;
         SnapshotBrowserMessage = SnapshotList.Count == 0
-            ? "Snapshot がありません。"
-            : "Snapshot を選択して Compare Request を生成できます。";
+            ? "Snapshot repository is empty."
+            : "Preview mode: select snapshots and run manual compare.";
         RefreshComputedState();
     }
 
