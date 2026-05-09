@@ -55,6 +55,37 @@
                         <TextBlock Text="Comparison Candidates:" Margin="0,0,4,0"/>
                         <TextBlock Text="{Binding SnapshotBrowser.ComparisonCandidates.Count}"/>
                     </WrapPanel>
+                    <Grid Margin="0,8,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="3*"/>
+                            <ColumnDefinition Width="2*"/>
+                        </Grid.ColumnDefinitions>
+                        <DataGrid Grid.Column="0"
+                                  Height="140"
+                                  ItemsSource="{Binding SnapshotBrowser.SnapshotList}"
+                                  SelectedItem="{Binding SelectedSnapshotListItem, Mode=TwoWay}"
+                                  AutoGenerateColumns="False"
+                                  IsReadOnly="True">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Name" Binding="{Binding SnapshotName}" Width="*"/>
+                                <DataGridTextColumn Header="Created" Binding="{Binding CreatedAt}" Width="150"/>
+                                <DataGridTextColumn Header="Source" Binding="{Binding SourceProject}" Width="130"/>
+                                <DataGridTextColumn Header="Hash" Binding="{Binding SnapshotHash}" Width="130"/>
+                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
+                            <WrapPanel>
+                                <Button Content="Set Old" Width="90" Margin="0,0,6,0" Click="OnSetOldSnapshotClick"/>
+                                <Button Content="Set New" Width="90" Margin="0,0,6,0" Click="OnSetNewSnapshotClick"/>
+                                <Button Content="Swap" Width="80" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
+                                <Button Content="Clear" Width="80" Click="OnClearSnapshotSelectionClick"/>
+                            </WrapPanel>
+                            <TextBlock Margin="0,8,0,0" Text="{Binding SnapshotBrowser.CompareSummaryText}" TextWrapping="Wrap" FontSize="11"/>
+                            <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.SnapshotBrowserMessage}" TextWrapping="Wrap" FontSize="11" Opacity="0.8"/>
+                            <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotCompareSummaryText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkSlateGray"/>
+                        </StackPanel>
+                    </Grid>
                 </StackPanel>
             </Border>
         </Expander>

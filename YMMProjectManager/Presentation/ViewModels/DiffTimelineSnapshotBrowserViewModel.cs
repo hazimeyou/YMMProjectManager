@@ -7,6 +7,7 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     private DiffTimelineSnapshotListItem? selectedOldSnapshot;
     private DiffTimelineSnapshotListItem? selectedNewSnapshot;
     private string latestValidationState = "unknown";
+    private string snapshotBrowserMessage = string.Empty;
 
     public ObservableCollection<DiffTimelineSnapshotListItem> SnapshotList { get; } = [];
     public ObservableCollection<DiffTimelineComparisonCandidate> ComparisonCandidates { get; } = [];
@@ -29,9 +30,70 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
         set => SetProperty(ref latestValidationState, value);
     }
 
+    public string SnapshotBrowserMessage
+    {
+        get => snapshotBrowserMessage;
+        private set => SetProperty(ref snapshotBrowserMessage, value);
+    }
+
+    public bool CanCompare =>
+        SelectedOldSnapshot is not null &&
+        SelectedNewSnapshot is not null &&
+        !string.Equals(SelectedOldSnapshot.SnapshotHash, SelectedNewSnapshot.SnapshotHash, StringComparison.Ordinal);
+
+    public string CompareSummaryText
+    {
+        get
+        {
+            if (SnapshotList.Count == 0)
+            {
+                return "Snapshot がありません。";
+            }
+
+            if (SelectedOldSnapshot is null || SelectedNewSnapshot is null)
+            {
+                return "Old/New を選択してください。";
+            }
+
+            if (!CanCompare)
+            {
+                return "同一 Snapshot は比較できません。";
+            }
+
+            var oldHash = ToShortHash(SelectedOldSnapshot.SnapshotHash);
+            var newHash = ToShortHash(SelectedNewSnapshot.SnapshotHash);
+            return $"Compare: {SelectedOldSnapshot.SnapshotName} ({oldHash}) -> {SelectedNewSnapshot.SnapshotName} ({newHash})";
+        }
+    }
+
+    public void SelectOldSnapshot(DiffTimelineSnapshotListItem? item)
+    {
+        SelectedOldSnapshot = item;
+        RefreshComputedState();
+    }
+
+    public void SelectNewSnapshot(DiffTimelineSnapshotListItem? item)
+    {
+        SelectedNewSnapshot = item;
+        RefreshComputedState();
+    }
+
+    public void SwapSelection()
+    {
+        (SelectedOldSnapshot, SelectedNewSnapshot) = (SelectedNewSnapshot, SelectedOldSnapshot);
+        RefreshComputedState();
+    }
+
+    public void ClearSelection()
+    {
+        SelectedOldSnapshot = null;
+        SelectedNewSnapshot = null;
+        RefreshComputedState();
+    }
+
     public DiffTimelineCompareRequest? BuildCompareRequest()
     {
-        if (SelectedOldSnapshot is null || SelectedNewSnapshot is null)
+        if (!CanCompare || SelectedOldSnapshot is null || SelectedNewSnapshot is null)
         {
             return null;
         }
@@ -58,5 +120,25 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
         }
 
         LatestValidationState = state.LatestValidationState;
+        SnapshotBrowserMessage = SnapshotList.Count == 0
+            ? "Snapshot がありません。"
+            : "Snapshot を選択して Compare Request を生成できます。";
+        RefreshComputedState();
+    }
+
+    private void RefreshComputedState()
+    {
+        OnPropertyChanged(nameof(CanCompare));
+        OnPropertyChanged(nameof(CompareSummaryText));
+    }
+
+    public static string ToShortHash(string hash)
+    {
+        if (string.IsNullOrWhiteSpace(hash))
+        {
+            return "(none)";
+        }
+
+        return hash.Length <= 8 ? hash : hash[..8];
     }
 }

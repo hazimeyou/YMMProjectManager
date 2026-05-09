@@ -42,9 +42,15 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly HashSet<string> selectedPathFilters = new(StringComparer.Ordinal);
     private readonly HashSet<string> selectedGroupFilters = new(StringComparer.Ordinal);
     private DiffTimelineCoreResult? latestCoreResult;
+    private DiffTimelineSnapshotListItem? selectedSnapshotListItem;
     private readonly DiffTimelineSnapshotRepository snapshotRepository;
     private readonly DiffTimelineComparisonHistoryStore comparisonHistoryStore;
     public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
+    public DiffTimelineSnapshotListItem? SelectedSnapshotListItem
+    {
+        get => selectedSnapshotListItem;
+        set => SetProperty(ref selectedSnapshotListItem, value);
+    }
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
@@ -795,14 +801,53 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
     public void CollapseAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = true }).ToList();
     public void ExpandAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = false }).ToList();
+    public void SelectSnapshotAsOld()
+    {
+        SnapshotBrowser.SelectOldSnapshot(SelectedSnapshotListItem);
+        OnPropertyChanged(nameof(SnapshotCompareSummaryText));
+    }
+
+    public void SelectSnapshotAsNew()
+    {
+        SnapshotBrowser.SelectNewSnapshot(SelectedSnapshotListItem);
+        OnPropertyChanged(nameof(SnapshotCompareSummaryText));
+    }
+
+    public void SwapSnapshotSelection()
+    {
+        SnapshotBrowser.SwapSelection();
+        OnPropertyChanged(nameof(SnapshotCompareSummaryText));
+    }
+
+    public void ClearSnapshotSelection()
+    {
+        SnapshotBrowser.ClearSelection();
+        OnPropertyChanged(nameof(SnapshotCompareSummaryText));
+    }
+
+    public string SnapshotCompareSummaryText => SnapshotBrowser.CompareSummaryText;
     private DiffTimelineSnapshotBrowserState SnapshotBrowserStateForExport()
     {
         var selected = SnapshotBrowser.BuildCompareRequest();
         var latest = SnapshotBrowser.LatestValidationState;
+        var selectedDetail = new DiffTimelineSnapshotDetailSummary(
+            SnapshotHash: selected?.NewSnapshotHash ?? "(none)",
+            TimelineCount: SnapshotBrowser.SnapshotList.Count,
+            LayerCount: SnapshotBrowser.ComparisonCandidates.Count,
+            ItemCount: selected is null ? 0 : 1,
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["selectedOldSnapshotHash"] = selected?.OldSnapshotHash ?? "(none)",
+                ["selectedNewSnapshotHash"] = selected?.NewSnapshotHash ?? "(none)",
+                ["canCompare"] = (selected is not null).ToString(),
+                ["compareSummary"] = SnapshotBrowser.CompareSummaryText,
+                ["snapshotCount"] = SnapshotBrowser.SnapshotList.Count.ToString(),
+                ["comparisonCandidateCount"] = SnapshotBrowser.ComparisonCandidates.Count.ToString(),
+            });
         return new DiffTimelineSnapshotBrowserState(
             Snapshots: SnapshotBrowser.SnapshotList.ToList(),
             ComparisonCandidates: SnapshotBrowser.ComparisonCandidates.ToList(),
-            SelectedSnapshotDetail: null,
+            SelectedSnapshotDetail: selectedDetail,
             LatestValidationState: string.IsNullOrWhiteSpace(latest)
                 ? "unknown"
                 : $"{latest}|selected={(selected is null ? "none" : $"{selected.OldSnapshotHash}->{selected.NewSnapshotHash}")}");

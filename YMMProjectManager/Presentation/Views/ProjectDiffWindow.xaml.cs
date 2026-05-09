@@ -25,6 +25,10 @@ public partial class ProjectDiffWindow : Window
     private void OnClearFiltersClick(object sender, RoutedEventArgs e) => Vm?.ClearStandaloneFilters();
     private void OnExpandAllGroupsClick(object sender, RoutedEventArgs e) => Vm?.ExpandAllGroups();
     private void OnCollapseAllGroupsClick(object sender, RoutedEventArgs e) => Vm?.CollapseAllGroups();
+    private void OnSetOldSnapshotClick(object sender, RoutedEventArgs e) => Vm?.SelectSnapshotAsOld();
+    private void OnSetNewSnapshotClick(object sender, RoutedEventArgs e) => Vm?.SelectSnapshotAsNew();
+    private void OnSwapSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.SwapSnapshotSelection();
+    private void OnClearSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.ClearSnapshotSelection();
 
     private void OnClosed(object? sender, EventArgs e)
     {

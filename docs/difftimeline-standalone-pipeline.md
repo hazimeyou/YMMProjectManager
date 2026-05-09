@@ -60,6 +60,10 @@
   - latest validation state
   - snapshot count
   - comparison candidate count
+  - snapshot list (name/created/source/hash/note)
+  - old/new snapshot selection
+  - swap/clear selection
+  - compare request summary and empty state message
 
 Current limitation:
 - The panel is intentionally minimal and preview-focused.
@@ -85,6 +89,8 @@ Current limitation:
   - filter/search state
   - snapshot browser state
   - comparison history
+  - selected old/new snapshot hashes
+  - compare summary text and compare availability context
 
 ## Snapshot/History Foundation
 
