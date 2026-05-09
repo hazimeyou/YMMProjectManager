@@ -1,4 +1,5 @@
-﻿using System.Windows;
+using System.Windows;
+using System.Windows.Controls;
 
 namespace YMMProjectManager.Presentation.Views;
 
@@ -32,6 +33,7 @@ public partial class ProjectDiffWindow : Window
     private void OnRunSnapshotCompareClick(object sender, RoutedEventArgs e) => Vm?.RunSelectedSnapshotCompare();
     private void OnSaveCompareSessionClick(object sender, RoutedEventArgs e) => Vm?.SaveCurrentCompareSession();
     private void OnRestoreCompareSessionClick(object sender, RoutedEventArgs e) => Vm?.RestoreSelectedCompareSession();
+    private void OnSessionSelectionChanged(object sender, SelectionChangedEventArgs e) => Vm?.OnSelectedCompareSessionChanged();
 
     private void OnClosed(object? sender, EventArgs e)
     {

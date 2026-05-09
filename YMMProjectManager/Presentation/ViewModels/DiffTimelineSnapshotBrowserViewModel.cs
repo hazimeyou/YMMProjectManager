@@ -21,6 +21,10 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     public ObservableCollection<DiffTimelinePersistedSnapshotEntry> PersistedSnapshots { get; } = [];
     public ObservableCollection<DiffTimelineReusableCompareSession> LatestCompareSessions { get; } = [];
     public DiffTimelineReusableCompareSession? SelectedSession { get; set; }
+    public string PersistedSnapshotSummary =>
+        PersistedSnapshots.Count == 0
+            ? "No persisted snapshots."
+            : $"Persisted snapshots: {PersistedSnapshots.Count}";
 
     public DiffTimelineSnapshotListItem? SelectedOldSnapshot
     {
@@ -198,6 +202,7 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
         SelectedSessionSummary = SelectedSession is null
             ? "No session selected."
             : $"Session {SelectedSession.SessionId}: {ToShortHash(SelectedSession.OldSnapshotHash)} -> {ToShortHash(SelectedSession.NewSnapshotHash)}";
+        OnPropertyChanged(nameof(PersistedSnapshotSummary));
     }
 
     private void RefreshComputedState()

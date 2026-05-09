@@ -101,7 +101,8 @@
                             </WrapPanel>
                             <TextBlock Margin="0,4,0,0" Text="{Binding LatestReusableSessionSummary}" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding LatestReusableSessionPath}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
-                            <ListBox Height="80" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" Margin="0,4,0,0">
+                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.PersistedSnapshotSummary}" FontSize="10" Opacity="0.8"/>
+                            <ListBox Height="80" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" Margin="0,4,0,0" SelectionChanged="OnSessionSelectionChanged">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding CompareSummary}" TextWrapping="Wrap"/>
