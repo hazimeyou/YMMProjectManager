@@ -217,9 +217,30 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string LastFilterDiagnostics => latestFilteredResult is null
         ? "filter: none"
         : $"matched={latestFilteredResult.MatchedRowCount}, filteredOut={latestFilteredResult.FilteredOutCount}, filterMs={lastFilterDuration.TotalMilliseconds:F1}, groupMs={lastGroupingDuration.TotalMilliseconds:F1}, applyMs={lastCompareApplyDuration.TotalMilliseconds:F1}";
+    public bool HasVirtualizationWarning => BuildHeavyProjectDiagnostics().HeavyProjectDetected || BuildHeavyProjectDiagnostics().VirtualizationRecommended;
     public string VirtualizationRecommendationText => BuildHeavyProjectDiagnostics().VirtualizationRecommended
-        ? "Large compare result detected. Virtualization recommended."
-        : "Virtualization recommendation: not required.";
+        ? "大きな比較結果です。表示が重くなる可能性があります。仮想化表示の利用を推奨します。"
+        : "仮想化表示の推奨は現在不要です。";
+    public string CompactRenderDiagnosticsText
+    {
+        get
+        {
+            var state = BuildVirtualizationState();
+            return $"行 {state.RowCount:N0} / グループ {state.GroupCount:N0} / 描画 {lastRenderDuration.TotalMilliseconds:F0}ms / フィルター {lastFilterDuration.TotalMilliseconds:F0}ms";
+        }
+    }
+    public string DiagnosticsDetailsText
+    {
+        get
+        {
+            var state = BuildVirtualizationState();
+            var heavy = BuildHeavyProjectDiagnostics();
+            var reasonText = heavy.Reasons.Count == 0 ? "(none)" : string.Join(", ", heavy.Reasons);
+            return $"Render={lastRenderDuration.TotalMilliseconds:F1}ms, Filter={lastFilterDuration.TotalMilliseconds:F1}ms, Grouping={lastGroupingDuration.TotalMilliseconds:F1}ms, CompareApply={lastCompareApplyDuration.TotalMilliseconds:F1}ms, UIUpdate={lastUiUpdateDuration.TotalMilliseconds:F1}ms\n" +
+                   $"VisibleRows~{state.VisibleRowEstimate:N0}, EstimatedVisuals~{state.EstimatedVisualCount:N0}, EstimatedMemory~{state.EstimatedMemoryUsageBytes / 1024.0 / 1024.0:F2}MB\n" +
+                   $"HeavyProjectDetected={heavy.HeavyProjectDetected}, VirtualizationRecommended={heavy.VirtualizationRecommended}, Reasons={reasonText}";
+        }
+    }
     public string ActiveFilterSummary => latestFilteredResult is null
         ? "active filters: none"
         : string.Join(" | ", latestFilteredResult.ActiveFilters.Where(x => !string.IsNullOrWhiteSpace(x.Value)).Select(x => $"{x.Key}={x.Value}"));
@@ -826,6 +847,9 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(ActiveFilterSummary));
         OnPropertyChanged(nameof(NoMatchStateText));
         OnPropertyChanged(nameof(VirtualizationRecommendationText));
+        OnPropertyChanged(nameof(HasVirtualizationWarning));
+        OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
+        OnPropertyChanged(nameof(DiagnosticsDetailsText));
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
@@ -1056,6 +1080,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             lastUiUpdateDuration = uiSw.Elapsed;
             compareSw.Stop();
             lastCompareApplyDuration = compareSw.Elapsed;
+            lastRenderDuration = lastFilterDuration + lastGroupingDuration + lastUiUpdateDuration;
 
             var d = envelope.Result.Diagnostics;
             SnapshotBrowser.LastCompareResultSummary = $"added={d.AddedCount}, removed={d.RemovedCount}, changed={d.ChangedCount}, rows={d.RowCount}, groups={d.GroupCount}, cacheHit={envelope.CacheHit}";
@@ -1065,6 +1090,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SaveCurrentCompareSession();
             TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
             PersistManualValidationLog();
+            OnPropertyChanged(nameof(HasVirtualizationWarning));
+            OnPropertyChanged(nameof(VirtualizationRecommendationText));
+            OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
+            OnPropertyChanged(nameof(DiagnosticsDetailsText));
         }
         catch (Exception ex)
         {

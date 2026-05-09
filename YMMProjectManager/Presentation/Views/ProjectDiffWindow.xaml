@@ -13,12 +13,34 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Margin="0,0,0,6" Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" />
         <TextBlock Grid.Row="1" Margin="0,0,0,8" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
-        <Expander Grid.Row="2" Header="Preview UX Controls" IsExpanded="False" Margin="0,0,0,8">
+        <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,6">
+            <StackPanel>
+                <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap"/>
+                <TextBlock Margin="0,4,0,0" Text="{Binding VirtualizationRecommendationText}" FontSize="11" Foreground="DarkGoldenrod" TextWrapping="Wrap">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasVirtualizationWarning}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Expander Header="詳細 (Diagnostics)" IsExpanded="False" Margin="0,4,0,0">
+                    <TextBlock Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
+                </Expander>
+            </StackPanel>
+        </Border>
+
+        <Expander Grid.Row="3" Header="Preview UX Controls" IsExpanded="False" Margin="0,0,0,8">
             <Border BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="8">
                 <StackPanel>
                     <WrapPanel>
@@ -116,7 +138,7 @@
             </Border>
         </Expander>
 
-        <TabControl Grid.Row="3">
+        <TabControl Grid.Row="4">
             <TabItem Header="一覧表示">
                 <Grid Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
