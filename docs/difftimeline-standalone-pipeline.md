@@ -64,6 +64,8 @@
   - old/new snapshot selection
   - swap/clear selection
   - compare request summary and empty state message
+  - manual `Compare Selected Snapshots` action (preview-only)
+  - compare status/result/error/diagnostics path display
 
 Current limitation:
 - The panel is intentionally minimal and preview-focused.
@@ -91,6 +93,7 @@ Current limitation:
   - comparison history
   - selected old/new snapshot hashes
   - compare summary text and compare availability context
+  - latest compare execution status/error summary
 
 ## Snapshot/History Foundation
 

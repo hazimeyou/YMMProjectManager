@@ -27,8 +27,27 @@ public sealed class DiffTimelineSnapshotRepository
     public void SaveSnapshot(DiffTimelineSnapshotRepositoryEntry entry)
     {
         var all = Load().ToList();
+        all.RemoveAll(x => string.Equals(x.Snapshot.Metadata.SnapshotHash, entry.Snapshot.Metadata.SnapshotHash, StringComparison.Ordinal));
         all.Add(entry);
         File.WriteAllText(storagePath, JsonSerializer.Serialize(all, JsonOptions));
+    }
+
+    public bool TryGetSnapshotByHash(string snapshotHash, out DiffTimelineProjectSnapshot? snapshot)
+    {
+        snapshot = null;
+        if (string.IsNullOrWhiteSpace(snapshotHash))
+        {
+            return false;
+        }
+
+        var entry = Load().FirstOrDefault(x => string.Equals(x.Snapshot.Metadata.SnapshotHash, snapshotHash, StringComparison.Ordinal));
+        if (entry is null)
+        {
+            return false;
+        }
+
+        snapshot = entry.Snapshot;
+        return true;
     }
 
     public DiffTimelineSnapshotRetentionPlan BuildRetentionPlan(int keepLatestCount)

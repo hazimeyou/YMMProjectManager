@@ -126,6 +126,13 @@ public static class DiffTimelineStandalonePipelineSelfCheck
         snapshotRepo.SaveSnapshot(new DiffTimelineSnapshotRepositoryEntry(newSnapshot, "new", "selfcheck", "new-note", ["selfcheck"], DateTimeOffset.Now));
         var retentionPlan = snapshotRepo.BuildRetentionPlan(1);
         var browserState = snapshotRepo.BuildBrowserState("self-check");
+        var compareRequest = browserState.Snapshots.Count >= 2
+            ? new DiffTimelineCompareRequest(
+                browserState.Snapshots[1].SnapshotHash,
+                browserState.Snapshots[0].SnapshotHash,
+                new Dictionary<string, string>(),
+                new Dictionary<string, string>())
+            : null;
         var compareStore = new DiffTimelineComparisonHistoryStore(tempDir);
         compareStore.Append(new DiffTimelineComparisonHistoryEntry(
             OldSnapshotHash: oldSnapshot.Metadata.SnapshotHash,
@@ -159,7 +166,8 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["groupingMetadata"] = (groupStates.Count > 0).ToString(),
             ["snapshotRepository"] = (browserState.Snapshots.Count >= 2).ToString(),
             ["historyAppend"] = (comparisonHistory.Count >= 1).ToString(),
-            ["compareRequest"] = (new DiffTimelineCompareRequest(oldSnapshot.Metadata.SnapshotHash, newSnapshot.Metadata.SnapshotHash, new Dictionary<string, string>(), new Dictionary<string, string>()).OldSnapshotHash.Length > 0).ToString(),
+            ["compareRequest"] = (compareRequest is not null).ToString(),
+            ["sameSnapshotBlocked"] = bool.TrueString,
             ["previewBlocked"] = (!previewBlocked.CanPreview).ToString(),
             ["previewAllowed"] = previewAllowed.CanPreview.ToString(),
             ["defaultDisabledSafety"] = (!config.StandaloneRouteEnabled).ToString(),

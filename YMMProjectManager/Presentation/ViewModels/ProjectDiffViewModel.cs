@@ -826,6 +826,101 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     }
 
     public string SnapshotCompareSummaryText => SnapshotBrowser.CompareSummaryText;
+    public void RunSelectedSnapshotCompare()
+    {
+        SnapshotBrowser.IsCompareRunning = true;
+        SnapshotBrowser.LastCompareErrorText = string.Empty;
+        SnapshotBrowser.LastCompareStatusText = "running";
+        SnapshotBrowser.LastCompareResultSummary = string.Empty;
+        try
+        {
+            var request = SnapshotBrowser.BuildCompareRequest();
+            if (request is null)
+            {
+                SnapshotBrowser.LastCompareStatusText = "blocked";
+                SnapshotBrowser.LastCompareErrorText = "Old/New snapshot selection is incomplete or invalid.";
+                return;
+            }
+
+            if (!snapshotRepository.TryGetSnapshotByHash(request.OldSnapshotHash, out var oldSnapshot) ||
+                !snapshotRepository.TryGetSnapshotByHash(request.NewSnapshotHash, out var newSnapshot) ||
+                oldSnapshot is null || newSnapshot is null)
+            {
+                SnapshotBrowser.LastCompareStatusText = "no-op";
+                SnapshotBrowser.LastCompareErrorText = "Snapshot body is not available in repository.";
+                return;
+            }
+
+            var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+                oldSnapshot,
+                newSnapshot,
+                new DiffTimelineStandalonePipelineOptions(
+                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["requestedRoute"] = "snapshot-browser-preview",
+                        ["compareMode"] = "manual-preview",
+                    },
+                    SnapshotCache: standalonePipelineCache));
+            if (!envelope.IsSuccess || envelope.Result is null)
+            {
+                SnapshotBrowser.LastCompareStatusText = "failed";
+                SnapshotBrowser.LastCompareErrorText = string.IsNullOrWhiteSpace(envelope.FallbackReason) ? "pipeline failed" : envelope.FallbackReason;
+                return;
+            }
+
+            latestCoreResult = envelope.Result.CoreResult;
+            comparisonHistoryStore.Append(new DiffTimelineComparisonHistoryEntry(
+                OldSnapshotHash: request.OldSnapshotHash,
+                NewSnapshotHash: request.NewSnapshotHash,
+                ComparedAt: DateTimeOffset.Now,
+                Summary: $"manual-preview: rows={envelope.Result.CoreResult.RowSet.Rows.Count}",
+                Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["cacheHit"] = envelope.CacheHit.ToString(),
+                    ["source"] = envelope.SnapshotSource,
+                    ["groupCount"] = envelope.Result.CoreResult.Groups.Count.ToString(),
+                }));
+
+            YmmDiffEntries.Clear();
+            foreach (var row in envelope.Result.CoreResult.RowSet.Rows)
+            {
+                YmmDiffEntries.Add(new DiffEntryViewModel
+                {
+                    Id = row.RowId,
+                    Kind = row.DiffKind,
+                    Scope = row.Path,
+                    Field = row.Field,
+                    Before = row.OldValue,
+                    After = row.NewValue,
+                    TimelineIndex = row.TimelineIndex,
+                    Layer = row.Layer,
+                    Frame = row.Frame,
+                    Length = row.Length,
+                });
+            }
+            DiffGroups.Clear();
+            BuildGroups(envelope.Result.CoreResult.Groups);
+            MatchStatisticsText = envelope.Result.CoreResult.Summary.SummaryText;
+            RefreshSnapshotBrowserState("snapshot-compare");
+            ApplyStandaloneFiltersAndGrouping();
+
+            var d = envelope.Result.Diagnostics;
+            SnapshotBrowser.LastCompareResultSummary = $"added={d.AddedCount}, removed={d.RemovedCount}, changed={d.ChangedCount}, rows={d.RowCount}, groups={d.GroupCount}, cacheHit={envelope.CacheHit}";
+            SnapshotBrowser.LastCompareDiagnosticsPath = Path.Combine(AppContext.BaseDirectory, "diagnostics");
+            SnapshotBrowser.LastCompareTimestamp = DateTimeOffset.Now;
+            SnapshotBrowser.LastCompareStatusText = "success";
+        }
+        catch (Exception ex)
+        {
+            SnapshotBrowser.LastCompareStatusText = "failed";
+            SnapshotBrowser.LastCompareErrorText = ex.Message;
+            logger.Error(ex, "RunSelectedSnapshotCompare failed");
+        }
+        finally
+        {
+            SnapshotBrowser.IsCompareRunning = false;
+        }
+    }
     private DiffTimelineSnapshotBrowserState SnapshotBrowserStateForExport()
     {
         var selected = SnapshotBrowser.BuildCompareRequest();

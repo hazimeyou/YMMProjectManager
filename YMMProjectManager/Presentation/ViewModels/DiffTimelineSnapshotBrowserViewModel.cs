@@ -8,6 +8,12 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     private DiffTimelineSnapshotListItem? selectedNewSnapshot;
     private string latestValidationState = "unknown";
     private string snapshotBrowserMessage = string.Empty;
+    private bool isCompareRunning;
+    private string lastCompareStatusText = "idle";
+    private string lastCompareErrorText = string.Empty;
+    private string lastCompareResultSummary = string.Empty;
+    private string lastCompareDiagnosticsPath = string.Empty;
+    private DateTimeOffset? lastCompareTimestamp;
 
     public ObservableCollection<DiffTimelineSnapshotListItem> SnapshotList { get; } = [];
     public ObservableCollection<DiffTimelineComparisonCandidate> ComparisonCandidates { get; } = [];
@@ -34,6 +40,42 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     {
         get => snapshotBrowserMessage;
         private set => SetProperty(ref snapshotBrowserMessage, value);
+    }
+
+    public bool IsCompareRunning
+    {
+        get => isCompareRunning;
+        set => SetProperty(ref isCompareRunning, value);
+    }
+
+    public string LastCompareStatusText
+    {
+        get => lastCompareStatusText;
+        set => SetProperty(ref lastCompareStatusText, value);
+    }
+
+    public string LastCompareErrorText
+    {
+        get => lastCompareErrorText;
+        set => SetProperty(ref lastCompareErrorText, value);
+    }
+
+    public string LastCompareResultSummary
+    {
+        get => lastCompareResultSummary;
+        set => SetProperty(ref lastCompareResultSummary, value);
+    }
+
+    public string LastCompareDiagnosticsPath
+    {
+        get => lastCompareDiagnosticsPath;
+        set => SetProperty(ref lastCompareDiagnosticsPath, value);
+    }
+
+    public DateTimeOffset? LastCompareTimestamp
+    {
+        get => lastCompareTimestamp;
+        set => SetProperty(ref lastCompareTimestamp, value);
     }
 
     public bool CanCompare =>

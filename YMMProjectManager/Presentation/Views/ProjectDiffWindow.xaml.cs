@@ -29,6 +29,7 @@ public partial class ProjectDiffWindow : Window
     private void OnSetNewSnapshotClick(object sender, RoutedEventArgs e) => Vm?.SelectSnapshotAsNew();
     private void OnSwapSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.SwapSnapshotSelection();
     private void OnClearSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.ClearSnapshotSelection();
+    private void OnRunSnapshotCompareClick(object sender, RoutedEventArgs e) => Vm?.RunSelectedSnapshotCompare();
 
     private void OnClosed(object? sender, EventArgs e)
     {
