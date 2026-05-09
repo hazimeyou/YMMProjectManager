@@ -41,6 +41,31 @@
   - `DiffTimelineSnapshotBrowserViewModel`
   - snapshot list, comparison candidates, selected old/new, compare request generation
 
+## ProjectDiffWindow Preview Controls
+
+- Added minimal preview controls (collapsed by default):
+  - search box
+  - changed-only / warning-only toggles
+  - change type / semantic filters
+  - path/group filter text inputs
+  - clear filters
+  - grouping mode selector
+  - expand/collapse all group actions
+- Added filter diagnostics display:
+  - matched count
+  - filtered-out count
+  - filter duration
+  - active filter summary
+- Added snapshot browser preview panel:
+  - latest validation state
+  - snapshot count
+  - comparison candidate count
+
+Current limitation:
+- The panel is intentionally minimal and preview-focused.
+- Standalone route default is still disabled.
+- Legacy fallback remains primary when gate/rollback guard is NG.
+
 ## Snapshot/History Foundation
 
 - Snapshot repository:

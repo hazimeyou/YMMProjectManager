@@ -28,6 +28,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private TimelineMode selectedTimelineMode = TimelineMode.Synced;
     private string filterSearchText = string.Empty;
     private string selectedGroupingMode = "None";
+    private string selectedChangeTypeFilter = "All";
+    private string selectedSemanticCategoryFilter = "All";
+    private string selectedPathFilter = string.Empty;
+    private string selectedGroupFilter = string.Empty;
     private bool changedOnlyFilter;
     private bool warningOnlyFilter;
     private DiffTimelineFilteredResult? latestFilteredResult;
@@ -168,9 +172,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public bool ChangedOnlyFilter { get => changedOnlyFilter; set { if (SetProperty(ref changedOnlyFilter, value)) ApplyStandaloneFiltersAndGrouping(); } }
     public bool WarningOnlyFilter { get => warningOnlyFilter; set { if (SetProperty(ref warningOnlyFilter, value)) ApplyStandaloneFiltersAndGrouping(); } }
     public string SelectedGroupingMode { get => selectedGroupingMode; set { if (SetProperty(ref selectedGroupingMode, value)) ApplyStandaloneFiltersAndGrouping(); } }
+    public string SelectedChangeTypeFilter { get => selectedChangeTypeFilter; set { if (SetProperty(ref selectedChangeTypeFilter, value)) { SetChangeTypeFilters(string.Equals(value, "All", StringComparison.Ordinal) ? [] : [value]); } } }
+    public string SelectedSemanticCategoryFilter { get => selectedSemanticCategoryFilter; set { if (SetProperty(ref selectedSemanticCategoryFilter, value)) { SetSemanticCategoryFilters(string.Equals(value, "All", StringComparison.Ordinal) ? [] : [value]); } } }
+    public string SelectedPathFilter { get => selectedPathFilter; set { if (SetProperty(ref selectedPathFilter, value)) { SetPathFilters(string.IsNullOrWhiteSpace(value) ? [] : [value]); } } }
+    public string SelectedGroupFilter { get => selectedGroupFilter; set { if (SetProperty(ref selectedGroupFilter, value)) { selectedGroupFilters.Clear(); if (!string.IsNullOrWhiteSpace(value)) selectedGroupFilters.Add(value); ApplyStandaloneFiltersAndGrouping(); } } }
     public string LastFilterDiagnostics => latestFilteredResult is null
         ? "filter: none"
         : $"matched={latestFilteredResult.MatchedRowCount}, filteredOut={latestFilteredResult.FilteredOutCount}, ms={lastFilterDuration.TotalMilliseconds:F1}";
+    public string ActiveFilterSummary => latestFilteredResult is null
+        ? "active filters: none"
+        : string.Join(" | ", latestFilteredResult.ActiveFilters.Where(x => !string.IsNullOrWhiteSpace(x.Value)).Select(x => $"{x.Key}={x.Value}"));
+    public IReadOnlyList<string> GroupingModeOptions { get; } = ["None", "Semantic", "Timeline", "Layer", "Field", "Path", "ChangeType"];
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -699,9 +711,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         selectedGroupFilters.Clear();
         changedOnlyFilter = false;
         warningOnlyFilter = false;
+        selectedChangeTypeFilter = "All";
+        selectedSemanticCategoryFilter = "All";
+        selectedPathFilter = string.Empty;
+        selectedGroupFilter = string.Empty;
         OnPropertyChanged(nameof(FilterSearchText));
         OnPropertyChanged(nameof(ChangedOnlyFilter));
         OnPropertyChanged(nameof(WarningOnlyFilter));
+        OnPropertyChanged(nameof(SelectedChangeTypeFilter));
+        OnPropertyChanged(nameof(SelectedSemanticCategoryFilter));
+        OnPropertyChanged(nameof(SelectedPathFilter));
+        OnPropertyChanged(nameof(SelectedGroupFilter));
         ApplyStandaloneFiltersAndGrouping();
     }
 
@@ -747,6 +767,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         sw.Stop();
         lastFilterDuration = sw.Elapsed;
         OnPropertyChanged(nameof(LastFilterDiagnostics));
+        OnPropertyChanged(nameof(ActiveFilterSummary));
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)

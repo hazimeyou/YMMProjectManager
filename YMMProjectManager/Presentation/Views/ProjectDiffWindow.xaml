@@ -12,13 +12,66 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Margin="0,0,0,6" Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" />
         <TextBlock Grid.Row="1" Margin="0,0,0,8" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
+        <Expander Grid.Row="2" Header="Preview UX Controls" IsExpanded="False" Margin="0,0,0,8">
+            <Border BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="8">
+                <StackPanel>
+                    <WrapPanel>
+                        <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="220" Text="{Binding FilterSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                        <CheckBox Content="Changed only" IsChecked="{Binding ChangedOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                        <CheckBox Content="Warning only" IsChecked="{Binding WarningOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                        <TextBlock Text="ChangeType:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox Width="120" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0">
+                            <ComboBoxItem Content="All" IsSelected="True"/>
+                            <ComboBoxItem Content="追加"/>
+                            <ComboBoxItem Content="削除"/>
+                            <ComboBoxItem Content="変更"/>
+                            <ComboBoxItem Content="移動"/>
+                        </ComboBox>
+                        <TextBlock Text="Semantic:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox Width="120" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0">
+                            <ComboBoxItem Content="All" IsSelected="True"/>
+                            <ComboBoxItem Content="Added"/>
+                            <ComboBoxItem Content="Removed"/>
+                            <ComboBoxItem Content="TimelinePosition"/>
+                            <ComboBoxItem Content="Property"/>
+                            <ComboBoxItem Content="Text"/>
+                        </ComboBox>
+                    </WrapPanel>
+                    <WrapPanel Margin="0,6,0,0">
+                        <TextBlock Text="Path:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="220" Text="{Binding SelectedPathFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                        <TextBlock Text="Group:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <TextBox Width="180" Text="{Binding SelectedGroupFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                        <Button Content="Clear Filters" Width="100" Click="OnClearFiltersClick" Margin="0,0,8,0"/>
+                        <TextBlock Text="Grouping:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                        <ComboBox Width="120" ItemsSource="{Binding GroupingModeOptions}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Margin="0,0,8,0"/>
+                        <Button Content="Expand All" Width="90" Click="OnExpandAllGroupsClick" Margin="0,0,6,0"/>
+                        <Button Content="Collapse All" Width="90" Click="OnCollapseAllGroupsClick"/>
+                    </WrapPanel>
+                    <TextBlock Margin="0,6,0,0" Text="{Binding LastFilterDiagnostics}" FontSize="11" Opacity="0.85"/>
+                    <TextBlock Margin="0,2,0,0" Text="{Binding ActiveFilterSummary}" FontSize="11" Opacity="0.85"/>
+                    <Separator Margin="0,8,0,8"/>
+                    <TextBlock Text="Snapshot Browser (Preview)" FontWeight="SemiBold"/>
+                    <WrapPanel Margin="0,4,0,0">
+                        <TextBlock Text="Latest Validation:" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding SnapshotBrowser.LatestValidationState}" Margin="0,0,12,0"/>
+                        <TextBlock Text="Snapshot Count:" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding SnapshotBrowser.SnapshotList.Count}" Margin="0,0,12,0"/>
+                        <TextBlock Text="Comparison Candidates:" Margin="0,0,4,0"/>
+                        <TextBlock Text="{Binding SnapshotBrowser.ComparisonCandidates.Count}"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+        </Expander>
 
-        <TabControl Grid.Row="2">
+        <TabControl Grid.Row="3">
             <TabItem Header="一覧表示">
                 <Grid Margin="0,8,0,0">
                     <Grid.ColumnDefinitions>
