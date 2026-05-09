@@ -30,7 +30,10 @@ public static class DiffTimelinePreviewValidationRunner
             history,
             dashboard,
             config,
-            initialReadiness);
+            initialReadiness,
+            filteredResult: null,
+            snapshotBrowserState: null,
+            comparisonHistory: null);
 
         var diagnosticsPath = string.IsNullOrWhiteSpace(routeValidationReport.DiagnosticsPath)
             ? export.ManifestPath

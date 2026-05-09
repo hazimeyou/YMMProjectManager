@@ -12,7 +12,10 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
         DiffTimelineValidationRunHistory history,
         DiffTimelineValidationDashboard dashboard,
         DiffTimelineStandaloneConfig config,
-        DiffTimelinePreviewReadiness? previewReadiness = null)
+        DiffTimelinePreviewReadiness? previewReadiness = null,
+        DiffTimelineFilteredResult? filteredResult = null,
+        DiffTimelineSnapshotBrowserState? snapshotBrowserState = null,
+        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null)
     {
         var warnings = new List<string>();
         var exported = new List<string>();
@@ -46,6 +49,24 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
                 var previewPath = Path.Combine(exportDir, "preview-readiness-report.json");
                 File.WriteAllText(previewPath, JsonSerializer.Serialize(previewReadiness, JsonOptions));
                 exported.Add(previewPath);
+            }
+            if (filteredResult is not null)
+            {
+                var filterPath = Path.Combine(exportDir, "filter-search-state.json");
+                File.WriteAllText(filterPath, JsonSerializer.Serialize(filteredResult, JsonOptions));
+                exported.Add(filterPath);
+            }
+            if (snapshotBrowserState is not null)
+            {
+                var browserPath = Path.Combine(exportDir, "snapshot-browser-state.json");
+                File.WriteAllText(browserPath, JsonSerializer.Serialize(snapshotBrowserState, JsonOptions));
+                exported.Add(browserPath);
+            }
+            if (comparisonHistory is not null)
+            {
+                var comparisonHistoryPath = Path.Combine(exportDir, "comparison-history.json");
+                File.WriteAllText(comparisonHistoryPath, JsonSerializer.Serialize(comparisonHistory, JsonOptions));
+                exported.Add(comparisonHistoryPath);
             }
 
             var manifest = new

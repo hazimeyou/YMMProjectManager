@@ -8,6 +8,53 @@
 - Default: disabled
 - Legacy fallback: always preserved
 - TimelineView integration: frozen
+- Preview UX/history foundation: in progress (filter/search/grouping + snapshot browser base)
+
+## Preview UX Direction (RouteA)
+
+- Filtering/search:
+  - path filter
+  - semantic category filter
+  - change type filter
+  - text search
+  - changed-only / warning-only
+  - group filter
+- Grouping UX:
+  - semantic / timeline / layer / field / path / change-type grouping
+  - group metadata (collapsed-ready, row count, semantic/severity summary)
+- Row UX metadata:
+  - compact-ready
+  - icon/highlight/navigation keys
+  - sticky-group-ready marker
+
+## Snapshot/History Foundation
+
+- Snapshot repository:
+  - named snapshot
+  - created timestamp
+  - source project
+  - note/tag
+  - hash index
+- Retention planning:
+  - keep-latest target
+  - cleanup candidate identification (diagnostics-only)
+- Comparison history:
+  - old/new snapshot hash
+  - compare timestamp
+  - summary and metadata
+- Snapshot browser foundation:
+  - list item model
+  - comparison candidate model
+  - snapshot detail summary
+  - latest validation state
+
+## RouteA Roadmap (Preview UX / History Expansion)
+
+1. Stabilize filter/search defaults on large row sets.
+2. Add persisted filter presets and compare-session recall.
+3. Connect snapshot browser foundation to isolated preview ViewModel.
+4. Expand diagnostics export for filter/search/history diff sessions.
+5. Keep standalone route default disabled until trend-based readiness is sustained.
 
 ## Environment Flags (Safe Defaults)
 

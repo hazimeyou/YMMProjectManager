@@ -38,6 +38,16 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             Keys: pipeline.CoreResult.RowSet.Rows.Select(x => $"{x.DiffKind}|{x.Path}|{x.Field}|{x.Frame}|{x.Layer}|{x.Length}").ToList());
 
         var comparer = DiffTimelineValidationComparer.Compare(existingSummary, pipeline);
+        var filterState = new DiffTimelineFilterState(
+            PathFilters: [],
+            SemanticCategoryFilters: [],
+            ChangeTypeFilters: [],
+            GroupFilters: [],
+            SearchQuery: new DiffTimelineSearchQuery("item", CaseSensitive: false, Regex: false),
+            ChangedOnly: false,
+            WarningOnly: false);
+        var filtered = DiffTimelineFilterSearchPipeline.Apply(pipeline.CoreResult, filterState);
+        var groupStates = DiffTimelineGroupingUxResolver.BuildGroupStates(pipeline.CoreResult, "semantic");
         var readiness = DiffTimelinePromotionReadinessEvaluator.Evaluate(comparer, envelopeMiss);
         var config = DiffTimelineStandaloneConfigResolver.ResolveFromEnvironment();
         var gate = DiffTimelineStandalonePromotionGate.Evaluate(readiness, DiffTimelineStandaloneConfigResolver.BuildPolicy(config));
@@ -111,6 +121,22 @@ public static class DiffTimelineStandalonePipelineSelfCheck
                 },
                 pipeline.Diagnostics,
                 "self-check-override"));
+        var snapshotRepo = new DiffTimelineSnapshotRepository(tempDir);
+        snapshotRepo.SaveSnapshot(new DiffTimelineSnapshotRepositoryEntry(oldSnapshot, "old", "selfcheck", "old-note", ["selfcheck"], DateTimeOffset.Now.AddMinutes(-1)));
+        snapshotRepo.SaveSnapshot(new DiffTimelineSnapshotRepositoryEntry(newSnapshot, "new", "selfcheck", "new-note", ["selfcheck"], DateTimeOffset.Now));
+        var retentionPlan = snapshotRepo.BuildRetentionPlan(1);
+        var browserState = snapshotRepo.BuildBrowserState("self-check");
+        var compareStore = new DiffTimelineComparisonHistoryStore(tempDir);
+        compareStore.Append(new DiffTimelineComparisonHistoryEntry(
+            OldSnapshotHash: oldSnapshot.Metadata.SnapshotHash,
+            NewSnapshotHash: newSnapshot.Metadata.SnapshotHash,
+            ComparedAt: DateTimeOffset.Now,
+            Summary: "self-check",
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["matchedRows"] = filtered.MatchedRowCount.ToString(),
+            }));
+        var comparisonHistory = compareStore.Load();
 
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
@@ -128,12 +154,19 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["configDefaultSafety"] = (!config.StandaloneRouteEnabled && !config.ShadowValidationEnabled).ToString(),
             ["rollbackGuard"] = rollback.Allowed.ToString(),
             ["dashboardModel"] = (!string.IsNullOrWhiteSpace(dashboard.Recommendation)).ToString(),
+            ["filterPipeline"] = (filtered.MatchedRowCount > 0).ToString(),
+            ["searchPipeline"] = (!string.IsNullOrWhiteSpace(filterState.SearchQuery?.Text)).ToString(),
+            ["groupingMetadata"] = (groupStates.Count > 0).ToString(),
+            ["snapshotRepository"] = (browserState.Snapshots.Count >= 2).ToString(),
+            ["historyAppend"] = (comparisonHistory.Count >= 1).ToString(),
+            ["compareRequest"] = (new DiffTimelineCompareRequest(oldSnapshot.Metadata.SnapshotHash, newSnapshot.Metadata.SnapshotHash, new Dictionary<string, string>(), new Dictionary<string, string>()).OldSnapshotHash.Length > 0).ToString(),
             ["previewBlocked"] = (!previewBlocked.CanPreview).ToString(),
             ["previewAllowed"] = previewAllowed.CanPreview.ToString(),
             ["defaultDisabledSafety"] = (!config.StandaloneRouteEnabled).ToString(),
             ["manifestGeneration"] = File.Exists(Path.Combine(previewRunner.ExportPackage.ExportDirectory, "preview-package-manifest.json")).ToString(),
             ["packageExport"] = previewRunner.ExportPackage.Succeeded.ToString(),
             ["packageContainsReport"] = previewRunner.ExportPackage.ExportedFiles.Any(x => string.Equals(Path.GetFileName(x), "preview-readiness-report.json", StringComparison.OrdinalIgnoreCase)).ToString(),
+            ["snapshotRetention"] = (retentionPlan.CleanupCandidateHashes.Count >= 1).ToString(),
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
         };
 
