@@ -56,6 +56,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly DiffTimelineSnapshotRepository snapshotRepository;
     private readonly DiffTimelineComparisonHistoryStore comparisonHistoryStore;
     private readonly DiffTimelineReusableCompareSessionStore reusableSessionStore;
+    private readonly DiffTimelineProjectionCache rowProjectionCache = new();
+    private DiffTimelineProjectionCacheStats? latestProjectionCacheStats;
     public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
     public DiffTimelineSnapshotListItem? SelectedSnapshotListItem
     {
@@ -238,7 +240,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             var reasonText = heavy.Reasons.Count == 0 ? "(none)" : string.Join(", ", heavy.Reasons);
             return $"Render={lastRenderDuration.TotalMilliseconds:F1}ms, Filter={lastFilterDuration.TotalMilliseconds:F1}ms, Grouping={lastGroupingDuration.TotalMilliseconds:F1}ms, CompareApply={lastCompareApplyDuration.TotalMilliseconds:F1}ms, UIUpdate={lastUiUpdateDuration.TotalMilliseconds:F1}ms\n" +
                    $"VisibleRows~{state.VisibleRowEstimate:N0}, EstimatedVisuals~{state.EstimatedVisualCount:N0}, EstimatedMemory~{state.EstimatedMemoryUsageBytes / 1024.0 / 1024.0:F2}MB\n" +
-                   $"HeavyProjectDetected={heavy.HeavyProjectDetected}, VirtualizationRecommended={heavy.VirtualizationRecommended}, Reasons={reasonText}";
+                   $"HeavyProjectDetected={heavy.HeavyProjectDetected}, VirtualizationRecommended={heavy.VirtualizationRecommended}, Reasons={reasonText}\n" +
+                   $"ProjectionCache={latestProjectionCacheStats?.CachedProjectionCount ?? 0}, Materialized={latestProjectionCacheStats?.MaterializedRowCount ?? 0}, Reuse={latestProjectionCacheStats?.ProjectionReuseCount ?? 0}, Deferred={latestProjectionCacheStats?.DeferredProjectionCount ?? 0}";
         }
     }
     public string ActiveFilterSummary => latestFilteredResult is null
@@ -1055,16 +1058,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
             YmmDiffEntries.Clear();
             var uiSw = System.Diagnostics.Stopwatch.StartNew();
-            foreach (var row in envelope.Result.CoreResult.RowSet.Rows)
+            var lightweightRows = GetLightweightProjections(envelope.Result.CoreResult);
+            foreach (var row in lightweightRows)
             {
                 YmmDiffEntries.Add(new DiffEntryViewModel
                 {
-                    Id = row.RowId,
-                    Kind = row.DiffKind,
-                    Scope = row.Path,
+                    Id = row.Id,
+                    Kind = row.Kind,
+                    Scope = row.Scope,
                     Field = row.Field,
-                    Before = row.OldValue,
-                    After = row.NewValue,
+                    Before = row.Before,
+                    After = row.After,
                     TimelineIndex = row.TimelineIndex,
                     Layer = row.Layer,
                     Frame = row.Frame,
@@ -1185,7 +1189,54 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             LatestErrors: string.IsNullOrWhiteSpace(SnapshotBrowser.LastCompareErrorText) ? [] : [SnapshotBrowser.LastCompareErrorText],
             RenderMetrics: renderMetrics,
             VirtualizationState: virtualizationState,
-            HeavyProjectDiagnostics: heavyDiagnostics);
+            HeavyProjectDiagnostics: heavyDiagnostics,
+            ProjectionCacheStats: latestProjectionCacheStats);
+    }
+
+    private IReadOnlyList<DiffTimelineLightweightRowProjection> GetLightweightProjections(DiffTimelineCoreResult coreResult)
+    {
+        var totalRows = coreResult.RowSet.Rows.Count;
+        var materializeLimit = totalRows > 2000 ? 1200 : totalRows;
+        var cacheKey = string.Join("|",
+            coreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("oldSnapshotHash") ?? "old",
+            coreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("newSnapshotHash") ?? "new",
+            totalRows.ToString(),
+            materializeLimit.ToString());
+
+        var list = rowProjectionCache.GetOrCreate(cacheKey, () =>
+        {
+            var rows = coreResult.RowSet.Rows;
+            var projected = new List<DiffTimelineLightweightRowProjection>(materializeLimit);
+            for (var i = 0; i < materializeLimit; i++)
+            {
+                var row = rows[i];
+                projected.Add(new DiffTimelineLightweightRowProjection(
+                    Id: row.RowId,
+                    Kind: row.DiffKind,
+                    Scope: row.Path,
+                    Field: row.Field,
+                    Before: row.OldValue,
+                    After: row.NewValue,
+                    TimelineIndex: row.TimelineIndex,
+                    Layer: row.Layer,
+                    Frame: row.Frame,
+                    Length: row.Length,
+                    DisplayText: $"{row.Path} {row.Field}",
+                    ShortDisplayText: row.DisplayLabel,
+                    GroupKey: row.GroupKey,
+                    CachedSearchText: $"{row.Title} {row.Subtitle} {row.Detail}",
+                    CachedFilterText: $"{row.DiffKind}|{row.SemanticCategory}|{row.FilterKey}",
+                    Flags: row.DiffKind));
+            }
+
+            return projected;
+        }, out _);
+
+        latestProjectionCacheStats = rowProjectionCache.BuildStats(
+            materializedRowCount: list.Count,
+            totalRowCount: totalRows,
+            deferredGroupCount: Math.Max(0, coreResult.Groups.Count - 100));
+        return list;
     }
 
     private DiffTimelineVirtualizationState BuildVirtualizationState()

@@ -13,4 +13,5 @@ public sealed record DiffTimelinePreviewWorkspaceState(
     IReadOnlyList<string> LatestErrors,
     DiffTimelineRenderMetrics? RenderMetrics,
     DiffTimelineVirtualizationState? VirtualizationState,
-    DiffTimelineHeavyProjectDiagnostics? HeavyProjectDiagnostics);
+    DiffTimelineHeavyProjectDiagnostics? HeavyProjectDiagnostics,
+    DiffTimelineProjectionCacheStats? ProjectionCacheStats);
