@@ -14,4 +14,13 @@ public sealed record DiffTimelinePreviewWorkspaceState(
     DiffTimelineRenderMetrics? RenderMetrics,
     DiffTimelineVirtualizationState? VirtualizationState,
     DiffTimelineHeavyProjectDiagnostics? HeavyProjectDiagnostics,
-    DiffTimelineProjectionCacheStats? ProjectionCacheStats);
+    DiffTimelineProjectionCacheStats? ProjectionCacheStats,
+    bool IsLargeResultMode,
+    string LargeResultModeReason,
+    int MaterializedRowLimit,
+    int TotalAvailableRowCount,
+    int DisplayedRowCount,
+    int DeferredRowCount,
+    int VisibleRowWindowStart,
+    int VisibleRowWindowSize,
+    bool CanLoadMoreRows);

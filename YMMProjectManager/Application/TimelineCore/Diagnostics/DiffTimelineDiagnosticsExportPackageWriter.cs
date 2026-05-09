@@ -114,6 +114,7 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
                     RenderMetrics = previewWorkspaceState?.RenderMetrics is not null,
                     HeavyProjectDiagnostics = previewWorkspaceState?.HeavyProjectDiagnostics is not null,
                     ProjectionCacheStats = previewWorkspaceState?.ProjectionCacheStats is not null,
+                    LargeResultMode = previewWorkspaceState?.IsLargeResultMode ?? false,
                 }
             };
             var manifestPath = Path.Combine(exportDir, "manifest.json");

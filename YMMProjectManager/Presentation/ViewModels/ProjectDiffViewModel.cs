@@ -58,6 +58,15 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly DiffTimelineReusableCompareSessionStore reusableSessionStore;
     private readonly DiffTimelineProjectionCache rowProjectionCache = new();
     private DiffTimelineProjectionCacheStats? latestProjectionCacheStats;
+    private IReadOnlyList<DiffTimelineLightweightRowProjection> latestLightweightRows = [];
+    private bool isLargeResultMode;
+    private string largeResultModeReason = string.Empty;
+    private int materializedRowLimit;
+    private int totalAvailableRowCount;
+    private int displayedRowCount;
+    private int deferredRowCount;
+    private int visibleRowWindowStart;
+    private int visibleRowWindowSize = 500;
     public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
     public DiffTimelineSnapshotListItem? SelectedSnapshotListItem
     {
@@ -241,9 +250,20 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             return $"Render={lastRenderDuration.TotalMilliseconds:F1}ms, Filter={lastFilterDuration.TotalMilliseconds:F1}ms, Grouping={lastGroupingDuration.TotalMilliseconds:F1}ms, CompareApply={lastCompareApplyDuration.TotalMilliseconds:F1}ms, UIUpdate={lastUiUpdateDuration.TotalMilliseconds:F1}ms\n" +
                    $"VisibleRows~{state.VisibleRowEstimate:N0}, EstimatedVisuals~{state.EstimatedVisualCount:N0}, EstimatedMemory~{state.EstimatedMemoryUsageBytes / 1024.0 / 1024.0:F2}MB\n" +
                    $"HeavyProjectDetected={heavy.HeavyProjectDetected}, VirtualizationRecommended={heavy.VirtualizationRecommended}, Reasons={reasonText}\n" +
-                   $"ProjectionCache={latestProjectionCacheStats?.CachedProjectionCount ?? 0}, Materialized={latestProjectionCacheStats?.MaterializedRowCount ?? 0}, Reuse={latestProjectionCacheStats?.ProjectionReuseCount ?? 0}, Deferred={latestProjectionCacheStats?.DeferredProjectionCount ?? 0}";
+                   $"ProjectionCache={latestProjectionCacheStats?.CachedProjectionCount ?? 0}, Materialized={latestProjectionCacheStats?.MaterializedRowCount ?? 0}, Reuse={latestProjectionCacheStats?.ProjectionReuseCount ?? 0}, Deferred={latestProjectionCacheStats?.DeferredProjectionCount ?? 0}\n" +
+                   $"LargeResultMode={IsLargeResultMode}, Reason={LargeResultModeReason}, Window={VisibleRowWindowStart}-{VisibleRowWindowStart + DisplayedRowCount}/{TotalAvailableRowCount}";
         }
     }
+    public bool IsLargeResultMode => isLargeResultMode;
+    public string LargeResultModeReason => largeResultModeReason;
+    public int MaterializedRowLimit => materializedRowLimit;
+    public int TotalAvailableRowCount => totalAvailableRowCount;
+    public int DisplayedRowCount => displayedRowCount;
+    public int DeferredRowCount => deferredRowCount;
+    public int VisibleRowWindowStart => visibleRowWindowStart;
+    public int VisibleRowWindowSize => visibleRowWindowSize;
+    public bool CanLoadMoreRows => DeferredRowCount > 0;
+    public string RowWindowSummaryText => $"表示中: {DisplayedRowCount:N0} / {TotalAvailableRowCount:N0} 行 (遅延: {DeferredRowCount:N0})";
     public string ActiveFilterSummary => latestFilteredResult is null
         ? "active filters: none"
         : string.Join(" | ", latestFilteredResult.ActiveFilters.Where(x => !string.IsNullOrWhiteSpace(x.Value)).Select(x => $"{x.Key}={x.Value}"));
@@ -821,6 +841,29 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         ApplyStandaloneFiltersAndGrouping();
     }
 
+    public void LoadMoreRows()
+    {
+        if (!CanLoadMoreRows || latestCoreResult is null)
+        {
+            return;
+        }
+
+        visibleRowWindowSize += Math.Max(250, materializedRowLimit / 2);
+        MaterializeRowsForCurrentWindow(latestCoreResult);
+        OnRowWindowStateChanged();
+    }
+
+    public void ResetRowWindow()
+    {
+        visibleRowWindowStart = 0;
+        visibleRowWindowSize = 500;
+        if (latestCoreResult is not null)
+        {
+            MaterializeRowsForCurrentWindow(latestCoreResult);
+        }
+        OnRowWindowStateChanged();
+    }
+
     private void ApplyStandaloneFiltersAndGrouping()
     {
         if (latestCoreResult is null)
@@ -846,6 +889,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         lastGroupingDuration = groupingSw.Elapsed;
         sw.Stop();
         lastRenderDuration = lastFilterDuration + lastGroupingDuration;
+        ResetRowWindow();
         OnPropertyChanged(nameof(LastFilterDiagnostics));
         OnPropertyChanged(nameof(ActiveFilterSummary));
         OnPropertyChanged(nameof(NoMatchStateText));
@@ -1056,25 +1100,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                     ["groupCount"] = envelope.Result.CoreResult.Groups.Count.ToString(),
                 }));
 
-            YmmDiffEntries.Clear();
             var uiSw = System.Diagnostics.Stopwatch.StartNew();
-            var lightweightRows = GetLightweightProjections(envelope.Result.CoreResult);
-            foreach (var row in lightweightRows)
-            {
-                YmmDiffEntries.Add(new DiffEntryViewModel
-                {
-                    Id = row.Id,
-                    Kind = row.Kind,
-                    Scope = row.Scope,
-                    Field = row.Field,
-                    Before = row.Before,
-                    After = row.After,
-                    TimelineIndex = row.TimelineIndex,
-                    Layer = row.Layer,
-                    Frame = row.Frame,
-                    Length = row.Length,
-                });
-            }
+            visibleRowWindowStart = 0;
+            visibleRowWindowSize = 500;
+            MaterializeRowsForCurrentWindow(envelope.Result.CoreResult);
             DiffGroups.Clear();
             BuildGroups(envelope.Result.CoreResult.Groups);
             MatchStatisticsText = envelope.Result.CoreResult.Summary.SummaryText;
@@ -1098,6 +1127,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(VirtualizationRecommendationText));
             OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
             OnPropertyChanged(nameof(DiagnosticsDetailsText));
+            OnRowWindowStateChanged();
         }
         catch (Exception ex)
         {
@@ -1190,13 +1220,22 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             RenderMetrics: renderMetrics,
             VirtualizationState: virtualizationState,
             HeavyProjectDiagnostics: heavyDiagnostics,
-            ProjectionCacheStats: latestProjectionCacheStats);
+            ProjectionCacheStats: latestProjectionCacheStats,
+            IsLargeResultMode: IsLargeResultMode,
+            LargeResultModeReason: LargeResultModeReason,
+            MaterializedRowLimit: MaterializedRowLimit,
+            TotalAvailableRowCount: TotalAvailableRowCount,
+            DisplayedRowCount: DisplayedRowCount,
+            DeferredRowCount: DeferredRowCount,
+            VisibleRowWindowStart: VisibleRowWindowStart,
+            VisibleRowWindowSize: VisibleRowWindowSize,
+            CanLoadMoreRows: CanLoadMoreRows);
     }
 
     private IReadOnlyList<DiffTimelineLightweightRowProjection> GetLightweightProjections(DiffTimelineCoreResult coreResult)
     {
         var totalRows = coreResult.RowSet.Rows.Count;
-        var materializeLimit = totalRows > 2000 ? 1200 : totalRows;
+        var materializeLimit = totalRows > 3000 ? 800 : totalRows > 1500 ? 1200 : totalRows;
         var cacheKey = string.Join("|",
             coreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("oldSnapshotHash") ?? "old",
             coreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("newSnapshotHash") ?? "new",
@@ -1236,7 +1275,54 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             materializedRowCount: list.Count,
             totalRowCount: totalRows,
             deferredGroupCount: Math.Max(0, coreResult.Groups.Count - 100));
+        totalAvailableRowCount = totalRows;
+        materializedRowLimit = materializeLimit;
+        isLargeResultMode = totalRows > materializeLimit;
+        largeResultModeReason = isLargeResultMode ? $"row-count-threshold ({totalRows:N0} > {materializeLimit:N0})" : "none";
         return list;
+    }
+
+    private void MaterializeRowsForCurrentWindow(DiffTimelineCoreResult coreResult)
+    {
+        latestLightweightRows = GetLightweightProjections(coreResult);
+        YmmDiffEntries.Clear();
+        var take = Math.Min(visibleRowWindowSize, latestLightweightRows.Count);
+        for (var i = visibleRowWindowStart; i < take; i++)
+        {
+            var row = latestLightweightRows[i];
+            YmmDiffEntries.Add(new DiffEntryViewModel
+            {
+                Id = row.Id,
+                Kind = row.Kind,
+                Scope = row.Scope,
+                Field = row.Field,
+                Before = row.Before,
+                After = row.After,
+                TimelineIndex = row.TimelineIndex,
+                Layer = row.Layer,
+                Frame = row.Frame,
+                Length = row.Length,
+            });
+        }
+
+        displayedRowCount = YmmDiffEntries.Count;
+        deferredRowCount = Math.Max(0, totalAvailableRowCount - displayedRowCount);
+    }
+
+    private void OnRowWindowStateChanged()
+    {
+        OnPropertyChanged(nameof(IsLargeResultMode));
+        OnPropertyChanged(nameof(LargeResultModeReason));
+        OnPropertyChanged(nameof(MaterializedRowLimit));
+        OnPropertyChanged(nameof(TotalAvailableRowCount));
+        OnPropertyChanged(nameof(DisplayedRowCount));
+        OnPropertyChanged(nameof(DeferredRowCount));
+        OnPropertyChanged(nameof(VisibleRowWindowStart));
+        OnPropertyChanged(nameof(VisibleRowWindowSize));
+        OnPropertyChanged(nameof(CanLoadMoreRows));
+        OnPropertyChanged(nameof(RowWindowSummaryText));
+        OnPropertyChanged(nameof(DiagnosticsDetailsText));
+        OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
     }
 
     private DiffTimelineVirtualizationState BuildVirtualizationState()

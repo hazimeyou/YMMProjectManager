@@ -31,6 +31,8 @@ public partial class ProjectDiffWindow : Window
     private void OnSwapSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.SwapSnapshotSelection();
     private void OnClearSnapshotSelectionClick(object sender, RoutedEventArgs e) => Vm?.ClearSnapshotSelection();
     private void OnRunSnapshotCompareClick(object sender, RoutedEventArgs e) => Vm?.RunSelectedSnapshotCompare();
+    private void OnLoadMoreRowsClick(object sender, RoutedEventArgs e) => Vm?.LoadMoreRows();
+    private void OnResetRowWindowClick(object sender, RoutedEventArgs e) => Vm?.ResetRowWindow();
     private void OnSaveCompareSessionClick(object sender, RoutedEventArgs e) => Vm?.SaveCurrentCompareSession();
     private void OnRestoreCompareSessionClick(object sender, RoutedEventArgs e) => Vm?.RestoreSelectedCompareSession();
     private void OnSessionSelectionChanged(object sender, SelectionChangedEventArgs e) => Vm?.OnSelectedCompareSessionChanged();

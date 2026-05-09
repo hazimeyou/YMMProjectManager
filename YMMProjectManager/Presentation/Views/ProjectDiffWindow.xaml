@@ -37,6 +37,11 @@
                 <Expander Header="詳細 (Diagnostics)" IsExpanded="False" Margin="0,4,0,0">
                     <TextBlock Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
                 </Expander>
+                <WrapPanel Margin="0,4,0,0">
+                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" />
+                    <Button Content="さらに表示" Width="90" Margin="8,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
+                    <Button Content="表示リセット" Width="90" Click="OnResetRowWindowClick" />
+                </WrapPanel>
             </StackPanel>
         </Border>
 
