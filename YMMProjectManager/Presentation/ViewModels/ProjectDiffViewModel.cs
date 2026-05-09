@@ -1105,6 +1105,29 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         DiffTimelineManualUiValidationLogWriter.WriteSummary(diagnosticsDir, summary);
         LatestManualValidationSummary = $"compare={summary.CompareCount}, blocked={summary.BlockedCount}, noop={summary.NoOpCount}, failed={summary.FailureCount}";
     }
+
+    private DiffTimelinePreviewWorkspaceState BuildPreviewWorkspaceState()
+    {
+        var filterState = new DiffTimelineFilterState(
+            PathFilters: selectedPathFilters.ToList(),
+            SemanticCategoryFilters: selectedSemanticCategories.ToList(),
+            ChangeTypeFilters: selectedChangeTypes.ToList(),
+            GroupFilters: selectedGroupFilters.ToList(),
+            SearchQuery: new DiffTimelineSearchQuery(FilterSearchText, false, false),
+            ChangedOnly: ChangedOnlyFilter,
+            WarningOnly: WarningOnlyFilter);
+        return new DiffTimelinePreviewWorkspaceState(
+            FilterState: filterState,
+            GroupingMode: SelectedGroupingMode,
+            SnapshotBrowserState: SnapshotBrowserStateForExport(),
+            SelectedCompareSession: SnapshotBrowser.SelectedSession,
+            LatestCompareResultSummary: SnapshotBrowser.LastCompareResultSummary,
+            LatestValidationLogPath: LatestManualValidationLogPath,
+            LatestDiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
+            LatestExportPath: string.Empty,
+            LatestWarnings: [],
+            LatestErrors: string.IsNullOrWhiteSpace(SnapshotBrowser.LastCompareErrorText) ? [] : [SnapshotBrowser.LastCompareErrorText]);
+    }
     private void RefreshReusableSessionState()
     {
         var sessions = reusableSessionStore.LatestSessions(20);

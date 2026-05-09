@@ -21,7 +21,8 @@ public static class DiffTimelinePreviewValidationRunner
         bool evaluateReadinessAfterExport = true,
         DiffTimelineFilteredResult? filteredResult = null,
         DiffTimelineSnapshotBrowserState? snapshotBrowserState = null,
-        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null)
+        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null,
+        DiffTimelinePreviewWorkspaceState? previewWorkspaceState = null)
     {
         var warnings = new List<string>();
         var selfCheck = selfCheckOverride ?? DiffTimelineStandalonePipelineSelfCheck.Run();
@@ -36,7 +37,8 @@ public static class DiffTimelinePreviewValidationRunner
             initialReadiness,
             filteredResult: filteredResult,
             snapshotBrowserState: snapshotBrowserState,
-            comparisonHistory: comparisonHistory);
+            comparisonHistory: comparisonHistory,
+            previewWorkspaceState: previewWorkspaceState);
 
         var diagnosticsPath = string.IsNullOrWhiteSpace(routeValidationReport.DiagnosticsPath)
             ? export.ManifestPath
