@@ -10,4 +10,7 @@ public sealed record DiffTimelinePreviewWorkspaceState(
     string LatestDiagnosticsPath,
     string LatestExportPath,
     IReadOnlyList<string> LatestWarnings,
-    IReadOnlyList<string> LatestErrors);
+    IReadOnlyList<string> LatestErrors,
+    DiffTimelineRenderMetrics? RenderMetrics,
+    DiffTimelineVirtualizationState? VirtualizationState,
+    DiffTimelineHeavyProjectDiagnostics? HeavyProjectDiagnostics);

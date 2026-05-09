@@ -37,6 +37,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private DiffTimelineFilteredResult? latestFilteredResult;
     private IReadOnlyList<DiffTimelineGroupState> latestGroupStates = [];
     private TimeSpan lastFilterDuration = TimeSpan.Zero;
+    private TimeSpan lastGroupingDuration = TimeSpan.Zero;
+    private TimeSpan lastCompareApplyDuration = TimeSpan.Zero;
+    private TimeSpan lastUiUpdateDuration = TimeSpan.Zero;
+    private TimeSpan lastRenderDuration = TimeSpan.Zero;
     private readonly HashSet<string> selectedChangeTypes = new(StringComparer.Ordinal);
     private readonly HashSet<string> selectedSemanticCategories = new(StringComparer.Ordinal);
     private readonly HashSet<string> selectedPathFilters = new(StringComparer.Ordinal);
@@ -212,7 +216,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string SelectedGroupFilter { get => selectedGroupFilter; set { if (SetProperty(ref selectedGroupFilter, value)) { selectedGroupFilters.Clear(); if (!string.IsNullOrWhiteSpace(value)) selectedGroupFilters.Add(value); ApplyStandaloneFiltersAndGrouping(); } } }
     public string LastFilterDiagnostics => latestFilteredResult is null
         ? "filter: none"
-        : $"matched={latestFilteredResult.MatchedRowCount}, filteredOut={latestFilteredResult.FilteredOutCount}, ms={lastFilterDuration.TotalMilliseconds:F1}";
+        : $"matched={latestFilteredResult.MatchedRowCount}, filteredOut={latestFilteredResult.FilteredOutCount}, filterMs={lastFilterDuration.TotalMilliseconds:F1}, groupMs={lastGroupingDuration.TotalMilliseconds:F1}, applyMs={lastCompareApplyDuration.TotalMilliseconds:F1}";
+    public string VirtualizationRecommendationText => BuildHeavyProjectDiagnostics().VirtualizationRecommended
+        ? "Large compare result detected. Virtualization recommended."
+        : "Virtualization recommendation: not required.";
     public string ActiveFilterSummary => latestFilteredResult is null
         ? "active filters: none"
         : string.Join(" | ", latestFilteredResult.ActiveFilters.Where(x => !string.IsNullOrWhiteSpace(x.Value)).Select(x => $"{x.Key}={x.Value}"));
@@ -807,12 +814,18 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             ChangedOnly: changedOnlyFilter,
             WarningOnly: warningOnlyFilter);
         latestFilteredResult = DiffTimelineFilterSearchPipeline.Apply(latestCoreResult, filterState);
-        latestGroupStates = ResolveGroupStates(latestCoreResult, selectedGroupingMode);
         sw.Stop();
         lastFilterDuration = sw.Elapsed;
+        var groupingSw = System.Diagnostics.Stopwatch.StartNew();
+        latestGroupStates = ResolveGroupStates(latestCoreResult, selectedGroupingMode);
+        groupingSw.Stop();
+        lastGroupingDuration = groupingSw.Elapsed;
+        sw.Stop();
+        lastRenderDuration = lastFilterDuration + lastGroupingDuration;
         OnPropertyChanged(nameof(LastFilterDiagnostics));
         OnPropertyChanged(nameof(ActiveFilterSummary));
         OnPropertyChanged(nameof(NoMatchStateText));
+        OnPropertyChanged(nameof(VirtualizationRecommendationText));
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
@@ -962,6 +975,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         TrackManualUiAction("CompareStarted", "started");
         try
         {
+            var compareSw = System.Diagnostics.Stopwatch.StartNew();
             var request = SnapshotBrowser.BuildCompareRequest();
             if (request is null)
             {
@@ -1016,6 +1030,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 }));
 
             YmmDiffEntries.Clear();
+            var uiSw = System.Diagnostics.Stopwatch.StartNew();
             foreach (var row in envelope.Result.CoreResult.RowSet.Rows)
             {
                 YmmDiffEntries.Add(new DiffEntryViewModel
@@ -1037,6 +1052,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             MatchStatisticsText = envelope.Result.CoreResult.Summary.SummaryText;
             RefreshSnapshotBrowserState("snapshot-compare");
             ApplyStandaloneFiltersAndGrouping();
+            uiSw.Stop();
+            lastUiUpdateDuration = uiSw.Elapsed;
+            compareSw.Stop();
+            lastCompareApplyDuration = compareSw.Elapsed;
 
             var d = envelope.Result.Diagnostics;
             SnapshotBrowser.LastCompareResultSummary = $"added={d.AddedCount}, removed={d.RemovedCount}, changed={d.ChangedCount}, rows={d.RowCount}, groups={d.GroupCount}, cacheHit={envelope.CacheHit}";
@@ -1116,6 +1135,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SearchQuery: new DiffTimelineSearchQuery(FilterSearchText, false, false),
             ChangedOnly: ChangedOnlyFilter,
             WarningOnly: WarningOnlyFilter);
+        var virtualizationState = BuildVirtualizationState();
+        var heavyDiagnostics = BuildHeavyProjectDiagnostics();
+        var renderMetrics = new DiffTimelineRenderMetrics(
+            LastRenderDuration: lastRenderDuration,
+            LastFilterDuration: lastFilterDuration,
+            LastGroupingDuration: lastGroupingDuration,
+            LastCompareApplyDuration: lastCompareApplyDuration,
+            LastUiUpdateDuration: lastUiUpdateDuration);
         return new DiffTimelinePreviewWorkspaceState(
             FilterState: filterState,
             GroupingMode: SelectedGroupingMode,
@@ -1126,7 +1153,42 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             LatestDiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
             LatestExportPath: string.Empty,
             LatestWarnings: [],
-            LatestErrors: string.IsNullOrWhiteSpace(SnapshotBrowser.LastCompareErrorText) ? [] : [SnapshotBrowser.LastCompareErrorText]);
+            LatestErrors: string.IsNullOrWhiteSpace(SnapshotBrowser.LastCompareErrorText) ? [] : [SnapshotBrowser.LastCompareErrorText],
+            RenderMetrics: renderMetrics,
+            VirtualizationState: virtualizationState,
+            HeavyProjectDiagnostics: heavyDiagnostics);
+    }
+
+    private DiffTimelineVirtualizationState BuildVirtualizationState()
+    {
+        var rowCount = latestCoreResult?.RowSet.Rows.Count ?? 0;
+        var groupCount = latestCoreResult?.Groups.Count ?? 0;
+        var expandedGroupCount = Math.Max(0, groupCount - latestGroupStates.Count(x => x.Collapsed));
+        var visibleRowEstimate = latestFilteredResult?.MatchedRowCount ?? rowCount;
+        var estimatedVisualCount = visibleRowEstimate + expandedGroupCount;
+        var estimatedMemoryUsage = (long)rowCount * 320L + (long)groupCount * 160L;
+        var recommend = rowCount > 1500 || groupCount > 120 || estimatedVisualCount > 1800;
+        return new DiffTimelineVirtualizationState(
+            RowCount: rowCount,
+            VisibleRowEstimate: visibleRowEstimate,
+            GroupCount: groupCount,
+            ExpandedGroupCount: expandedGroupCount,
+            EstimatedVisualCount: estimatedVisualCount,
+            EstimatedMemoryUsageBytes: estimatedMemoryUsage,
+            VirtualizationRecommended: recommend);
+    }
+
+    private DiffTimelineHeavyProjectDiagnostics BuildHeavyProjectDiagnostics()
+    {
+        var state = BuildVirtualizationState();
+        var reasons = new List<string>();
+        if (state.RowCount > 1500) reasons.Add("row-count-threshold");
+        if (state.GroupCount > 120) reasons.Add("group-count-threshold");
+        if (state.EstimatedVisualCount > 1800) reasons.Add("visual-count-threshold");
+        return new DiffTimelineHeavyProjectDiagnostics(
+            HeavyProjectDetected: reasons.Count > 0,
+            VirtualizationRecommended: state.VirtualizationRecommended,
+            Reasons: reasons);
     }
     private void RefreshReusableSessionState()
     {

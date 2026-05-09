@@ -110,6 +110,9 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
                     ValidationLog = manualUiValidationLog is not null,
                     CompareHistory = comparisonHistory is not null,
                     DiagnosticsSummary = true,
+                    VirtualizationState = previewWorkspaceState?.VirtualizationState is not null,
+                    RenderMetrics = previewWorkspaceState?.RenderMetrics is not null,
+                    HeavyProjectDiagnostics = previewWorkspaceState?.HeavyProjectDiagnostics is not null,
                 }
             };
             var manifestPath = Path.Combine(exportDir, "manifest.json");
