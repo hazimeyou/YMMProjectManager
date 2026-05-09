@@ -93,6 +93,22 @@
                             <TextBlock Margin="0,4,0,0" Text="{Binding ManualValidationSessionId, StringFormat=Validation Session: {0}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationLogPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationSummary}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
+                            <Separator Margin="0,6,0,6"/>
+                            <TextBlock Text="Reusable Compare Sessions" FontWeight="SemiBold" FontSize="11"/>
+                            <WrapPanel Margin="0,4,0,0">
+                                <Button Content="Save Current Session" Width="150" Margin="0,0,6,0" Click="OnSaveCompareSessionClick"/>
+                                <Button Content="Restore Selected Session" Width="160" Click="OnRestoreCompareSessionClick"/>
+                            </WrapPanel>
+                            <TextBlock Margin="0,4,0,0" Text="{Binding LatestReusableSessionSummary}" FontSize="10" Opacity="0.8"/>
+                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestReusableSessionPath}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
+                            <ListBox Height="80" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" Margin="0,4,0,0">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding CompareSummary}" TextWrapping="Wrap"/>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.SelectedSessionSummary}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Grid>
                 </StackPanel>

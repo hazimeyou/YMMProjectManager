@@ -14,9 +14,13 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     private string lastCompareResultSummary = string.Empty;
     private string lastCompareDiagnosticsPath = string.Empty;
     private DateTimeOffset? lastCompareTimestamp;
+    private string selectedSessionSummary = string.Empty;
 
     public ObservableCollection<DiffTimelineSnapshotListItem> SnapshotList { get; } = [];
     public ObservableCollection<DiffTimelineComparisonCandidate> ComparisonCandidates { get; } = [];
+    public ObservableCollection<DiffTimelinePersistedSnapshotEntry> PersistedSnapshots { get; } = [];
+    public ObservableCollection<DiffTimelineReusableCompareSession> LatestCompareSessions { get; } = [];
+    public DiffTimelineReusableCompareSession? SelectedSession { get; set; }
 
     public DiffTimelineSnapshotListItem? SelectedOldSnapshot
     {
@@ -82,6 +86,12 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
     {
         get => lastCompareTimestamp;
         set => SetProperty(ref lastCompareTimestamp, value);
+    }
+
+    public string SelectedSessionSummary
+    {
+        get => selectedSessionSummary;
+        set => SetProperty(ref selectedSessionSummary, value);
     }
 
     public bool CanCompare =>
@@ -175,6 +185,19 @@ public sealed class DiffTimelineSnapshotBrowserViewModel : ViewModelBase
             ? "Snapshot repository is empty."
             : "Preview mode: select snapshots and run manual compare.";
         RefreshComputedState();
+    }
+
+    public void ApplyPersistedState(
+        IReadOnlyList<DiffTimelinePersistedSnapshotEntry> persistedSnapshots,
+        IReadOnlyList<DiffTimelineReusableCompareSession> sessions)
+    {
+        PersistedSnapshots.Clear();
+        foreach (var item in persistedSnapshots) PersistedSnapshots.Add(item);
+        LatestCompareSessions.Clear();
+        foreach (var s in sessions) LatestCompareSessions.Add(s);
+        SelectedSessionSummary = SelectedSession is null
+            ? "No session selected."
+            : $"Session {SelectedSession.SessionId}: {ToShortHash(SelectedSession.OldSnapshotHash)} -> {ToShortHash(SelectedSession.NewSnapshotHash)}";
     }
 
     private void RefreshComputedState()

@@ -164,6 +164,22 @@ public static class DiffTimelineStandalonePipelineSelfCheck
         var manualSummary = new DiffTimelineManualUiValidationSessionSummary("selfcheck", DateTimeOffset.Now, 2, 0, 0, 0, tempDir, tempDir, "success");
         var manualLogPath = DiffTimelineManualUiValidationLogWriter.Write(tempDir, manualLog);
         var manualSummaryPath = DiffTimelineManualUiValidationLogWriter.WriteSummary(tempDir, manualSummary);
+        var sessionStore = new DiffTimelineReusableCompareSessionStore(tempDir);
+        var reusableSession = new DiffTimelineReusableCompareSession(
+            SessionId: "selfcheck-session",
+            OldSnapshotHash: oldSnapshot.Metadata.SnapshotHash,
+            NewSnapshotHash: newSnapshot.Metadata.SnapshotHash,
+            CompareOptions: new Dictionary<string, string>(),
+            FilterState: new Dictionary<string, string> { ["searchText"] = "item" },
+            GroupingMode: "Semantic",
+            CompareSummary: "selfcheck",
+            LatestDiagnosticsPath: tempDir,
+            LatestExportPath: tempDir,
+            LatestValidationLogPath: manualLogPath,
+            CreatedAt: DateTimeOffset.Now,
+            UpdatedAt: DateTimeOffset.Now);
+        sessionStore.SaveSession(reusableSession);
+        var loadedSessions = sessionStore.LoadSessions();
 
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
@@ -198,6 +214,7 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
             ["manualValidationLog"] = File.Exists(manualLogPath).ToString(),
             ["manualValidationSummary"] = File.Exists(manualSummaryPath).ToString(),
+            ["reusableSessionSaveLoad"] = (loadedSessions.Count >= 1).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

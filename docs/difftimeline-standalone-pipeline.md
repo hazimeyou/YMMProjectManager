@@ -116,6 +116,21 @@ Current limitation:
   - `CompareStarted`, `CompareSucceeded`, `CompareFailed`, `CompareBlocked`, `CompareNoOp`
 - Logs are preview/internal diagnostics for traceability and do not change default route behavior.
 
+## Snapshot Persistence / Reusable Compare Session (Preview)
+
+- Reusable compare sessions are stored in diagnostics:
+  - `difftimeline-reusable-compare-sessions.json`
+- Snapshot persistence metadata foundation:
+  - `difftimeline-persisted-snapshots.json`
+- Session stores:
+  - old/new snapshot hashes
+  - compare options
+  - filter/search/grouping state
+  - latest diagnostics/log paths
+- ProjectDiffWindow preview panel now supports:
+  - save current compare session
+  - restore selected compare session (restore-only)
+
 ## Snapshot/History Foundation
 
 - Snapshot repository:

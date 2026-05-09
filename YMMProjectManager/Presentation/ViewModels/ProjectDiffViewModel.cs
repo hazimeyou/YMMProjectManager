@@ -47,8 +47,11 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private string manualValidationSessionId = Guid.NewGuid().ToString("N");
     private string latestManualValidationLogPath = string.Empty;
     private string latestManualValidationSummary = string.Empty;
+    private string latestReusableSessionSummary = string.Empty;
+    private string latestReusableSessionPath = string.Empty;
     private readonly DiffTimelineSnapshotRepository snapshotRepository;
     private readonly DiffTimelineComparisonHistoryStore comparisonHistoryStore;
+    private readonly DiffTimelineReusableCompareSessionStore reusableSessionStore;
     public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
     public DiffTimelineSnapshotListItem? SelectedSnapshotListItem
     {
@@ -65,6 +68,16 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         get => latestManualValidationSummary;
         private set => SetProperty(ref latestManualValidationSummary, value);
+    }
+    public string LatestReusableSessionSummary
+    {
+        get => latestReusableSessionSummary;
+        private set => SetProperty(ref latestReusableSessionSummary, value);
+    }
+    public string LatestReusableSessionPath
+    {
+        get => latestReusableSessionPath;
+        private set => SetProperty(ref latestReusableSessionPath, value);
     }
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
@@ -254,12 +267,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         var diagnosticsRoot = Path.Combine(AppContext.BaseDirectory, "diagnostics");
         snapshotRepository = new DiffTimelineSnapshotRepository(diagnosticsRoot);
         comparisonHistoryStore = new DiffTimelineComparisonHistoryStore(diagnosticsRoot);
+        reusableSessionStore = new DiffTimelineReusableCompareSessionStore(diagnosticsRoot);
         PureTimelineHost = new PureTimelineHostViewModel(PureTimelineAdapterKind.Placeholder, pureTimelineExperimentalOptions);
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
         ApplySyncModeAndState();
         TryInitializeHost();
         TryValidateStandalonePipeline();
+        RefreshReusableSessionState();
     }
 
     public void SyncFrameFromPlaceholder()
@@ -844,6 +859,57 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(SnapshotCompareSummaryText));
     }
 
+    public void SaveCurrentCompareSession()
+    {
+        var request = SnapshotBrowser.BuildCompareRequest();
+        if (request is null)
+        {
+            return;
+        }
+
+        var session = new DiffTimelineReusableCompareSession(
+            SessionId: Guid.NewGuid().ToString("N"),
+            OldSnapshotHash: request.OldSnapshotHash,
+            NewSnapshotHash: request.NewSnapshotHash,
+            CompareOptions: request.CompareOptions,
+            FilterState: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["searchText"] = FilterSearchText ?? string.Empty,
+                ["changeType"] = SelectedChangeTypeFilter,
+                ["semantic"] = SelectedSemanticCategoryFilter,
+                ["path"] = SelectedPathFilter,
+                ["group"] = SelectedGroupFilter,
+            },
+            GroupingMode: SelectedGroupingMode,
+            CompareSummary: SnapshotBrowser.LastCompareResultSummary,
+            LatestDiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
+            LatestExportPath: string.Empty,
+            LatestValidationLogPath: LatestManualValidationLogPath,
+            CreatedAt: DateTimeOffset.Now,
+            UpdatedAt: DateTimeOffset.Now);
+        reusableSessionStore.SaveSession(session);
+        RefreshReusableSessionState();
+    }
+
+    public void RestoreSelectedCompareSession()
+    {
+        var session = SnapshotBrowser.SelectedSession;
+        if (session is null)
+        {
+            return;
+        }
+
+        SnapshotBrowser.SelectOldSnapshot(SnapshotBrowser.SnapshotList.FirstOrDefault(x => string.Equals(x.SnapshotHash, session.OldSnapshotHash, StringComparison.Ordinal)));
+        SnapshotBrowser.SelectNewSnapshot(SnapshotBrowser.SnapshotList.FirstOrDefault(x => string.Equals(x.SnapshotHash, session.NewSnapshotHash, StringComparison.Ordinal)));
+        FilterSearchText = session.FilterState.GetValueOrDefault("searchText") ?? string.Empty;
+        SelectedChangeTypeFilter = session.FilterState.GetValueOrDefault("changeType") ?? "All";
+        SelectedSemanticCategoryFilter = session.FilterState.GetValueOrDefault("semantic") ?? "All";
+        SelectedPathFilter = session.FilterState.GetValueOrDefault("path") ?? string.Empty;
+        SelectedGroupFilter = session.FilterState.GetValueOrDefault("group") ?? string.Empty;
+        SelectedGroupingMode = string.IsNullOrWhiteSpace(session.GroupingMode) ? "None" : session.GroupingMode;
+        SnapshotBrowser.SelectedSessionSummary = $"Restored {session.SessionId}";
+    }
+
     public string SnapshotCompareSummaryText => SnapshotBrowser.CompareSummaryText;
     public void RunSelectedSnapshotCompare()
     {
@@ -944,6 +1010,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SnapshotBrowser.LastCompareDiagnosticsPath = Path.Combine(AppContext.BaseDirectory, "diagnostics");
             SnapshotBrowser.LastCompareTimestamp = DateTimeOffset.Now;
             SnapshotBrowser.LastCompareStatusText = "success (preview/manual)";
+            SaveCurrentCompareSession();
             TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
             PersistManualValidationLog();
         }
@@ -1004,6 +1071,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             LatestResult: SnapshotBrowser.LastCompareStatusText);
         DiffTimelineManualUiValidationLogWriter.WriteSummary(diagnosticsDir, summary);
         LatestManualValidationSummary = $"compare={summary.CompareCount}, blocked={summary.BlockedCount}, noop={summary.NoOpCount}, failed={summary.FailureCount}";
+    }
+    private void RefreshReusableSessionState()
+    {
+        var sessions = reusableSessionStore.LatestSessions(20);
+        var persisted = reusableSessionStore.LoadPersistedSnapshots();
+        SnapshotBrowser.ApplyPersistedState(persisted, sessions);
+        LatestReusableSessionSummary = sessions.Count == 0 ? "no reusable sessions" : $"sessions={sessions.Count}";
+        LatestReusableSessionPath = Path.Combine(AppContext.BaseDirectory, "diagnostics", "difftimeline-reusable-compare-sessions.json");
     }
     private DiffTimelineSnapshotBrowserState SnapshotBrowserStateForExport()
     {
