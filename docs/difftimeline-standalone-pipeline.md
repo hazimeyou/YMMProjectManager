@@ -106,6 +106,16 @@ Current limitation:
   - snapshot body missing in repository
   - pipeline failure/fallback reason returned
 
+## Manual UI Validation Logging
+
+- Manual preview interactions now emit validation logs under `diagnostics/`:
+  - `manual-ui-validation-<sessionId>.json`
+  - `manual-ui-validation-summary-<sessionId>.json`
+- Action types include:
+  - `SnapshotSelected`, `SnapshotSwapped`, `SnapshotCleared`
+  - `CompareStarted`, `CompareSucceeded`, `CompareFailed`, `CompareBlocked`, `CompareNoOp`
+- Logs are preview/internal diagnostics for traceability and do not change default route behavior.
+
 ## Snapshot/History Foundation
 
 - Snapshot repository:

@@ -96,3 +96,34 @@ public sealed record DiffTimelineComparisonHistoryEntry(
     DateTimeOffset ComparedAt,
     string Summary,
     IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record DiffTimelineManualUiAction(
+    string ActionType,
+    DateTimeOffset Timestamp,
+    string StateSummary,
+    IReadOnlyDictionary<string, string> Metadata);
+
+public sealed record DiffTimelineManualUiValidationLog(
+    string SessionId,
+    DateTimeOffset CreatedAt,
+    IReadOnlyList<DiffTimelineManualUiAction> Actions,
+    string SelectedOldSnapshotHash,
+    string SelectedNewSnapshotHash,
+    string CompareRequestSummary,
+    bool CompareSucceeded,
+    string BlockedOrNoOpReason,
+    string DiagnosticsPath,
+    string ExportPackagePath,
+    string LatestStatusText,
+    string LatestErrorText);
+
+public sealed record DiffTimelineManualUiValidationSessionSummary(
+    string SessionId,
+    DateTimeOffset UpdatedAt,
+    int CompareCount,
+    int BlockedCount,
+    int NoOpCount,
+    int FailureCount,
+    string LatestDiagnosticsPath,
+    string LatestExportPath,
+    string LatestResult);

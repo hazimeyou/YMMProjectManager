@@ -15,7 +15,9 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
         DiffTimelinePreviewReadiness? previewReadiness = null,
         DiffTimelineFilteredResult? filteredResult = null,
         DiffTimelineSnapshotBrowserState? snapshotBrowserState = null,
-        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null)
+        IReadOnlyList<DiffTimelineComparisonHistoryEntry>? comparisonHistory = null,
+        DiffTimelineManualUiValidationLog? manualUiValidationLog = null,
+        DiffTimelineManualUiValidationSessionSummary? manualUiValidationSummary = null)
     {
         var warnings = new List<string>();
         var exported = new List<string>();
@@ -67,6 +69,18 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
                 var comparisonHistoryPath = Path.Combine(exportDir, "comparison-history.json");
                 File.WriteAllText(comparisonHistoryPath, JsonSerializer.Serialize(comparisonHistory, JsonOptions));
                 exported.Add(comparisonHistoryPath);
+            }
+            if (manualUiValidationLog is not null)
+            {
+                var validationLogPath = Path.Combine(exportDir, "manual-ui-validation-log.json");
+                File.WriteAllText(validationLogPath, JsonSerializer.Serialize(manualUiValidationLog, JsonOptions));
+                exported.Add(validationLogPath);
+            }
+            if (manualUiValidationSummary is not null)
+            {
+                var validationSummaryPath = Path.Combine(exportDir, "manual-ui-validation-summary.json");
+                File.WriteAllText(validationSummaryPath, JsonSerializer.Serialize(manualUiValidationSummary, JsonOptions));
+                exported.Add(validationSummaryPath);
             }
 
             var manifest = new

@@ -144,6 +144,26 @@ public static class DiffTimelineStandalonePipelineSelfCheck
                 ["matchedRows"] = filtered.MatchedRowCount.ToString(),
             }));
         var comparisonHistory = compareStore.Load();
+        var manualLog = new DiffTimelineManualUiValidationLog(
+            SessionId: "selfcheck",
+            CreatedAt: DateTimeOffset.Now,
+            Actions:
+            [
+                new DiffTimelineManualUiAction("CompareStarted", DateTimeOffset.Now, "selfcheck", new Dictionary<string, string>()),
+                new DiffTimelineManualUiAction("CompareSucceeded", DateTimeOffset.Now, "selfcheck", new Dictionary<string, string>())
+            ],
+            SelectedOldSnapshotHash: oldSnapshot.Metadata.SnapshotHash,
+            SelectedNewSnapshotHash: newSnapshot.Metadata.SnapshotHash,
+            CompareRequestSummary: "selfcheck compare",
+            CompareSucceeded: true,
+            BlockedOrNoOpReason: string.Empty,
+            DiagnosticsPath: tempDir,
+            ExportPackagePath: tempDir,
+            LatestStatusText: "success",
+            LatestErrorText: string.Empty);
+        var manualSummary = new DiffTimelineManualUiValidationSessionSummary("selfcheck", DateTimeOffset.Now, 2, 0, 0, 0, tempDir, tempDir, "success");
+        var manualLogPath = DiffTimelineManualUiValidationLogWriter.Write(tempDir, manualLog);
+        var manualSummaryPath = DiffTimelineManualUiValidationLogWriter.WriteSummary(tempDir, manualSummary);
 
         var historyPath = DiffTimelineValidationRunHistoryWriter.Append(tempDir, run1, keepLast: 10);
         var loaded = DiffTimelineValidationRunHistoryWriter.Load(historyPath);
@@ -176,6 +196,8 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["packageContainsReport"] = previewRunner.ExportPackage.ExportedFiles.Any(x => string.Equals(Path.GetFileName(x), "preview-readiness-report.json", StringComparison.OrdinalIgnoreCase)).ToString(),
             ["snapshotRetention"] = (retentionPlan.CleanupCandidateHashes.Count >= 1).ToString(),
             ["jsonRoundTrip"] = (string.Equals(oldSnapshot.ProjectId, oldRoundTrip.ProjectId, StringComparison.Ordinal)).ToString(),
+            ["manualValidationLog"] = File.Exists(manualLogPath).ToString(),
+            ["manualValidationSummary"] = File.Exists(manualSummaryPath).ToString(),
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)

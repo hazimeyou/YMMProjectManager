@@ -90,6 +90,9 @@
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareErrorText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkOrange"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareDiagnosticsPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareTimestamp, StringFormat=Last Compare: {0:yyyy-MM-dd HH:mm:ss}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
+                            <TextBlock Margin="0,4,0,0" Text="{Binding ManualValidationSessionId, StringFormat=Validation Session: {0}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
+                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationLogPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
+                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationSummary}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                         </StackPanel>
                     </Grid>
                 </StackPanel>

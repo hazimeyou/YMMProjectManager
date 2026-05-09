@@ -43,6 +43,10 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private readonly HashSet<string> selectedGroupFilters = new(StringComparer.Ordinal);
     private DiffTimelineCoreResult? latestCoreResult;
     private DiffTimelineSnapshotListItem? selectedSnapshotListItem;
+    private readonly List<DiffTimelineManualUiAction> manualUiActions = [];
+    private string manualValidationSessionId = Guid.NewGuid().ToString("N");
+    private string latestManualValidationLogPath = string.Empty;
+    private string latestManualValidationSummary = string.Empty;
     private readonly DiffTimelineSnapshotRepository snapshotRepository;
     private readonly DiffTimelineComparisonHistoryStore comparisonHistoryStore;
     public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
@@ -50,6 +54,17 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         get => selectedSnapshotListItem;
         set => SetProperty(ref selectedSnapshotListItem, value);
+    }
+    public string ManualValidationSessionId => manualValidationSessionId;
+    public string LatestManualValidationLogPath
+    {
+        get => latestManualValidationLogPath;
+        private set => SetProperty(ref latestManualValidationLogPath, value);
+    }
+    public string LatestManualValidationSummary
+    {
+        get => latestManualValidationSummary;
+        private set => SetProperty(ref latestManualValidationSummary, value);
     }
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
@@ -804,24 +819,28 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public void SelectSnapshotAsOld()
     {
         SnapshotBrowser.SelectOldSnapshot(SelectedSnapshotListItem);
+        TrackManualUiAction("SnapshotSelected", "set-old");
         OnPropertyChanged(nameof(SnapshotCompareSummaryText));
     }
 
     public void SelectSnapshotAsNew()
     {
         SnapshotBrowser.SelectNewSnapshot(SelectedSnapshotListItem);
+        TrackManualUiAction("SnapshotSelected", "set-new");
         OnPropertyChanged(nameof(SnapshotCompareSummaryText));
     }
 
     public void SwapSnapshotSelection()
     {
         SnapshotBrowser.SwapSelection();
+        TrackManualUiAction("SnapshotSwapped", "swap");
         OnPropertyChanged(nameof(SnapshotCompareSummaryText));
     }
 
     public void ClearSnapshotSelection()
     {
         SnapshotBrowser.ClearSelection();
+        TrackManualUiAction("SnapshotCleared", "clear");
         OnPropertyChanged(nameof(SnapshotCompareSummaryText));
     }
 
@@ -832,6 +851,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         {
             SnapshotBrowser.LastCompareStatusText = "blocked";
             SnapshotBrowser.LastCompareErrorText = "Compare is already running.";
+            TrackManualUiAction("CompareBlocked", "already-running");
+            PersistManualValidationLog();
             return;
         }
 
@@ -839,6 +860,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         SnapshotBrowser.LastCompareErrorText = string.Empty;
         SnapshotBrowser.LastCompareStatusText = "running (preview/manual)";
         SnapshotBrowser.LastCompareResultSummary = string.Empty;
+        TrackManualUiAction("CompareStarted", "started");
         try
         {
             var request = SnapshotBrowser.BuildCompareRequest();
@@ -846,6 +868,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             {
                 SnapshotBrowser.LastCompareStatusText = "blocked";
                 SnapshotBrowser.LastCompareErrorText = "Select valid old/new snapshots before compare.";
+                TrackManualUiAction("CompareBlocked", "invalid-selection");
+                PersistManualValidationLog();
                 return;
             }
 
@@ -855,6 +879,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             {
                 SnapshotBrowser.LastCompareStatusText = "no-op";
                 SnapshotBrowser.LastCompareErrorText = "Snapshot body is missing in repository. Compare skipped.";
+                TrackManualUiAction("CompareNoOp", "snapshot-body-missing");
+                PersistManualValidationLog();
                 return;
             }
 
@@ -872,6 +898,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             {
                 SnapshotBrowser.LastCompareStatusText = "failed";
                 SnapshotBrowser.LastCompareErrorText = string.IsNullOrWhiteSpace(envelope.FallbackReason) ? "pipeline failed" : envelope.FallbackReason;
+                TrackManualUiAction("CompareFailed", SnapshotBrowser.LastCompareErrorText);
+                PersistManualValidationLog();
                 return;
             }
 
@@ -916,17 +944,66 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SnapshotBrowser.LastCompareDiagnosticsPath = Path.Combine(AppContext.BaseDirectory, "diagnostics");
             SnapshotBrowser.LastCompareTimestamp = DateTimeOffset.Now;
             SnapshotBrowser.LastCompareStatusText = "success (preview/manual)";
+            TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
+            PersistManualValidationLog();
         }
         catch (Exception ex)
         {
             SnapshotBrowser.LastCompareStatusText = "failed";
             SnapshotBrowser.LastCompareErrorText = ex.Message;
+            TrackManualUiAction("CompareFailed", ex.Message);
+            PersistManualValidationLog();
             logger.Error(ex, "RunSelectedSnapshotCompare failed");
         }
         finally
         {
             SnapshotBrowser.IsCompareRunning = false;
         }
+    }
+    private void TrackManualUiAction(string actionType, string stateSummary)
+    {
+        manualUiActions.Add(new DiffTimelineManualUiAction(
+            actionType,
+            DateTimeOffset.Now,
+            stateSummary,
+            new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["searchText"] = FilterSearchText ?? string.Empty,
+                ["groupingMode"] = SelectedGroupingMode,
+                ["compareSummary"] = SnapshotBrowser.CompareSummaryText,
+            }));
+    }
+
+    private void PersistManualValidationLog()
+    {
+        var selected = SnapshotBrowser.BuildCompareRequest();
+        var diagnosticsDir = Path.Combine(AppContext.BaseDirectory, "diagnostics");
+        var log = new DiffTimelineManualUiValidationLog(
+            SessionId: manualValidationSessionId,
+            CreatedAt: DateTimeOffset.Now,
+            Actions: manualUiActions.ToList(),
+            SelectedOldSnapshotHash: selected?.OldSnapshotHash ?? "(none)",
+            SelectedNewSnapshotHash: selected?.NewSnapshotHash ?? "(none)",
+            CompareRequestSummary: SnapshotBrowser.CompareSummaryText,
+            CompareSucceeded: string.Equals(SnapshotBrowser.LastCompareStatusText, "success (preview/manual)", StringComparison.Ordinal),
+            BlockedOrNoOpReason: SnapshotBrowser.LastCompareStatusText is "blocked" or "no-op" ? SnapshotBrowser.LastCompareErrorText : string.Empty,
+            DiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
+            ExportPackagePath: string.Empty,
+            LatestStatusText: SnapshotBrowser.LastCompareStatusText,
+            LatestErrorText: SnapshotBrowser.LastCompareErrorText);
+        LatestManualValidationLogPath = DiffTimelineManualUiValidationLogWriter.Write(diagnosticsDir, log);
+        var summary = new DiffTimelineManualUiValidationSessionSummary(
+            SessionId: manualValidationSessionId,
+            UpdatedAt: DateTimeOffset.Now,
+            CompareCount: manualUiActions.Count(x => x.ActionType.StartsWith("Compare", StringComparison.Ordinal)),
+            BlockedCount: manualUiActions.Count(x => x.ActionType == "CompareBlocked"),
+            NoOpCount: manualUiActions.Count(x => x.ActionType == "CompareNoOp"),
+            FailureCount: manualUiActions.Count(x => x.ActionType == "CompareFailed"),
+            LatestDiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
+            LatestExportPath: string.Empty,
+            LatestResult: SnapshotBrowser.LastCompareStatusText);
+        DiffTimelineManualUiValidationLogWriter.WriteSummary(diagnosticsDir, summary);
+        LatestManualValidationSummary = $"compare={summary.CompareCount}, blocked={summary.BlockedCount}, noop={summary.NoOpCount}, failed={summary.FailureCount}";
     }
     private DiffTimelineSnapshotBrowserState SnapshotBrowserStateForExport()
     {
