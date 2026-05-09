@@ -130,6 +130,12 @@ Current limitation:
 - ProjectDiffWindow preview panel now supports:
   - save current compare session
   - restore selected compare session (restore-only)
+  - session selection trace in manual validation log
+
+## RC Notes
+
+- Preview Workspace RC checklist and required export files are documented in:
+  - `docs/difftimeline-preview-workspace-rc.md`
 
 ## Snapshot/History Foundation
 

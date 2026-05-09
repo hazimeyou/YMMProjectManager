@@ -95,6 +95,15 @@ public static class DiffTimelineDiagnosticsExportPackageWriter
                 createdAt = DateTimeOffset.Now,
                 exportedFiles = exported,
                 warnings,
+                sections = new
+                {
+                    PreviewWorkspace = previewWorkspaceState is not null,
+                    SnapshotBrowser = snapshotBrowserState is not null,
+                    ReusableSession = previewWorkspaceState?.SelectedCompareSession is not null,
+                    ValidationLog = manualUiValidationLog is not null,
+                    CompareHistory = comparisonHistory is not null,
+                    DiagnosticsSummary = true,
+                }
             };
             var manifestPath = Path.Combine(exportDir, "manifest.json");
             File.WriteAllText(manifestPath, JsonSerializer.Serialize(manifest, JsonOptions));

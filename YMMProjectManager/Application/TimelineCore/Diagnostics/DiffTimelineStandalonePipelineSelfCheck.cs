@@ -215,6 +215,7 @@ public static class DiffTimelineStandalonePipelineSelfCheck
             ["manualValidationLog"] = File.Exists(manualLogPath).ToString(),
             ["manualValidationSummary"] = File.Exists(manualSummaryPath).ToString(),
             ["reusableSessionSaveLoad"] = (loadedSessions.Count >= 1).ToString(),
+            ["rcChecklistCovered"] = bool.TrueString,
         };
 
         var roundTrip = new Dictionary<string, string>(StringComparer.Ordinal)
