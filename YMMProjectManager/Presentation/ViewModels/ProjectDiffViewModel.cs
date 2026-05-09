@@ -26,6 +26,21 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     private string pureTimelineActiveTimeline = "(プレースホルダー)";
     private TimelineSyncState selectedSyncState = TimelineSyncState.Detached;
     private TimelineMode selectedTimelineMode = TimelineMode.Synced;
+    private string filterSearchText = string.Empty;
+    private string selectedGroupingMode = "None";
+    private bool changedOnlyFilter;
+    private bool warningOnlyFilter;
+    private DiffTimelineFilteredResult? latestFilteredResult;
+    private IReadOnlyList<DiffTimelineGroupState> latestGroupStates = [];
+    private TimeSpan lastFilterDuration = TimeSpan.Zero;
+    private readonly HashSet<string> selectedChangeTypes = new(StringComparer.Ordinal);
+    private readonly HashSet<string> selectedSemanticCategories = new(StringComparer.Ordinal);
+    private readonly HashSet<string> selectedPathFilters = new(StringComparer.Ordinal);
+    private readonly HashSet<string> selectedGroupFilters = new(StringComparer.Ordinal);
+    private DiffTimelineCoreResult? latestCoreResult;
+    private readonly DiffTimelineSnapshotRepository snapshotRepository;
+    private readonly DiffTimelineComparisonHistoryStore comparisonHistoryStore;
+    public DiffTimelineSnapshotBrowserViewModel SnapshotBrowser { get; } = new();
 
     public ObservableCollection<DiffEntryViewModel> JsonDiffEntries { get; } = [];
     public ObservableCollection<DiffEntryViewModel> YmmDiffEntries { get; } = [];
@@ -149,6 +164,13 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
     public string PureTimelineSyncState => ToSyncStateLabel(TimelineViewModel.SyncState);
     public string PureTimelineMode => ToTimelineModeLabel(TimelineViewModel.Mode);
     public string RuntimeEnvironmentText => runtimeEnvironmentDetector.Detect().ToString();
+    public string FilterSearchText { get => filterSearchText; set { if (SetProperty(ref filterSearchText, value)) ApplyStandaloneFiltersAndGrouping(); } }
+    public bool ChangedOnlyFilter { get => changedOnlyFilter; set { if (SetProperty(ref changedOnlyFilter, value)) ApplyStandaloneFiltersAndGrouping(); } }
+    public bool WarningOnlyFilter { get => warningOnlyFilter; set { if (SetProperty(ref warningOnlyFilter, value)) ApplyStandaloneFiltersAndGrouping(); } }
+    public string SelectedGroupingMode { get => selectedGroupingMode; set { if (SetProperty(ref selectedGroupingMode, value)) ApplyStandaloneFiltersAndGrouping(); } }
+    public string LastFilterDiagnostics => latestFilteredResult is null
+        ? "filter: none"
+        : $"matched={latestFilteredResult.MatchedRowCount}, filteredOut={latestFilteredResult.FilteredOutCount}, ms={lastFilterDuration.TotalMilliseconds:F1}";
 
     public DiffEntryViewModel? SelectedYmmDiffEntry
     {
@@ -191,6 +213,9 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         this.normalizeService = normalizeService;
         this.jsonDiffService = jsonDiffService;
         this.ymmDiffService = ymmDiffService;
+        var diagnosticsRoot = Path.Combine(AppContext.BaseDirectory, "diagnostics");
+        snapshotRepository = new DiffTimelineSnapshotRepository(diagnosticsRoot);
+        comparisonHistoryStore = new DiffTimelineComparisonHistoryStore(diagnosticsRoot);
         PureTimelineHost = new PureTimelineHostViewModel(PureTimelineAdapterKind.Placeholder, pureTimelineExperimentalOptions);
 
         TimelineViewModel.SelectedDiffItemChanged += OnTimelineSelectedDiffItemChanged;
@@ -591,6 +616,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
 
             var ymmResult = ymmDiffService.DiffWithStatistics(before, after);
             var coreResult = BuildCoreResultFromCurrentRoute(ymmResult);
+            latestCoreResult = coreResult;
 
             var timelineItems = new List<DiffTimelineItemViewModel>(coreResult.RowSet.Rows.Count);
             for (var i = 0; i < coreResult.RowSet.Rows.Count; i++)
@@ -626,6 +652,8 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             BuildGroups(coreResult.Groups);
             MatchStatisticsText = FormatStatistics(ymmResult.Statistics, coreResult.Summary);
             TimelineViewModel.SetItems(timelineItems);
+            RefreshSnapshotBrowserState("diff-applied");
+            ApplyStandaloneFiltersAndGrouping();
             SelectedYmmDiffEntry = YmmDiffEntries.FirstOrDefault();
             SelectedSyncState = TimelineSyncState.Synced;
             TrySetHostFrame(PureTimelineCurrentFrame, "差分読み込み");
@@ -660,6 +688,115 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
                 Count = group.Count,
             });
         }
+    }
+
+    public void ClearStandaloneFilters()
+    {
+        filterSearchText = string.Empty;
+        selectedChangeTypes.Clear();
+        selectedSemanticCategories.Clear();
+        selectedPathFilters.Clear();
+        selectedGroupFilters.Clear();
+        changedOnlyFilter = false;
+        warningOnlyFilter = false;
+        OnPropertyChanged(nameof(FilterSearchText));
+        OnPropertyChanged(nameof(ChangedOnlyFilter));
+        OnPropertyChanged(nameof(WarningOnlyFilter));
+        ApplyStandaloneFiltersAndGrouping();
+    }
+
+    public void SetChangeTypeFilters(IEnumerable<string> values)
+    {
+        selectedChangeTypes.Clear();
+        foreach (var v in values) selectedChangeTypes.Add(v);
+        ApplyStandaloneFiltersAndGrouping();
+    }
+
+    public void SetSemanticCategoryFilters(IEnumerable<string> values)
+    {
+        selectedSemanticCategories.Clear();
+        foreach (var v in values) selectedSemanticCategories.Add(v);
+        ApplyStandaloneFiltersAndGrouping();
+    }
+
+    public void SetPathFilters(IEnumerable<string> values)
+    {
+        selectedPathFilters.Clear();
+        foreach (var v in values) selectedPathFilters.Add(v);
+        ApplyStandaloneFiltersAndGrouping();
+    }
+
+    private void ApplyStandaloneFiltersAndGrouping()
+    {
+        if (latestCoreResult is null)
+        {
+            return;
+        }
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var filterState = new DiffTimelineFilterState(
+            PathFilters: selectedPathFilters.ToList(),
+            SemanticCategoryFilters: selectedSemanticCategories.ToList(),
+            ChangeTypeFilters: selectedChangeTypes.ToList(),
+            GroupFilters: selectedGroupFilters.ToList(),
+            SearchQuery: new DiffTimelineSearchQuery(filterSearchText, CaseSensitive: false, Regex: false),
+            ChangedOnly: changedOnlyFilter,
+            WarningOnly: warningOnlyFilter);
+        latestFilteredResult = DiffTimelineFilterSearchPipeline.Apply(latestCoreResult, filterState);
+        latestGroupStates = ResolveGroupStates(latestCoreResult, selectedGroupingMode);
+        sw.Stop();
+        lastFilterDuration = sw.Elapsed;
+        OnPropertyChanged(nameof(LastFilterDiagnostics));
+    }
+
+    private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
+    {
+        return mode switch
+        {
+            "Semantic" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "semantic"),
+            "Timeline" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "timeline"),
+            "Layer" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "layer"),
+            "Field" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "field"),
+            "Path" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "path"),
+            "ChangeType" => DiffTimelineGroupingUxResolver.BuildGroupStates(coreResult, "changeType"),
+            _ => [],
+        };
+    }
+
+    public void CollapseAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = true }).ToList();
+    public void ExpandAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = false }).ToList();
+
+    private void RefreshSnapshotBrowserState(string validationState)
+    {
+        if (latestCoreResult is null)
+        {
+            return;
+        }
+
+        var oldHash = latestCoreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("oldSnapshotHash") ?? $"legacy-{DateTimeOffset.Now:yyyyMMddHHmmss}";
+        var newHash = latestCoreResult.Summary.BuildOptionsSnapshot.GetValueOrDefault("newSnapshotHash") ?? $"legacy-new-{DateTimeOffset.Now:yyyyMMddHHmmss}";
+        var oldSnapshot = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck().OldSnapshot with
+        {
+            Metadata = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck().OldSnapshot.Metadata with { SnapshotHash = oldHash }
+        };
+        var newSnapshot = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck().NewSnapshot with
+        {
+            Metadata = SampleDiffTimelineSnapshotFactory.CreateForSelfCheck().NewSnapshot.Metadata with { SnapshotHash = newHash }
+        };
+        snapshotRepository.SaveSnapshot(new DiffTimelineSnapshotRepositoryEntry(oldSnapshot, "project-old", "ProjectDiffViewModel", "auto-captured", ["preview"], DateTimeOffset.Now.AddSeconds(-1)));
+        snapshotRepository.SaveSnapshot(new DiffTimelineSnapshotRepositoryEntry(newSnapshot, "project-new", "ProjectDiffViewModel", "auto-captured", ["preview"], DateTimeOffset.Now));
+        comparisonHistoryStore.Append(new DiffTimelineComparisonHistoryEntry(
+            OldSnapshotHash: oldHash,
+            NewSnapshotHash: newHash,
+            ComparedAt: DateTimeOffset.Now,
+            Summary: validationState,
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["rowCount"] = latestCoreResult.RowSet.Rows.Count.ToString(),
+                ["groupCount"] = latestCoreResult.Groups.Count.ToString(),
+            }));
+        var browser = snapshotRepository.BuildBrowserState(validationState);
+        SnapshotBrowser.ApplyState(browser);
     }
 
     private DiffTimelineCoreResult BuildCoreResultFromCurrentRoute(YmmProjectDiffResult ymmResult)

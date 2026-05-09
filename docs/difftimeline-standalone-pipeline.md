@@ -27,6 +27,20 @@
   - icon/highlight/navigation keys
   - sticky-group-ready marker
 
+## ViewModel Wiring Status
+
+- `ProjectDiffViewModel` now keeps preview filter/search state:
+  - search text
+  - changed-only / warning-only
+  - change-type / semantic / path / group filters
+- Filtering uses Core pipeline (`DiffTimelineFilterSearchPipeline`) rather than ad-hoc UI logic.
+- Grouping mode state is wired:
+  - `None`, `Semantic`, `Timeline`, `Layer`, `Field`, `Path`, `ChangeType`
+- Group collapse/expand foundation is available via state mutation helpers.
+- Snapshot browser foundation ViewModel added:
+  - `DiffTimelineSnapshotBrowserViewModel`
+  - snapshot list, comparison candidates, selected old/new, compare request generation
+
 ## Snapshot/History Foundation
 
 - Snapshot repository:
