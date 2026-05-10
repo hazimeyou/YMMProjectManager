@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.Diff;
+﻿namespace YMMProjectManager.Infrastructure.Diff;
 
 public sealed class YmmProjectDiffService
 {

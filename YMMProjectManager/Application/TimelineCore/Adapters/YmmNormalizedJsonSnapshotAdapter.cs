@@ -1,8 +1,4 @@
-﻿using System.Security.Cryptography;
-using System.Text;
-using YMMProjectManager.Infrastructure.Ymm;
-
-namespace YMMProjectManager.Application.TimelineCore;
+﻿namespace YMMProjectManager.Application.TimelineCore;
 
 public sealed class YmmNormalizedJsonSnapshotAdapter
 {

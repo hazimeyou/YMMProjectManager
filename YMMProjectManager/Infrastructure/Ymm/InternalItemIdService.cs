@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.Ymm;
+﻿namespace YMMProjectManager.Infrastructure.Ymm;
 
 public sealed class InternalItemIdService
 {

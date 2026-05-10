@@ -1,6 +1,4 @@
 ﻿
-using YMMProjectManager.Application.TimelineCore;
-
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable

@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.Packaging;
+﻿namespace YMMProjectManager.Infrastructure.Packaging;
 
 public sealed class YmmpBundleService
 {

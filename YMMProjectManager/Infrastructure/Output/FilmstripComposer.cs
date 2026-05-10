@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.Output;
+﻿namespace YMMProjectManager.Infrastructure.Output;
 
 public sealed class FilmstripComposer
 {

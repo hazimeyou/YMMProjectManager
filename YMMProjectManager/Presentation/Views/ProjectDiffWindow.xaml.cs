@@ -1,6 +1,3 @@
-using System.Windows;
-using System.Windows.Controls;
-
 namespace YMMProjectManager.Presentation.Views;
 
 public partial class ProjectDiffWindow : Window

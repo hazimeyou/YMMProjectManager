@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure;
+﻿namespace YMMProjectManager.Infrastructure;
 
 public sealed class FileLogger
 {

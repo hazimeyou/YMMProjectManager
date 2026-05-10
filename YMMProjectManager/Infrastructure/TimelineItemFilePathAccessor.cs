@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure;
+﻿namespace YMMProjectManager.Infrastructure;
 
 internal static class TimelineItemFilePathAccessor
 {

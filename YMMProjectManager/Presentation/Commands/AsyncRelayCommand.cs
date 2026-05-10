@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Presentation.Commands;
+﻿namespace YMMProjectManager.Presentation.Commands;
 
 public sealed class AsyncRelayCommand : ICommand
 {

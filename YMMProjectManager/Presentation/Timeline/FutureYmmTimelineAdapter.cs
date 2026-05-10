@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Presentation.Timeline;
+﻿namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class FutureYmmTimelineAdapter : IPureTimelineAdapter
 {

@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Application;
+﻿namespace YMMProjectManager.Application;
 
 public interface IProjectRepository
 {

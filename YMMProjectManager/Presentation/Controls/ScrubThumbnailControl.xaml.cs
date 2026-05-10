@@ -1,6 +1,4 @@
-﻿using System.Windows;
-
-namespace YMMProjectManager.Presentation.Controls;
+﻿namespace YMMProjectManager.Presentation.Controls;
 
 public partial class ScrubThumbnailControl : UserControl
 {

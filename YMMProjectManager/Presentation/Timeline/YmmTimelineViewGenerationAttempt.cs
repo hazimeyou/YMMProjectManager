@@ -1,13 +1,3 @@
-using System.Windows;
-using System.Windows.Automation;
-using System.Windows.Automation.Peers;
-using System.Windows.Controls;
-using System.Windows.Controls.Primitives;
-using System.Windows.Data;
-using System.Windows.Input;
-using System.Windows.Media;
-using Panel = System.Windows.Controls.Panel;
-
 namespace YMMProjectManager.Presentation.Timeline;
 
 public sealed class YmmTimelineViewGenerationAttempt

@@ -1,6 +1,4 @@
-﻿using System.Windows;
-
-namespace YMMProjectManager.Presentation.Relink;
+﻿namespace YMMProjectManager.Presentation.Relink;
 
 public partial class RelinkMainWindow : Window
 {

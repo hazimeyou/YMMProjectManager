@@ -1,6 +1,4 @@
-﻿using YMMProjectManager.Infrastructure.Diff;
-
-namespace YMMProjectManager.Application.TimelineCore;
+﻿namespace YMMProjectManager.Application.TimelineCore;
 
 public static class DiffTimelineSnapshotDiffBuilder
 {

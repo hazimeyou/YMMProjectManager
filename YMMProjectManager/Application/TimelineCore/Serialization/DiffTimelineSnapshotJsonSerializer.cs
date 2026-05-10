@@ -1,6 +1,4 @@
-﻿using System.Text.Json;
-
-namespace YMMProjectManager.Application.TimelineCore;
+﻿namespace YMMProjectManager.Application.TimelineCore;
 
 public sealed class DiffTimelineSnapshotJsonSerializer : IDiffTimelineSnapshotSerializer
 {

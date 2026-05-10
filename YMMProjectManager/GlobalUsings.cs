@@ -30,7 +30,7 @@ global using System.Windows.Media;
 global using System.Windows.Media.Imaging;
 global using System.Windows.Navigation;
 global using System.Windows.Threading;
-
+global using System.Windows;
 global using YMMProjectManager.Application;
 global using YMMProjectManager.Domain;
 global using YMMProjectManager.Infrastructure;
@@ -47,10 +47,12 @@ global using YMMProjectManager.Presentation.Timeline;
 global using YMMProjectManager.Presentation.ViewModels;
 global using YMMProjectManager.Presentation.Views;
 global using YMMProjectManager.Settings;
-
+global using YMMProjectManager.Application.TimelineCore;
 global using YukkuriMovieMaker.Commons;
 global using YukkuriMovieMaker.Player.Video;
 global using YukkuriMovieMaker.Plugin;
 global using YukkuriMovieMaker.Project;
 global using YukkuriMovieMaker.Project.Items;
-
+global using System.Windows.Automation.Peers;
+global using System.Windows.Controls.Primitives;
+global using Panel = System.Windows.Controls.Panel;

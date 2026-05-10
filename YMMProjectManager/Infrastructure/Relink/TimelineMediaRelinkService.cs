@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.Relink;
+﻿namespace YMMProjectManager.Infrastructure.Relink;
 
 public sealed class TimelineRelinkTarget
 {

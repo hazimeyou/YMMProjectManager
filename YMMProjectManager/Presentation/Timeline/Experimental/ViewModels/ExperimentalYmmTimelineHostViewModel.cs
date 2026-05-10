@@ -1,6 +1,4 @@
-﻿using System.Windows;
-
-namespace YMMProjectManager.Presentation.ViewModels;
+﻿namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class ExperimentalYmmTimelineHostViewModel : ViewModelBase, IDisposable
 {

@@ -1,6 +1,4 @@
-﻿using System.Windows;
-
-namespace YMMProjectManager.Presentation.Views;
+﻿namespace YMMProjectManager.Presentation.Views;
 
 public partial class ExperimentalYmmTimelineHostWindow : Window
 {

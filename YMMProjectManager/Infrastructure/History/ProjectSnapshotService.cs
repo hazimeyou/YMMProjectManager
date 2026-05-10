@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Infrastructure.History;
+﻿namespace YMMProjectManager.Infrastructure.History;
 
 public sealed class ProjectSnapshotService
 {

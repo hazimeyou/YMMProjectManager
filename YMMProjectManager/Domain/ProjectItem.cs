@@ -1,5 +1,4 @@
-﻿
-namespace YMMProjectManager.Domain;
+﻿namespace YMMProjectManager.Domain;
 
 public sealed class ProjectEntry : INotifyPropertyChanged
 {

@@ -1,6 +1,4 @@
-﻿using System.Windows;
-
-namespace YMMProjectManager.Plugin;
+﻿namespace YMMProjectManager.Plugin;
 
 public sealed class ToolPluginEntry : IToolPlugin
 {
