@@ -21,8 +21,11 @@
         <TextBlock Grid.Row="1" Margin="0,0,0,8" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
         <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,6">
             <StackPanel>
-                <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap"/>
-                <TextBlock Margin="0,4,0,0" Text="{Binding VirtualizationRecommendationText}" FontSize="11" Foreground="DarkGoldenrod" TextWrapping="Wrap">
+                <WrapPanel>
+                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center"/>
+                </WrapPanel>
+                <TextBlock Margin="0,2,0,0" Text="{Binding VirtualizationRecommendationText}" FontSize="11" Foreground="DarkGoldenrod" TextWrapping="Wrap">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
                             <Setter Property="Visibility" Value="Collapsed"/>
@@ -34,20 +37,31 @@
                         </Style>
                     </TextBlock.Style>
                 </TextBlock>
-                <Expander Header="詳細 (Diagnostics)" IsExpanded="False" Margin="0,4,0,0">
-                    <TextBlock Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
-                </Expander>
                 <WrapPanel Margin="0,4,0,0">
-                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" />
-                    <Button Content="さらに表示" Width="90" Margin="8,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
-                    <Button Content="表示リセット" Width="90" Click="OnResetRowWindowClick" />
+                    <Button Content="さらに表示" Width="86" Margin="0,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
+                    <Button Content="表示リセット" Width="86" Click="OnResetRowWindowClick" />
                 </WrapPanel>
             </StackPanel>
         </Border>
 
-        <Expander Grid.Row="3" Header="Preview UX Controls" IsExpanded="False" Margin="0,0,0,8">
+        <Expander Grid.Row="3" Header="比較とフィルター (Advanced)" IsExpanded="False" Margin="0,0,0,8">
             <Border BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="8">
                 <StackPanel>
+                    <TextBlock Text="Compare Workflow" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                    <WrapPanel>
+                        <Button Content="Set Old" Width="82" Margin="0,0,6,0" Click="OnSetOldSnapshotClick"/>
+                        <Button Content="Set New" Width="82" Margin="0,0,6,0" Click="OnSetNewSnapshotClick"/>
+                        <Button Content="Swap" Width="70" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
+                        <Button Content="Clear" Width="70" Click="OnClearSnapshotSelectionClick" Margin="0,0,10,0"/>
+                        <Button Width="196" Content="Compare Selected Snapshots" Click="OnRunSnapshotCompareClick" IsEnabled="{Binding SnapshotBrowser.CanCompare}"/>
+                        <Button Content="Save Session" Width="96" Margin="10,0,6,0" Click="OnSaveCompareSessionClick"/>
+                        <Button Content="Restore Session" Width="110" Click="OnRestoreCompareSessionClick"/>
+                    </WrapPanel>
+                    <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.LastCompareStatusText}" FontSize="11" FontWeight="SemiBold"/>
+                    <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareResultSummary}" TextWrapping="Wrap" FontSize="11"/>
+                    <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareErrorText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkOrange"/>
+                    <Separator Margin="0,8,0,8"/>
+                    <TextBlock Text="Filter and Grouping" FontWeight="SemiBold" Margin="0,0,0,4"/>
                     <WrapPanel>
                         <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,4,0"/>
                         <TextBox Width="220" Text="{Binding FilterSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
@@ -102,19 +116,9 @@
                             </DataGrid.Columns>
                         </DataGrid>
                         <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                            <WrapPanel>
-                                <Button Content="Set Old" Width="90" Margin="0,0,6,0" Click="OnSetOldSnapshotClick"/>
-                                <Button Content="Set New" Width="90" Margin="0,0,6,0" Click="OnSetNewSnapshotClick"/>
-                                <Button Content="Swap" Width="80" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
-                                <Button Content="Clear" Width="80" Click="OnClearSnapshotSelectionClick"/>
-                            </WrapPanel>
-                            <Button Margin="0,6,0,0" Width="220" Content="Compare Selected Snapshots" Click="OnRunSnapshotCompareClick" IsEnabled="{Binding SnapshotBrowser.CanCompare}"/>
                             <TextBlock Margin="0,8,0,0" Text="{Binding SnapshotBrowser.CompareSummaryText}" TextWrapping="Wrap" FontSize="11"/>
                             <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.SnapshotBrowserMessage}" TextWrapping="Wrap" FontSize="11" Opacity="0.8"/>
                             <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotCompareSummaryText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkSlateGray"/>
-                            <TextBlock Margin="0,6,0,0" Text="{Binding SnapshotBrowser.LastCompareStatusText}" FontSize="11" FontWeight="SemiBold"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareResultSummary}" TextWrapping="Wrap" FontSize="11"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareErrorText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkOrange"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareDiagnosticsPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareTimestamp, StringFormat=Last Compare: {0:yyyy-MM-dd HH:mm:ss}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,4,0,0" Text="{Binding ManualValidationSessionId, StringFormat=Validation Session: {0}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
@@ -122,10 +126,6 @@
                             <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationSummary}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
                             <Separator Margin="0,6,0,6"/>
                             <TextBlock Text="Reusable Compare Sessions" FontWeight="SemiBold" FontSize="11"/>
-                            <WrapPanel Margin="0,4,0,0">
-                                <Button Content="Save Current Session" Width="150" Margin="0,0,6,0" Click="OnSaveCompareSessionClick"/>
-                                <Button Content="Restore Selected Session" Width="160" Click="OnRestoreCompareSessionClick"/>
-                            </WrapPanel>
                             <TextBlock Margin="0,4,0,0" Text="{Binding LatestReusableSessionSummary}" FontSize="10" Opacity="0.8"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding LatestReusableSessionPath}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.PersistedSnapshotSummary}" FontSize="10" Opacity="0.8"/>
@@ -139,6 +139,9 @@
                             <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.SelectedSessionSummary}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Grid>
+                    <Expander Header="Advanced Diagnostics" IsExpanded="False" Margin="0,8,0,0">
+                        <TextBlock Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
+                    </Expander>
                 </StackPanel>
             </Border>
         </Expander>
