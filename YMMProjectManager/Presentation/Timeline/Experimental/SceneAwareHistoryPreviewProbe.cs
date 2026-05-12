@@ -47,6 +47,17 @@ internal static class SceneAwareHistoryPreviewProbe
 
         var timelineFingerprint = BuildTimelineFingerprintCandidate(bestTimelineCollectionCandidate, getterErrors.Count);
         var sceneIdentityCandidate = BuildSceneIdentityCandidate(bestSceneCandidate, bestCandidate, timelineFingerprint);
+        var historySources = ScanHistorySources(diagnosticsDirectory);
+        var historyMatchCandidates = BuildHistoryMatchCandidates(historySources, sceneIdentityCandidate, timelineFingerprint);
+        var bestHistoryMatchCandidate = historyMatchCandidates.OrderByDescending(x => x.Score).FirstOrDefault();
+        var historyMatching = new SceneAwareHistoryMatchingSummary(
+            SourceCount: historySources.Count,
+            ReadSucceededCount: historySources.Count(x => x.ReadSucceeded),
+            MetadataCandidateCount: historyMatchCandidates.Count,
+            MatchCandidateCount: historyMatchCandidates.Count(x => x.Score > 0),
+            BestMatchScore: bestHistoryMatchCandidate?.Score ?? 0,
+            BestMatchConfidence: bestHistoryMatchCandidate?.Confidence ?? "None",
+            HistoryLinkFeasible: historyMatchCandidates.Any(x => x.Confidence is "High" or "Medium"));
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -122,7 +133,11 @@ internal static class SceneAwareHistoryPreviewProbe
                 GetterErrorCount: getterErrors.Count,
                 PathExcludedFromHash: true,
                 TextBodyExcludedFromHash: true,
-                ReadOnly: true));
+                ReadOnly: true),
+            HistoryMatching: historyMatching,
+            HistorySources: historySources,
+            HistoryMatchCandidates: historyMatchCandidates,
+            BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
         var probePath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-probe-{stamp}.json");
@@ -144,7 +159,9 @@ internal static class SceneAwareHistoryPreviewProbe
             BestSceneCandidate: result.BestSceneCandidate,
             BestTimelineCollectionCandidate: result.BestTimelineCollectionCandidate,
             TimelineFingerprint: result.TimelineFingerprint,
-            SceneIdentityCandidate: result.SceneIdentityCandidate);
+            SceneIdentityCandidate: result.SceneIdentityCandidate,
+            HistoryMatching: result.HistoryMatching,
+            BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
 
@@ -633,12 +650,272 @@ internal static class SceneAwareHistoryPreviewProbe
         return string.Join(Environment.NewLine, lines);
     }
 
+    private static List<SceneAwareHistorySource> ScanHistorySources(string diagnosticsDirectory)
+    {
+        var roots = new[]
+        {
+            diagnosticsDirectory,
+            Path.Combine(Directory.GetCurrentDirectory(), "diagnostics"),
+            Path.Combine(AppContext.BaseDirectory, "diagnostics"),
+        }.Distinct(StringComparer.OrdinalIgnoreCase).Where(Directory.Exists).ToList();
+
+        var result = new List<SceneAwareHistorySource>();
+        var patterns = new[] { "comparison-history.json", "preview-workspace-state.json", "*validation*.json", "*manifest*.json", "*summary*.json", "*snapshot*.json", "scene-aware-history-preview-probe-*.json" };
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var root in roots)
+        {
+            foreach (var pattern in patterns)
+            {
+                foreach (var path in Directory.EnumerateFiles(root, pattern, SearchOption.TopDirectoryOnly))
+                {
+                    if (!seen.Add(path))
+                    {
+                        continue;
+                    }
+
+                    var fi = new FileInfo(path);
+                    var readOk = false;
+                    var errType = "";
+                    var errMsg = "";
+                    try
+                    {
+                        using var _ = File.OpenRead(path);
+                        readOk = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        errType = ex.GetType().FullName ?? ex.GetType().Name;
+                        errMsg = ex.Message;
+                    }
+
+                    result.Add(new SceneAwareHistorySource(
+                        SourcePath: path,
+                        SourceFileName: fi.Name,
+                        SourceKind: ResolveSourceKind(fi.Name),
+                        Exists: fi.Exists,
+                        ReadSucceeded: readOk,
+                        ReadErrorType: errType,
+                        ReadErrorMessage: errMsg,
+                        ModifiedAt: fi.Exists ? fi.LastWriteTimeUtc : null,
+                        SizeBytes: fi.Exists ? fi.Length : 0));
+                }
+            }
+        }
+
+        return result.OrderByDescending(x => x.ModifiedAt).ToList();
+    }
+
+    private static string ResolveSourceKind(string fileName)
+    {
+        var n = fileName.ToLowerInvariant();
+        if (n.Contains("comparison-history")) return "ComparisonHistory";
+        if (n.Contains("preview-workspace-state")) return "PreviewWorkspaceState";
+        if (n.Contains("manifest")) return "Manifest";
+        if (n.Contains("validation")) return "Validation";
+        if (n.Contains("summary")) return "Summary";
+        if (n.Contains("snapshot")) return "Snapshot";
+        if (n.Contains("scene-aware-history-preview-probe")) return "SceneAwareProbe";
+        return "Other";
+    }
+
     private static string ComputeSha256(string text)
     {
         using var sha = System.Security.Cryptography.SHA256.Create();
         var bytes = System.Text.Encoding.UTF8.GetBytes(text);
         var hash = sha.ComputeHash(bytes);
         return Convert.ToHexString(hash);
+    }
+
+    private static List<SceneAwareHistoryMatchCandidate> BuildHistoryMatchCandidates(
+        IReadOnlyList<SceneAwareHistorySource> sources,
+        SceneAwareSceneIdentityCandidate identity,
+        SceneAwareTimelineFingerprint fingerprint)
+    {
+        var list = new List<SceneAwareHistoryMatchCandidate>();
+        foreach (var src in sources.Where(x => x.ReadSucceeded))
+        {
+            try
+            {
+                using var stream = File.OpenRead(src.SourcePath);
+                using var doc = JsonDocument.Parse(stream);
+                var flat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                FlattenJson(doc.RootElement, flat, "", 0, 5, 2000);
+
+                var sceneName = TryGetValue(flat, "sceneName", "SceneName");
+                var sceneIndex = TryGetInt(flat, "sceneIndex", "SceneIndex");
+                var stableHash = TryGetValue(flat, "stableHash", "StableHash", "timelineFingerprint.stableHash", "TimelineFingerprint.StableHash");
+                var itemCount = TryGetInt(flat, "itemCount", "ItemCount");
+                var layerCount = TryGetInt(flat, "layerCount", "LayerCount");
+                var minFrame = TryGetLong(flat, "minFrame", "MinFrame");
+                var maxFrame = TryGetLong(flat, "maxFrame", "MaxFrame");
+
+                var reasons = new List<string>();
+                var missing = new List<string>();
+                var score = 0;
+                if (!string.IsNullOrWhiteSpace(stableHash))
+                {
+                    if (string.Equals(stableHash, identity.TimelineFingerprintHash, StringComparison.OrdinalIgnoreCase))
+                    {
+                        score += 100;
+                        reasons.Add("stableHash exact match");
+                    }
+                    else
+                    {
+                        score -= 30;
+                        reasons.Add("stableHash mismatch");
+                    }
+                }
+                else
+                {
+                    missing.Add("stableHash");
+                }
+
+                if (!string.IsNullOrWhiteSpace(sceneName) && !string.Equals(sceneName, "<unknown>", StringComparison.OrdinalIgnoreCase) && string.Equals(sceneName, identity.SceneName, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 40;
+                    reasons.Add("sceneName match");
+                }
+                else if (string.IsNullOrWhiteSpace(sceneName))
+                {
+                    missing.Add("sceneName");
+                }
+
+                if (sceneIndex is not null && identity.SceneIndex is not null && sceneIndex == identity.SceneIndex)
+                {
+                    score += 30;
+                    reasons.Add("sceneIndex match");
+                }
+                else if (sceneIndex is null)
+                {
+                    missing.Add("sceneIndex");
+                }
+
+                if (itemCount is not null)
+                {
+                    if (itemCount == fingerprint.ItemCount)
+                    {
+                        score += 25;
+                        reasons.Add("itemCount match");
+                    }
+                    else
+                    {
+                        score -= 30;
+                        reasons.Add("itemCount mismatch");
+                    }
+                }
+                else
+                {
+                    missing.Add("itemCount");
+                }
+
+                if (layerCount is not null && fingerprint.LayerCount is not null)
+                {
+                    if (layerCount == fingerprint.LayerCount)
+                    {
+                        score += 20;
+                        reasons.Add("layerCount match");
+                    }
+                }
+
+                if (minFrame is not null && maxFrame is not null && fingerprint.MinFrame is not null && fingerprint.MaxFrame is not null)
+                {
+                    if (minFrame == fingerprint.MinFrame && maxFrame == fingerprint.MaxFrame)
+                    {
+                        score += 20;
+                        reasons.Add("frameRange match");
+                    }
+                }
+
+                if (src.ModifiedAt is not null && src.ModifiedAt > DateTimeOffset.UtcNow.AddDays(-7))
+                {
+                    score += 5;
+                    reasons.Add("recent file");
+                }
+
+                var confidence = score >= 80 ? "High" : score >= 40 ? "Medium" : score > 0 ? "Low" : "None";
+                list.Add(new SceneAwareHistoryMatchCandidate(
+                    SourceKind: src.SourceKind,
+                    SourceFileName: src.SourceFileName,
+                    SourcePath: src.SourcePath,
+                    ModifiedAt: src.ModifiedAt,
+                    SceneName: sceneName,
+                    SceneIndex: sceneIndex,
+                    StableHash: stableHash,
+                    ItemCount: itemCount,
+                    LayerCount: layerCount,
+                    MinFrame: minFrame,
+                    MaxFrame: maxFrame,
+                    Score: score,
+                    Confidence: confidence,
+                    MatchReasons: reasons,
+                    MissingFields: missing));
+            }
+            catch
+            {
+                // keep read-only investigation resilient
+            }
+        }
+
+        return list.OrderByDescending(x => x.Score).ToList();
+    }
+
+    private static void FlattenJson(JsonElement element, Dictionary<string, string> output, string prefix, int depth, int maxDepth, int maxProperties)
+    {
+        if (depth > maxDepth || output.Count >= maxProperties)
+        {
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var p in element.EnumerateObject())
+            {
+                var key = string.IsNullOrEmpty(prefix) ? p.Name : $"{prefix}.{p.Name}";
+                FlattenJson(p.Value, output, key, depth + 1, maxDepth, maxProperties);
+                if (output.Count >= maxProperties) return;
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+        {
+            var i = 0;
+            foreach (var item in element.EnumerateArray())
+            {
+                if (i >= 50) break;
+                FlattenJson(item, output, $"{prefix}[{i}]", depth + 1, maxDepth, maxProperties);
+                i++;
+                if (output.Count >= maxProperties) return;
+            }
+        }
+        else
+        {
+            output[prefix] = element.ToString();
+        }
+    }
+
+    private static string? TryGetValue(Dictionary<string, string> map, params string[] keys)
+    {
+        foreach (var k in keys)
+        {
+            var match = map.FirstOrDefault(x => x.Key.EndsWith(k, StringComparison.OrdinalIgnoreCase));
+            if (!string.IsNullOrWhiteSpace(match.Value))
+            {
+                return match.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryGetInt(Dictionary<string, string> map, params string[] keys)
+    {
+        var value = TryGetValue(map, keys);
+        return int.TryParse(value, out var i) ? i : null;
+    }
+
+    private static long? TryGetLong(Dictionary<string, string> map, params string[] keys)
+    {
+        var value = TryGetValue(map, keys);
+        return long.TryParse(value, out var i) ? i : null;
     }
 
     private static SceneAwareSceneCandidate ResolveBestSceneCandidate(List<SceneAwarePropertyReadResult> sceneCandidates)
@@ -834,6 +1111,21 @@ internal static class SceneAwareHistoryPreviewProbe
 - getterErrorCount: {r.FingerprintSafety.GetterErrorCount}
 - pathExcludedFromHash: {r.FingerprintSafety.PathExcludedFromHash}
 - textBodyExcludedFromHash: {r.FingerprintSafety.TextBodyExcludedFromHash}
+
+## Step 5: Snapshot / History Matching Foundation
+- sourceCount: {r.HistoryMatching.SourceCount}
+- readSucceededCount: {r.HistoryMatching.ReadSucceededCount}
+- metadataCandidateCount: {r.HistoryMatching.MetadataCandidateCount}
+- matchCandidateCount: {r.HistoryMatching.MatchCandidateCount}
+- bestMatchScore: {r.HistoryMatching.BestMatchScore}
+- bestMatchConfidence: {r.HistoryMatching.BestMatchConfidence}
+- historyLinkFeasible: {r.HistoryMatching.HistoryLinkFeasible}
+
+## Best History Match
+- sourceKind: {r.BestHistoryMatchCandidate?.SourceKind ?? "(none)"}
+- sourceFileName: {r.BestHistoryMatchCandidate?.SourceFileName ?? "(none)"}
+- score: {r.BestHistoryMatchCandidate?.Score.ToString() ?? "0"}
+- confidence: {r.BestHistoryMatchCandidate?.Confidence ?? "None"}
 """;
     }
 
@@ -937,7 +1229,9 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareSceneCandidate BestSceneCandidate,
     SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate,
     SceneAwareTimelineFingerprint TimelineFingerprintDetails,
-    SceneAwareSceneIdentityCandidate SceneIdentityCandidate);
+    SceneAwareSceneIdentityCandidate SceneIdentityCandidate,
+    SceneAwareHistoryMatchingSummary HistoryMatching,
+    SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
     string Route,
@@ -979,6 +1273,10 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareTimelineFingerprint TimelineFingerprintDetails,
     SceneAwareSceneIdentityCandidate SceneIdentityCandidate,
     SceneAwareFingerprintSafety FingerprintSafety,
+    SceneAwareHistoryMatchingSummary HistoryMatching,
+    IReadOnlyList<SceneAwareHistorySource> HistorySources,
+    IReadOnlyList<SceneAwareHistoryMatchCandidate> HistoryMatchCandidates,
+    SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
     string ReportPath = "");
@@ -1136,3 +1434,40 @@ internal sealed record SceneAwareFingerprintSafety(
     bool PathExcludedFromHash,
     bool TextBodyExcludedFromHash,
     bool ReadOnly);
+
+internal sealed record SceneAwareHistorySource(
+    string SourcePath,
+    string SourceFileName,
+    string SourceKind,
+    bool Exists,
+    bool ReadSucceeded,
+    string ReadErrorType,
+    string ReadErrorMessage,
+    DateTimeOffset? ModifiedAt,
+    long SizeBytes);
+
+internal sealed record SceneAwareHistoryMatchCandidate(
+    string SourceKind,
+    string SourceFileName,
+    string SourcePath,
+    DateTimeOffset? ModifiedAt,
+    string? SceneName,
+    int? SceneIndex,
+    string? StableHash,
+    int? ItemCount,
+    int? LayerCount,
+    long? MinFrame,
+    long? MaxFrame,
+    int Score,
+    string Confidence,
+    IReadOnlyList<string> MatchReasons,
+    IReadOnlyList<string> MissingFields);
+
+internal sealed record SceneAwareHistoryMatchingSummary(
+    int SourceCount,
+    int ReadSucceededCount,
+    int MetadataCandidateCount,
+    int MatchCandidateCount,
+    int BestMatchScore,
+    string BestMatchConfidence,
+    bool HistoryLinkFeasible);

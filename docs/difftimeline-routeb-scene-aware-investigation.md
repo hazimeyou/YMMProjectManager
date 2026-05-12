@@ -59,6 +59,20 @@
   - getter error count
   - path/text-body excluded from hash
 
+## Step 5 (Snapshot / History Matching Foundation)
+- Added read-only history source scan over diagnostics roots.
+- Added shallow JSON metadata extraction with safety limits:
+  - maxDepth=5
+  - maxProperties=2000
+  - maxArrayItemsPerArray=50
+- Added runtime fingerprint vs history metadata matching candidate scoring.
+- Added summary outputs:
+  - source/read success counts
+  - metadata/match candidate counts
+  - best match score/confidence
+  - historyLinkFeasible
+- Existing snapshot/history schemas are not modified.
+
 ## Safety
 - read-only only
 - no input injection
