@@ -176,45 +176,35 @@ internal static partial class SceneAwareHistoryPreviewProbe
     {
         var comp = Directory.GetFiles(diagnosticsDirectory, "*comparison-history*.json").OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
         var repo = Directory.GetFiles(diagnosticsDirectory, "*snapshot-repository*.json").OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
+        var debug = new SceneAwareSnapshotPairResolverDebug(
+            ComparisonHistoryFileFound: !string.IsNullOrWhiteSpace(comp),
+            SnapshotRepositoryFileFound: !string.IsNullOrWhiteSpace(repo),
+            ComparisonHistoryRootKind: "Unknown",
+            SnapshotRepositoryRootKind: "Unknown",
+            ComparisonEntryCount: 0,
+            SnapshotEntryCount: 0,
+            SelectedComparisonEntryIndex: null,
+            SelectedComparisonEntryReason: "",
+            ExceptionStage: "");
         if (string.IsNullOrWhiteSpace(comp) || string.IsNullOrWhiteSpace(repo))
-            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "history/repository not found", ["comparison-history or snapshot-repository missing"], ["paths"]);
+            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "history/repository not found", ["comparison-history or snapshot-repository missing"], ["paths"], debug with { ExceptionStage = "PathDiscovery" });
 
         try
         {
-            using var ch = JsonDocument.Parse(File.ReadAllText(comp));
-            var entries = new List<(string? OldHash, string? NewHash, DateTimeOffset? ComparedAt, int RowCount)>();
-            if (ch.RootElement.TryGetProperty("value", out var arr) && arr.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var e in arr.EnumerateArray())
-                {
-                    var oldHash = e.TryGetProperty("OldSnapshotHash", out var oh) ? oh.GetString() : null;
-                    var newHash = e.TryGetProperty("NewSnapshotHash", out var nh) ? nh.GetString() : null;
-                    DateTimeOffset? comparedAt = null;
-                    if (e.TryGetProperty("ComparedAt", out var ca) && DateTimeOffset.TryParse(ca.GetString(), out var dt)) comparedAt = dt;
-                    var rowCount = 0;
-                    if (e.TryGetProperty("Metadata", out var m) && m.TryGetProperty("rowCount", out var rc)) int.TryParse(rc.ToString(), out rowCount);
-                    entries.Add((oldHash, newHash, comparedAt, rowCount));
-                }
-            }
+            var entries = ParseComparisonEntries(comp, ref debug, out var parseWarnings);
             var chosen = entries
                 .Where(x => !string.IsNullOrWhiteSpace(x.OldHash) && !string.IsNullOrWhiteSpace(x.NewHash))
                 .OrderByDescending(x => x.RowCount > 0)
                 .ThenByDescending(x => x.ComparedAt ?? DateTimeOffset.MinValue)
                 .FirstOrDefault();
-
-            using var sr = JsonDocument.Parse(File.ReadAllText(repo));
-            var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (sr.RootElement.TryGetProperty("value", out var sarr) && sarr.ValueKind == JsonValueKind.Array)
+            var selectedIndex = entries.FindIndex(x => x == chosen);
+            debug = debug with
             {
-                foreach (var e in sarr.EnumerateArray())
-                {
-                    if (e.TryGetProperty("Snapshot", out var s) && s.TryGetProperty("Metadata", out var md) && md.TryGetProperty("SnapshotHash", out var sh))
-                    {
-                        var h = sh.GetString();
-                        if (!string.IsNullOrWhiteSpace(h)) hashes.Add(h);
-                    }
-                }
-            }
+                SelectedComparisonEntryIndex = selectedIndex >= 0 ? selectedIndex : null,
+                SelectedComparisonEntryReason = selectedIndex >= 0 ? "latest valid old/new hash entry" : "no valid old/new hash entry"
+            };
+
+            var hashes = ParseSnapshotRepositoryHashes(repo, ref debug, out var parseRepoWarnings);
 
             var oldFound = !string.IsNullOrWhiteSpace(chosen.OldHash) && hashes.Contains(chosen.OldHash);
             var newFound = !string.IsNullOrWhiteSpace(chosen.NewHash) && hashes.Contains(chosen.NewHash);
@@ -224,11 +214,112 @@ internal static partial class SceneAwareHistoryPreviewProbe
             var missing = new List<string>();
             if (!oldFound) missing.Add("oldSnapshotHash");
             if (!newFound) missing.Add("newSnapshotHash");
-            return new SceneAwareSnapshotPairResolution(true, resolved, confidence, comp, repo, chosen.OldHash, chosen.NewHash, oldFound, newFound, chosen.ComparedAt, reason, [], missing);
+            var warnings = new List<string>();
+            warnings.AddRange(parseWarnings);
+            warnings.AddRange(parseRepoWarnings);
+            return new SceneAwareSnapshotPairResolution(true, resolved, confidence, comp, repo, chosen.OldHash, chosen.NewHash, oldFound, newFound, chosen.ComparedAt, reason, warnings, missing, debug);
         }
         catch (Exception ex)
         {
-            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "resolution failed", [$"exception={ex.GetType().Name}"], ["parse"]);
+            var warning = $"exception={ex.GetType().Name}: {ex.Message}";
+            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "resolution failed", [warning], ["parse"], debug with { ExceptionStage = string.IsNullOrWhiteSpace(debug.ExceptionStage) ? "Unknown" : debug.ExceptionStage });
         }
+    }
+
+    private static List<(string? OldHash, string? NewHash, DateTimeOffset? ComparedAt, int RowCount)> ParseComparisonEntries(string path, ref SceneAwareSnapshotPairResolverDebug debug, out List<string> warnings)
+    {
+        warnings = [];
+        var entries = new List<(string? OldHash, string? NewHash, DateTimeOffset? ComparedAt, int RowCount)>();
+        debug = debug with { ExceptionStage = "ReadComparisonHistory" };
+        using var ch = JsonDocument.Parse(File.ReadAllText(path));
+        debug = debug with { ComparisonHistoryRootKind = ch.RootElement.ValueKind.ToString(), ExceptionStage = "ParseComparisonEntries" };
+        foreach (var e in EnumerateCandidateEntries(ch.RootElement, ["value", "entries", "history", "items", "results"]))
+        {
+            var oldHash = ReadStringByKeys(e, ["OldSnapshotHash", "oldSnapshotHash", "OldSnapshotId", "oldSnapshotId", "OldSnapshot.SnapshotHash", "OldSnapshot.Hash", "oldSnapshot.hash"]);
+            var newHash = ReadStringByKeys(e, ["NewSnapshotHash", "newSnapshotHash", "NewSnapshotId", "newSnapshotId", "NewSnapshot.SnapshotHash", "NewSnapshot.Hash", "newSnapshot.hash"]);
+            DateTimeOffset? comparedAt = null;
+            var t = ReadStringByKeys(e, ["ComparedAt", "comparedAt", "CreatedAt", "createdAt"]);
+            if (!string.IsNullOrWhiteSpace(t) && DateTimeOffset.TryParse(t, out var dt)) comparedAt = dt;
+            var rowCount = 0;
+            int.TryParse(ReadStringByKeys(e, ["Metadata.rowCount", "rowCount"]), out rowCount);
+            entries.Add((oldHash, newHash, comparedAt, rowCount));
+        }
+        debug = debug with { ComparisonEntryCount = entries.Count };
+        return entries;
+    }
+
+    private static HashSet<string> ParseSnapshotRepositoryHashes(string path, ref SceneAwareSnapshotPairResolverDebug debug, out List<string> warnings)
+    {
+        warnings = [];
+        var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        debug = debug with { ExceptionStage = "ReadSnapshotRepository" };
+        using var sr = JsonDocument.Parse(File.ReadAllText(path));
+        debug = debug with { SnapshotRepositoryRootKind = sr.RootElement.ValueKind.ToString(), ExceptionStage = "ParseSnapshotEntries" };
+        var count = 0;
+        foreach (var e in EnumerateCandidateEntries(sr.RootElement, ["value", "snapshots", "items", "repository", "entries"]))
+        {
+            count++;
+            var h = ReadStringByKeys(e, ["Snapshot.Metadata.SnapshotHash", "SnapshotHash", "snapshotHash", "Hash", "Snapshot.Hash"]);
+            if (!string.IsNullOrWhiteSpace(h)) hashes.Add(h.Trim());
+        }
+        debug = debug with { SnapshotEntryCount = count };
+        return hashes;
+    }
+
+    private static IEnumerable<JsonElement> EnumerateCandidateEntries(JsonElement root, string[] collectionKeys)
+    {
+        if (root.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var e in root.EnumerateArray()) yield return e;
+            yield break;
+        }
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var key in collectionKeys)
+            {
+                if (root.TryGetProperty(key, out var child))
+                {
+                    if (child.ValueKind == JsonValueKind.Array)
+                    {
+                        foreach (var e in child.EnumerateArray()) yield return e;
+                        yield break;
+                    }
+                    if (child.ValueKind == JsonValueKind.Object)
+                    {
+                        yield return child;
+                        yield break;
+                    }
+                }
+            }
+            yield return root;
+        }
+    }
+
+    private static string? ReadStringByKeys(JsonElement element, string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = TryReadPath(element, key);
+            if (!string.IsNullOrWhiteSpace(value)) return value.Trim();
+        }
+        return null;
+    }
+
+    private static string? TryReadPath(JsonElement element, string dottedPath)
+    {
+        var current = element;
+        foreach (var part in dottedPath.Split('.'))
+        {
+            if (current.ValueKind != JsonValueKind.Object || !current.TryGetProperty(part, out current))
+                return null;
+        }
+        return current.ValueKind switch
+        {
+            JsonValueKind.String => current.GetString(),
+            JsonValueKind.Number => current.ToString(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => null
+        };
     }
 }

@@ -1278,6 +1278,15 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - newSnapshotFound: {r.SnapshotPairResolution.NewSnapshotFound}
 - matchReason: {r.SnapshotPairResolution.MatchReason}
 - missingFields: {(r.SnapshotPairResolution.MissingFields.Count == 0 ? "(none)" : string.Join(", ", r.SnapshotPairResolution.MissingFields))}
+
+## Step 7B.7: Snapshot Pair Resolver Debug
+- comparisonHistoryRootKind: {r.SnapshotPairResolution.Debug.ComparisonHistoryRootKind}
+- snapshotRepositoryRootKind: {r.SnapshotPairResolution.Debug.SnapshotRepositoryRootKind}
+- comparisonEntryCount: {r.SnapshotPairResolution.Debug.ComparisonEntryCount}
+- snapshotEntryCount: {r.SnapshotPairResolution.Debug.SnapshotEntryCount}
+- selectedComparisonEntryIndex: {r.SnapshotPairResolution.Debug.SelectedComparisonEntryIndex?.ToString() ?? "(none)"}
+- selectedComparisonEntryReason: {r.SnapshotPairResolution.Debug.SelectedComparisonEntryReason}
+- exceptionStage: {r.SnapshotPairResolution.Debug.ExceptionStage}
 """;
     }
 
@@ -1743,7 +1752,19 @@ internal sealed record SceneAwareSnapshotPairResolution(
     DateTimeOffset? MatchedComparisonEntryTime,
     string MatchReason,
     IReadOnlyList<string> Warnings,
-    IReadOnlyList<string> MissingFields);
+    IReadOnlyList<string> MissingFields,
+    SceneAwareSnapshotPairResolverDebug Debug);
+
+internal sealed record SceneAwareSnapshotPairResolverDebug(
+    bool ComparisonHistoryFileFound,
+    bool SnapshotRepositoryFileFound,
+    string ComparisonHistoryRootKind,
+    string SnapshotRepositoryRootKind,
+    int ComparisonEntryCount,
+    int SnapshotEntryCount,
+    int? SelectedComparisonEntryIndex,
+    string SelectedComparisonEntryReason,
+    string ExceptionStage);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,
