@@ -229,6 +229,32 @@ Updated Decision:
   - `sceneAwareStableHash` (recommended)
   - `sourceKind` (recommended)
 
+## Auto Progress 2 Result (Latest Probe Gate + Branch)
+- Latest available probe at analysis time was older than Step7A/7A.5 output schema and did not include:
+  - `historyPreview`
+  - `routeADetailHandoff`
+  - `routeADetailHandoffGap`
+- Branch decision:
+  - treated as output-gap gate, then advanced to Step7B foundation (non-blocking path).
+
+## Step 7B (Scene-aware Metadata Save Foundation)
+- Added optional non-breaking block:
+  - `sceneAwareMetadata`
+- Current target outputs:
+  - RouteB probe JSON
+  - RouteB summary JSON
+- Block content:
+  - `schemaVersion`
+  - `source` (`route`, `investigation`, `defaultDisabled`, `readOnly`)
+  - `sceneIdentity`
+  - `timelineFingerprint`
+  - `routeAHandoff`
+  - `privacy`
+- Privacy defaults:
+  - `fullPathExcluded=true`
+  - `textBodyExcluded=true`
+  - `projectPathHashOnly=true`
+
 ## Safety
 - read-only only
 - no input injection
