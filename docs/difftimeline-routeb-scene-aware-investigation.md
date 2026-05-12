@@ -326,6 +326,34 @@ Updated Decision:
   - runtime mutation disabled
   - input injection disabled
 
+## Step 9.5 RC Validation Result
+- probe:
+  - `scene-aware-history-preview-probe-20260513-031341.json`
+- summary:
+  - `scene-aware-history-preview-summary-20260513-031341.json`
+- report:
+  - `scene-aware-history-preview-report.md`
+- current runtime:
+  - `CurrentSceneDetected=True`
+  - `SceneHistoryLinkFeasible=True`
+  - `Confidence=High`
+  - `HistoryPreview.PreviewItemCount=19`
+  - `HistoryPreview.HasHighConfidenceMatch=True`
+  - `SnapshotPairResolution.Resolved=True`
+  - `RouteAOpenReadiness.CanOpen=True`
+- RC metadata/readiness blocks:
+  - `routeBInvestigationRc`: missing in this measured probe
+  - `routeBInvestigationReadiness`: missing in this measured probe
+- safety:
+  - `DefaultDisabled=True`
+  - `FallbackPreserved=True`
+  - `RouteAPreserved=True`
+  - `ProductionEmbedding=False`
+  - `RuntimeMutation=False`
+  - `InputInjection=False`
+- decision:
+  - `runtime revalidation pending` (measured files were generated before latest RC metadata output path)
+
 ## Safety
 - read-only only
 - no input injection
