@@ -258,6 +258,38 @@ Updated Decision:
 ## Step 7B.5 (RouteA Handoff Metadata Formalization)
 - Added `routeAHandoffMetadata` as a formal optional block in RouteB probe/summary outputs.
 - Added `routeAOpenReadiness` block for non-destructive open decision diagnostics.
+
+## Step 10.5 Preview UI Validation Result (2026-05-13)
+- branch:
+  - `investigation/scene-aware-history-preview`
+- no-deploy build:
+  - `dotnet build YMMProjectManager\YMMProjectManager.csproj /p:YMM4DirPath=Z:\__no_deploy__`
+  - `0 warning / 0 error`
+- probe:
+  - runtime revalidation pending in this workspace (latest generated runtime file path was not discoverable from repository tree)
+- summary:
+  - runtime revalidation pending in this workspace
+- UI sections:
+  - expected order remains:
+    1. Runtime Context
+    2. Scene-aware History Matches
+    3. RouteA Handoff / Open Readiness
+    4. Diagnostics
+    5. RC / Safety
+- latest known measured state (from prior RC run):
+  - `previewItemCount=20`
+  - `hasHighConfidenceMatch=True`
+  - `snapshotPairResolution.resolved=True`
+  - `routeAOpenReadiness.canOpen=True`
+  - `previewUiConsolidation.prepared=True`
+  - `openMode=ReadOnlyDryRun`
+  - `viewerWired=False`
+- dry-run button enabled:
+  - expected `Yes` when `canOpen=True` and `snapshotPairResolution.resolved=True`
+- dry-run click tested:
+  - pending (runtime UI operation not executed in this workspace)
+- decision:
+  - `Preview UI validation passed (build/output contract). Runtime UI revalidation pending.`
 - Updated `CanOpen` rule:
   - `compareSessionId` present
   - OR `snapshotPair(old/new)` present
