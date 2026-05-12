@@ -255,6 +255,18 @@ Updated Decision:
   - `textBodyExcluded=true`
   - `projectPathHashOnly=true`
 
+## Step 7B.5 (RouteA Handoff Metadata Formalization)
+- Added `routeAHandoffMetadata` as a formal optional block in RouteB probe/summary outputs.
+- Added `routeAOpenReadiness` block for non-destructive open decision diagnostics.
+- Updated `CanOpen` rule:
+  - `compareSessionId` present
+  - OR `snapshotPair(old/new)` present
+  - OR `previewWorkspaceStatePath + comparisonHistoryPath` present
+  - and confidence `>= Medium`
+- Compatibility:
+  - optional + nullable + non-breaking
+  - read-only/default-disabled preserved
+
 ## Safety
 - read-only only
 - no input injection

@@ -69,6 +69,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             historyPreviewItems.FirstOrDefault(),
             sceneIdentityCandidate.TimelineFingerprintHash);
         var routeAHandoffGap = BuildRouteAHandoffGap(defaultRouteAHandoff);
+        var routeAHandoffMetadata = BuildRouteAHandoffMetadata(defaultRouteAHandoff, sceneIdentityCandidate, now);
+        var routeAOpenReadiness = BuildRouteAOpenReadiness(defaultRouteAHandoff, routeAHandoffGap, historyPreview.BestPreviewItemConfidence);
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
@@ -153,6 +155,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             HistoryPreviewItems: historyPreviewItems,
             RouteADetailHandoff: defaultRouteAHandoff,
             RouteADetailHandoffGap: routeAHandoffGap,
+            RouteAHandoffMetadata: routeAHandoffMetadata,
+            RouteAOpenReadiness: routeAOpenReadiness,
             SceneAwareMetadata: sceneAwareMetadata,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
@@ -182,6 +186,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             HistoryPreviewItems: result.HistoryPreviewItems,
             RouteADetailHandoff: result.RouteADetailHandoff,
             RouteADetailHandoffGap: result.RouteADetailHandoffGap,
+            RouteAHandoffMetadata: result.RouteAHandoffMetadata,
+            RouteAOpenReadiness: result.RouteAOpenReadiness,
             SceneAwareMetadata: result.SceneAwareMetadata,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
@@ -1237,6 +1243,24 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - privacy.fullPathExcluded: {r.SceneAwareMetadata.Privacy.FullPathExcluded}
 - privacy.textBodyExcluded: {r.SceneAwareMetadata.Privacy.TextBodyExcluded}
 - privacy.projectPathHashOnly: {r.SceneAwareMetadata.Privacy.ProjectPathHashOnly}
+
+## Step 7B.5: RouteA Handoff Metadata Formalization
+- routeAHandoffMetadata.schemaVersion: {r.RouteAHandoffMetadata.SchemaVersion}
+- routeAHandoffMetadata.prepared: {r.RouteAHandoffMetadata.Prepared}
+- routeAHandoffMetadata.confidence: {r.RouteAHandoffMetadata.Confidence}
+- routeAHandoffMetadata.compareSessionId: {r.RouteAHandoffMetadata.CompareSession.CompareSessionId ?? "(none)"}
+- routeAHandoffMetadata.snapshotPair: {r.RouteAHandoffMetadata.SnapshotPair.OldSnapshotId ?? "(none)"} -> {r.RouteAHandoffMetadata.SnapshotPair.NewSnapshotId ?? "(none)"}
+
+## RouteA Open Readiness
+- prepared: {r.RouteAOpenReadiness.Prepared}
+- canOpen: {r.RouteAOpenReadiness.CanOpen}
+- confidence: {r.RouteAOpenReadiness.Confidence}
+- hasCompareSessionId: {r.RouteAOpenReadiness.HasCompareSessionId}
+- hasSnapshotPair: {r.RouteAOpenReadiness.HasSnapshotPair}
+- hasPreviewWorkspaceState: {r.RouteAOpenReadiness.HasPreviewWorkspaceState}
+- hasComparisonHistory: {r.RouteAOpenReadiness.HasComparisonHistory}
+- missingCriticalFields: {(r.RouteAOpenReadiness.MissingCriticalFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteAOpenReadiness.MissingCriticalFields))}
+- missingImportantFields: {(r.RouteAOpenReadiness.MissingImportantFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteAOpenReadiness.MissingImportantFields))}
 """;
     }
 
@@ -1346,6 +1370,8 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
     SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareRouteADetailHandoffGap RouteADetailHandoffGap,
+    SceneAwareRouteAHandoffMetadata RouteAHandoffMetadata,
+    SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
@@ -1396,6 +1422,8 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
     SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareRouteADetailHandoffGap RouteADetailHandoffGap,
+    SceneAwareRouteAHandoffMetadata RouteAHandoffMetadata,
+    SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
@@ -1631,6 +1659,8 @@ internal sealed record SceneAwareRouteADetailHandoffCandidate(
     string SourcePath,
     string? SnapshotId,
     string? CompareSessionId,
+    string? OldSnapshotId,
+    string? NewSnapshotId,
     string? RouteValidationReportPath,
     string? PreviewWorkspaceStatePath,
     string? ComparisonHistoryPath,
@@ -1646,9 +1676,39 @@ internal sealed record SceneAwareRouteADetailHandoffCandidate(
 internal sealed record SceneAwareRouteAExtractedFields(
     string? SnapshotId,
     string? CompareSessionId,
+    string? OldSnapshotId,
+    string? NewSnapshotId,
     string? RouteValidationReportPath,
     string? PreviewWorkspaceStatePath,
     string? ComparisonHistoryPath,
+    IReadOnlyList<string> Warnings);
+
+internal sealed record SceneAwareRouteAHandoffMetadata(
+    int SchemaVersion,
+    bool Prepared,
+    string Confidence,
+    SceneAwareCompareSessionReference CompareSession,
+    SceneAwareSnapshotReference SnapshotPair,
+    SceneAwarePreviewWorkspaceReference PreviewWorkspace,
+    SceneAwareLinkReference SceneAwareLink,
+    SceneAwareMetadataCompatibility Compatibility);
+
+internal sealed record SceneAwareCompareSessionReference(string? CompareSessionId, string? CompareSessionPath);
+internal sealed record SceneAwareSnapshotReference(string? OldSnapshotId, string? NewSnapshotId, string? OldSnapshotPath, string? NewSnapshotPath);
+internal sealed record SceneAwarePreviewWorkspaceReference(string? PreviewWorkspaceStatePath, string? RouteValidationReportPath, string? ComparisonHistoryPath);
+internal sealed record SceneAwareLinkReference(string RuntimeStableHash, string HistoryStableHash, string SceneName, int? SceneIndex);
+internal sealed record SceneAwareMetadataCompatibility(bool ReadOnly, bool DefaultDisabled, bool NonBreaking);
+
+internal sealed record SceneAwareRouteAOpenReadiness(
+    bool Prepared,
+    bool CanOpen,
+    string Confidence,
+    bool HasCompareSessionId,
+    bool HasSnapshotPair,
+    bool HasPreviewWorkspaceState,
+    bool HasComparisonHistory,
+    IReadOnlyList<string> MissingCriticalFields,
+    IReadOnlyList<string> MissingImportantFields,
     IReadOnlyList<string> Warnings);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
