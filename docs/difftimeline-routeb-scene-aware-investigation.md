@@ -97,6 +97,68 @@ Decision:
 - proceed to `Step 5.5b: Snapshot/History Metadata Gap Analysis`
 - reason: branching conditions for Step 6 require `historyLinkFeasible=True` and `bestMatchConfidence>=Medium`, but those measured fields are currently unavailable in the runtime output used for this check.
 
+## Step 5.5b (Snapshot / History Metadata Gap Analysis)
+
+### 1) Step5 Output Presence
+- Step5 output present in runtime probe JSON:
+  - `No` (latest measured file does not include `historyMatching`, `historySources`, `historyMatchCandidates`, `bestHistoryMatchCandidate`)
+- Code-side Step5 fields:
+  - `Yes` (`SceneAwareHistoryPreviewProbeResult` includes Step5 properties in current source)
+
+Interpretation:
+- Most likely split is `D (runtime DLL/output generation timing mismatch)` from the Step5.5 assumptions:
+  - source contains Step5 fields
+  - measured probe file was generated before the latest Step5-enabled runtime execution cycle
+
+### 2) DLL Reflection Check
+- Local build output DLL timestamp:
+  - `2026-05-13T02:09:20.7005529+09:00`
+- YMM Lite plugin DLL timestamp:
+  - `2026-05-13T02:09:20.7005529+09:00`
+- Conclusion:
+  - plugin DLL copy itself is up to date; however, measured probe files used for Step5.5 were generated at `01:39` and therefore are older runtime outputs.
+
+### 3) History Source Roots / Files (read-only observed)
+- Observed diagnostics root:
+  - `C:\Users\yu-za-hazimeyou\Desktop\YukkuriMovieMaker_v4_Lite\diagnostics`
+- Confirmed files relevant to matching foundation:
+  - `difftimeline-comparison-history.json`
+  - `difftimeline-snapshot-repository.json`
+  - `manual-ui-validation-summary-*.json`
+  - `scene-aware-history-preview-probe-*.json`
+  - `scene-aware-history-preview-summary-*.json`
+
+### 4) Metadata Availability (current measured state)
+- Runtime side (from latest measured probe):
+  - `stableHash`: available
+  - `itemCount`: available
+  - `itemTypeHistogram`: available
+  - `layerCount`: not reliable (often null/unknown)
+  - `minFrame` / `maxFrame`: not reliable (often null/unknown)
+  - `sceneName` / `sceneIndex`: partially unknown in candidate path
+- History side (from current measured probe output block):
+  - `historyMatching`: unavailable in measured JSON (cannot evaluate match counters/confidence from this run)
+
+### 5) Gap Classification
+- Critical:
+  - cannot evaluate `bestMatchConfidence` / `historyLinkFeasible` because Step5 result block is absent in measured probe JSON
+- Important:
+  - missing stable scene identity fields (`sceneName`, `sceneIndex`) in runtime candidate path for robust non-hash fallback
+- Optional:
+  - richer historical linkage metadata (`compareSessionId`, normalized source timestamp mapping)
+
+### 6) Decision
+- Step 6 ready:
+  - `No` (evidence insufficient in measured runtime output)
+- Recommended next step:
+  1. Re-run Scene-aware investigation once with the latest deployed DLL (post-02:09 build) to regenerate probe/summary/report.
+  2. Confirm that Step5 block appears:
+     - `historyMatching`
+     - `historySources`
+     - `historyMatchCandidates`
+     - `bestHistoryMatchCandidate`
+  3. If still absent, return to Step5 implementation validation (serializer/result wiring path).
+
 ## Safety
 - read-only only
 - no input injection
