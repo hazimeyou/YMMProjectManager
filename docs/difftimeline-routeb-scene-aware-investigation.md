@@ -73,6 +73,30 @@
   - historyLinkFeasible
 - Existing snapshot/history schemas are not modified.
 
+## Step 5.5 Actual Runtime Result (2026-05-13)
+- Probe file:
+  - `C:\Users\yu-za-hazimeyou\Desktop\YukkuriMovieMaker_v4_Lite\diagnostics\scene-aware-history-preview-probe-20260513-013944.json`
+- sceneDetected:
+  - `True`
+- runtime fingerprint stableHash:
+  - `51DE41A4C89943588D6E03CF8D3C6BF5D40BC6F3BBB8BA940D64FD4B568277C0`
+- itemCount:
+  - `21`
+- actualItemsScanned:
+  - `21`
+- sceneIdentityCandidate.confidence:
+  - `High`
+- historyMatching block:
+  - not present in this runtime probe JSON
+- bestHistoryMatchCandidate:
+  - not present
+- missing fields summary:
+  - `historyMatching.*` fields are unavailable in this measured probe output, so `sourceCount / metadataCandidateCount / matchCandidateCount / bestMatchConfidence / historyLinkFeasible` cannot be determined from this file.
+
+Decision:
+- proceed to `Step 5.5b: Snapshot/History Metadata Gap Analysis`
+- reason: branching conditions for Step 6 require `historyLinkFeasible=True` and `bestMatchConfidence>=Medium`, but those measured fields are currently unavailable in the runtime output used for this check.
+
 ## Safety
 - read-only only
 - no input injection
