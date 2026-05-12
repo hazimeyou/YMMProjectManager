@@ -118,6 +118,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             $"history sourceCount={result.HistoryMatching.SourceCount} readOk={result.HistoryMatching.ReadSucceededCount} metadataCandidates={result.HistoryMatching.MetadataCandidateCount}",
             $"history matchCandidates={result.HistoryMatching.MatchCandidateCount} bestScore={result.HistoryMatching.BestMatchScore} bestConfidence={result.HistoryMatching.BestMatchConfidence} linkFeasible={result.HistoryMatching.HistoryLinkFeasible}",
             $"history best source={result.BestHistoryMatchCandidate?.SourceKind ?? "(none)"} file={result.BestHistoryMatchCandidate?.SourceFileName ?? "(none)"} score={result.BestHistoryMatchCandidate?.Score.ToString() ?? "0"}",
+            $"handoffGap critical=[{string.Join(", ", result.RouteADetailHandoffGap.CriticalMissingFields)}] important=[{string.Join(", ", result.RouteADetailHandoffGap.ImportantMissingFields)}] optional=[{string.Join(", ", result.RouteADetailHandoffGap.OptionalMissingFields)}]",
             "windows:",
             string.Join(Environment.NewLine, result.Windows.Select(x => $"- {x.WindowType} title={x.Title} excluded={x.Excluded} reason={x.ExcludedReason}")),
             $"probe={result.ProbePath}",

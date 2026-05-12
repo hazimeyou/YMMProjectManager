@@ -216,6 +216,19 @@ Updated Decision:
   - `Open RouteA Detail Diff` remains disabled in Step 7A
   - no runtime mutation / no snapshot restore / no RouteA replacement
 
+## Step 7A.5 (RouteA Handoff Metadata Gap Fix)
+- Added handoff gap classification output:
+  - `criticalMissingFields`
+  - `importantMissingFields`
+  - `optionalMissingFields`
+  - `recommendedSchemaFields`
+- Added schema proposal focus for reliable handoff:
+  - `compareSessionId` (required)
+  - `oldSnapshotId/newSnapshotId` (required)
+  - `previewWorkspaceStatePath` (recommended)
+  - `sceneAwareStableHash` (recommended)
+  - `sourceKind` (recommended)
+
 ## Safety
 - read-only only
 - no input injection
