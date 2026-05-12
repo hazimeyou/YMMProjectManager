@@ -402,13 +402,14 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         string? oldValue,
         string? newValue)
     {
+        var clipTypeLabel = DiffTimelineClipDisplayResolver.ResolveClipTypeLabel(displayName, category, oldValue, newValue);
         var model = new DiffTimelineItemViewModel
         {
             Id = id,
             Kind = kind,
             Category = category,
             DisplayName = displayName,
-            ClipTypeLabel = DiffTimelineClipDisplayResolver.ResolveClipTypeLabel(displayName, category, oldValue, newValue),
+            ClipTypeLabel = clipTypeLabel,
             ClipTitle = DiffTimelineClipDisplayResolver.BuildClipTitle(displayName),
             TimelineIndex = timelineIndex,
             Layer = layer,
@@ -418,7 +419,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             DurationHint = $"{Math.Max(1, length)}f",
             OldValue = oldValue,
             NewValue = newValue,
-            Fill = ResolveBrush(kind),
+            Fill = ResolveBrush(kind, clipTypeLabel),
         };
 
         ProjectItem(model);
@@ -511,16 +512,38 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         return 30;
     }
 
-    private static Brush ResolveBrush(string kind)
+    private static Brush ResolveBrush(string kind, string clipTypeLabel)
     {
-        return kind switch
+        // Prefer clip semantic coloring (YMM-like subdued tones), then fallback to diff-kind color.
+        var clipBrush = clipTypeLabel switch
         {
-            "Added" or "追加" => Brushes.SeaGreen,
-            "Removed" or "削除" => Brushes.IndianRed,
-            "Moved" or "移動" => Brushes.Peru,
-            "Changed" or "変更" => Brushes.SteelBlue,
-            _ => Brushes.DimGray,
+            "テキスト" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
+            "図形" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
+            "画像" => new SolidColorBrush(Color.FromRgb(116, 98, 154)),
+            "音声" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
+            "動画" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
+            _ => null,
         };
+        if (clipBrush is not null)
+        {
+            clipBrush.Freeze();
+            return clipBrush;
+        }
+
+        var kindBrush = kind switch
+        {
+            "Added" or "追加" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
+            "Removed" or "削除" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
+            "Moved" or "移動" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
+            "Changed" or "変更" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
+            _ => new SolidColorBrush(Color.FromRgb(108, 108, 108)),
+        };
+        kindBrush.Freeze();
+        return kindBrush;
     }
 
 }
+
+
+
+
