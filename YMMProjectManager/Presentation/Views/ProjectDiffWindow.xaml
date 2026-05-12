@@ -8,6 +8,17 @@
     Height="900"
     WindowState="Maximized"
     WindowStartupLocation="CenterOwner">
+    <Window.Resources>
+        <Style x:Key="CompactLabelTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+        <Style x:Key="CompactValueTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="Opacity" Value="0.85" />
+        </Style>
+    </Window.Resources>
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
@@ -42,15 +53,15 @@
             <StackPanel>
                 <TextBlock Text="Filter / Grouping" FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4" />
                 <WrapPanel>
-                    <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock Text="Search:" Style="{StaticResource CompactLabelTextStyle}"/>
                     <TextBox Width="190" Text="{Binding FilterSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
                     <CheckBox Content="Changed only" IsChecked="{Binding ChangedOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
                     <CheckBox Content="Warning only" IsChecked="{Binding WarningOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                    <TextBlock Text="ChangeType:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock Text="ChangeType:" Style="{StaticResource CompactLabelTextStyle}"/>
                     <ComboBox Width="110" ItemsSource="{Binding ChangeTypeFilterOptions}" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                    <TextBlock Text="Semantic:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock Text="Semantic:" Style="{StaticResource CompactLabelTextStyle}"/>
                     <ComboBox Width="110" ItemsSource="{Binding SemanticFilterOptions}" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                    <TextBlock Text="Grouping:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBlock Text="Grouping:" Style="{StaticResource CompactLabelTextStyle}"/>
                     <ComboBox Width="110" ItemsSource="{Binding GroupingModeOptions}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Margin="0,0,8,0"/>
                     <Button Content="Clear" Width="66" Click="OnClearFiltersClick" Margin="0,0,6,0"/>
                     <Button Content="Expand" Width="66" Click="OnExpandAllGroupsClick" Margin="0,0,6,0"/>
@@ -64,9 +75,9 @@
         <Border Grid.Row="3" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,8">
             <StackPanel>
                 <WrapPanel>
-                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                    <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                    <TextBlock Text="{Binding IsLargeResultMode, StringFormat=Large Result: {0}}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding RowWindowSummaryText}" Style="{StaticResource CompactValueTextStyle}" Margin="0,0,12,0"/>
+                    <TextBlock Text="{Binding CompactRenderDiagnosticsText}" Style="{StaticResource CompactValueTextStyle}" Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding IsLargeResultMode, StringFormat=Large Result: {0}}" Style="{StaticResource CompactValueTextStyle}" Margin="0,0,8,0"/>
                     <Button Content="さらに表示" Width="86" Margin="0,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
                     <Button Content="表示リセット" Width="86" Click="OnResetRowWindowClick" />
                 </WrapPanel>
@@ -148,11 +159,11 @@
                             <Expander Header="Snapshot Browser / Sessions" IsExpanded="False" Margin="0,8,0,0">
                                 <StackPanel>
                                     <WrapPanel Margin="0,0,0,4">
-                                        <TextBlock Text="Validation:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="Validation:" Style="{StaticResource CompactLabelTextStyle}"/>
                                         <TextBlock Text="{Binding SnapshotBrowser.LatestValidationState}" Margin="0,0,12,0"/>
-                                        <TextBlock Text="Snapshots:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="Snapshots:" Style="{StaticResource CompactLabelTextStyle}"/>
                                         <TextBlock Text="{Binding SnapshotBrowser.SnapshotList.Count}" Margin="0,0,12,0"/>
-                                        <TextBlock Text="Candidates:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="Candidates:" Style="{StaticResource CompactLabelTextStyle}"/>
                                         <TextBlock Text="{Binding SnapshotBrowser.ComparisonCandidates.Count}"/>
                                     </WrapPanel>
                                     <ListBox Height="90" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" SelectionChanged="OnSessionSelectionChanged">
@@ -181,13 +192,13 @@
                         <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
                             <StackPanel>
                                 <WrapPanel>
-                                    <TextBlock Text="アダプター:" Margin="0,0,4,0" />
+                                    <TextBlock Text="アダプター:" Style="{StaticResource CompactLabelTextStyle}" />
                                     <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
-                                    <TextBlock Text="状態:" Margin="0,0,4,0" />
+                                    <TextBlock Text="状態:" Style="{StaticResource CompactLabelTextStyle}" />
                                     <TextBlock Text="{Binding PureTimelineStatus}" Margin="0,0,12,0" />
-                                    <TextBlock Text="同期状態:" Margin="0,0,4,0" />
+                                    <TextBlock Text="同期状態:" Style="{StaticResource CompactLabelTextStyle}" />
                                     <ComboBox Width="130" ItemsSource="{Binding SyncStateOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedSyncState, Mode=TwoWay}" Margin="0,0,12,0" />
-                                    <TextBlock Text="モード:" Margin="0,0,4,0" />
+                                    <TextBlock Text="モード:" Style="{StaticResource CompactLabelTextStyle}" />
                                     <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
                                 </WrapPanel>
                                 <WrapPanel Margin="0,6,0,0">

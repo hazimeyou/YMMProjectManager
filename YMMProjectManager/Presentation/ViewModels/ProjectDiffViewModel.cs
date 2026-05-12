@@ -1,4 +1,6 @@
 ﻿
+using YMMProjectManager.Presentation.TimelinePresentation.State;
+
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
@@ -234,22 +236,29 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         get
         {
-            var state = BuildVirtualizationState();
-            return $"行 {state.RowCount:N0} / グループ {state.GroupCount:N0} / 描画 {lastRenderDuration.TotalMilliseconds:F0}ms / フィルター {lastFilterDuration.TotalMilliseconds:F0}ms";
+            var metricsSnapshot = BuildMetricsSnapshot();
+            var state = metricsSnapshot.VirtualizationState;
+            var renderMetrics = metricsSnapshot.RenderMetrics;
+            return $"行 {state.RowCount:N0} / グループ {state.GroupCount:N0} / 描画 {renderMetrics.LastRenderDuration.TotalMilliseconds:F0}ms / フィルター {renderMetrics.LastFilterDuration.TotalMilliseconds:F0}ms";
         }
     }
     public string DiagnosticsDetailsText
     {
         get
         {
-            var state = BuildVirtualizationState();
-            var heavy = BuildHeavyProjectDiagnostics();
+            var metricsSnapshot = BuildMetricsSnapshot();
+            var state = metricsSnapshot.VirtualizationState;
+            var heavy = metricsSnapshot.HeavyProjectDiagnostics;
+            var renderMetrics = metricsSnapshot.RenderMetrics;
             var reasonText = heavy.Reasons.Count == 0 ? "(none)" : string.Join(", ", heavy.Reasons);
-            return $"Render={lastRenderDuration.TotalMilliseconds:F1}ms, Filter={lastFilterDuration.TotalMilliseconds:F1}ms, Grouping={lastGroupingDuration.TotalMilliseconds:F1}ms, CompareApply={lastCompareApplyDuration.TotalMilliseconds:F1}ms, UIUpdate={lastUiUpdateDuration.TotalMilliseconds:F1}ms\n" +
+            var consistencyWarnings = BuildMetricsSnapshotConsistencyWarnings(metricsSnapshot);
+            var warningText = consistencyWarnings.Count == 0 ? "none" : string.Join(", ", consistencyWarnings);
+            return $"Render={renderMetrics.LastRenderDuration.TotalMilliseconds:F1}ms, Filter={renderMetrics.LastFilterDuration.TotalMilliseconds:F1}ms, Grouping={renderMetrics.LastGroupingDuration.TotalMilliseconds:F1}ms, CompareApply={renderMetrics.LastCompareApplyDuration.TotalMilliseconds:F1}ms, UIUpdate={renderMetrics.LastUiUpdateDuration.TotalMilliseconds:F1}ms\n" +
                    $"VisibleRows~{state.VisibleRowEstimate:N0}, EstimatedVisuals~{state.EstimatedVisualCount:N0}, EstimatedMemory~{state.EstimatedMemoryUsageBytes / 1024.0 / 1024.0:F2}MB\n" +
                    $"HeavyProjectDetected={heavy.HeavyProjectDetected}, VirtualizationRecommended={heavy.VirtualizationRecommended}, Reasons={reasonText}\n" +
-                   $"ProjectionCache={latestProjectionCacheStats?.CachedProjectionCount ?? 0}, Materialized={latestProjectionCacheStats?.MaterializedRowCount ?? 0}, Reuse={latestProjectionCacheStats?.ProjectionReuseCount ?? 0}, Deferred={latestProjectionCacheStats?.DeferredProjectionCount ?? 0}\n" +
-                   $"LargeResultMode={IsLargeResultMode}, Reason={LargeResultModeReason}, Window={VisibleRowWindowStart}-{VisibleRowWindowStart + DisplayedRowCount}/{TotalAvailableRowCount}";
+                   $"ProjectionCache={metricsSnapshot.ProjectionCacheStats?.CachedProjectionCount ?? 0}, Materialized={metricsSnapshot.ProjectionCacheStats?.MaterializedRowCount ?? 0}, Reuse={metricsSnapshot.ProjectionCacheStats?.ProjectionReuseCount ?? 0}, Deferred={metricsSnapshot.ProjectionCacheStats?.DeferredProjectionCount ?? 0}\n" +
+                   $"LargeResultMode={metricsSnapshot.IsLargeResultMode}, Reason={metricsSnapshot.LargeResultModeReason}, Window={metricsSnapshot.VisibleRowWindowStart}-{metricsSnapshot.VisibleRowWindowStart + metricsSnapshot.DisplayedRowCount}/{metricsSnapshot.TotalAvailableRowCount}\n" +
+                   $"MetricsSnapshotConsistencyWarnings={warningText}";
         }
     }
     public bool IsLargeResultMode => isLargeResultMode;
@@ -866,9 +875,7 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
         sw.Stop();
         lastRenderDuration = lastFilterDuration + lastGroupingDuration;
         ResetRowWindow();
-        OnPropertyChanged(nameof(LastFilterDiagnostics));
-        OnPropertyChanged(nameof(ActiveFilterSummary));
-        OnPropertyChanged(nameof(NoMatchStateText));
+        NotifyFilterStateChanged();
         NotifyDiagnosticsChanged();
     }
 
@@ -901,38 +908,72 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             SearchQuery: new DiffTimelineSearchQuery(FilterSearchText, false, false),
             ChangedOnly: ChangedOnlyFilter,
             WarningOnly: WarningOnlyFilter);
+        var metricsSnapshot = BuildMetricsSnapshot();
+        return DiffTimelinePreviewWorkspaceStateBuilder.Build(
+            filterState,
+            SelectedGroupingMode,
+            SnapshotBrowserStateForExport(),
+            SnapshotBrowser.SelectedSession,
+            SnapshotBrowser.LastCompareResultSummary,
+            LatestManualValidationLogPath,
+            SnapshotBrowser.LastCompareDiagnosticsPath,
+            metricsSnapshot,
+            SnapshotBrowser.LastCompareErrorText);
+    }
+
+    private DiffTimelineMetricsSnapshot BuildMetricsSnapshot()
+    {
         var virtualizationState = BuildVirtualizationState();
         var heavyDiagnostics = BuildHeavyProjectDiagnostics();
-        var renderMetrics = new DiffTimelineRenderMetrics(
-            LastRenderDuration: lastRenderDuration,
-            LastFilterDuration: lastFilterDuration,
-            LastGroupingDuration: lastGroupingDuration,
-            LastCompareApplyDuration: lastCompareApplyDuration,
-            LastUiUpdateDuration: lastUiUpdateDuration);
-        return new DiffTimelinePreviewWorkspaceState(
-            FilterState: filterState,
-            GroupingMode: SelectedGroupingMode,
-            SnapshotBrowserState: SnapshotBrowserStateForExport(),
-            SelectedCompareSession: SnapshotBrowser.SelectedSession,
-            LatestCompareResultSummary: SnapshotBrowser.LastCompareResultSummary,
-            LatestValidationLogPath: LatestManualValidationLogPath,
-            LatestDiagnosticsPath: SnapshotBrowser.LastCompareDiagnosticsPath,
-            LatestExportPath: string.Empty,
-            LatestWarnings: [],
-            LatestErrors: string.IsNullOrWhiteSpace(SnapshotBrowser.LastCompareErrorText) ? [] : [SnapshotBrowser.LastCompareErrorText],
-            RenderMetrics: renderMetrics,
-            VirtualizationState: virtualizationState,
-            HeavyProjectDiagnostics: heavyDiagnostics,
-            ProjectionCacheStats: latestProjectionCacheStats,
-            IsLargeResultMode: IsLargeResultMode,
-            LargeResultModeReason: LargeResultModeReason,
-            MaterializedRowLimit: MaterializedRowLimit,
-            TotalAvailableRowCount: TotalAvailableRowCount,
-            DisplayedRowCount: DisplayedRowCount,
-            DeferredRowCount: DeferredRowCount,
-            VisibleRowWindowStart: VisibleRowWindowStart,
-            VisibleRowWindowSize: VisibleRowWindowSize,
-            CanLoadMoreRows: CanLoadMoreRows);
+        return DiffTimelineMetricsSnapshotBuilder.Build(
+            lastRenderDuration,
+            lastFilterDuration,
+            lastGroupingDuration,
+            lastCompareApplyDuration,
+            lastUiUpdateDuration,
+            virtualizationState,
+            heavyDiagnostics,
+            latestProjectionCacheStats,
+            IsLargeResultMode,
+            LargeResultModeReason,
+            MaterializedRowLimit,
+            TotalAvailableRowCount,
+            DisplayedRowCount,
+            DeferredRowCount,
+            VisibleRowWindowStart,
+            VisibleRowWindowSize,
+            CanLoadMoreRows);
+    }
+
+    private static IReadOnlyList<string> BuildMetricsSnapshotConsistencyWarnings(DiffTimelineMetricsSnapshot snapshot)
+    {
+        var warnings = new List<string>();
+        if (snapshot.DisplayedRowCount > snapshot.TotalAvailableRowCount)
+        {
+            warnings.Add("displayed-gt-total");
+        }
+
+        if (snapshot.DeferredRowCount < 0)
+        {
+            warnings.Add("deferred-negative");
+        }
+
+        if (snapshot.CanLoadMoreRows && snapshot.DeferredRowCount == 0)
+        {
+            warnings.Add("load-more-without-deferred");
+        }
+
+        if (!snapshot.IsLargeResultMode && snapshot.DeferredRowCount > 0)
+        {
+            warnings.Add("deferred-without-large-mode");
+        }
+
+        if (snapshot.TotalAvailableRowCount > 0 && snapshot.ProjectionCacheStats is null)
+        {
+            warnings.Add("missing-projection-cache-stats");
+        }
+
+        return warnings;
     }
 
     private IReadOnlyList<DiffTimelineLightweightRowProjection> GetLightweightProjections(DiffTimelineCoreResult coreResult)

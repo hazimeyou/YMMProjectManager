@@ -74,3 +74,15 @@
 2. Phase 2: naming normalization with compatibility checks.
 3. Phase 3: add/export integrity regression checks.
 4. Phase 4: integrate only A/B candidates incrementally.
+
+## MetricsSnapshot Consistency Guard
+- `DiffTimelineMetricsSnapshot` is treated as the shared metrics source for UI diagnostics, preview workspace state, and export diagnostics.
+- `ProjectDiffViewModel` appends `MetricsSnapshotConsistencyWarnings=...` in diagnostics details to detect lightweight consistency issues during cleanup/refactor.
+- The guard is intended for regression detection and does not change UI/export schemas.
+
+### Current Warning Rules
+- `DisplayedRowCount > TotalAvailableRowCount`
+- `DeferredRowCount < 0`
+- `CanLoadMoreRows == true && DeferredRowCount == 0`
+- `IsLargeResultMode == false && DeferredRowCount > 0`
+- `TotalAvailableRowCount > 0 && ProjectionCacheStats == null`
