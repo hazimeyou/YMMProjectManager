@@ -70,7 +70,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             sceneIdentityCandidate.TimelineFingerprintHash);
         var routeAHandoffGap = BuildRouteAHandoffGap(defaultRouteAHandoff);
         var routeAHandoffMetadata = BuildRouteAHandoffMetadata(defaultRouteAHandoff, sceneIdentityCandidate, now);
-        var routeAOpenReadiness = BuildRouteAOpenReadiness(defaultRouteAHandoff, routeAHandoffGap, historyPreview.BestPreviewItemConfidence);
+        var snapshotPairResolution = ResolveSnapshotPairFromHistory(diagnosticsDirectory);
+        var routeAHandoffMetadataWithResolvedPair = ApplyResolvedSnapshotPair(routeAHandoffMetadata, snapshotPairResolution);
+        var routeAOpenReadiness = BuildRouteAOpenReadiness(defaultRouteAHandoff, routeAHandoffGap, historyPreview.BestPreviewItemConfidence, snapshotPairResolution);
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
@@ -155,7 +157,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             HistoryPreviewItems: historyPreviewItems,
             RouteADetailHandoff: defaultRouteAHandoff,
             RouteADetailHandoffGap: routeAHandoffGap,
-            RouteAHandoffMetadata: routeAHandoffMetadata,
+            RouteAHandoffMetadata: routeAHandoffMetadataWithResolvedPair,
+            SnapshotPairResolution: snapshotPairResolution,
             RouteAOpenReadiness: routeAOpenReadiness,
             SceneAwareMetadata: sceneAwareMetadata,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
@@ -187,6 +190,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             RouteADetailHandoff: result.RouteADetailHandoff,
             RouteADetailHandoffGap: result.RouteADetailHandoffGap,
             RouteAHandoffMetadata: result.RouteAHandoffMetadata,
+            SnapshotPairResolution: result.SnapshotPairResolution,
             RouteAOpenReadiness: result.RouteAOpenReadiness,
             SceneAwareMetadata: result.SceneAwareMetadata,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
@@ -1261,6 +1265,19 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - hasComparisonHistory: {r.RouteAOpenReadiness.HasComparisonHistory}
 - missingCriticalFields: {(r.RouteAOpenReadiness.MissingCriticalFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteAOpenReadiness.MissingCriticalFields))}
 - missingImportantFields: {(r.RouteAOpenReadiness.MissingImportantFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteAOpenReadiness.MissingImportantFields))}
+
+## Step 7B.6: Snapshot Pair Resolution
+- attempted: {r.SnapshotPairResolution.Attempted}
+- resolved: {r.SnapshotPairResolution.Resolved}
+- confidence: {r.SnapshotPairResolution.Confidence}
+- comparisonHistoryPath: {r.SnapshotPairResolution.ComparisonHistoryPath ?? "(none)"}
+- snapshotRepositoryPath: {r.SnapshotPairResolution.SnapshotRepositoryPath ?? "(none)"}
+- oldSnapshotHash: {r.SnapshotPairResolution.OldSnapshotHash ?? "(none)"}
+- newSnapshotHash: {r.SnapshotPairResolution.NewSnapshotHash ?? "(none)"}
+- oldSnapshotFound: {r.SnapshotPairResolution.OldSnapshotFound}
+- newSnapshotFound: {r.SnapshotPairResolution.NewSnapshotFound}
+- matchReason: {r.SnapshotPairResolution.MatchReason}
+- missingFields: {(r.SnapshotPairResolution.MissingFields.Count == 0 ? "(none)" : string.Join(", ", r.SnapshotPairResolution.MissingFields))}
 """;
     }
 
@@ -1371,6 +1388,7 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareRouteADetailHandoffGap RouteADetailHandoffGap,
     SceneAwareRouteAHandoffMetadata RouteAHandoffMetadata,
+    SceneAwareSnapshotPairResolution SnapshotPairResolution,
     SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
@@ -1423,6 +1441,7 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareRouteADetailHandoffGap RouteADetailHandoffGap,
     SceneAwareRouteAHandoffMetadata RouteAHandoffMetadata,
+    SceneAwareSnapshotPairResolution SnapshotPairResolution,
     SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
@@ -1710,6 +1729,21 @@ internal sealed record SceneAwareRouteAOpenReadiness(
     IReadOnlyList<string> MissingCriticalFields,
     IReadOnlyList<string> MissingImportantFields,
     IReadOnlyList<string> Warnings);
+
+internal sealed record SceneAwareSnapshotPairResolution(
+    bool Attempted,
+    bool Resolved,
+    string Confidence,
+    string? ComparisonHistoryPath,
+    string? SnapshotRepositoryPath,
+    string? OldSnapshotHash,
+    string? NewSnapshotHash,
+    bool OldSnapshotFound,
+    bool NewSnapshotFound,
+    DateTimeOffset? MatchedComparisonEntryTime,
+    string MatchReason,
+    IReadOnlyList<string> Warnings,
+    IReadOnlyList<string> MissingFields);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,

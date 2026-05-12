@@ -130,9 +130,11 @@ internal static partial class SceneAwareHistoryPreviewProbe
     private static SceneAwareRouteAOpenReadiness BuildRouteAOpenReadiness(
         SceneAwareRouteADetailHandoffCandidate handoff,
         SceneAwareRouteADetailHandoffGap gap,
-        string bestConfidence)
+        string bestConfidence,
+        SceneAwareSnapshotPairResolution? snapshotPairResolution = null)
     {
-        var hasSnapshotPair = !string.IsNullOrWhiteSpace(handoff.OldSnapshotId) && !string.IsNullOrWhiteSpace(handoff.NewSnapshotId);
+        var hasSnapshotPair = (!string.IsNullOrWhiteSpace(handoff.OldSnapshotId) && !string.IsNullOrWhiteSpace(handoff.NewSnapshotId))
+            || (snapshotPairResolution?.Resolved ?? false);
         var hasWorkspace = !string.IsNullOrWhiteSpace(handoff.PreviewWorkspaceStatePath);
         var hasHistory = !string.IsNullOrWhiteSpace(handoff.ComparisonHistoryPath);
         var canOpen = handoff.Prepared
@@ -149,5 +151,84 @@ internal static partial class SceneAwareHistoryPreviewProbe
             MissingCriticalFields: gap.CriticalMissingFields,
             MissingImportantFields: gap.ImportantMissingFields,
             Warnings: handoff.Warnings);
+    }
+
+    private static SceneAwareRouteAHandoffMetadata ApplyResolvedSnapshotPair(SceneAwareRouteAHandoffMetadata metadata, SceneAwareSnapshotPairResolution resolved)
+    {
+        if (!resolved.Resolved) return metadata;
+        return metadata with
+        {
+            SnapshotPair = metadata.SnapshotPair with
+            {
+                OldSnapshotId = resolved.OldSnapshotHash,
+                NewSnapshotId = resolved.NewSnapshotHash,
+                OldSnapshotPath = string.IsNullOrWhiteSpace(resolved.OldSnapshotHash) ? null : $"{resolved.SnapshotRepositoryPath}#SnapshotHash={resolved.OldSnapshotHash}",
+                NewSnapshotPath = string.IsNullOrWhiteSpace(resolved.NewSnapshotHash) ? null : $"{resolved.SnapshotRepositoryPath}#SnapshotHash={resolved.NewSnapshotHash}",
+            },
+            PreviewWorkspace = metadata.PreviewWorkspace with
+            {
+                ComparisonHistoryPath = resolved.ComparisonHistoryPath ?? metadata.PreviewWorkspace.ComparisonHistoryPath
+            }
+        };
+    }
+
+    private static SceneAwareSnapshotPairResolution ResolveSnapshotPairFromHistory(string diagnosticsDirectory)
+    {
+        var comp = Directory.GetFiles(diagnosticsDirectory, "*comparison-history*.json").OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
+        var repo = Directory.GetFiles(diagnosticsDirectory, "*snapshot-repository*.json").OrderByDescending(File.GetLastWriteTime).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(comp) || string.IsNullOrWhiteSpace(repo))
+            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "history/repository not found", ["comparison-history or snapshot-repository missing"], ["paths"]);
+
+        try
+        {
+            using var ch = JsonDocument.Parse(File.ReadAllText(comp));
+            var entries = new List<(string? OldHash, string? NewHash, DateTimeOffset? ComparedAt, int RowCount)>();
+            if (ch.RootElement.TryGetProperty("value", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var e in arr.EnumerateArray())
+                {
+                    var oldHash = e.TryGetProperty("OldSnapshotHash", out var oh) ? oh.GetString() : null;
+                    var newHash = e.TryGetProperty("NewSnapshotHash", out var nh) ? nh.GetString() : null;
+                    DateTimeOffset? comparedAt = null;
+                    if (e.TryGetProperty("ComparedAt", out var ca) && DateTimeOffset.TryParse(ca.GetString(), out var dt)) comparedAt = dt;
+                    var rowCount = 0;
+                    if (e.TryGetProperty("Metadata", out var m) && m.TryGetProperty("rowCount", out var rc)) int.TryParse(rc.ToString(), out rowCount);
+                    entries.Add((oldHash, newHash, comparedAt, rowCount));
+                }
+            }
+            var chosen = entries
+                .Where(x => !string.IsNullOrWhiteSpace(x.OldHash) && !string.IsNullOrWhiteSpace(x.NewHash))
+                .OrderByDescending(x => x.RowCount > 0)
+                .ThenByDescending(x => x.ComparedAt ?? DateTimeOffset.MinValue)
+                .FirstOrDefault();
+
+            using var sr = JsonDocument.Parse(File.ReadAllText(repo));
+            var hashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (sr.RootElement.TryGetProperty("value", out var sarr) && sarr.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var e in sarr.EnumerateArray())
+                {
+                    if (e.TryGetProperty("Snapshot", out var s) && s.TryGetProperty("Metadata", out var md) && md.TryGetProperty("SnapshotHash", out var sh))
+                    {
+                        var h = sh.GetString();
+                        if (!string.IsNullOrWhiteSpace(h)) hashes.Add(h);
+                    }
+                }
+            }
+
+            var oldFound = !string.IsNullOrWhiteSpace(chosen.OldHash) && hashes.Contains(chosen.OldHash);
+            var newFound = !string.IsNullOrWhiteSpace(chosen.NewHash) && hashes.Contains(chosen.NewHash);
+            var resolved = oldFound && newFound;
+            var confidence = resolved ? "High" : (oldFound || newFound) ? "Medium" : "Low";
+            var reason = resolved ? "comparison-history hashes resolved in snapshot-repository" : "snapshot hash pair not fully resolved";
+            var missing = new List<string>();
+            if (!oldFound) missing.Add("oldSnapshotHash");
+            if (!newFound) missing.Add("newSnapshotHash");
+            return new SceneAwareSnapshotPairResolution(true, resolved, confidence, comp, repo, chosen.OldHash, chosen.NewHash, oldFound, newFound, chosen.ComparedAt, reason, [], missing);
+        }
+        catch (Exception ex)
+        {
+            return new SceneAwareSnapshotPairResolution(true, false, "None", comp, repo, null, null, false, false, null, "resolution failed", [$"exception={ex.GetType().Name}"], ["parse"]);
+        }
     }
 }

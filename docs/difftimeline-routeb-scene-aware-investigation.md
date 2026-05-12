@@ -267,6 +267,16 @@ Updated Decision:
   - optional + nullable + non-breaking
   - read-only/default-disabled preserved
 
+## Step 7B.6 (Resolve Snapshot Pair from History Repository)
+- Added `snapshotPairResolution` output block.
+- Resolution flow:
+  - read latest `*comparison-history*.json`
+  - extract `OldSnapshotHash/NewSnapshotHash`
+  - match with `Snapshot.Metadata.SnapshotHash` in `*snapshot-repository*.json`
+  - backfill `routeAHandoffMetadata.snapshotPair`
+- Goal:
+  - allow `CanOpen=True` even without `compareSessionId` when snapshot pair resolves.
+
 ## Safety
 - read-only only
 - no input injection
