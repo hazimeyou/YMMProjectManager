@@ -16,4 +16,15 @@ public sealed partial class ProjectDiffViewModel
         OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
         OnPropertyChanged(nameof(DiagnosticsDetailsText));
     }
+
+    private void NotifyMetricsRefreshCompleted(bool includeFilterState)
+    {
+        if (includeFilterState)
+        {
+            NotifyFilterStateChanged();
+        }
+
+        NotifyDiagnosticsChanged();
+        OnRowWindowStateChanged();
+    }
 }

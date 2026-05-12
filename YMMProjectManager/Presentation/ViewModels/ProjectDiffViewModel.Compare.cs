@@ -97,8 +97,7 @@ public sealed partial class ProjectDiffViewModel
             SaveCurrentCompareSession();
             TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
             PersistManualValidationLog();
-            NotifyDiagnosticsChanged();
-            OnRowWindowStateChanged();
+            NotifyMetricsRefreshCompleted(includeFilterState: false);
         }
         catch (Exception ex)
         {

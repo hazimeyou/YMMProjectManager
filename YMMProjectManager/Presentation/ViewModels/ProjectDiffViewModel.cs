@@ -587,6 +587,7 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             {
                 docsPath = Path.Combine(Directory.GetCurrentDirectory(), "docs", "difftimeline-standalone-pipeline.md");
             }
+            var previewWorkspaceState = BuildCurrentPreviewWorkspaceState();
             var previewRunner = DiffTimelinePreviewValidationRunner.Run(
                 diagnosticsDirectory: Path.Combine(AppContext.BaseDirectory, "diagnostics"),
                 routeValidationReport: guardedReport,
@@ -599,7 +600,8 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
                 commitHash: "99dff2c",
                 filteredResult: latestFilteredResult,
                 snapshotBrowserState: SnapshotBrowserStateForExport(),
-                comparisonHistory: comparisonHistoryStore.Load());
+                comparisonHistory: comparisonHistoryStore.Load(),
+                previewWorkspaceState: previewWorkspaceState);
             var previewReadiness = previewRunner.PreviewReadiness;
             var exportPackage = previewRunner.ExportPackage;
 
@@ -875,8 +877,7 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
         sw.Stop();
         lastRenderDuration = lastFilterDuration + lastGroupingDuration;
         ResetRowWindow();
-        NotifyFilterStateChanged();
-        NotifyDiagnosticsChanged();
+        NotifyMetricsRefreshCompleted(includeFilterState: true);
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
@@ -897,6 +898,13 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
     public void ExpandAllGroups() => latestGroupStates = latestGroupStates.Select(x => x with { Collapsed = false }).ToList();
 
     public string SnapshotCompareSummaryText => SnapshotBrowser.CompareSummaryText;
+
+    private DiffTimelinePreviewWorkspaceState BuildCurrentPreviewWorkspaceState()
+    {
+        // Always build from the latest in-memory VM state so export/validation paths use
+        // the same snapshot source right before serialization.
+        return BuildPreviewWorkspaceState();
+    }
 
     private DiffTimelinePreviewWorkspaceState BuildPreviewWorkspaceState()
     {
