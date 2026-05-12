@@ -20,6 +20,7 @@ public partial class ProjectDiffWindow : Window
     private void OnPrevFromFrameClick(object sender, RoutedEventArgs e) => Vm?.JumpToPreviousDiffFromCurrentFrame();
     private void OnNextFromFrameClick(object sender, RoutedEventArgs e) => Vm?.JumpToNextDiffFromCurrentFrame();
     private void OnOpenExperimentalHostClick(object sender, RoutedEventArgs e) => Vm?.OpenExperimentalDiagnosticsHost();
+    private void OnOpenSceneAwareHistoryPreviewInvestigationClick(object sender, RoutedEventArgs e) => Vm?.OpenSceneAwareHistoryPreviewInvestigation();
     private void OnClearFiltersClick(object sender, RoutedEventArgs e) => Vm?.ClearStandaloneFilters();
     private void OnExpandAllGroupsClick(object sender, RoutedEventArgs e) => Vm?.ExpandAllGroups();
     private void OnCollapseAllGroupsClick(object sender, RoutedEventArgs e) => Vm?.CollapseAllGroups();

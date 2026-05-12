@@ -211,6 +211,7 @@
                                     <Button Content="末尾差分" Width="90" Click="OnLastDiffClick" Margin="0,0,6,0" />
                                     <Button Content="前の差分" Width="90" Click="OnPrevFromFrameClick" Margin="0,0,6,0" />
                                     <Button Content="次の差分" Width="90" Click="OnNextFromFrameClick" />
+                                    <Button Content="Scene-aware調査" Width="120" Margin="12,0,0,0" Click="OnOpenSceneAwareHistoryPreviewInvestigationClick" />
                                 </WrapPanel>
                             </StackPanel>
                         </Border>

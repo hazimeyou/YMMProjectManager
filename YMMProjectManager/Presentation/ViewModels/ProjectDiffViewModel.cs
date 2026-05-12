@@ -1,5 +1,8 @@
 ﻿
 using YMMProjectManager.Presentation.TimelinePresentation.State;
+using YMMProjectManager.Presentation.Timeline.Experimental;
+using YMMProjectManager.Presentation.Timeline.Experimental.ViewModels;
+using YMMProjectManager.Presentation.Timeline.Experimental.Views;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -435,6 +438,29 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             logger.Error(ex, "OpenExperimentalDiagnosticsHost failed");
+        }
+    }
+
+    public void OpenSceneAwareHistoryPreviewInvestigation()
+    {
+        try
+        {
+            var diagnosticsDir = Path.Combine(AppContext.BaseDirectory, "diagnostics");
+            var probeResult = SceneAwareHistoryPreviewProbe.Run(diagnosticsDir);
+            var vm = new SceneAwareHistoryPreviewInvestigationViewModel();
+            vm.Apply(probeResult);
+            var window = new SceneAwareHistoryPreviewInvestigationWindow(vm);
+            var owner = System.Windows.Application.Current?.Windows.OfType<System.Windows.Window>().FirstOrDefault(x => x.IsActive);
+            if (owner is not null && !ReferenceEquals(owner, window))
+            {
+                window.Owner = owner;
+            }
+
+            window.Show();
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "OpenSceneAwareHistoryPreviewInvestigation failed");
         }
     }
 
