@@ -354,6 +354,20 @@ Updated Decision:
 - decision:
   - `runtime revalidation pending` (measured files were generated before latest RC metadata output path)
 
+## Step 10: Preview UI Consolidation Foundation
+- Added section-oriented preview layout foundation:
+  - Runtime Context
+  - Scene-aware History Matches
+  - RouteA Handoff / Open Readiness
+  - Diagnostics
+  - RC / Safety
+- Added `previewUiConsolidation` optional output block.
+- Scope:
+  - default disabled
+  - investigation preview only
+  - production UI not enabled
+  - RouteA viewer not wired
+
 ## Safety
 - read-only only
 - no input injection

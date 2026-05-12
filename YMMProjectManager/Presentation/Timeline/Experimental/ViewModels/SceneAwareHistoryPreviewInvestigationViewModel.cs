@@ -12,6 +12,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private string routeADetailHandoffStatusText = "(not-prepared)";
     private bool canOpenRouteADetailDiff;
     private string routeADetailOpenResultText = "(not-attempted)";
+    private string rcStatusText = "(unknown)";
 
     public string SummaryText
     {
@@ -85,6 +86,12 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref routeADetailOpenResultText, value);
     }
 
+    public string RcStatusText
+    {
+        get => rcStatusText;
+        set => SetProperty(ref rcStatusText, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -118,6 +125,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             && !result.InputInjection
             && !result.ProductionEmbedding;
         RouteADetailOpenResultText = "Ready for read-only dry-run open. Click button to record safe open attempt.";
+        RcStatusText = $"rc={result.RouteBInvestigationRc.RcVersion}, prepared={result.RouteBInvestigationReadiness.Prepared}, confidence={result.RouteBInvestigationReadiness.Confidence}, openMode={result.RouteBInvestigationRc.DetailOpenMode}, viewerWired={result.RouteBInvestigationRc.ViewerWired}, defaultDisabled={result.DefaultDisabled}, fallbackPreserved={result.FallbackPreserved}, routeAPreserved={result.RouteAPreserved}";
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {

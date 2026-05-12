@@ -76,6 +76,14 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
         var routeBRc = BuildRouteBInvestigationRc();
         var routeBReadiness = BuildRouteBInvestigationReadiness(historyPreview.BestPreviewItemConfidence);
+        var previewUiConsolidation = new PreviewUiConsolidationStatus(
+            Prepared: true,
+            Mode: "InvestigationPreview",
+            DefaultDisabled: true,
+            ProductionUiEnabled: false,
+            Sections: ["RuntimeContext", "HistoryMatches", "RouteAHandoff", "RcStatus"],
+            ViewerWired: false,
+            OpenMode: "ReadOnlyDryRun");
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -165,6 +173,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SceneAwareMetadata: sceneAwareMetadata,
             RouteBInvestigationRc: routeBRc,
             RouteBInvestigationReadiness: routeBReadiness,
+            PreviewUiConsolidation: previewUiConsolidation,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -199,6 +208,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SceneAwareMetadata: result.SceneAwareMetadata,
             RouteBInvestigationRc: result.RouteBInvestigationRc,
             RouteBInvestigationReadiness: result.RouteBInvestigationReadiness,
+            PreviewUiConsolidation: result.PreviewUiConsolidation,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -1358,6 +1368,15 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - confidence: {r.RouteBInvestigationReadiness.Confidence}
 - canPromoteToPreviewFeature: {r.RouteBInvestigationReadiness.CanPromoteToPreviewFeature}
 - reason: {r.RouteBInvestigationReadiness.Reason}
+
+## Step 10: Preview UI Consolidation Foundation
+- prepared: {r.PreviewUiConsolidation.Prepared}
+- mode: {r.PreviewUiConsolidation.Mode}
+- defaultDisabled: {r.PreviewUiConsolidation.DefaultDisabled}
+- productionUiEnabled: {r.PreviewUiConsolidation.ProductionUiEnabled}
+- viewerWired: {r.PreviewUiConsolidation.ViewerWired}
+- openMode: {r.PreviewUiConsolidation.OpenMode}
+- sections: {(r.PreviewUiConsolidation.Sections.Count == 0 ? "(none)" : string.Join(", ", r.PreviewUiConsolidation.Sections))}
 """;
     }
 
@@ -1473,6 +1492,7 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareMetadataBlock SceneAwareMetadata,
     RouteBInvestigationRc RouteBInvestigationRc,
     RouteBInvestigationReadiness RouteBInvestigationReadiness,
+    PreviewUiConsolidationStatus PreviewUiConsolidation,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1528,6 +1548,7 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareMetadataBlock SceneAwareMetadata,
     RouteBInvestigationRc RouteBInvestigationRc,
     RouteBInvestigationReadiness RouteBInvestigationReadiness,
+    PreviewUiConsolidationStatus PreviewUiConsolidation,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -1867,6 +1888,15 @@ internal sealed record RouteBInvestigationReadiness(
     IReadOnlyList<string> CompletedCapabilities,
     IReadOnlyList<string> RemainingBeforePreviewFeature,
     IReadOnlyList<string> BlockedScopes);
+
+internal sealed record PreviewUiConsolidationStatus(
+    bool Prepared,
+    string Mode,
+    bool DefaultDisabled,
+    bool ProductionUiEnabled,
+    IReadOnlyList<string> Sections,
+    bool ViewerWired,
+    string OpenMode);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,

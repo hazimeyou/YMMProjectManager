@@ -20,7 +20,7 @@
         <TextBlock Grid.Row="0" Text="RouteB Scene-aware History Preview Investigation (read-only)" FontWeight="SemiBold" FontSize="14"/>
         <TextBlock Grid.Row="1" Margin="0,6,0,0" Text="{Binding SummaryText}"/>
 
-        <GroupBox Grid.Row="2" Header="Best YMM Timeline Candidate" Margin="0,8,0,0">
+        <GroupBox Grid.Row="2" Header="Runtime Context" Margin="0,8,0,0">
             <TextBlock Margin="6" Text="{Binding TimelineInfoText}" TextWrapping="Wrap"/>
         </GroupBox>
 
@@ -30,7 +30,7 @@
             </ScrollViewer>
         </GroupBox>
 
-        <GroupBox Grid.Row="4" Header="Scene-aware History Preview" Margin="0,8,0,0">
+        <GroupBox Grid.Row="4" Header="Scene-aware History Matches" Margin="0,8,0,0">
             <Grid Margin="6">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -47,7 +47,7 @@
             </ScrollViewer>
         </GroupBox>
 
-        <GroupBox Grid.Row="6" Header="RouteA Detail Preview Open" Margin="0,8,0,0">
+        <GroupBox Grid.Row="6" Header="RouteA Handoff / Open Readiness" Margin="0,8,0,0">
             <StackPanel Margin="6">
                 <TextBlock Text="{Binding RouteADetailHandoffStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
                 <Button Margin="0,6,0,0" Content="Open RouteA Detail Preview (Read-only)" IsEnabled="{Binding CanOpenRouteADetailDiff}" Click="OpenRouteADetailPreview_OnClick"/>
@@ -55,10 +55,14 @@
             </StackPanel>
         </GroupBox>
 
-        <GroupBox Grid.Row="7" Header="Window Scan / Diagnostics" Margin="0,8,0,0">
+        <GroupBox Grid.Row="7" Header="Diagnostics" Margin="0,8,0,0">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <TextBlock Margin="6" Text="{Binding DiagnosticsText}" TextWrapping="Wrap" FontFamily="Consolas"/>
             </ScrollViewer>
+        </GroupBox>
+
+        <GroupBox Grid.Row="8" Header="RC / Safety" Margin="0,8,0,0">
+            <TextBlock Margin="6" Text="{Binding RcStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
         </GroupBox>
     </Grid>
 </Window>

@@ -25,3 +25,4 @@
 - `SceneAwareMetadata`
 - `RouteBInvestigationRc`
 - `RouteBInvestigationReadiness`
+- `PreviewUiConsolidation`
