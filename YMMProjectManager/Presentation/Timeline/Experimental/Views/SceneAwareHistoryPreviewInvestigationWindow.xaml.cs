@@ -10,4 +10,12 @@ public partial class SceneAwareHistoryPreviewInvestigationWindow : Window
         InitializeComponent();
         DataContext = vm;
     }
+
+    private void OpenRouteADetailPreview_OnClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is SceneAwareHistoryPreviewInvestigationViewModel vm)
+        {
+            vm.OpenRouteADetailPreviewDryRun();
+        }
+    }
 }

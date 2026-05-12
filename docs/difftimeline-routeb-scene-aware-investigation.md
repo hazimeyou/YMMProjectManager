@@ -277,6 +277,27 @@ Updated Decision:
 - Goal:
   - allow `CanOpen=True` even without `compareSessionId` when snapshot pair resolves.
 
+## Step 7B.7 (Snapshot Pair Resolver Refinement)
+- Fixed resolver to support both JSON root kinds:
+  - array root
+  - object root (`value/entries/history/items/results` and fallback single object)
+- Added stage-aware diagnostics and debug output:
+  - root kinds
+  - entry counts
+  - selected entry index/reason
+  - exception stage
+- Added safer parsing for old/new snapshot hash variants and nested object paths.
+
+## Step 8 (Safe RouteA Detail Preview Open Foundation)
+- Added guarded open foundation in investigation window:
+  - button enabled only when readiness/safety conditions pass
+  - user-click only (no auto-open)
+  - read-only dry-run open attempt text logging
+- Current mode:
+  - viewer wired: not yet
+  - dryRun: enabled
+  - mutation/restore/apply: disabled
+
 ## Safety
 - read-only only
 - no input injection

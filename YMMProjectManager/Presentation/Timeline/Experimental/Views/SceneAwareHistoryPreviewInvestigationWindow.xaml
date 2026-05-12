@@ -47,10 +47,11 @@
             </ScrollViewer>
         </GroupBox>
 
-        <GroupBox Grid.Row="6" Header="RouteA Detail Handoff (dry-run)" Margin="0,8,0,0">
+        <GroupBox Grid.Row="6" Header="RouteA Detail Preview Open" Margin="0,8,0,0">
             <StackPanel Margin="6">
                 <TextBlock Text="{Binding RouteADetailHandoffStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
-                <Button Margin="0,6,0,0" Content="Open RouteA Detail Diff (Step 7A: disabled)" IsEnabled="{Binding CanOpenRouteADetailDiff}"/>
+                <Button Margin="0,6,0,0" Content="Open RouteA Detail Preview (Read-only)" IsEnabled="{Binding CanOpenRouteADetailDiff}" Click="OpenRouteADetailPreview_OnClick"/>
+                <TextBlock Margin="0,6,0,0" Text="{Binding RouteADetailOpenResultText}" TextWrapping="Wrap" FontFamily="Consolas"/>
             </StackPanel>
         </GroupBox>
 

@@ -11,6 +11,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private string historyPreviewSummaryText = "(none)";
     private string routeADetailHandoffStatusText = "(not-prepared)";
     private bool canOpenRouteADetailDiff;
+    private string routeADetailOpenResultText = "(not-attempted)";
 
     public string SummaryText
     {
@@ -78,6 +79,12 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref canOpenRouteADetailDiff, value);
     }
 
+    public string RouteADetailOpenResultText
+    {
+        get => routeADetailOpenResultText;
+        set => SetProperty(ref routeADetailOpenResultText, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -97,8 +104,20 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         }
         SelectedHistoryPreviewItem = HistoryPreviewItems.FirstOrDefault();
         HistoryPreviewSummaryText = $"previewItemCount={result.HistoryPreview.PreviewItemCount}, bestScore={result.HistoryPreview.BestPreviewItemScore}, bestConfidence={result.HistoryPreview.BestPreviewItemConfidence}, hasHighConfidenceMatch={result.HistoryPreview.HasHighConfidenceMatch}, routeADetailHandoffPrepared={result.HistoryPreview.RouteADetailHandoffPrepared}";
-        RouteADetailHandoffStatusText = $"prepared={result.RouteADetailHandoff.Prepared}, canOpen={result.RouteADetailHandoff.CanOpen}, reason={result.RouteADetailHandoff.Reason}, source={result.RouteADetailHandoff.SourceFileName}, snapshotId={result.RouteADetailHandoff.SnapshotId ?? "(none)"}, compareSessionId={result.RouteADetailHandoff.CompareSessionId ?? "(none)"}, available=[{string.Join(", ", result.RouteADetailHandoff.AvailableFields)}], missing=[{string.Join(", ", result.RouteADetailHandoff.MissingFields)}], warnings=[{string.Join(" | ", result.RouteADetailHandoff.Warnings)}]";
-        CanOpenRouteADetailDiff = false; // Step 7A keeps open action disabled (dry-run only)
+        RouteADetailHandoffStatusText = $"prepared={result.RouteADetailHandoff.Prepared}, canOpen={result.RouteADetailHandoff.CanOpen}, reason={result.RouteADetailHandoff.Reason}, source={result.RouteADetailHandoff.SourceFileName}, snapshotId={result.RouteADetailHandoff.SnapshotId ?? "(none)"}, compareSessionId={result.RouteADetailHandoff.CompareSessionId ?? "(none)"}, available=[{string.Join(", ", result.RouteADetailHandoff.AvailableFields)}], missing=[{string.Join(", ", result.RouteADetailHandoff.MissingFields)}], warnings=[{string.Join(" | ", result.RouteADetailHandoff.Warnings)}], hasSnapshotPair={result.RouteAOpenReadiness.HasSnapshotPair}, snapshotResolved={result.SnapshotPairResolution.Resolved}";
+        CanOpenRouteADetailDiff = result.RouteAOpenReadiness.Prepared
+            && result.RouteAOpenReadiness.CanOpen
+            && result.RouteAOpenReadiness.HasSnapshotPair
+            && result.SnapshotPairResolution.Resolved
+            && !string.IsNullOrWhiteSpace(result.SnapshotPairResolution.OldSnapshotHash)
+            && !string.IsNullOrWhiteSpace(result.SnapshotPairResolution.NewSnapshotHash)
+            && result.DefaultDisabled
+            && result.RouteAPreserved
+            && result.FallbackPreserved
+            && !result.RuntimeMutation
+            && !result.InputInjection
+            && !result.ProductionEmbedding;
+        RouteADetailOpenResultText = "Ready for read-only dry-run open. Click button to record safe open attempt.";
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
@@ -125,5 +144,16 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             $"summary={result.SummaryPath}",
             $"report={result.ReportPath}",
         });
+    }
+
+    public void OpenRouteADetailPreviewDryRun()
+    {
+        if (!CanOpenRouteADetailDiff)
+        {
+            RouteADetailOpenResultText = "Blocked: readiness false (safe guard)";
+            return;
+        }
+
+        RouteADetailOpenResultText = $"DryRun Open Attempt: readOnly=True, viewerWired=False, reason=viewer invocation not wired yet, time={DateTimeOffset.Now:O}";
     }
 }
