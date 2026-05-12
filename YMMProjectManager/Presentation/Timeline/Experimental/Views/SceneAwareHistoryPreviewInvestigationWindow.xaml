@@ -62,7 +62,11 @@
         </GroupBox>
 
         <GroupBox Grid.Row="8" Header="RC / Safety" Margin="0,8,0,0">
-            <TextBlock Margin="6" Text="{Binding RcStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
+            <StackPanel Margin="6">
+                <TextBlock Text="{Binding RcStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
+                <TextBlock Margin="0,6,0,0" Text="Preview Feature Gate" FontWeight="SemiBold"/>
+                <TextBlock Text="{Binding PreviewFeatureStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </StackPanel>
         </GroupBox>
     </Grid>
 </Window>

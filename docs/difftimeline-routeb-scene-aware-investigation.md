@@ -290,6 +290,23 @@ Updated Decision:
   - pending (runtime UI operation not executed in this workspace)
 - decision:
   - `Preview UI validation passed (build/output contract). Runtime UI revalidation pending.`
+
+## Step 12: Preview Feature Gate Foundation
+- RouteB Scene-aware History Preview is now represented as a preview feature candidate with explicit gate metadata.
+- State:
+  - `enabled=false`
+  - `defaultDisabled=true`
+  - `previewOnly=true`
+  - `investigationRc=true`
+  - `openMode=ReadOnlyDryRun`
+  - `viewerWired=false`
+- Added output blocks:
+  - `previewFeatureGate`
+  - `previewFeatureReadiness`
+- Scope:
+  - investigation preview only
+  - production UI not enabled
+  - RouteA viewer wiring not included
 - Updated `CanOpen` rule:
   - `compareSessionId` present
   - OR `snapshotPair(old/new)` present

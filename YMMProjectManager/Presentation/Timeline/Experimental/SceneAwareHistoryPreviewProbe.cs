@@ -76,6 +76,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
         var routeBRc = BuildRouteBInvestigationRc();
         var routeBReadiness = BuildRouteBInvestigationReadiness(historyPreview.BestPreviewItemConfidence);
+        var previewFeatureGate = BuildPreviewFeatureGate();
+        var previewFeatureReadiness = BuildPreviewFeatureReadiness(historyPreview.BestPreviewItemConfidence);
         var previewUiConsolidation = new PreviewUiConsolidationStatus(
             Prepared: true,
             Mode: "InvestigationPreview",
@@ -173,6 +175,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SceneAwareMetadata: sceneAwareMetadata,
             RouteBInvestigationRc: routeBRc,
             RouteBInvestigationReadiness: routeBReadiness,
+            PreviewFeatureGate: previewFeatureGate,
+            PreviewFeatureReadiness: previewFeatureReadiness,
             PreviewUiConsolidation: previewUiConsolidation,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
@@ -208,6 +212,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SceneAwareMetadata: result.SceneAwareMetadata,
             RouteBInvestigationRc: result.RouteBInvestigationRc,
             RouteBInvestigationReadiness: result.RouteBInvestigationReadiness,
+            PreviewFeatureGate: result.PreviewFeatureGate,
+            PreviewFeatureReadiness: result.PreviewFeatureReadiness,
             PreviewUiConsolidation: result.PreviewUiConsolidation,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
@@ -1172,6 +1178,53 @@ internal static partial class SceneAwareHistoryPreviewProbe
                 "input injection"
             ]);
 
+    private static RouteBPreviewFeatureGate BuildPreviewFeatureGate()
+        => new(
+            Prepared: true,
+            Enabled: false,
+            DefaultDisabled: true,
+            PreviewOnly: true,
+            InvestigationRc: true,
+            FeatureIdentity: "RouteBSceneAwareHistoryPreview",
+            FeatureVersion: "Preview-RC1",
+            ViewerWired: false,
+            OpenMode: "ReadOnlyDryRun",
+            ProductionEmbedding: false,
+            RuntimeMutation: false,
+            InputInjection: false,
+            RouteAPreserved: true,
+            FallbackPreserved: true);
+
+    private static RouteBPreviewFeatureReadiness BuildPreviewFeatureReadiness(string confidence)
+        => new(
+            Prepared: true,
+            Confidence: confidence,
+            CanEnablePreviewUi: false,
+            Reason: "Investigation preview only; viewer wiring and production UI are not enabled.",
+            Completed:
+            [
+                "runtime timeline detection",
+                "scene-aware matching",
+                "history preview",
+                "snapshot pair resolution",
+                "routeA open readiness",
+                "read-only dry-run open"
+            ],
+            Remaining:
+            [
+                "viewer wired validation",
+                "preview UI productionization review",
+                "heavy project performance review",
+                "feature toggle UX review"
+            ],
+            BlockedScopes:
+            [
+                "production embedding",
+                "timeline replacement",
+                "runtime mutation",
+                "input injection"
+            ]);
+
     private static string BuildMarkdownReport(SceneAwareHistoryPreviewProbeResult r, string probePath, string summaryPath)
     {
         return $"""
@@ -1377,6 +1430,22 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - viewerWired: {r.PreviewUiConsolidation.ViewerWired}
 - openMode: {r.PreviewUiConsolidation.OpenMode}
 - sections: {(r.PreviewUiConsolidation.Sections.Count == 0 ? "(none)" : string.Join(", ", r.PreviewUiConsolidation.Sections))}
+
+## Step 12: Preview Feature Gate Foundation
+- prepared: {r.PreviewFeatureGate.Prepared}
+- enabled: {r.PreviewFeatureGate.Enabled}
+- previewOnly: {r.PreviewFeatureGate.PreviewOnly}
+- investigationRc: {r.PreviewFeatureGate.InvestigationRc}
+- featureIdentity: {r.PreviewFeatureGate.FeatureIdentity}
+- featureVersion: {r.PreviewFeatureGate.FeatureVersion}
+- viewerWired: {r.PreviewFeatureGate.ViewerWired}
+- openMode: {r.PreviewFeatureGate.OpenMode}
+
+## Preview Feature Readiness
+- prepared: {r.PreviewFeatureReadiness.Prepared}
+- confidence: {r.PreviewFeatureReadiness.Confidence}
+- canEnablePreviewUi: {r.PreviewFeatureReadiness.CanEnablePreviewUi}
+- reason: {r.PreviewFeatureReadiness.Reason}
 """;
     }
 
@@ -1492,6 +1561,8 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareMetadataBlock SceneAwareMetadata,
     RouteBInvestigationRc RouteBInvestigationRc,
     RouteBInvestigationReadiness RouteBInvestigationReadiness,
+    RouteBPreviewFeatureGate PreviewFeatureGate,
+    RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
@@ -1548,6 +1619,8 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareMetadataBlock SceneAwareMetadata,
     RouteBInvestigationRc RouteBInvestigationRc,
     RouteBInvestigationReadiness RouteBInvestigationReadiness,
+    RouteBPreviewFeatureGate PreviewFeatureGate,
+    RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
@@ -1887,6 +1960,31 @@ internal sealed record RouteBInvestigationReadiness(
     string Reason,
     IReadOnlyList<string> CompletedCapabilities,
     IReadOnlyList<string> RemainingBeforePreviewFeature,
+    IReadOnlyList<string> BlockedScopes);
+
+internal sealed record RouteBPreviewFeatureGate(
+    bool Prepared,
+    bool Enabled,
+    bool DefaultDisabled,
+    bool PreviewOnly,
+    bool InvestigationRc,
+    string FeatureIdentity,
+    string FeatureVersion,
+    bool ViewerWired,
+    string OpenMode,
+    bool ProductionEmbedding,
+    bool RuntimeMutation,
+    bool InputInjection,
+    bool RouteAPreserved,
+    bool FallbackPreserved);
+
+internal sealed record RouteBPreviewFeatureReadiness(
+    bool Prepared,
+    string Confidence,
+    bool CanEnablePreviewUi,
+    string Reason,
+    IReadOnlyList<string> Completed,
+    IReadOnlyList<string> Remaining,
     IReadOnlyList<string> BlockedScopes);
 
 internal sealed record PreviewUiConsolidationStatus(

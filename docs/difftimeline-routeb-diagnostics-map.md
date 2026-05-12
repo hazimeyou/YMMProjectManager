@@ -25,4 +25,6 @@
 - `SceneAwareMetadata`
 - `RouteBInvestigationRc`
 - `RouteBInvestigationReadiness`
+- `PreviewFeatureGate`
+- `PreviewFeatureReadiness`
 - `PreviewUiConsolidation`

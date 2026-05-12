@@ -13,6 +13,10 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private bool canOpenRouteADetailDiff;
     private string routeADetailOpenResultText = "(not-attempted)";
     private string rcStatusText = "(unknown)";
+    private bool previewFeatureAvailable;
+    private bool previewFeatureEnabled;
+    private string previewFeatureMode = "InvestigationPreview";
+    private string previewFeatureStatusText = "(unknown)";
 
     public string SummaryText
     {
@@ -92,6 +96,30 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref rcStatusText, value);
     }
 
+    public bool PreviewFeatureAvailable
+    {
+        get => previewFeatureAvailable;
+        set => SetProperty(ref previewFeatureAvailable, value);
+    }
+
+    public bool PreviewFeatureEnabled
+    {
+        get => previewFeatureEnabled;
+        set => SetProperty(ref previewFeatureEnabled, value);
+    }
+
+    public string PreviewFeatureMode
+    {
+        get => previewFeatureMode;
+        set => SetProperty(ref previewFeatureMode, value);
+    }
+
+    public string PreviewFeatureStatusText
+    {
+        get => previewFeatureStatusText;
+        set => SetProperty(ref previewFeatureStatusText, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -126,6 +154,10 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             && !result.ProductionEmbedding;
         RouteADetailOpenResultText = "Ready for read-only dry-run open. Click button to record safe open attempt.";
         RcStatusText = $"rc={result.RouteBInvestigationRc.RcVersion}, prepared={result.RouteBInvestigationReadiness.Prepared}, confidence={result.RouteBInvestigationReadiness.Confidence}, openMode={result.RouteBInvestigationRc.DetailOpenMode}, viewerWired={result.RouteBInvestigationRc.ViewerWired}, defaultDisabled={result.DefaultDisabled}, fallbackPreserved={result.FallbackPreserved}, routeAPreserved={result.RouteAPreserved}";
+        PreviewFeatureAvailable = result.PreviewFeatureGate.Prepared && result.PreviewFeatureGate.PreviewOnly;
+        PreviewFeatureEnabled = result.PreviewFeatureGate.Enabled;
+        PreviewFeatureMode = result.PreviewUiConsolidation.Mode;
+        PreviewFeatureStatusText = $"prepared={result.PreviewFeatureGate.Prepared}, enabled={result.PreviewFeatureGate.Enabled}, previewOnly={result.PreviewFeatureGate.PreviewOnly}, investigationRc={result.PreviewFeatureGate.InvestigationRc}, feature={result.PreviewFeatureGate.FeatureIdentity}/{result.PreviewFeatureGate.FeatureVersion}, openMode={result.PreviewFeatureGate.OpenMode}, viewerWired={result.PreviewFeatureGate.ViewerWired}, canEnablePreviewUi={result.PreviewFeatureReadiness.CanEnablePreviewUi}, readiness={result.PreviewFeatureReadiness.Confidence}";
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
