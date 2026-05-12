@@ -58,6 +58,13 @@ internal static class SceneAwareHistoryPreviewProbe
             BestMatchScore: bestHistoryMatchCandidate?.Score ?? 0,
             BestMatchConfidence: bestHistoryMatchCandidate?.Confidence ?? "None",
             HistoryLinkFeasible: historyMatchCandidates.Any(x => x.Confidence is "High" or "Medium"));
+        var historyPreviewItems = BuildHistoryPreviewItems(historyMatchCandidates, bestHistoryMatchCandidate);
+        var historyPreview = new SceneAwareHistoryPreviewSummaryMetrics(
+            PreviewItemCount: historyPreviewItems.Count,
+            BestPreviewItemScore: historyPreviewItems.FirstOrDefault()?.Score ?? 0,
+            BestPreviewItemConfidence: historyPreviewItems.FirstOrDefault()?.Confidence ?? "None",
+            HasHighConfidenceMatch: historyPreviewItems.Any(x => x.Confidence is "High"),
+            RouteADetailHandoffPrepared: historyPreviewItems.Count > 0);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -78,7 +85,7 @@ internal static class SceneAwareHistoryPreviewProbe
         var result = new SceneAwareHistoryPreviewProbeResult(
             Route: "RouteB",
             Investigation: "SceneAwareHistoryPreview",
-            Step: "TimelineViewModelSurfaceInventory",
+            Step: "SceneAwareHistoryListPreview",
             ProbedAt: now,
             DefaultDisabled: true,
             FallbackPreserved: true,
@@ -137,6 +144,8 @@ internal static class SceneAwareHistoryPreviewProbe
             HistoryMatching: historyMatching,
             HistorySources: historySources,
             HistoryMatchCandidates: historyMatchCandidates,
+            HistoryPreview: historyPreview,
+            HistoryPreviewItems: historyPreviewItems,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -161,6 +170,8 @@ internal static class SceneAwareHistoryPreviewProbe
             TimelineFingerprint: result.TimelineFingerprint,
             SceneIdentityCandidate: result.SceneIdentityCandidate,
             HistoryMatching: result.HistoryMatching,
+            HistoryPreview: result.HistoryPreview,
+            HistoryPreviewItems: result.HistoryPreviewItems,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -859,6 +870,48 @@ internal static class SceneAwareHistoryPreviewProbe
         return list.OrderByDescending(x => x.Score).ToList();
     }
 
+    private static List<SceneAwareHistoryPreviewItem> BuildHistoryPreviewItems(
+        IReadOnlyList<SceneAwareHistoryMatchCandidate> candidates,
+        SceneAwareHistoryMatchCandidate? bestCandidate)
+    {
+        return candidates
+            .OrderByDescending(x => x.Score)
+            .ThenByDescending(x => ConfidenceRank(x.Confidence))
+            .ThenByDescending(x => x.ModifiedAt ?? DateTimeOffset.MinValue)
+            .ThenBy(x => x.SourceFileName, StringComparer.OrdinalIgnoreCase)
+            .Take(20)
+            .Select((x, i) =>
+            {
+                var isBest = bestCandidate is not null
+                    && string.Equals(x.SourcePath, bestCandidate.SourcePath, StringComparison.OrdinalIgnoreCase)
+                    && x.Score == bestCandidate.Score;
+                var reasons = x.MatchReasons.Count == 0 ? "(none)" : string.Join(", ", x.MatchReasons);
+                var missing = x.MissingFields.Count == 0 ? "(none)" : string.Join(", ", x.MissingFields);
+                return new SceneAwareHistoryPreviewItem(
+                    Rank: i + 1,
+                    Title: $"#{i + 1} {x.Confidence} score={x.Score} {x.SourceKind} / {x.SourceFileName}",
+                    SourceKind: x.SourceKind,
+                    SourceFileName: x.SourceFileName,
+                    SourcePath: x.SourcePath,
+                    ModifiedAt: x.ModifiedAt,
+                    Score: x.Score,
+                    Confidence: x.Confidence,
+                    IsBestMatch: isBest,
+                    SceneName: x.SceneName ?? "<unknown>",
+                    SceneIndex: x.SceneIndex,
+                    StableHash: x.StableHash ?? string.Empty,
+                    ItemCount: x.ItemCount,
+                    LayerCount: x.LayerCount,
+                    MinFrame: x.MinFrame,
+                    MaxFrame: x.MaxFrame,
+                    MatchReasons: x.MatchReasons,
+                    MissingFields: x.MissingFields,
+                    SummaryText: $"#{i + 1} [{x.Confidence}] score={x.Score} {x.SourceKind} / {x.SourceFileName} | reasons: {reasons}",
+                    DetailText: $"Missing: {missing}{Environment.NewLine}Modified: {(x.ModifiedAt?.ToString("yyyy-MM-dd HH:mm:ss zzz") ?? "(unknown)")}{Environment.NewLine}Hash: {(string.IsNullOrWhiteSpace(x.StableHash) ? "(none)" : x.StableHash)}");
+            })
+            .ToList();
+    }
+
     private static void FlattenJson(JsonElement element, Dictionary<string, string> output, string prefix, int depth, int maxDepth, int maxProperties)
     {
         if (depth > maxDepth || output.Count >= maxProperties)
@@ -917,6 +970,14 @@ internal static class SceneAwareHistoryPreviewProbe
         var value = TryGetValue(map, keys);
         return long.TryParse(value, out var i) ? i : null;
     }
+
+    private static int ConfidenceRank(string confidence) => confidence switch
+    {
+        "High" => 3,
+        "Medium" => 2,
+        "Low" => 1,
+        _ => 0,
+    };
 
     private static SceneAwareSceneCandidate ResolveBestSceneCandidate(List<SceneAwarePropertyReadResult> sceneCandidates)
     {
@@ -1126,6 +1187,14 @@ internal static class SceneAwareHistoryPreviewProbe
 - sourceFileName: {r.BestHistoryMatchCandidate?.SourceFileName ?? "(none)"}
 - score: {r.BestHistoryMatchCandidate?.Score.ToString() ?? "0"}
 - confidence: {r.BestHistoryMatchCandidate?.Confidence ?? "None"}
+
+## Step 6: Scene-aware History List Preview
+- previewItemCount: {r.HistoryPreview.PreviewItemCount}
+- bestPreviewItemScore: {r.HistoryPreview.BestPreviewItemScore}
+- bestPreviewItemConfidence: {r.HistoryPreview.BestPreviewItemConfidence}
+- hasHighConfidenceMatch: {r.HistoryPreview.HasHighConfidenceMatch}
+- routeADetailHandoffPrepared: {r.HistoryPreview.RouteADetailHandoffPrepared}
+- routeADetailHandoffImplemented: no
 """;
     }
 
@@ -1231,6 +1300,8 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareTimelineFingerprint TimelineFingerprintDetails,
     SceneAwareSceneIdentityCandidate SceneIdentityCandidate,
     SceneAwareHistoryMatchingSummary HistoryMatching,
+    SceneAwareHistoryPreviewSummaryMetrics HistoryPreview,
+    IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1276,6 +1347,8 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareHistoryMatchingSummary HistoryMatching,
     IReadOnlyList<SceneAwareHistorySource> HistorySources,
     IReadOnlyList<SceneAwareHistoryMatchCandidate> HistoryMatchCandidates,
+    SceneAwareHistoryPreviewSummaryMetrics HistoryPreview,
+    IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -1471,3 +1544,32 @@ internal sealed record SceneAwareHistoryMatchingSummary(
     int BestMatchScore,
     string BestMatchConfidence,
     bool HistoryLinkFeasible);
+
+internal sealed record SceneAwareHistoryPreviewSummaryMetrics(
+    int PreviewItemCount,
+    int BestPreviewItemScore,
+    string BestPreviewItemConfidence,
+    bool HasHighConfidenceMatch,
+    bool RouteADetailHandoffPrepared);
+
+public sealed record SceneAwareHistoryPreviewItem(
+    int Rank,
+    string Title,
+    string SourceKind,
+    string SourceFileName,
+    string SourcePath,
+    DateTimeOffset? ModifiedAt,
+    int Score,
+    string Confidence,
+    bool IsBestMatch,
+    string SceneName,
+    int? SceneIndex,
+    string StableHash,
+    int? ItemCount,
+    int? LayerCount,
+    long? MinFrame,
+    long? MaxFrame,
+    IReadOnlyList<string> MatchReasons,
+    IReadOnlyList<string> MissingFields,
+    string SummaryText,
+    string DetailText);

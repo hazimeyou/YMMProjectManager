@@ -6,6 +6,9 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private string timelineInfoText = string.Empty;
     private string candidatesText = string.Empty;
     private string diagnosticsText = string.Empty;
+    private SceneAwareHistoryPreviewItem? selectedHistoryPreviewItem;
+    private string selectedHistoryPreviewItemDetailText = "(none)";
+    private string historyPreviewSummaryText = "(none)";
 
     public string SummaryText
     {
@@ -31,6 +34,36 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref diagnosticsText, value);
     }
 
+    public ObservableCollection<SceneAwareHistoryPreviewItem> HistoryPreviewItems { get; } = [];
+
+    public SceneAwareHistoryPreviewItem? SelectedHistoryPreviewItem
+    {
+        get => selectedHistoryPreviewItem;
+        set
+        {
+            if (!SetProperty(ref selectedHistoryPreviewItem, value))
+            {
+                return;
+            }
+
+            SelectedHistoryPreviewItemDetailText = value is null
+                ? "(none)"
+                : $"{value.Title}{Environment.NewLine}{value.DetailText}{Environment.NewLine}SourcePath: {value.SourcePath}{Environment.NewLine}RouteA Detail Handoff: not implemented in Step 6";
+        }
+    }
+
+    public string SelectedHistoryPreviewItemDetailText
+    {
+        get => selectedHistoryPreviewItemDetailText;
+        set => SetProperty(ref selectedHistoryPreviewItemDetailText, value);
+    }
+
+    public string HistoryPreviewSummaryText
+    {
+        get => historyPreviewSummaryText;
+        set => SetProperty(ref historyPreviewSummaryText, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -42,6 +75,14 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
                 .OrderByDescending(x => x.Score)
                 .Take(20)
                 .Select(x => $"[{x.Confidence}] score={x.Score} type={x.ElementType} vm={x.DataContextType} owner={x.OwnerWindowType} excluded={x.Excluded} reason={x.ExcludedReason}"));
+
+        HistoryPreviewItems.Clear();
+        foreach (var item in result.HistoryPreviewItems)
+        {
+            HistoryPreviewItems.Add(item);
+        }
+        SelectedHistoryPreviewItem = HistoryPreviewItems.FirstOrDefault();
+        HistoryPreviewSummaryText = $"previewItemCount={result.HistoryPreview.PreviewItemCount}, bestScore={result.HistoryPreview.BestPreviewItemScore}, bestConfidence={result.HistoryPreview.BestPreviewItemConfidence}, hasHighConfidenceMatch={result.HistoryPreview.HasHighConfidenceMatch}, routeADetailHandoffPrepared={result.HistoryPreview.RouteADetailHandoffPrepared}";
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {

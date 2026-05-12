@@ -185,6 +185,25 @@ Updated Decision:
 - Recommended next step:
   - proceed to `Step 6: Scene-aware History List Preview`
 
+## Step 6 (Scene-aware History List Preview)
+- Scope:
+  - investigation window only
+  - read-only preview only
+  - no production embedding
+- Added:
+  - score-sorted preview list (`max 20`)
+  - selected preview item detail panel
+  - Step 6 diagnostics fields:
+    - `historyPreview.previewItemCount`
+    - `historyPreview.bestPreviewItemScore`
+    - `historyPreview.bestPreviewItemConfidence`
+    - `historyPreview.hasHighConfidenceMatch`
+    - `historyPreview.routeADetailHandoffPrepared`
+    - `historyPreviewItems[]`
+- RouteA detail diff handoff:
+  - prepared as candidate metadata only
+  - not executed in Step 6
+
 ## Safety
 - read-only only
 - no input injection
