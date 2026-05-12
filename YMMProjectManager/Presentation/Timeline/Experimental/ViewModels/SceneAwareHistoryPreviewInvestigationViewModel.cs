@@ -46,10 +46,15 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
             $"windowScan total={result.WindowScan.TotalWindows} excluded={result.WindowScan.ExcludedWindows} candidates={result.WindowScan.CandidateWindows}",
+            $"surface scannedObjects={result.SurfaceInventory.ScannedObjectCount} props={result.SurfaceInventory.PropertyCount} readable={result.SurfaceInventory.ReadablePropertyCount}",
+            $"surface sceneCandidates={result.SurfaceInventory.SceneCandidateCount} collectionCandidates={result.SurfaceInventory.CollectionCandidateCount} frameCandidates={result.SurfaceInventory.FrameCandidateCount} selectionCandidates={result.SurfaceInventory.SelectionCandidateCount}",
+            $"surface getterErrors={result.SurfaceInventory.GetterErrorCount}",
             $"best found={result.BestYmmTimelineCandidate.Found} score={result.BestYmmTimelineCandidate.Score} confidence={result.BestYmmTimelineCandidate.Confidence}",
             $"best type={result.BestYmmTimelineCandidate.ElementType}",
             $"best vm={result.BestYmmTimelineCandidate.DataContextType}",
             $"best owner={result.BestYmmTimelineCandidate.OwnerWindowType}",
+            $"best scene found={result.BestSceneCandidate.Found} source={result.BestSceneCandidate.SourceObjectType}.{result.BestSceneCandidate.PropertyName} value={result.BestSceneCandidate.ValuePreview}",
+            $"best collection found={result.BestTimelineCollectionCandidate.Found} source={result.BestTimelineCollectionCandidate.SourceObjectType}.{result.BestTimelineCollectionCandidate.PropertyName} count={result.BestTimelineCollectionCandidate.Count?.ToString() ?? "?"}",
             "windows:",
             string.Join(Environment.NewLine, result.Windows.Select(x => $"- {x.WindowType} title={x.Title} excluded={x.Excluded} reason={x.ExcludedReason}")),
             $"probe={result.ProbePath}",

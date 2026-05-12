@@ -35,11 +35,21 @@ internal static class SceneAwareHistoryPreviewProbe
             .OrderByDescending(x => x.Score)
             .FirstOrDefault();
 
+        var scannedObjects = BuildScannedObjects(bestCandidate, windows);
+        var allProperties = scannedObjects.SelectMany(x => x.Properties).ToList();
+        var getterErrors = allProperties.Where(x => x.ReadAttempted && !x.ReadSucceeded).ToList();
+        var sceneCandidates = allProperties.Where(x => x.Category == "SceneCandidate" && x.ReadSucceeded).ToList();
+        var collectionCandidates = allProperties.Where(x => x.Category is "ItemCollectionCandidate" or "LayerCandidate" or "SelectionCandidate").ToList();
+        var frameCandidates = allProperties.Where(x => x.Category == "FrameCandidate").ToList();
+        var selectionCandidates = allProperties.Where(x => x.Category == "SelectionCandidate").ToList();
+        var bestSceneCandidate = ResolveBestSceneCandidate(sceneCandidates);
+        var bestTimelineCollectionCandidate = ResolveBestCollectionCandidate(collectionCandidates);
+
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
         var currentFrame = bestCandidate?.CurrentFrame;
-        var itemCount = bestCandidate?.ItemCount;
+        var itemCount = bestTimelineCollectionCandidate.Found ? bestTimelineCollectionCandidate.Count : bestCandidate?.ItemCount;
         var layerCount = bestCandidate?.LayerCount;
         var selectedCount = bestCandidate?.SelectedCount;
 
@@ -53,7 +63,7 @@ internal static class SceneAwareHistoryPreviewProbe
         var result = new SceneAwareHistoryPreviewProbeResult(
             Route: "RouteB",
             Investigation: "SceneAwareHistoryPreview",
-            Step: "YmmTimelineCandidateScan",
+            Step: "TimelineViewModelSurfaceInventory",
             ProbedAt: now,
             DefaultDisabled: true,
             FallbackPreserved: true,
@@ -62,7 +72,7 @@ internal static class SceneAwareHistoryPreviewProbe
             ProductionEmbedding: false,
             RuntimeMutation: false,
             InputInjection: false,
-            CurrentSceneDetected: !string.IsNullOrWhiteSpace(bestCandidate?.SceneName) || bestCandidate?.SceneIndex is not null,
+            CurrentSceneDetected: bestSceneCandidate.Found || !string.IsNullOrWhiteSpace(bestCandidate?.SceneName) || bestCandidate?.SceneIndex is not null,
             SceneHistoryLinkFeasible: File.Exists(workspaceStatePath) || File.Exists(comparisonHistoryPath),
             Confidence: confidence,
             TimelineViewType: bestCandidate?.ElementType ?? "(not-found)",
@@ -86,7 +96,20 @@ internal static class SceneAwareHistoryPreviewProbe
             TimelineCandidates: timelineCandidates,
             BestYmmTimelineCandidate: bestCandidate is null
                 ? new SceneAwareBestTimelineCandidate(false, 0, "None", "", "", "")
-                : new SceneAwareBestTimelineCandidate(true, bestCandidate.Score, ResolveConfidence(bestCandidate, timelineCandidates.Count), bestCandidate.ElementType, bestCandidate.DataContextType, bestCandidate.OwnerWindowType));
+                : new SceneAwareBestTimelineCandidate(true, bestCandidate.Score, ResolveConfidence(bestCandidate, timelineCandidates.Count), bestCandidate.ElementType, bestCandidate.DataContextType, bestCandidate.OwnerWindowType),
+            SurfaceInventory: new SceneAwareSurfaceInventorySummary(
+                ScannedObjectCount: scannedObjects.Count,
+                PropertyCount: allProperties.Count,
+                ReadablePropertyCount: allProperties.Count(x => x.CanRead && x.GetterIsPublic),
+                SceneCandidateCount: sceneCandidates.Count,
+                CollectionCandidateCount: collectionCandidates.Count,
+                FrameCandidateCount: frameCandidates.Count,
+                SelectionCandidateCount: selectionCandidates.Count,
+                GetterErrorCount: getterErrors.Count),
+            ScannedObjects: scannedObjects,
+            BestSceneCandidate: bestSceneCandidate,
+            BestTimelineCollectionCandidate: bestTimelineCollectionCandidate,
+            GetterErrors: getterErrors);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
         var probePath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-probe-{stamp}.json");
@@ -103,7 +126,10 @@ internal static class SceneAwareHistoryPreviewProbe
             TimelineViewModelType: result.TimelineViewModelType,
             TimelineFingerprint: result.TimelineFingerprint,
             WindowScan: result.WindowScan,
-            BestYmmTimelineCandidate: result.BestYmmTimelineCandidate);
+            BestYmmTimelineCandidate: result.BestYmmTimelineCandidate,
+            SurfaceInventory: result.SurfaceInventory,
+            BestSceneCandidate: result.BestSceneCandidate,
+            BestTimelineCollectionCandidate: result.BestTimelineCollectionCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
 
@@ -327,6 +353,39 @@ internal static class SceneAwareHistoryPreviewProbe
         return best.Score >= 80 ? "High" : best.Score >= 50 ? "Medium" : "Low";
     }
 
+    private static List<SceneAwareScannedObjectReport> BuildScannedObjects(SceneAwareTimelineCandidate? best, List<Window> windows)
+    {
+        var objects = new List<SceneAwareScannedObjectReport>();
+        if (best is null)
+        {
+            return objects;
+        }
+
+        var ownerWindow = windows.FirstOrDefault(x => string.Equals(x.GetType().FullName, best.OwnerWindowType, StringComparison.Ordinal));
+        AddScannedObject(objects, "BestTimelineCandidate.DataContext", ownerWindow?.DataContext?.GetType().FullName == best.DataContextType ? ownerWindow?.DataContext : null);
+        AddScannedObject(objects, "OwnerWindow.DataContext", ownerWindow?.DataContext);
+
+        var mainWindow = System.Windows.Application.Current?.MainWindow;
+        AddScannedObject(objects, "Application.MainWindow", mainWindow);
+        AddScannedObject(objects, "Application.MainWindow.DataContext", mainWindow?.DataContext);
+
+        return objects;
+    }
+
+    private static void AddScannedObject(List<SceneAwareScannedObjectReport> list, string sourceKind, object? source)
+    {
+        if (source is null)
+        {
+            list.Add(new SceneAwareScannedObjectReport(sourceKind, "(null)", []));
+            return;
+        }
+
+        list.Add(new SceneAwareScannedObjectReport(
+            sourceKind,
+            source.GetType().FullName ?? source.GetType().Name,
+            BuildSurfaceInventory(source)));
+    }
+
     private static string[] BuildPropertyHints(Type? vmType)
     {
         if (vmType is null)
@@ -344,9 +403,175 @@ internal static class SceneAwareHistoryPreviewProbe
             .ToArray();
     }
 
+    private static List<SceneAwarePropertyReadResult> BuildSurfaceInventory(object source)
+    {
+        var props = source.GetType().GetProperties(BindingFlags.Public | BindingFlags.Instance);
+        var results = new List<SceneAwarePropertyReadResult>(props.Length);
+        foreach (var p in props)
+        {
+            var category = ClassifyCategory(p.Name, p.PropertyType);
+            var canRead = p.CanRead;
+            var canWrite = p.CanWrite;
+            var getterPublic = p.GetMethod?.IsPublic == true;
+            var indexCount = p.GetIndexParameters().Length;
+            var readAttempted = false;
+            var readSucceeded = false;
+            var errorType = "";
+            var errorMessage = "";
+            var valueKind = "none";
+            var valueType = "";
+            var valuePreview = "";
+            int? collectionCount = null;
+            var sampleTypes = new List<string>();
+            var sampleValues = new List<string>();
+            var frameLike = new List<string>();
+            var layerLike = new List<string>();
+            var textLike = new List<string>();
+            var startLike = new List<string>();
+            var endLike = new List<string>();
+            var durationLike = new List<string>();
+
+            if (canRead && getterPublic && indexCount == 0 && !typeof(System.Windows.Input.ICommand).IsAssignableFrom(p.PropertyType))
+            {
+                readAttempted = true;
+                try
+                {
+                    var value = p.GetValue(source);
+                    readSucceeded = true;
+                    if (value is null)
+                    {
+                        valueKind = "null";
+                        valuePreview = "null";
+                    }
+                    else
+                    {
+                        valueType = value.GetType().FullName ?? value.GetType().Name;
+                        if (IsScalar(value.GetType()))
+                        {
+                            valueKind = "scalar";
+                            valuePreview = SafeToString(value);
+                        }
+                        else if (value is System.Collections.ICollection collection)
+                        {
+                            valueKind = "collection";
+                            collectionCount = collection.Count;
+                            valuePreview = $"count={collection.Count}";
+                            CollectSamples(collection, sampleTypes, sampleValues, frameLike, layerLike, textLike, startLike, endLike, durationLike);
+                        }
+                        else
+                        {
+                            valueKind = "object";
+                            valuePreview = SafeToString(value);
+                            CollectTypeHints(value.GetType(), frameLike, layerLike, textLike, startLike, endLike, durationLike);
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    errorType = ex.GetType().FullName ?? ex.GetType().Name;
+                    errorMessage = ex.Message;
+                }
+            }
+
+            results.Add(new SceneAwarePropertyReadResult(
+                p.Name,
+                p.PropertyType.FullName ?? p.PropertyType.Name,
+                canRead,
+                canWrite,
+                getterPublic,
+                indexCount,
+                p.DeclaringType?.FullName ?? "",
+                category,
+                readAttempted,
+                readSucceeded,
+                errorType,
+                errorMessage,
+                valueKind,
+                valueType,
+                valuePreview,
+                collectionCount,
+                sampleTypes,
+                sampleValues,
+                frameLike,
+                layerLike,
+                textLike,
+                startLike,
+                endLike,
+                durationLike));
+        }
+
+        return results;
+    }
+
     private static string[] BuildCandidates(params string[] paths)
     {
         return paths.Where(File.Exists).Select(Path.GetFileName).Where(x => !string.IsNullOrWhiteSpace(x)).ToArray()!;
+    }
+
+    private static bool IsScalar(Type type)
+    {
+        var t = Nullable.GetUnderlyingType(type) ?? type;
+        return t.IsPrimitive || t.IsEnum || t == typeof(string) || t == typeof(DateTime) || t == typeof(DateTimeOffset) || t == typeof(TimeSpan) || t == typeof(Guid) || t == typeof(decimal);
+    }
+
+    private static string SafeToString(object value)
+    {
+        try
+        {
+            return value.ToString() ?? value.GetType().Name;
+        }
+        catch
+        {
+            return value.GetType().Name;
+        }
+    }
+
+    private static string ClassifyCategory(string name, Type type)
+    {
+        if (name.Contains("Scene", StringComparison.OrdinalIgnoreCase)) return "SceneCandidate";
+        if (name.Contains("Timeline", StringComparison.OrdinalIgnoreCase)) return "TimelineCandidate";
+        if (name.Contains("Layer", StringComparison.OrdinalIgnoreCase)) return "LayerCandidate";
+        if (name.Contains("Frame", StringComparison.OrdinalIgnoreCase) || name.Contains("Position", StringComparison.OrdinalIgnoreCase) || name.Contains("Cursor", StringComparison.OrdinalIgnoreCase)) return "FrameCandidate";
+        if (name.Contains("Select", StringComparison.OrdinalIgnoreCase)) return "SelectionCandidate";
+        if (name.Contains("Project", StringComparison.OrdinalIgnoreCase) || name.Contains("FilePath", StringComparison.OrdinalIgnoreCase)) return "ProjectCandidate";
+        if (name.Contains("History", StringComparison.OrdinalIgnoreCase) || name.Contains("Undo", StringComparison.OrdinalIgnoreCase) || name.Contains("Redo", StringComparison.OrdinalIgnoreCase)) return "HistoryCandidate";
+        if (typeof(System.Windows.Input.ICommand).IsAssignableFrom(type) || name.Contains("Command", StringComparison.OrdinalIgnoreCase)) return "CommandCandidate";
+        if (typeof(System.Collections.IEnumerable).IsAssignableFrom(type) && type != typeof(string)) return "ItemCollectionCandidate";
+        return "Other";
+    }
+
+    private static void CollectSamples(System.Collections.ICollection collection, List<string> sampleTypes, List<string> sampleValues, List<string> frameLike, List<string> layerLike, List<string> textLike, List<string> startLike, List<string> endLike, List<string> durationLike)
+    {
+        var count = 0;
+        foreach (var item in collection)
+        {
+            if (item is null)
+            {
+                continue;
+            }
+
+            sampleTypes.Add(item.GetType().FullName ?? item.GetType().Name);
+            sampleValues.Add(SafeToString(item));
+            CollectTypeHints(item.GetType(), frameLike, layerLike, textLike, startLike, endLike, durationLike);
+            count++;
+            if (count >= 3)
+            {
+                break;
+            }
+        }
+    }
+
+    private static void CollectTypeHints(Type type, List<string> frameLike, List<string> layerLike, List<string> textLike, List<string> startLike, List<string> endLike, List<string> durationLike)
+    {
+        foreach (var name in type.GetProperties(BindingFlags.Public | BindingFlags.Instance).Select(x => x.Name).Take(80))
+        {
+            if (name.Contains("Frame", StringComparison.OrdinalIgnoreCase)) frameLike.Add(name);
+            if (name.Contains("Layer", StringComparison.OrdinalIgnoreCase)) layerLike.Add(name);
+            if (name.Contains("Text", StringComparison.OrdinalIgnoreCase) || name.Contains("Name", StringComparison.OrdinalIgnoreCase) || name.Contains("FilePath", StringComparison.OrdinalIgnoreCase)) textLike.Add(name);
+            if (name.Contains("Start", StringComparison.OrdinalIgnoreCase)) startLike.Add(name);
+            if (name.Contains("End", StringComparison.OrdinalIgnoreCase)) endLike.Add(name);
+            if (name.Contains("Duration", StringComparison.OrdinalIgnoreCase) || name.Contains("Length", StringComparison.OrdinalIgnoreCase)) durationLike.Add(name);
+        }
     }
 
     private static string BuildTimelineFingerprint(string? sceneName, int? itemCount, int? layerCount, int? currentFrame)
@@ -354,10 +579,54 @@ internal static class SceneAwareHistoryPreviewProbe
         return $"scene={sceneName ?? "unknown"}|items={itemCount?.ToString() ?? "?"}|layers={layerCount?.ToString() ?? "?"}|frame={currentFrame?.ToString() ?? "?"}";
     }
 
+    private static SceneAwareSceneCandidate ResolveBestSceneCandidate(List<SceneAwarePropertyReadResult> sceneCandidates)
+    {
+        var best = sceneCandidates.FirstOrDefault(x => x.ReadSucceeded && !string.IsNullOrWhiteSpace(x.ValuePreview) && x.ValuePreview != "null");
+        if (best is null)
+        {
+            return new SceneAwareSceneCandidate(false, "None", "", "", "", "");
+        }
+
+        return new SceneAwareSceneCandidate(
+            Found: true,
+            Confidence: "Medium",
+            SourceObjectType: best.DeclaringType,
+            PropertyName: best.PropertyName,
+            ValueType: best.ValueTypeFullName,
+            ValuePreview: best.ValuePreview);
+    }
+
+    private static SceneAwareTimelineCollectionCandidate ResolveBestCollectionCandidate(List<SceneAwarePropertyReadResult> collectionCandidates)
+    {
+        var best = collectionCandidates
+            .Where(x => x.ReadSucceeded && x.CollectionCount is not null)
+            .OrderByDescending(x => x.CollectionCount)
+            .FirstOrDefault();
+        if (best is null)
+        {
+            return new SceneAwareTimelineCollectionCandidate(false, "None", "", "", null, [], [], [], [], [], [], [], []);
+        }
+
+        return new SceneAwareTimelineCollectionCandidate(
+            Found: true,
+            Confidence: "Medium",
+            SourceObjectType: best.DeclaringType,
+            PropertyName: best.PropertyName,
+            Count: best.CollectionCount,
+            SampleItemTypes: best.SampleItemTypes,
+            SampleItemToString: best.SampleItemToString,
+            FrameLikePropertyNames: best.FrameLikePropertyNames,
+            LayerLikePropertyNames: best.LayerLikePropertyNames,
+            TextLikePropertyNames: best.TextLikePropertyNames,
+            StartLikePropertyNames: best.StartLikePropertyNames,
+            EndLikePropertyNames: best.EndLikePropertyNames,
+            DurationLikePropertyNames: best.DurationLikePropertyNames);
+    }
+
     private static string BuildMarkdownReport(SceneAwareHistoryPreviewProbeResult r, string probePath, string summaryPath)
     {
         return $"""
-# Scene-aware History Preview Investigation Report (Step 2)
+# Scene-aware History Preview Investigation Report (Step 3)
 
 - route: {r.Route}
 - investigation: {r.Investigation}
@@ -377,6 +646,16 @@ internal static class SceneAwareHistoryPreviewProbe
 - excludedWindows: {r.WindowScan.ExcludedWindows}
 - candidateWindows: {r.WindowScan.CandidateWindows}
 
+## Surface Inventory Summary
+- scannedObjectCount: {r.SurfaceInventory.ScannedObjectCount}
+- propertyCount: {r.SurfaceInventory.PropertyCount}
+- readablePropertyCount: {r.SurfaceInventory.ReadablePropertyCount}
+- sceneCandidateCount: {r.SurfaceInventory.SceneCandidateCount}
+- collectionCandidateCount: {r.SurfaceInventory.CollectionCandidateCount}
+- frameCandidateCount: {r.SurfaceInventory.FrameCandidateCount}
+- selectionCandidateCount: {r.SurfaceInventory.SelectionCandidateCount}
+- getterErrorCount: {r.SurfaceInventory.GetterErrorCount}
+
 ## Best Candidate
 - found: {r.BestYmmTimelineCandidate.Found}
 - score: {r.BestYmmTimelineCandidate.Score}
@@ -394,6 +673,21 @@ internal static class SceneAwareHistoryPreviewProbe
 - selectedItemCount: {r.SelectedItemCount?.ToString() ?? "(unknown)"}
 - currentFrame: {r.CurrentFrame?.ToString() ?? "(unknown)"}
 - timelineFingerprint: {r.TimelineFingerprint}
+
+## Best Scene Candidate
+- found: {r.BestSceneCandidate.Found}
+- confidence: {r.BestSceneCandidate.Confidence}
+- sourceObjectType: {r.BestSceneCandidate.SourceObjectType}
+- propertyName: {r.BestSceneCandidate.PropertyName}
+- valueType: {r.BestSceneCandidate.ValueType}
+- valuePreview: {r.BestSceneCandidate.ValuePreview}
+
+## Best Timeline Collection Candidate
+- found: {r.BestTimelineCollectionCandidate.Found}
+- confidence: {r.BestTimelineCollectionCandidate.Confidence}
+- sourceObjectType: {r.BestTimelineCollectionCandidate.SourceObjectType}
+- propertyName: {r.BestTimelineCollectionCandidate.PropertyName}
+- count: {r.BestTimelineCollectionCandidate.Count?.ToString() ?? "(null)"}
 
 ## Output Files
 - probe: {probePath}
@@ -496,7 +790,10 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     string TimelineViewModelType,
     string TimelineFingerprint,
     SceneAwareWindowScanReport WindowScan,
-    SceneAwareBestTimelineCandidate BestYmmTimelineCandidate);
+    SceneAwareBestTimelineCandidate BestYmmTimelineCandidate,
+    SceneAwareSurfaceInventorySummary SurfaceInventory,
+    SceneAwareSceneCandidate BestSceneCandidate,
+    SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
     string Route,
@@ -530,6 +827,11 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     IReadOnlyList<SceneAwareWindowReport> Windows,
     IReadOnlyList<SceneAwareTimelineCandidate> TimelineCandidates,
     SceneAwareBestTimelineCandidate BestYmmTimelineCandidate,
+    SceneAwareSurfaceInventorySummary SurfaceInventory,
+    IReadOnlyList<SceneAwareScannedObjectReport> ScannedObjects,
+    SceneAwareSceneCandidate BestSceneCandidate,
+    SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate,
+    IReadOnlyList<SceneAwarePropertyReadResult> GetterErrors,
     string ProbePath = "",
     string SummaryPath = "",
     string ReportPath = "");
@@ -588,3 +890,67 @@ internal sealed record SceneAwarePropertyReadLog(
     string ErrorType,
     string ErrorMessage,
     string ValuePreview);
+
+internal sealed record SceneAwareSurfaceInventorySummary(
+    int ScannedObjectCount,
+    int PropertyCount,
+    int ReadablePropertyCount,
+    int SceneCandidateCount,
+    int CollectionCandidateCount,
+    int FrameCandidateCount,
+    int SelectionCandidateCount,
+    int GetterErrorCount);
+
+internal sealed record SceneAwareScannedObjectReport(
+    string SourceKind,
+    string Type,
+    IReadOnlyList<SceneAwarePropertyReadResult> Properties);
+
+internal sealed record SceneAwarePropertyReadResult(
+    string PropertyName,
+    string PropertyTypeFullName,
+    bool CanRead,
+    bool CanWrite,
+    bool GetterIsPublic,
+    int IndexParametersCount,
+    string DeclaringType,
+    string Category,
+    bool ReadAttempted,
+    bool ReadSucceeded,
+    string ReadErrorType,
+    string ReadErrorMessage,
+    string ValueKind,
+    string ValueTypeFullName,
+    string ValuePreview,
+    int? CollectionCount,
+    IReadOnlyList<string> SampleItemTypes,
+    IReadOnlyList<string> SampleItemToString,
+    IReadOnlyList<string> FrameLikePropertyNames,
+    IReadOnlyList<string> LayerLikePropertyNames,
+    IReadOnlyList<string> TextLikePropertyNames,
+    IReadOnlyList<string> StartLikePropertyNames,
+    IReadOnlyList<string> EndLikePropertyNames,
+    IReadOnlyList<string> DurationLikePropertyNames);
+
+internal sealed record SceneAwareSceneCandidate(
+    bool Found,
+    string Confidence,
+    string SourceObjectType,
+    string PropertyName,
+    string ValueType,
+    string ValuePreview);
+
+internal sealed record SceneAwareTimelineCollectionCandidate(
+    bool Found,
+    string Confidence,
+    string SourceObjectType,
+    string PropertyName,
+    int? Count,
+    IReadOnlyList<string> SampleItemTypes,
+    IReadOnlyList<string> SampleItemToString,
+    IReadOnlyList<string> FrameLikePropertyNames,
+    IReadOnlyList<string> LayerLikePropertyNames,
+    IReadOnlyList<string> TextLikePropertyNames,
+    IReadOnlyList<string> StartLikePropertyNames,
+    IReadOnlyList<string> EndLikePropertyNames,
+    IReadOnlyList<string> DurationLikePropertyNames);

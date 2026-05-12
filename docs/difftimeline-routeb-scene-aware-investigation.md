@@ -22,6 +22,27 @@
 - Added RouteA DiffTimeline exclusion for candidate list.
 - Added safe public getter read logs for scene/timeline-related fields.
 
+## Step 3 (TimelineViewModel Surface Inventory)
+- Added public surface inventory scanner for:
+  - best timeline candidate DataContext
+  - owner window DataContext
+  - `Application.Current.MainWindow`
+  - `Application.Current.MainWindow.DataContext`
+- Added property-level diagnostics:
+  - category classification (Scene/Timeline/Collection/Layer/Frame/Selection/etc.)
+  - safe getter read attempt / success / error recording
+  - value kind, preview, collection count
+  - shallow sample item types/toString (max 3)
+  - frame/layer/text/start/end/duration-like property hints
+- Added best-candidate synthesis:
+  - `bestSceneCandidate`
+  - `bestTimelineCollectionCandidate`
+- Added summary counters:
+  - scanned object count
+  - property/readable counts
+  - scene/collection/frame/selection candidate counts
+  - getter error count
+
 ## Safety
 - read-only only
 - no input injection
