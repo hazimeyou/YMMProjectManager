@@ -13,6 +13,10 @@ public sealed class DiffTimelineItemViewModel
     public int Length { get; set; }
     public string? OldValue { get; set; }
     public string? NewValue { get; set; }
+    public string ClipTypeLabel { get; set; } = "その他";
+    public string ClipTitle { get; set; } = string.Empty;
+    public string LayerHint { get; set; } = string.Empty;
+    public string DurationHint { get; set; } = string.Empty;
 
     public double X { get; set; }
     public double Y { get; set; }

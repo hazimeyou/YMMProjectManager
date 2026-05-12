@@ -1,4 +1,6 @@
-ï»¿namespace YMMProjectManager.Presentation.ViewModels;
+using YMMProjectManager.Presentation.TimelinePresentation.Display;
+
+namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed class DiffTimelineViewModel : ViewModelBase
 {
@@ -161,19 +163,19 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     public string SyncStateLabel => syncState switch
     {
-        TimelineSyncState.Unavailable => "åˆ©ç”¨ä¸å¯",
-        TimelineSyncState.Detached => "åˆ‡æ–­",
-        TimelineSyncState.Synced => "åŒæœŸä¸­",
-        TimelineSyncState.Manual => "æ‰‹å‹•",
-        TimelineSyncState.Error => "ã‚¨ãƒ©ãƒ¼",
+        TimelineSyncState.Unavailable => "—˜—p•s‰Â",
+        TimelineSyncState.Detached => "Ø’f",
+        TimelineSyncState.Synced => "“¯Šú’†",
+        TimelineSyncState.Manual => "Žè“®",
+        TimelineSyncState.Error => "ƒGƒ‰[",
         _ => syncState.ToString(),
     };
 
     public string ModeLabel => mode switch
     {
-        TimelineMode.Standalone => "å˜ç‹¬",
-        TimelineMode.Synced => "åŒæœŸ",
-        TimelineMode.Comparison => "æ¯”è¼ƒ",
+        TimelineMode.Standalone => "’P“Æ",
+        TimelineMode.Synced => "“¯Šú",
+        TimelineMode.Comparison => "”äŠr",
         _ => mode.ToString(),
     };
 
@@ -406,10 +408,14 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             Kind = kind,
             Category = category,
             DisplayName = displayName,
+            ClipTypeLabel = DiffTimelineClipDisplayResolver.ResolveClipTypeLabel(displayName, category, oldValue, newValue),
+            ClipTitle = DiffTimelineClipDisplayResolver.BuildClipTitle(displayName),
             TimelineIndex = timelineIndex,
             Layer = layer,
             Frame = frame,
             Length = length,
+            LayerHint = $"L{Math.Max(0, layer)}",
+            DurationHint = $"{Math.Max(1, length)}f",
             OldValue = oldValue,
             NewValue = newValue,
             Fill = ResolveBrush(kind),
@@ -509,11 +515,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     {
         return kind switch
         {
-            "Added" or "è¿½åŠ " => Brushes.ForestGreen,
-            "Removed" or "å‰Šé™¤" => Brushes.IndianRed,
-            "Moved" or "ç§»å‹•" => Brushes.DarkOrange,
-            "Changed" or "å¤‰æ›´" => Brushes.DodgerBlue,
-            _ => Brushes.Gray,
+            "Added" or "’Ç‰Á" => Brushes.SeaGreen,
+            "Removed" or "íœ" => Brushes.IndianRed,
+            "Moved" or "ˆÚ“®" => Brushes.Peru,
+            "Changed" or "•ÏX" => Brushes.SteelBlue,
+            _ => Brushes.DimGray,
         };
     }
+
 }

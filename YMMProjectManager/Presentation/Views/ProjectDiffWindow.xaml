@@ -17,134 +17,68 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <TextBlock Grid.Row="0" Margin="0,0,0,6" Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" />
-        <TextBlock Grid.Row="1" Margin="0,0,0,8" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
-        <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,6">
+        <StackPanel Grid.Row="0" Margin="0,0,0,6">
+            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="15" />
+            <TextBlock Margin="0,2,0,0" Text="{Binding MatchStatisticsText}" FontSize="11" Opacity="0.85" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <Border Grid.Row="1" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,6">
             <StackPanel>
+                <TextBlock Text="Compare" FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4" />
                 <WrapPanel>
-                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,12,0"/>
-                    <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center"/>
+                    <Button Content="Set Old" Width="78" Margin="0,0,6,0" Click="OnSetOldSnapshotClick"/>
+                    <Button Content="Set New" Width="78" Margin="0,0,6,0" Click="OnSetNewSnapshotClick"/>
+                    <Button Content="Swap" Width="66" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
+                    <Button Content="Compare" Width="90" Margin="0,0,10,0" Click="OnRunSnapshotCompareClick" IsEnabled="{Binding SnapshotBrowser.CanCompare}"/>
+                    <Button Content="Save Session" Width="94" Margin="0,0,6,0" Click="OnSaveCompareSessionClick"/>
+                    <Button Content="Restore Session" Width="106" Margin="0,0,6,0" Click="OnRestoreCompareSessionClick"/>
+                    <Button Content="Clear" Width="66" Click="OnClearSnapshotSelectionClick"/>
                 </WrapPanel>
-                <TextBlock Margin="0,2,0,0" Text="{Binding VirtualizationRecommendationText}" FontSize="11" Foreground="DarkGoldenrod" TextWrapping="Wrap">
-                    <TextBlock.Style>
-                        <Style TargetType="TextBlock">
-                            <Setter Property="Visibility" Value="Collapsed"/>
-                            <Style.Triggers>
-                                <DataTrigger Binding="{Binding HasVirtualizationWarning}" Value="True">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                </DataTrigger>
-                            </Style.Triggers>
-                        </Style>
-                    </TextBlock.Style>
-                </TextBlock>
-                <WrapPanel Margin="0,4,0,0">
-                    <Button Content="さらに表示" Width="86" Margin="0,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
-                    <Button Content="表示リセット" Width="86" Click="OnResetRowWindowClick" />
-                </WrapPanel>
+                <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.LastCompareStatusText}" FontSize="11" FontWeight="SemiBold"/>
             </StackPanel>
         </Border>
 
-        <Expander Grid.Row="3" Header="比較とフィルター (Advanced)" IsExpanded="False" Margin="0,0,0,8">
-            <Border BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="8">
-                <StackPanel>
-                    <TextBlock Text="Compare Workflow" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                    <WrapPanel>
-                        <Button Content="Set Old" Width="82" Margin="0,0,6,0" Click="OnSetOldSnapshotClick"/>
-                        <Button Content="Set New" Width="82" Margin="0,0,6,0" Click="OnSetNewSnapshotClick"/>
-                        <Button Content="Swap" Width="70" Margin="0,0,6,0" Click="OnSwapSnapshotSelectionClick"/>
-                        <Button Content="Clear" Width="70" Click="OnClearSnapshotSelectionClick" Margin="0,0,10,0"/>
-                        <Button Width="196" Content="Compare Selected Snapshots" Click="OnRunSnapshotCompareClick" IsEnabled="{Binding SnapshotBrowser.CanCompare}"/>
-                        <Button Content="Save Session" Width="96" Margin="10,0,6,0" Click="OnSaveCompareSessionClick"/>
-                        <Button Content="Restore Session" Width="110" Click="OnRestoreCompareSessionClick"/>
-                    </WrapPanel>
-                    <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.LastCompareStatusText}" FontSize="11" FontWeight="SemiBold"/>
-                    <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareResultSummary}" TextWrapping="Wrap" FontSize="11"/>
-                    <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareErrorText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkOrange"/>
-                    <Separator Margin="0,8,0,8"/>
-                    <TextBlock Text="Filter and Grouping" FontWeight="SemiBold" Margin="0,0,0,4"/>
-                    <WrapPanel>
-                        <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <TextBox Width="220" Text="{Binding FilterSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                        <CheckBox Content="Changed only" IsChecked="{Binding ChangedOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                        <CheckBox Content="Warning only" IsChecked="{Binding WarningOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                        <TextBlock Text="ChangeType:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Width="120" ItemsSource="{Binding ChangeTypeFilterOptions}" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                        <TextBlock Text="Semantic:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Width="120" ItemsSource="{Binding SemanticFilterOptions}" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
-                    </WrapPanel>
-                    <WrapPanel Margin="0,6,0,0">
-                        <TextBlock Text="Path:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <TextBox Width="220" Text="{Binding SelectedPathFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                        <TextBlock Text="Group:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <TextBox Width="180" Text="{Binding SelectedGroupFilter, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
-                        <Button Content="Clear Filters" Width="100" Click="OnClearFiltersClick" Margin="0,0,8,0"/>
-                        <TextBlock Text="Grouping:" VerticalAlignment="Center" Margin="0,0,4,0"/>
-                        <ComboBox Width="120" ItemsSource="{Binding GroupingModeOptions}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Margin="0,0,8,0"/>
-                        <Button Content="Expand All" Width="90" Click="OnExpandAllGroupsClick" Margin="0,0,6,0"/>
-                        <Button Content="Collapse All" Width="90" Click="OnCollapseAllGroupsClick"/>
-                    </WrapPanel>
-                    <TextBlock Margin="0,6,0,0" Text="{Binding LastFilterDiagnostics}" FontSize="11" Opacity="0.85"/>
-                    <TextBlock Margin="0,2,0,0" Text="{Binding ActiveFilterSummary}" FontSize="11" Opacity="0.85"/>
-                    <TextBlock Margin="0,2,0,0" Text="{Binding NoMatchStateText}" FontSize="11" Foreground="DarkOrange" TextWrapping="Wrap"/>
-                    <Separator Margin="0,8,0,8"/>
-                    <TextBlock Text="Snapshot Browser (Preview)" FontWeight="SemiBold"/>
-                    <WrapPanel Margin="0,4,0,0">
-                        <TextBlock Text="Latest Validation:" Margin="0,0,4,0"/>
-                        <TextBlock Text="{Binding SnapshotBrowser.LatestValidationState}" Margin="0,0,12,0"/>
-                        <TextBlock Text="Snapshot Count:" Margin="0,0,4,0"/>
-                        <TextBlock Text="{Binding SnapshotBrowser.SnapshotList.Count}" Margin="0,0,12,0"/>
-                        <TextBlock Text="Comparison Candidates:" Margin="0,0,4,0"/>
-                        <TextBlock Text="{Binding SnapshotBrowser.ComparisonCandidates.Count}"/>
-                    </WrapPanel>
-                    <Grid Margin="0,8,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="3*"/>
-                            <ColumnDefinition Width="2*"/>
-                        </Grid.ColumnDefinitions>
-                        <DataGrid Grid.Column="0"
-                                  Height="140"
-                                  ItemsSource="{Binding SnapshotBrowser.SnapshotList}"
-                                  SelectedItem="{Binding SelectedSnapshotListItem, Mode=TwoWay}"
-                                  AutoGenerateColumns="False"
-                                  IsReadOnly="True">
-                            <DataGrid.Columns>
-                                <DataGridTextColumn Header="Name" Binding="{Binding SnapshotName}" Width="*"/>
-                                <DataGridTextColumn Header="Created" Binding="{Binding CreatedAt}" Width="150"/>
-                                <DataGridTextColumn Header="Source" Binding="{Binding SourceProject}" Width="130"/>
-                                <DataGridTextColumn Header="Hash" Binding="{Binding SnapshotHash}" Width="130"/>
-                                <DataGridTextColumn Header="Note" Binding="{Binding Note}" Width="*"/>
-                            </DataGrid.Columns>
-                        </DataGrid>
-                        <StackPanel Grid.Column="1" Margin="8,0,0,0">
-                            <TextBlock Margin="0,8,0,0" Text="{Binding SnapshotBrowser.CompareSummaryText}" TextWrapping="Wrap" FontSize="11"/>
-                            <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.SnapshotBrowserMessage}" TextWrapping="Wrap" FontSize="11" Opacity="0.8"/>
-                            <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotCompareSummaryText}" TextWrapping="Wrap" FontSize="11" Foreground="DarkSlateGray"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareDiagnosticsPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.LastCompareTimestamp, StringFormat=Last Compare: {0:yyyy-MM-dd HH:mm:ss}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
-                            <TextBlock Margin="0,4,0,0" Text="{Binding ManualValidationSessionId, StringFormat=Validation Session: {0}}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationLogPath}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestManualValidationSummary}" TextWrapping="Wrap" FontSize="10" Opacity="0.8"/>
-                            <Separator Margin="0,6,0,6"/>
-                            <TextBlock Text="Reusable Compare Sessions" FontWeight="SemiBold" FontSize="11"/>
-                            <TextBlock Margin="0,4,0,0" Text="{Binding LatestReusableSessionSummary}" FontSize="10" Opacity="0.8"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding LatestReusableSessionPath}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.PersistedSnapshotSummary}" FontSize="10" Opacity="0.8"/>
-                            <ListBox Height="80" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" Margin="0,4,0,0" SelectionChanged="OnSessionSelectionChanged">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding CompareSummary}" TextWrapping="Wrap"/>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
-                            <TextBlock Margin="0,2,0,0" Text="{Binding SnapshotBrowser.SelectedSessionSummary}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </Grid>
-                    <Expander Header="Advanced Diagnostics" IsExpanded="False" Margin="0,8,0,0">
-                        <TextBlock Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
-                    </Expander>
-                </StackPanel>
-            </Border>
-        </Expander>
+        <Border Grid.Row="2" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,6">
+            <StackPanel>
+                <TextBlock Text="Filter / Grouping" FontWeight="SemiBold" FontSize="11" Margin="0,0,0,4" />
+                <WrapPanel>
+                    <TextBlock Text="Search:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <TextBox Width="190" Text="{Binding FilterSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0"/>
+                    <CheckBox Content="Changed only" IsChecked="{Binding ChangedOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                    <CheckBox Content="Warning only" IsChecked="{Binding WarningOnlyFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                    <TextBlock Text="ChangeType:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox Width="110" ItemsSource="{Binding ChangeTypeFilterOptions}" SelectedItem="{Binding SelectedChangeTypeFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                    <TextBlock Text="Semantic:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox Width="110" ItemsSource="{Binding SemanticFilterOptions}" SelectedItem="{Binding SelectedSemanticCategoryFilter, Mode=TwoWay}" Margin="0,0,8,0"/>
+                    <TextBlock Text="Grouping:" VerticalAlignment="Center" Margin="0,0,4,0"/>
+                    <ComboBox Width="110" ItemsSource="{Binding GroupingModeOptions}" SelectedItem="{Binding SelectedGroupingMode, Mode=TwoWay}" Margin="0,0,8,0"/>
+                    <Button Content="Clear" Width="66" Click="OnClearFiltersClick" Margin="0,0,6,0"/>
+                    <Button Content="Expand" Width="66" Click="OnExpandAllGroupsClick" Margin="0,0,6,0"/>
+                    <Button Content="Collapse" Width="70" Click="OnCollapseAllGroupsClick"/>
+                </WrapPanel>
+                <TextBlock Margin="0,4,0,0" Text="{Binding ActiveFilterSummary}" FontSize="11" Opacity="0.85"/>
+                <TextBlock Margin="0,2,0,0" Text="{Binding NoMatchStateText}" FontSize="11" Foreground="DarkOrange" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="3" BorderThickness="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" Padding="6" Margin="0,0,0,8">
+            <StackPanel>
+                <WrapPanel>
+                    <TextBlock Text="{Binding RowWindowSummaryText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                    <TextBlock Text="{Binding CompactRenderDiagnosticsText}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBlock Text="{Binding IsLargeResultMode, StringFormat=Large Result: {0}}" FontSize="11" Opacity="0.85" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <Button Content="さらに表示" Width="86" Margin="0,0,6,0" Click="OnLoadMoreRowsClick" IsEnabled="{Binding CanLoadMoreRows}" />
+                    <Button Content="表示リセット" Width="86" Click="OnResetRowWindowClick" />
+                </WrapPanel>
+                <Expander Header="Advanced / Diagnostics" IsExpanded="False" Margin="0,6,0,0">
+                    <StackPanel>
+                        <TextBlock Text="{Binding VirtualizationRecommendationText}" FontSize="11" Foreground="DarkGoldenrod" TextWrapping="Wrap" />
+                        <TextBlock Margin="0,4,0,0" Text="{Binding LastFilterDiagnostics}" FontSize="10" Opacity="0.85" TextWrapping="Wrap"/>
+                        <TextBlock Margin="0,2,0,0" Text="{Binding DiagnosticsDetailsText}" FontSize="10" Opacity="0.85" TextWrapping="Wrap"/>
+                    </StackPanel>
+                </Expander>
+            </StackPanel>
+        </Border>
 
         <TabControl Grid.Row="4">
             <TabItem Header="一覧表示">
@@ -183,30 +117,55 @@
                     </Grid>
 
                     <ScrollViewer Grid.Column="1" Margin="8,0,0,0">
-                        <ItemsControl ItemsSource="{Binding DiffGroups}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Expander IsExpanded="True" Margin="0,0,0,6">
-                                        <Expander.Header>
-                                            <TextBlock FontWeight="SemiBold">
-                                                <Run Text="▼ " />
-                                                <Run Text="{Binding GroupName}" />
-                                                <Run Text=" (" />
-                                                <Run Text="{Binding Count}" />
-                                                <Run Text=")" />
-                                            </TextBlock>
-                                        </Expander.Header>
-                                        <ItemsControl ItemsSource="{Binding Items}">
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate>
-                                                    <TextBlock Margin="8,2,0,2" Text="{Binding Kind}" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
-                                    </Expander>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
+                        <StackPanel>
+                            <Expander Header="Diff Groups" IsExpanded="True">
+                                <ItemsControl ItemsSource="{Binding DiffGroups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Expander IsExpanded="True" Margin="0,0,0,6">
+                                                <Expander.Header>
+                                                    <TextBlock FontWeight="SemiBold">
+                                                        <Run Text="▼ " />
+                                                        <Run Text="{Binding GroupName}" />
+                                                        <Run Text=" (" />
+                                                        <Run Text="{Binding Count}" />
+                                                        <Run Text=")" />
+                                                    </TextBlock>
+                                                </Expander.Header>
+                                                <ItemsControl ItemsSource="{Binding Items}">
+                                                    <ItemsControl.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Margin="8,2,0,2" Text="{Binding Kind}" />
+                                                        </DataTemplate>
+                                                    </ItemsControl.ItemTemplate>
+                                                </ItemsControl>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Expander>
+
+                            <Expander Header="Snapshot Browser / Sessions" IsExpanded="False" Margin="0,8,0,0">
+                                <StackPanel>
+                                    <WrapPanel Margin="0,0,0,4">
+                                        <TextBlock Text="Validation:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="{Binding SnapshotBrowser.LatestValidationState}" Margin="0,0,12,0"/>
+                                        <TextBlock Text="Snapshots:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="{Binding SnapshotBrowser.SnapshotList.Count}" Margin="0,0,12,0"/>
+                                        <TextBlock Text="Candidates:" Margin="0,0,4,0"/>
+                                        <TextBlock Text="{Binding SnapshotBrowser.ComparisonCandidates.Count}"/>
+                                    </WrapPanel>
+                                    <ListBox Height="90" ItemsSource="{Binding SnapshotBrowser.LatestCompareSessions}" SelectedItem="{Binding SnapshotBrowser.SelectedSession, Mode=TwoWay}" SelectionChanged="OnSessionSelectionChanged">
+                                        <ListBox.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding CompareSummary}" TextWrapping="Wrap"/>
+                                            </DataTemplate>
+                                        </ListBox.ItemTemplate>
+                                    </ListBox>
+                                    <TextBlock Margin="0,4,0,0" Text="{Binding SnapshotBrowser.SelectedSessionSummary}" FontSize="10" Opacity="0.8" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
                     </ScrollViewer>
                 </Grid>
             </TabItem>
@@ -218,69 +177,32 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Margin="0,0,0,8" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
-                        <StackPanel>
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock Text="純正タイムラインホスト" FontWeight="SemiBold" Margin="0,0,12,0" />
-                                <TextBlock Text="アダプター種別:" Margin="0,0,4,0" />
-                                <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="アダプター:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.AdapterDisplayName}" Margin="0,0,12,0" />
-                                <TextBlock Text="状態:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineStatus}" Margin="0,0,12,0" />
-                                <TextBlock Text="利用可否:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.IsAvailable}" Margin="0,0,12,0" />
-                                <TextBlock Text="フォールバック:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.FallbackActive}" Margin="0,0,12,0" />
-                                <TextBlock Text="シーン:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineActiveScene}" Margin="0,0,12,0" />
-                                <TextBlock Text="タイムライン:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineActiveTimeline}" />
-                                <TextBlock Text="実行環境:" Margin="12,0,4,0" />
-                                <TextBlock Text="{Binding RuntimeEnvironmentText}" />
+                    <Expander Grid.Row="0" Header="Timeline Integration (Advanced)" IsExpanded="False" Margin="0,0,0,8">
+                        <Border BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+                            <StackPanel>
+                                <WrapPanel>
+                                    <TextBlock Text="アダプター:" Margin="0,0,4,0" />
+                                    <ComboBox Width="170" ItemsSource="{Binding AdapterKindOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedAdapterKind, Mode=TwoWay}" Margin="0,0,12,0" />
+                                    <TextBlock Text="状態:" Margin="0,0,4,0" />
+                                    <TextBlock Text="{Binding PureTimelineStatus}" Margin="0,0,12,0" />
+                                    <TextBlock Text="同期状態:" Margin="0,0,4,0" />
+                                    <ComboBox Width="130" ItemsSource="{Binding SyncStateOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedSyncState, Mode=TwoWay}" Margin="0,0,12,0" />
+                                    <TextBlock Text="モード:" Margin="0,0,4,0" />
+                                    <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
+                                </WrapPanel>
+                                <WrapPanel Margin="0,6,0,0">
+                                    <Button Content="フレーム同期→DiffTL" Width="130" Click="OnSyncFrameClick" Margin="0,0,6,0" />
+                                    <Button Content="現在フレームへ移動" Width="120" Click="OnGoToCurrentFrameClick" Margin="0,0,6,0" />
+                                    <Button Content="現在フレームを中央表示" Width="140" Click="OnCenterCurrentFrameClick" Margin="0,0,6,0" />
+                                    <Button Content="最寄りの差分へ" Width="100" Click="OnNearestDiffClick" Margin="0,0,6,0" />
+                                    <Button Content="先頭差分" Width="90" Click="OnFirstDiffClick" Margin="0,0,6,0" />
+                                    <Button Content="末尾差分" Width="90" Click="OnLastDiffClick" Margin="0,0,6,0" />
+                                    <Button Content="前の差分" Width="90" Click="OnPrevFromFrameClick" Margin="0,0,6,0" />
+                                    <Button Content="次の差分" Width="90" Click="OnNextFromFrameClick" />
+                                </WrapPanel>
                             </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="同期状態:" Margin="0,0,4,0" />
-                                <ComboBox Width="130" ItemsSource="{Binding SyncStateOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedSyncState, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="タイムラインモード:" Margin="0,0,4,0" />
-                                <ComboBox Width="130" ItemsSource="{Binding TimelineModeOptions}" DisplayMemberPath="Label" SelectedValuePath="Value" SelectedValue="{Binding SelectedTimelineMode, Mode=TwoWay}" Margin="0,0,12,0" />
-                                <TextBlock Text="現在フレーム:" Margin="0,0,4,0" />
-                                <TextBox Width="90" Text="{Binding PureTimelineHost.CurrentFrame, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,8,0" />
-                                <Button Content="フレーム同期→DiffTL" Width="130" Click="OnSyncFrameClick" Margin="0,0,6,0" />
-                                <Button Content="現在フレームへ移動" Width="120" Click="OnGoToCurrentFrameClick" Margin="0,0,6,0" />
-                                <Button Content="現在フレームを中央表示" Width="140" Click="OnCenterCurrentFrameClick" Margin="0,0,6,0" />
-                                <Button Content="最寄りの差分へ" Width="100" Click="OnNearestDiffClick" />
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <Button Content="先頭差分" Width="90" Click="OnFirstDiffClick" Margin="0,0,6,0" />
-                                <Button Content="末尾差分" Width="90" Click="OnLastDiffClick" Margin="0,0,6,0" />
-                                <Button Content="前の差分(現在フレーム基準)" Width="170" Click="OnPrevFromFrameClick" Margin="0,0,6,0" />
-                                <Button Content="次の差分(現在フレーム基準)" Width="170" Click="OnNextFromFrameClick" Margin="0,0,12,0" />
-                                <TextBlock Text="同期:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineSyncState}" Margin="0,0,12,0" />
-                                <TextBlock Text="モード:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineMode}" />
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
-                                <TextBlock Text="初期化回数:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.InitializeCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="解放回数:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.DisposeCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="解放失敗:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.DisposeFailureCount}" Margin="0,0,12,0" />
-                                <TextBlock Text="アクティブホスト:" Margin="0,0,4,0" />
-                                <TextBlock Text="{Binding PureTimelineHost.ActiveHostCount}" />
-                                <Button Content="診断ホストを開く" Width="130" Margin="12,0,0,0" Click="OnOpenExperimentalHostClick" />
-                            </StackPanel>
-
-                            <TextBlock Text="{Binding PureTimelineSelection, StringFormat=選択中: {0}}" Margin="0,6,0,0" />
-                            <TextBlock Text="{Binding PureTimelineHost.LastError, StringFormat=最終エラー: {0}}" Margin="0,2,0,0" />
-                            <TextBlock Text="{Binding PureTimelineHost.LastAction}" Margin="0,2,0,0" />
-                        </StackPanel>
-                    </Border>
+                        </Border>
+                    </Expander>
 
                     <views:DiffTimelineView Grid.Row="1" DataContext="{Binding TimelineViewModel}" />
                 </Grid>

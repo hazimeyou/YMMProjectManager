@@ -8,6 +8,12 @@
     xmlns:views="clr-namespace:YMMProjectManager.Presentation.Views"
     mc:Ignorable="d"
     d:DataContext="{d:DesignInstance Type=vm:DiffTimelineViewModel}">
+    <UserControl.Resources>
+        <Style x:Key="CompactHeaderTextStyle" TargetType="TextBlock">
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,4,0" />
+        </Style>
+    </UserControl.Resources>
 
     <Grid>
         <Grid.RowDefinitions>
@@ -16,7 +22,7 @@
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
             <Button Content="前の差分" Width="90" Margin="0,0,8,0" Click="OnPrevDiffClick" />
             <Button Content="次の差分" Width="90" Margin="0,0,8,0" Click="OnNextDiffClick" />
             <Button Content="選択差分へ移動" Width="130" Margin="0,0,10,0" Click="OnScrollToSelectedClick" />
@@ -24,13 +30,13 @@
             <Button Content="縮小" Width="70" Margin="0,0,6,0" Click="OnZoomOutClick" />
             <Button Content="拡大" Width="70" Margin="0,0,6,0" Click="OnZoomInClick" />
             <Button Content="リセット" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
-            <TextBlock VerticalAlignment="Center" Text="倍率:" Margin="0,0,4,0" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="倍率:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding Scale, StringFormat=F2}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="モード:" Margin="0,0,4,0" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="モード:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding ModeLabel}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="同期:" Margin="0,0,4,0" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="同期:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding SyncStateLabel}" Margin="0,0,10,0" />
-            <TextBlock VerticalAlignment="Center" Text="表示中:" Margin="0,0,4,0" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="表示:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
         </StackPanel>
 
@@ -38,7 +44,7 @@
 
         <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="3*" />
+                <ColumnDefinition Width="5*" />
                 <ColumnDefinition Width="2*" />
             </Grid.ColumnDefinitions>
 
@@ -61,7 +67,22 @@
                                 <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
                                     <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
                                         <Grid>
-                                            <Rectangle Fill="{Binding Fill}" RadiusX="2" RadiusY="2" />
+                                            <Rectangle Fill="{Binding Fill}" Opacity="0.82" RadiusX="2" RadiusY="2" />
+                                            <Border BorderBrush="#33000000" BorderThickness="1" CornerRadius="2" />
+                                            <Grid Margin="3,1,3,1">
+                                                <Grid.RowDefinitions>
+                                                    <RowDefinition Height="Auto"/>
+                                                    <RowDefinition Height="*"/>
+                                                </Grid.RowDefinitions>
+                                                <DockPanel Grid.Row="0">
+                                                    <TextBlock Text="{Binding ClipTypeLabel}" FontSize="10" FontWeight="SemiBold" Foreground="White" />
+                                                    <TextBlock Text="{Binding DurationHint}" DockPanel.Dock="Right" FontSize="9" Foreground="#E6FFFFFF" />
+                                                </DockPanel>
+                                                <DockPanel Grid.Row="1">
+                                                    <TextBlock Text="{Binding ClipTitle}" FontSize="10" Foreground="White" TextTrimming="CharacterEllipsis" />
+                                                    <TextBlock Text="{Binding LayerHint}" DockPanel.Dock="Right" FontSize="9" Foreground="#E6FFFFFF" Margin="4,0,0,0" />
+                                                </DockPanel>
+                                            </Grid>
                                             <Rectangle Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" StrokeThickness="2" RadiusX="2" RadiusY="2">
                                                 <Rectangle.Style>
                                                     <Style TargetType="Rectangle">
@@ -93,15 +114,17 @@
                 </ScrollViewer>
             </Border>
 
-            <Border Grid.Column="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="8" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
+            <Border Grid.Column="1" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="7" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
                 <StackPanel>
-                    <TextBlock Text="差分詳細" FontWeight="SemiBold" Margin="0,0,0,8" />
+                    <TextBlock Text="選択詳細" FontWeight="SemiBold" Margin="0,0,0,6" />
+                    <TextBlock Text="クリップ種別" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SelectedDiffItem.ClipTypeLabel, TargetNullValue=-}" Margin="0,0,0,4" />
                     <TextBlock Text="種別" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding SelectedDiffItem.Kind, TargetNullValue=-}" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding SelectedDiffItem.Kind, TargetNullValue=-}" Margin="0,0,0,4" />
                     <TextBlock Text="項目" FontWeight="SemiBold" />
-                    <TextBlock Text="{Binding SelectedDiffItem.DisplayName, TargetNullValue=-}" Margin="0,0,0,6" />
+                    <TextBlock Text="{Binding SelectedDiffItem.ClipTitle, TargetNullValue=-}" Margin="0,0,0,4" />
                     <TextBlock Text="位置" FontWeight="SemiBold" />
-                    <TextBlock Margin="0,0,0,6">
+                    <TextBlock Margin="0,0,0,4">
                         <Run Text="T=" /><Run Text="{Binding SelectedDiffItem.TimelineIndex}" />
                         <Run Text=", L=" /><Run Text="{Binding SelectedDiffItem.Layer}" />
                         <Run Text=", F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
