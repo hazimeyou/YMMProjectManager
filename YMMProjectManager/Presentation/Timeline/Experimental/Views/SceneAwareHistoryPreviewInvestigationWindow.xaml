@@ -2,29 +2,31 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Scene-aware History Preview Investigation"
-        Width="980" Height="720"
+        Width="1100" Height="760"
         WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="2*"/>
+            <RowDefinition Height="3*"/>
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0" Text="RouteB Scene-aware History Preview Investigation (read-only)" FontWeight="SemiBold" FontSize="14"/>
         <TextBlock Grid.Row="1" Margin="0,6,0,0" Text="{Binding SummaryText}"/>
 
-        <GroupBox Grid.Row="2" Header="Current Scene Info" Margin="0,8,0,0">
+        <GroupBox Grid.Row="2" Header="Best YMM Timeline Candidate" Margin="0,8,0,0">
             <TextBlock Margin="6" Text="{Binding TimelineInfoText}" TextWrapping="Wrap"/>
         </GroupBox>
 
-        <GroupBox Grid.Row="3" Header="Scene History Candidates" Margin="0,8,0,0">
-            <TextBlock Margin="6" Text="{Binding CandidatesText}" TextWrapping="Wrap"/>
+        <GroupBox Grid.Row="3" Header="Timeline Candidates" Margin="0,8,0,0">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <TextBlock Margin="6" Text="{Binding CandidatesText}" TextWrapping="Wrap" FontFamily="Consolas"/>
+            </ScrollViewer>
         </GroupBox>
 
-        <GroupBox Grid.Row="4" Header="Diagnostics" Margin="0,8,0,0">
+        <GroupBox Grid.Row="4" Header="Window Scan / Diagnostics" Margin="0,8,0,0">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <TextBlock Margin="6" Text="{Binding DiagnosticsText}" TextWrapping="Wrap" FontFamily="Consolas"/>
             </ScrollViewer>

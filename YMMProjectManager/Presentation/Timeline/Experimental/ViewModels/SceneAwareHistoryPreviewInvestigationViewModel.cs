@@ -35,16 +35,23 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
         TimelineInfoText = $"scene={result.SceneName} / index={result.SceneIndex?.ToString() ?? "?"} / items={result.TimelineItemCount?.ToString() ?? "?"} / layers={result.LayerCount?.ToString() ?? "?"} / selected={result.SelectedItemCount?.ToString() ?? "?"} / frame={result.CurrentFrame?.ToString() ?? "?"}";
-        CandidatesText = result.SnapshotHistoryCandidates.Count == 0
+
+        CandidatesText = result.TimelineCandidates.Count == 0
             ? "(none)"
-            : string.Join(Environment.NewLine, result.SnapshotHistoryCandidates.Select(x => $"- {x}"));
+            : string.Join(Environment.NewLine, result.TimelineCandidates
+                .OrderByDescending(x => x.Score)
+                .Take(20)
+                .Select(x => $"[{x.Confidence}] score={x.Score} type={x.ElementType} vm={x.DataContextType} owner={x.OwnerWindowType} excluded={x.Excluded} reason={x.ExcludedReason}"));
+
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
-            $"timelineViewType={result.TimelineViewType}",
-            $"timelineVmType={result.TimelineViewModelType}",
-            $"ownerWindowType={result.OwnerWindowType}",
-            $"ownerDataContextType={result.OwnerDataContextType}",
-            $"fingerprint={result.TimelineFingerprint}",
+            $"windowScan total={result.WindowScan.TotalWindows} excluded={result.WindowScan.ExcludedWindows} candidates={result.WindowScan.CandidateWindows}",
+            $"best found={result.BestYmmTimelineCandidate.Found} score={result.BestYmmTimelineCandidate.Score} confidence={result.BestYmmTimelineCandidate.Confidence}",
+            $"best type={result.BestYmmTimelineCandidate.ElementType}",
+            $"best vm={result.BestYmmTimelineCandidate.DataContextType}",
+            $"best owner={result.BestYmmTimelineCandidate.OwnerWindowType}",
+            "windows:",
+            string.Join(Environment.NewLine, result.Windows.Select(x => $"- {x.WindowType} title={x.Title} excluded={x.Excluded} reason={x.ExcludedReason}")),
             $"probe={result.ProbePath}",
             $"summary={result.SummaryPath}",
             $"report={result.ReportPath}",
