@@ -298,6 +298,34 @@ Updated Decision:
   - dryRun: enabled
   - mutation/restore/apply: disabled
 
+## Step 9 (RouteB Investigation RC1)
+- RC identity:
+  - `rcVersion=RouteB-SceneAwareHistoryPreview-RC1`
+  - `routeIdentity=RouteBSceneAwareHistoryPreviewInvestigationRC`
+- Completed capabilities:
+  - TimelineView detection
+  - TimelineViewModel surface inventory
+  - runtime fingerprint
+  - history matching
+  - history preview list
+  - sceneAwareMetadata
+  - RouteA handoff metadata
+  - snapshot pair resolution
+  - safe read-only open foundation
+- Not included in RC1:
+  - RouteA viewer wired open
+  - production UI
+  - timeline replacement
+  - history restore/apply
+  - YMM runtime mutation
+- Safety:
+  - default disabled
+  - fallback preserved
+  - RouteA preserved
+  - production embedding disabled
+  - runtime mutation disabled
+  - input injection disabled
+
 ## Safety
 - read-only only
 - no input injection

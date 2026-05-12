@@ -74,6 +74,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var routeAHandoffMetadataWithResolvedPair = ApplyResolvedSnapshotPair(routeAHandoffMetadata, snapshotPairResolution);
         var routeAOpenReadiness = BuildRouteAOpenReadiness(defaultRouteAHandoff, routeAHandoffGap, historyPreview.BestPreviewItemConfidence, snapshotPairResolution);
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
+        var routeBRc = BuildRouteBInvestigationRc();
+        var routeBReadiness = BuildRouteBInvestigationReadiness(historyPreview.BestPreviewItemConfidence);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -161,6 +163,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SnapshotPairResolution: snapshotPairResolution,
             RouteAOpenReadiness: routeAOpenReadiness,
             SceneAwareMetadata: sceneAwareMetadata,
+            RouteBInvestigationRc: routeBRc,
+            RouteBInvestigationReadiness: routeBReadiness,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -193,6 +197,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             SnapshotPairResolution: result.SnapshotPairResolution,
             RouteAOpenReadiness: result.RouteAOpenReadiness,
             SceneAwareMetadata: result.SceneAwareMetadata,
+            RouteBInvestigationRc: result.RouteBInvestigationRc,
+            RouteBInvestigationReadiness: result.RouteBInvestigationReadiness,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -1104,6 +1110,58 @@ internal static partial class SceneAwareHistoryPreviewProbe
             Confidence: confidence);
     }
 
+    private static RouteBInvestigationRc BuildRouteBInvestigationRc()
+        => new(
+            RcVersion: "RouteB-SceneAwareHistoryPreview-RC1",
+            RouteIdentity: "RouteBSceneAwareHistoryPreviewInvestigationRC",
+            Prepared: true,
+            DefaultDisabled: true,
+            FallbackPreserved: true,
+            RouteAPreserved: true,
+            TimelineViewIntegrationFrozen: true,
+            ProductionEmbedding: false,
+            RuntimeMutation: false,
+            InputInjection: false,
+            DetailOpenMode: "ReadOnlyDryRun",
+            ViewerWired: false,
+            SafeOpenFoundationPrepared: true,
+            SnapshotPairResolutionPrepared: true,
+            HistoryPreviewPrepared: true,
+            SceneAwareMetadataPrepared: true);
+
+    private static RouteBInvestigationReadiness BuildRouteBInvestigationReadiness(string confidence)
+        => new(
+            Prepared: true,
+            Confidence: confidence,
+            CanPromoteToPreviewFeature: false,
+            Reason: "Investigation RC only; production UI and viewer wired are not enabled.",
+            CompletedCapabilities:
+            [
+                "YMM TimelineView detection",
+                "runtime fingerprint",
+                "history matching",
+                "history preview list",
+                "sceneAwareMetadata",
+                "RouteA handoff metadata",
+                "snapshot pair resolution",
+                "RouteA open readiness",
+                "read-only dry-run open"
+            ],
+            RemainingBeforePreviewFeature:
+            [
+                "viewer wired or stable dry-run panel validation",
+                "UI consolidation",
+                "metadata schema compatibility review",
+                "performance/heavy project review"
+            ],
+            BlockedScopes:
+            [
+                "production embedding",
+                "timeline replacement",
+                "runtime mutation",
+                "input injection"
+            ]);
+
     private static string BuildMarkdownReport(SceneAwareHistoryPreviewProbeResult r, string probePath, string summaryPath)
     {
         return $"""
@@ -1287,6 +1345,19 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - selectedComparisonEntryIndex: {r.SnapshotPairResolution.Debug.SelectedComparisonEntryIndex?.ToString() ?? "(none)"}
 - selectedComparisonEntryReason: {r.SnapshotPairResolution.Debug.SelectedComparisonEntryReason}
 - exceptionStage: {r.SnapshotPairResolution.Debug.ExceptionStage}
+
+## Step 9: RouteB Investigation RC
+- rcVersion: {r.RouteBInvestigationRc.RcVersion}
+- routeIdentity: {r.RouteBInvestigationRc.RouteIdentity}
+- prepared: {r.RouteBInvestigationRc.Prepared}
+- detailOpenMode: {r.RouteBInvestigationRc.DetailOpenMode}
+- viewerWired: {r.RouteBInvestigationRc.ViewerWired}
+
+## RouteB Investigation Readiness
+- prepared: {r.RouteBInvestigationReadiness.Prepared}
+- confidence: {r.RouteBInvestigationReadiness.Confidence}
+- canPromoteToPreviewFeature: {r.RouteBInvestigationReadiness.CanPromoteToPreviewFeature}
+- reason: {r.RouteBInvestigationReadiness.Reason}
 """;
     }
 
@@ -1400,6 +1471,8 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareSnapshotPairResolution SnapshotPairResolution,
     SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
+    RouteBInvestigationRc RouteBInvestigationRc,
+    RouteBInvestigationReadiness RouteBInvestigationReadiness,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1453,6 +1526,8 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareSnapshotPairResolution SnapshotPairResolution,
     SceneAwareRouteAOpenReadiness RouteAOpenReadiness,
     SceneAwareMetadataBlock SceneAwareMetadata,
+    RouteBInvestigationRc RouteBInvestigationRc,
+    RouteBInvestigationReadiness RouteBInvestigationReadiness,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -1765,6 +1840,33 @@ internal sealed record SceneAwareSnapshotPairResolverDebug(
     int? SelectedComparisonEntryIndex,
     string SelectedComparisonEntryReason,
     string ExceptionStage);
+
+internal sealed record RouteBInvestigationRc(
+    string RcVersion,
+    string RouteIdentity,
+    bool Prepared,
+    bool DefaultDisabled,
+    bool FallbackPreserved,
+    bool RouteAPreserved,
+    bool TimelineViewIntegrationFrozen,
+    bool ProductionEmbedding,
+    bool RuntimeMutation,
+    bool InputInjection,
+    string DetailOpenMode,
+    bool ViewerWired,
+    bool SafeOpenFoundationPrepared,
+    bool SnapshotPairResolutionPrepared,
+    bool HistoryPreviewPrepared,
+    bool SceneAwareMetadataPrepared);
+
+internal sealed record RouteBInvestigationReadiness(
+    bool Prepared,
+    string Confidence,
+    bool CanPromoteToPreviewFeature,
+    string Reason,
+    IReadOnlyList<string> CompletedCapabilities,
+    IReadOnlyList<string> RemainingBeforePreviewFeature,
+    IReadOnlyList<string> BlockedScopes);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,
