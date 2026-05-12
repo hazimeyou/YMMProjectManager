@@ -43,6 +43,22 @@
   - scene/collection/frame/selection candidate counts
   - getter error count
 
+## Step 4 (TimelineFingerprint / SceneIdentity Candidate Foundation)
+- Added shallow timeline fingerprint candidate generation from timeline collection candidate:
+  - item count
+  - item type histogram
+  - text presence histogram
+  - stable text + SHA256 hash
+- Added scene identity candidate synthesis:
+  - scene name/index candidate (when available)
+  - fallback identity through fingerprint hash
+  - confidence scoring
+- Added fingerprint safety fields:
+  - max scanned items (200)
+  - actual scanned items
+  - getter error count
+  - path/text-body excluded from hash
+
 ## Safety
 - read-only only
 - no input injection

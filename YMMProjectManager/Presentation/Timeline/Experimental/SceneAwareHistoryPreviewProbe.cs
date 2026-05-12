@@ -45,6 +45,8 @@ internal static class SceneAwareHistoryPreviewProbe
         var bestSceneCandidate = ResolveBestSceneCandidate(sceneCandidates);
         var bestTimelineCollectionCandidate = ResolveBestCollectionCandidate(collectionCandidates);
 
+        var timelineFingerprint = BuildTimelineFingerprintCandidate(bestTimelineCollectionCandidate, getterErrors.Count);
+        var sceneIdentityCandidate = BuildSceneIdentityCandidate(bestSceneCandidate, bestCandidate, timelineFingerprint);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -58,7 +60,9 @@ internal static class SceneAwareHistoryPreviewProbe
         var routeValidationPath = Path.Combine(diagnosticsDirectory, "route-validation-report.json");
         var manifestPath = Path.Combine(diagnosticsDirectory, "manifest.json");
 
-        var fingerprint = BuildTimelineFingerprint(sceneName, itemCount, layerCount, currentFrame);
+        var fingerprint = timelineFingerprint.StableHash.Length == 0
+            ? BuildTimelineFingerprint(sceneName, itemCount, layerCount, currentFrame)
+            : timelineFingerprint.StableHash;
 
         var result = new SceneAwareHistoryPreviewProbeResult(
             Route: "RouteB",
@@ -109,7 +113,16 @@ internal static class SceneAwareHistoryPreviewProbe
             ScannedObjects: scannedObjects,
             BestSceneCandidate: bestSceneCandidate,
             BestTimelineCollectionCandidate: bestTimelineCollectionCandidate,
-            GetterErrors: getterErrors);
+            GetterErrors: getterErrors,
+            TimelineFingerprintDetails: timelineFingerprint,
+            SceneIdentityCandidate: sceneIdentityCandidate,
+            FingerprintSafety: new SceneAwareFingerprintSafety(
+                MaxItemsScanned: 200,
+                ActualItemsScanned: timelineFingerprint.ItemCount,
+                GetterErrorCount: getterErrors.Count,
+                PathExcludedFromHash: true,
+                TextBodyExcludedFromHash: true,
+                ReadOnly: true));
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
         var probePath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-probe-{stamp}.json");
@@ -124,12 +137,14 @@ internal static class SceneAwareHistoryPreviewProbe
             Confidence: result.Confidence,
             TimelineViewType: result.TimelineViewType,
             TimelineViewModelType: result.TimelineViewModelType,
-            TimelineFingerprint: result.TimelineFingerprint,
+            TimelineFingerprintDetails: result.TimelineFingerprintDetails,
             WindowScan: result.WindowScan,
             BestYmmTimelineCandidate: result.BestYmmTimelineCandidate,
             SurfaceInventory: result.SurfaceInventory,
             BestSceneCandidate: result.BestSceneCandidate,
-            BestTimelineCollectionCandidate: result.BestTimelineCollectionCandidate);
+            BestTimelineCollectionCandidate: result.BestTimelineCollectionCandidate,
+            TimelineFingerprint: result.TimelineFingerprint,
+            SceneIdentityCandidate: result.SceneIdentityCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
 
@@ -579,6 +594,53 @@ internal static class SceneAwareHistoryPreviewProbe
         return $"scene={sceneName ?? "unknown"}|items={itemCount?.ToString() ?? "?"}|layers={layerCount?.ToString() ?? "?"}|frame={currentFrame?.ToString() ?? "?"}";
     }
 
+    private static string BuildStableText(
+        int itemCount,
+        int? layerCount,
+        long? minFrame,
+        long? maxFrame,
+        long? totalDuration,
+        IReadOnlyDictionary<string, int> itemTypeHistogram,
+        IReadOnlyDictionary<string, int> layerHistogram,
+        IReadOnlyDictionary<string, int> textPresenceHistogram)
+    {
+        var lines = new List<string>
+        {
+            $"itemCount={itemCount}",
+            $"layerCount={layerCount?.ToString() ?? "null"}",
+            $"minFrame={minFrame?.ToString() ?? "null"}",
+            $"maxFrame={maxFrame?.ToString() ?? "null"}",
+            $"totalDuration={totalDuration?.ToString() ?? "null"}",
+            "types:"
+        };
+        foreach (var kv in itemTypeHistogram.OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            lines.Add($"  {kv.Key}={kv.Value}");
+        }
+
+        lines.Add("layers:");
+        foreach (var kv in layerHistogram.OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            lines.Add($"  {kv.Key}={kv.Value}");
+        }
+
+        lines.Add("text:");
+        foreach (var kv in textPresenceHistogram.OrderBy(x => x.Key, StringComparer.Ordinal))
+        {
+            lines.Add($"  {kv.Key}={kv.Value}");
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string ComputeSha256(string text)
+    {
+        using var sha = System.Security.Cryptography.SHA256.Create();
+        var bytes = System.Text.Encoding.UTF8.GetBytes(text);
+        var hash = sha.ComputeHash(bytes);
+        return Convert.ToHexString(hash);
+    }
+
     private static SceneAwareSceneCandidate ResolveBestSceneCandidate(List<SceneAwarePropertyReadResult> sceneCandidates)
     {
         var best = sceneCandidates.FirstOrDefault(x => x.ReadSucceeded && !string.IsNullOrWhiteSpace(x.ValuePreview) && x.ValuePreview != "null");
@@ -621,6 +683,64 @@ internal static class SceneAwareHistoryPreviewProbe
             StartLikePropertyNames: best.StartLikePropertyNames,
             EndLikePropertyNames: best.EndLikePropertyNames,
             DurationLikePropertyNames: best.DurationLikePropertyNames);
+    }
+
+    private static SceneAwareTimelineFingerprint BuildTimelineFingerprintCandidate(SceneAwareTimelineCollectionCandidate collectionCandidate, int getterErrorCount)
+    {
+        var itemTypes = collectionCandidate.SampleItemTypes
+            .GroupBy(x => x, StringComparer.Ordinal)
+            .OrderBy(x => x.Key, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
+        var layerHist = collectionCandidate.LayerLikePropertyNames
+            .GroupBy(x => x, StringComparer.Ordinal)
+            .OrderBy(x => x.Key, StringComparer.Ordinal)
+            .ToDictionary(x => x.Key, x => x.Count(), StringComparer.Ordinal);
+        var textHist = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            ["HasTextLikeField"] = collectionCandidate.TextLikePropertyNames.Count > 0 ? 1 : 0,
+            ["NoTextLikeField"] = collectionCandidate.TextLikePropertyNames.Count > 0 ? 0 : 1,
+        };
+
+        var stableText = BuildStableText(collectionCandidate.Count ?? 0, null, null, null, null, itemTypes, layerHist, textHist);
+        var stableHash = ComputeSha256(stableText);
+        var confidence = collectionCandidate.Count is > 0
+            ? (collectionCandidate.LayerLikePropertyNames.Count > 0 || collectionCandidate.FrameLikePropertyNames.Count > 0 ? "Medium" : "Low")
+            : "None";
+        return new SceneAwareTimelineFingerprint(
+            ItemCount: collectionCandidate.Count ?? 0,
+            LayerCount: null,
+            MinFrame: null,
+            MaxFrame: null,
+            TotalDuration: null,
+            ItemTypeHistogram: itemTypes,
+            LayerHistogram: layerHist,
+            TextPresenceHistogram: textHist,
+            SampleItemTypes: collectionCandidate.SampleItemTypes,
+            SampleItemPreviews: collectionCandidate.SampleItemToString.Select(x => x.Length > 80 ? x[..80] : x).ToList(),
+            StableText: stableText,
+            StableHash: stableHash,
+            Confidence: confidence);
+    }
+
+    private static SceneAwareSceneIdentityCandidate BuildSceneIdentityCandidate(SceneAwareSceneCandidate sceneCandidate, SceneAwareTimelineCandidate? best, SceneAwareTimelineFingerprint fingerprint)
+    {
+        var sceneName = sceneCandidate.Found ? sceneCandidate.ValuePreview : "<unknown>";
+        var sceneIndex = best?.SceneIndex;
+        var confidence = sceneCandidate.Found
+            ? "High"
+            : fingerprint.ItemCount > 0 && (fingerprint.LayerCount is not null || fingerprint.ItemTypeHistogram.Count > 0) ? "Medium"
+            : fingerprint.ItemCount > 0 ? "Low" : "None";
+        return new SceneAwareSceneIdentityCandidate(
+            SceneName: sceneName,
+            SceneIndex: sceneIndex,
+            SourceKind: sceneCandidate.Found ? "SurfaceInventory" : "TimelineCandidateFallback",
+            SourceProperty: sceneCandidate.PropertyName,
+            TimelineFingerprintHash: fingerprint.StableHash,
+            ItemCount: fingerprint.ItemCount,
+            LayerCount: fingerprint.LayerCount,
+            MinFrame: fingerprint.MinFrame,
+            MaxFrame: fingerprint.MaxFrame,
+            Confidence: confidence);
     }
 
     private static string BuildMarkdownReport(SceneAwareHistoryPreviewProbeResult r, string probePath, string summaryPath)
@@ -689,9 +809,31 @@ internal static class SceneAwareHistoryPreviewProbe
 - propertyName: {r.BestTimelineCollectionCandidate.PropertyName}
 - count: {r.BestTimelineCollectionCandidate.Count?.ToString() ?? "(null)"}
 
+## Timeline Fingerprint
+- itemCount: {r.TimelineFingerprintDetails.ItemCount}
+- layerCount: {r.TimelineFingerprintDetails.LayerCount?.ToString() ?? "(null)"}
+- minFrame: {r.TimelineFingerprintDetails.MinFrame?.ToString() ?? "(null)"}
+- maxFrame: {r.TimelineFingerprintDetails.MaxFrame?.ToString() ?? "(null)"}
+- stableHash: {r.TimelineFingerprintDetails.StableHash}
+- confidence: {r.TimelineFingerprintDetails.Confidence}
+
+## Scene Identity Candidate
+- sceneName: {r.SceneIdentityCandidate.SceneName}
+- sceneIndex: {r.SceneIdentityCandidate.SceneIndex?.ToString() ?? "(null)"}
+- sourceKind: {r.SceneIdentityCandidate.SourceKind}
+- sourceProperty: {r.SceneIdentityCandidate.SourceProperty}
+- confidence: {r.SceneIdentityCandidate.Confidence}
+
 ## Output Files
 - probe: {probePath}
 - summary: {summaryPath}
+
+## Fingerprint Safety
+- maxItemsScanned: {r.FingerprintSafety.MaxItemsScanned}
+- actualItemsScanned: {r.FingerprintSafety.ActualItemsScanned}
+- getterErrorCount: {r.FingerprintSafety.GetterErrorCount}
+- pathExcludedFromHash: {r.FingerprintSafety.PathExcludedFromHash}
+- textBodyExcludedFromHash: {r.FingerprintSafety.TextBodyExcludedFromHash}
 """;
     }
 
@@ -793,7 +935,9 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareBestTimelineCandidate BestYmmTimelineCandidate,
     SceneAwareSurfaceInventorySummary SurfaceInventory,
     SceneAwareSceneCandidate BestSceneCandidate,
-    SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate);
+    SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate,
+    SceneAwareTimelineFingerprint TimelineFingerprintDetails,
+    SceneAwareSceneIdentityCandidate SceneIdentityCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
     string Route,
@@ -832,6 +976,9 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwareSceneCandidate BestSceneCandidate,
     SceneAwareTimelineCollectionCandidate BestTimelineCollectionCandidate,
     IReadOnlyList<SceneAwarePropertyReadResult> GetterErrors,
+    SceneAwareTimelineFingerprint TimelineFingerprintDetails,
+    SceneAwareSceneIdentityCandidate SceneIdentityCandidate,
+    SceneAwareFingerprintSafety FingerprintSafety,
     string ProbePath = "",
     string SummaryPath = "",
     string ReportPath = "");
@@ -954,3 +1101,38 @@ internal sealed record SceneAwareTimelineCollectionCandidate(
     IReadOnlyList<string> StartLikePropertyNames,
     IReadOnlyList<string> EndLikePropertyNames,
     IReadOnlyList<string> DurationLikePropertyNames);
+
+internal sealed record SceneAwareTimelineFingerprint(
+    int ItemCount,
+    int? LayerCount,
+    long? MinFrame,
+    long? MaxFrame,
+    long? TotalDuration,
+    IReadOnlyDictionary<string, int> ItemTypeHistogram,
+    IReadOnlyDictionary<string, int> LayerHistogram,
+    IReadOnlyDictionary<string, int> TextPresenceHistogram,
+    IReadOnlyList<string> SampleItemTypes,
+    IReadOnlyList<string> SampleItemPreviews,
+    string StableText,
+    string StableHash,
+    string Confidence);
+
+internal sealed record SceneAwareSceneIdentityCandidate(
+    string SceneName,
+    int? SceneIndex,
+    string SourceKind,
+    string SourceProperty,
+    string TimelineFingerprintHash,
+    int ItemCount,
+    int? LayerCount,
+    long? MinFrame,
+    long? MaxFrame,
+    string Confidence);
+
+internal sealed record SceneAwareFingerprintSafety(
+    int MaxItemsScanned,
+    int ActualItemsScanned,
+    int GetterErrorCount,
+    bool PathExcludedFromHash,
+    bool TextBodyExcludedFromHash,
+    bool ReadOnly);
