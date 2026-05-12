@@ -149,7 +149,7 @@ Interpretation:
 
 ### 6) Decision
 - Step 6 ready:
-  - `No` (evidence insufficient in measured runtime output)
+- `No` (evidence insufficient in measured runtime output)
 - Recommended next step:
   1. Re-run Scene-aware investigation once with the latest deployed DLL (post-02:09 build) to regenerate probe/summary/report.
   2. Confirm that Step5 block appears:
@@ -158,6 +158,32 @@ Interpretation:
      - `historyMatchCandidates`
      - `bestHistoryMatchCandidate`
   3. If still absent, return to Step5 implementation validation (serializer/result wiring path).
+
+### 7) Re-run Result Update (2026-05-13 02:13 JST)
+- Latest probe:
+  - `scene-aware-history-preview-probe-20260513-021349.json`
+- Step5 output presence:
+  - `Yes` (`HistoryMatching`, `HistorySources`, `HistoryMatchCandidates`, `BestHistoryMatchCandidate` all present)
+- Runtime summary:
+  - `sceneDetected=True`
+  - `stableHash=51DE41A4C89943588D6E03CF8D3C6BF5D40BC6F3BBB8BA940D64FD4B568277C0`
+  - `itemCount/actualItemsScanned=21/21`
+- History matching summary:
+  - `sourceCount=11`
+  - `readSucceededCount=11`
+  - `metadataCandidateCount=11`
+  - `matchCandidateCount=9`
+  - `bestMatchScore=170`
+  - `bestMatchConfidence=High`
+  - `historyLinkFeasible=True`
+  - `bestHistoryMatchCandidate=scene-aware-history-preview-summary-20260513-013944.json (Summary)`
+  - `matchReasons=stableHash exact match, sceneName match, itemCount match, recent file`
+
+Updated Decision:
+- Step 6 ready:
+  - `Yes`
+- Recommended next step:
+  - proceed to `Step 6: Scene-aware History List Preview`
 
 ## Safety
 - read-only only
