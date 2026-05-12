@@ -17,6 +17,9 @@ public sealed class DiffTimelineItemViewModel
     public string ClipTitle { get; set; } = string.Empty;
     public string LayerHint { get; set; } = string.Empty;
     public string DurationHint { get; set; } = string.Empty;
+    public bool IsUnchanged { get; set; }
+    public double ItemOpacity { get; set; } = 0.9;
+    public double BorderOpacity { get; set; } = 0.35;
 
     public double X { get; set; }
     public double Y { get; set; }

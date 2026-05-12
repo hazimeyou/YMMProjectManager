@@ -22,6 +22,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int currentFrame;
     private TimelineSyncState syncState = TimelineSyncState.Unavailable;
     private TimelineMode mode = TimelineMode.Standalone;
+    private bool showUnchangedItems = true;
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -178,6 +179,19 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         TimelineMode.Comparison => "”äŠr",
         _ => mode.ToString(),
     };
+
+    public bool ShowUnchangedItems
+    {
+        get => showUnchangedItems;
+        set
+        {
+            if (SetProperty(ref showUnchangedItems, value))
+            {
+                FilterVisibleItems();
+            }
+        }
+    }
+
 
     public DiffTimelineItemViewModel? SelectedDiffItem
     {
@@ -403,6 +417,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         string? newValue)
     {
         var clipTypeLabel = DiffTimelineClipDisplayResolver.ResolveClipTypeLabel(displayName, category, oldValue, newValue);
+        var isUnchanged = IsUnchangedKind(kind);
         var model = new DiffTimelineItemViewModel
         {
             Id = id,
@@ -417,6 +432,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             Length = length,
             LayerHint = $"L{Math.Max(0, layer)}",
             DurationHint = $"{Math.Max(1, length)}f",
+            IsUnchanged = isUnchanged,
+            ItemOpacity = isUnchanged ? 0.33 : 0.92,
+            BorderOpacity = isUnchanged ? 0.16 : 0.36,
             OldValue = oldValue,
             NewValue = newValue,
             Fill = ResolveBrush(kind, clipTypeLabel),
@@ -462,7 +480,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             var itemEnd = item.Frame + Math.Max(1, item.Length);
             var frameVisible = itemEnd >= VisibleStartFrame && itemStart <= VisibleEndFrame;
             var layerVisible = item.Layer >= VisibleMinLayer && item.Layer <= VisibleMaxLayer;
-            if (frameVisible && layerVisible)
+            if (frameVisible && layerVisible && (ShowUnchangedItems || !item.IsUnchanged))
             {
                 VisibleItems.Add(item);
             }
@@ -512,6 +530,15 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         return 30;
     }
 
+
+    private static bool IsUnchangedKind(string kind)
+    {
+        return string.Equals(kind, "ˆê’v", StringComparison.Ordinal) ||
+               string.Equals(kind, "Unchanged", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(kind, "Same", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(kind, "None", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static Brush ResolveBrush(string kind, string clipTypeLabel)
     {
         // Prefer clip semantic coloring (YMM-like subdued tones), then fallback to diff-kind color.
@@ -543,6 +570,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     }
 
 }
+
 
 
 

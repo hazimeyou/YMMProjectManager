@@ -48,6 +48,7 @@
             <TextBlock VerticalAlignment="Center" Text="{Binding SyncStateLabel}" Margin="0,0,10,0" />
             <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="表示:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
+            <CheckBox Content="一致を表示" IsChecked="{Binding ShowUnchangedItems, Mode=TwoWay}" Margin="10,0,0,0" VerticalAlignment="Center" />
         </StackPanel>
 
         <views:DiffTimelineHeader Grid.Row="1" DataContext="{Binding}" />
@@ -96,9 +97,9 @@
                                 <DataTemplate DataType="{x:Type vm:DiffTimelineItemViewModel}">
                                     <Button Width="{Binding Width}" Height="{Binding Height}" Click="OnTimelineItemClick" ToolTip="{Binding DisplayName}" BorderThickness="0" Padding="0" Background="Transparent">
                                         <Grid>
-                                            <Rectangle Fill="{Binding Fill}" Opacity="0.88" RadiusX="2" RadiusY="2" />
-                                            <Border BorderBrush="#33000000" BorderThickness="1" CornerRadius="2" />
-                                            <Grid Margin="4,2,4,2">
+                                            <Rectangle Fill="{Binding Fill}" Opacity="{Binding ItemOpacity}" RadiusX="1" RadiusY="1" />
+                                            <Border BorderBrush="#33000000" BorderThickness="1" Opacity="{Binding BorderOpacity}" CornerRadius="1" />
+                                            <Grid Margin="3,1,3,1">
                                                 <Grid.RowDefinitions>
                                                     <RowDefinition Height="Auto"/>
                                                     <RowDefinition Height="*"/>
@@ -112,7 +113,7 @@
                                                     <TextBlock Text="{Binding LayerHint}" DockPanel.Dock="Right" FontSize="9" Foreground="#BFEFFFFF" Margin="4,0,0,0" />
                                                 </DockPanel>
                                             </Grid>
-                                            <Rectangle Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" StrokeThickness="2" RadiusX="2" RadiusY="2">
+                                            <Rectangle Stroke="{DynamicResource {x:Static SystemColors.HighlightBrushKey}}" StrokeThickness="1.5" RadiusX="1" RadiusY="1">
                                                 <Rectangle.Style>
                                                     <Style TargetType="Rectangle">
                                                         <Setter Property="Visibility" Value="Collapsed" />
