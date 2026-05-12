@@ -891,10 +891,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(LastFilterDiagnostics));
         OnPropertyChanged(nameof(ActiveFilterSummary));
         OnPropertyChanged(nameof(NoMatchStateText));
-        OnPropertyChanged(nameof(VirtualizationRecommendationText));
-        OnPropertyChanged(nameof(HasVirtualizationWarning));
-        OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
-        OnPropertyChanged(nameof(DiagnosticsDetailsText));
+        NotifyDiagnosticsChanged();
     }
 
     private static IReadOnlyList<DiffTimelineGroupState> ResolveGroupStates(DiffTimelineCoreResult coreResult, string mode)
@@ -1121,10 +1118,7 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
             SaveCurrentCompareSession();
             TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
             PersistManualValidationLog();
-            OnPropertyChanged(nameof(HasVirtualizationWarning));
-            OnPropertyChanged(nameof(VirtualizationRecommendationText));
-            OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
-            OnPropertyChanged(nameof(DiagnosticsDetailsText));
+            NotifyDiagnosticsChanged();
             OnRowWindowStateChanged();
         }
         catch (Exception ex)
@@ -1321,6 +1315,14 @@ public sealed class ProjectDiffViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(RowWindowSummaryText));
         OnPropertyChanged(nameof(DiagnosticsDetailsText));
         OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
+    }
+
+    private void NotifyDiagnosticsChanged()
+    {
+        OnPropertyChanged(nameof(HasVirtualizationWarning));
+        OnPropertyChanged(nameof(VirtualizationRecommendationText));
+        OnPropertyChanged(nameof(CompactRenderDiagnosticsText));
+        OnPropertyChanged(nameof(DiagnosticsDetailsText));
     }
 
     private DiffTimelineVirtualizationState BuildVirtualizationState()
