@@ -9,6 +9,8 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private SceneAwareHistoryPreviewItem? selectedHistoryPreviewItem;
     private string selectedHistoryPreviewItemDetailText = "(none)";
     private string historyPreviewSummaryText = "(none)";
+    private string routeADetailHandoffStatusText = "(not-prepared)";
+    private bool canOpenRouteADetailDiff;
 
     public string SummaryText
     {
@@ -64,6 +66,18 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref historyPreviewSummaryText, value);
     }
 
+    public string RouteADetailHandoffStatusText
+    {
+        get => routeADetailHandoffStatusText;
+        set => SetProperty(ref routeADetailHandoffStatusText, value);
+    }
+
+    public bool CanOpenRouteADetailDiff
+    {
+        get => canOpenRouteADetailDiff;
+        set => SetProperty(ref canOpenRouteADetailDiff, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -83,6 +97,8 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         }
         SelectedHistoryPreviewItem = HistoryPreviewItems.FirstOrDefault();
         HistoryPreviewSummaryText = $"previewItemCount={result.HistoryPreview.PreviewItemCount}, bestScore={result.HistoryPreview.BestPreviewItemScore}, bestConfidence={result.HistoryPreview.BestPreviewItemConfidence}, hasHighConfidenceMatch={result.HistoryPreview.HasHighConfidenceMatch}, routeADetailHandoffPrepared={result.HistoryPreview.RouteADetailHandoffPrepared}";
+        RouteADetailHandoffStatusText = $"prepared={result.RouteADetailHandoff.Prepared}, canOpen={result.RouteADetailHandoff.CanOpen}, reason={result.RouteADetailHandoff.Reason}, source={result.RouteADetailHandoff.SourceFileName}, snapshotId={result.RouteADetailHandoff.SnapshotId ?? "(none)"}, compareSessionId={result.RouteADetailHandoff.CompareSessionId ?? "(none)"}, available=[{string.Join(", ", result.RouteADetailHandoff.AvailableFields)}], missing=[{string.Join(", ", result.RouteADetailHandoff.MissingFields)}], warnings=[{string.Join(" | ", result.RouteADetailHandoff.Warnings)}]";
+        CanOpenRouteADetailDiff = false; // Step 7A keeps open action disabled (dry-run only)
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {

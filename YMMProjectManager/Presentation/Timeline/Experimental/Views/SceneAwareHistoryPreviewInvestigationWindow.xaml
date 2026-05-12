@@ -12,6 +12,8 @@
             <RowDefinition Height="2*"/>
             <RowDefinition Height="2*"/>
             <RowDefinition Height="2*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="2*"/>
             <RowDefinition Height="2*"/>
         </Grid.RowDefinitions>
 
@@ -45,7 +47,14 @@
             </ScrollViewer>
         </GroupBox>
 
-        <GroupBox Grid.Row="6" Header="Window Scan / Diagnostics" Margin="0,8,0,0">
+        <GroupBox Grid.Row="6" Header="RouteA Detail Handoff (dry-run)" Margin="0,8,0,0">
+            <StackPanel Margin="6">
+                <TextBlock Text="{Binding RouteADetailHandoffStatusText}" TextWrapping="Wrap" FontFamily="Consolas"/>
+                <Button Margin="0,6,0,0" Content="Open RouteA Detail Diff (Step 7A: disabled)" IsEnabled="{Binding CanOpenRouteADetailDiff}"/>
+            </StackPanel>
+        </GroupBox>
+
+        <GroupBox Grid.Row="7" Header="Window Scan / Diagnostics" Margin="0,8,0,0">
             <ScrollViewer VerticalScrollBarVisibility="Auto">
                 <TextBlock Margin="6" Text="{Binding DiagnosticsText}" TextWrapping="Wrap" FontFamily="Consolas"/>
             </ScrollViewer>

@@ -204,6 +204,18 @@ Updated Decision:
   - prepared as candidate metadata only
   - not executed in Step 6
 
+## Step 7A (RouteA Detail Diff Handoff Foundation)
+- Added read-only handoff candidate extraction from selected history preview item source JSON.
+- Added `routeADetailHandoff` into probe/summary output.
+- Added investigation UI section:
+  - prepared/canOpen/reason
+  - snapshotId / compareSessionId
+  - availableFields / missingFields / warnings
+- Scope:
+  - dry-run only
+  - `Open RouteA Detail Diff` remains disabled in Step 7A
+  - no runtime mutation / no snapshot restore / no RouteA replacement
+
 ## Safety
 - read-only only
 - no input injection

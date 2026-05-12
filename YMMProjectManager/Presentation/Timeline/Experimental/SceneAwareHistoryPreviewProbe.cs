@@ -65,6 +65,9 @@ internal static class SceneAwareHistoryPreviewProbe
             BestPreviewItemConfidence: historyPreviewItems.FirstOrDefault()?.Confidence ?? "None",
             HasHighConfidenceMatch: historyPreviewItems.Any(x => x.Confidence is "High"),
             RouteADetailHandoffPrepared: historyPreviewItems.Count > 0);
+        var defaultRouteAHandoff = BuildRouteADetailHandoffCandidate(
+            historyPreviewItems.FirstOrDefault(),
+            sceneIdentityCandidate.TimelineFingerprintHash);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -146,6 +149,7 @@ internal static class SceneAwareHistoryPreviewProbe
             HistoryMatchCandidates: historyMatchCandidates,
             HistoryPreview: historyPreview,
             HistoryPreviewItems: historyPreviewItems,
+            RouteADetailHandoff: defaultRouteAHandoff,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -172,6 +176,7 @@ internal static class SceneAwareHistoryPreviewProbe
             HistoryMatching: result.HistoryMatching,
             HistoryPreview: result.HistoryPreview,
             HistoryPreviewItems: result.HistoryPreviewItems,
+            RouteADetailHandoff: result.RouteADetailHandoff,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -912,6 +917,78 @@ internal static class SceneAwareHistoryPreviewProbe
             .ToList();
     }
 
+    private static SceneAwareRouteADetailHandoffCandidate BuildRouteADetailHandoffCandidate(
+        SceneAwareHistoryPreviewItem? selectedItem,
+        string runtimeStableHash)
+    {
+        if (selectedItem is null)
+        {
+            return new SceneAwareRouteADetailHandoffCandidate(
+                Prepared: false,
+                CanOpen: false,
+                Reason: "No selected history preview item",
+                SourceKind: "",
+                SourceFileName: "",
+                SourcePath: "",
+                SnapshotId: null,
+                CompareSessionId: null,
+                RouteValidationReportPath: null,
+                PreviewWorkspaceStatePath: null,
+                ComparisonHistoryPath: null,
+                RuntimeStableHash: runtimeStableHash,
+                HistoryStableHash: "",
+                Score: 0,
+                Confidence: "None",
+                AvailableFields: [],
+                MissingFields: ["sourcePath"],
+                Warnings: ["Open RouteA Detail Diff is not enabled in Step 7A (dry-run only)."],
+                SummaryText: "routeA handoff: not prepared");
+        }
+
+        var extracted = ExtractRouteAHandoffFields(selectedItem.SourcePath);
+        var available = new List<string>();
+        var missing = new List<string>();
+        void Track(string name, string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) missing.Add(name); else available.Add(name);
+        }
+
+        Track("snapshotId", extracted.SnapshotId);
+        Track("compareSessionId", extracted.CompareSessionId);
+        Track("routeValidationReportPath", extracted.RouteValidationReportPath);
+        Track("previewWorkspaceStatePath", extracted.PreviewWorkspaceStatePath);
+        Track("comparisonHistoryPath", extracted.ComparisonHistoryPath);
+
+        var canOpen = !string.IsNullOrWhiteSpace(selectedItem.SourcePath)
+            && (selectedItem.Confidence is "High" or "Medium")
+            && (!string.IsNullOrWhiteSpace(extracted.CompareSessionId) || !string.IsNullOrWhiteSpace(extracted.SnapshotId));
+        var reason = canOpen ? "RouteA handoff metadata is sufficient (dry-run only)" : "Insufficient RouteA handoff metadata";
+        var warnings = new List<string>();
+        warnings.AddRange(extracted.Warnings);
+        warnings.Add("Open RouteA Detail Diff is not enabled in Step 7A (dry-run only).");
+
+        return new SceneAwareRouteADetailHandoffCandidate(
+            Prepared: true,
+            CanOpen: canOpen,
+            Reason: reason,
+            SourceKind: selectedItem.SourceKind,
+            SourceFileName: selectedItem.SourceFileName,
+            SourcePath: selectedItem.SourcePath,
+            SnapshotId: extracted.SnapshotId,
+            CompareSessionId: extracted.CompareSessionId,
+            RouteValidationReportPath: extracted.RouteValidationReportPath,
+            PreviewWorkspaceStatePath: extracted.PreviewWorkspaceStatePath,
+            ComparisonHistoryPath: extracted.ComparisonHistoryPath,
+            RuntimeStableHash: runtimeStableHash,
+            HistoryStableHash: selectedItem.StableHash,
+            Score: selectedItem.Score,
+            Confidence: selectedItem.Confidence,
+            AvailableFields: available,
+            MissingFields: missing,
+            Warnings: warnings,
+            SummaryText: $"prepared=True canOpen={canOpen} reason={reason}");
+    }
+
     private static void FlattenJson(JsonElement element, Dictionary<string, string> output, string prefix, int depth, int maxDepth, int maxProperties)
     {
         if (depth > maxDepth || output.Count >= maxProperties)
@@ -978,6 +1055,44 @@ internal static class SceneAwareHistoryPreviewProbe
         "Low" => 1,
         _ => 0,
     };
+
+    private static SceneAwareRouteAExtractedFields ExtractRouteAHandoffFields(string sourcePath)
+    {
+        if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath))
+        {
+            return new SceneAwareRouteAExtractedFields(null, null, null, null, null, ["source file not found"]);
+        }
+
+        try
+        {
+            const long maxFileBytes = 5 * 1024 * 1024;
+            var fi = new FileInfo(sourcePath);
+            if (fi.Length > maxFileBytes)
+            {
+                return new SceneAwareRouteAExtractedFields(null, null, null, null, null, ["source file is larger than 5MB and was skipped"]);
+            }
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(sourcePath));
+            var flat = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            FlattenJson(doc.RootElement, flat, "", 0, 5, 2000);
+            var snapshotId = TryGetValue(flat, "snapshotId", "SnapshotId", "oldSnapshot", "newSnapshot", "baseSnapshot", "targetSnapshot");
+            var compareSessionId = TryGetValue(flat, "compareSessionId", "CompareSessionId", "sessionId", "SessionId");
+            var routeValidationReportPath = TryGetValue(flat, "routeValidationReportPath", "RouteValidationReportPath");
+            var previewWorkspaceStatePath = TryGetValue(flat, "previewWorkspaceStatePath", "PreviewWorkspaceStatePath");
+            var comparisonHistoryPath = TryGetValue(flat, "comparisonHistoryPath", "ComparisonHistoryPath");
+            return new SceneAwareRouteAExtractedFields(
+                snapshotId,
+                compareSessionId,
+                routeValidationReportPath,
+                previewWorkspaceStatePath,
+                comparisonHistoryPath,
+                []);
+        }
+        catch (Exception ex)
+        {
+            return new SceneAwareRouteAExtractedFields(null, null, null, null, null, [$"extract failed: {ex.GetType().Name}"]);
+        }
+    }
 
     private static SceneAwareSceneCandidate ResolveBestSceneCandidate(List<SceneAwarePropertyReadResult> sceneCandidates)
     {
@@ -1195,6 +1310,18 @@ internal static class SceneAwareHistoryPreviewProbe
 - hasHighConfidenceMatch: {r.HistoryPreview.HasHighConfidenceMatch}
 - routeADetailHandoffPrepared: {r.HistoryPreview.RouteADetailHandoffPrepared}
 - routeADetailHandoffImplemented: no
+
+## Step 7A: RouteA Detail Diff Handoff Foundation
+- prepared: {r.RouteADetailHandoff.Prepared}
+- canOpen: {r.RouteADetailHandoff.CanOpen}
+- reason: {r.RouteADetailHandoff.Reason}
+- sourceKind: {r.RouteADetailHandoff.SourceKind}
+- sourceFileName: {r.RouteADetailHandoff.SourceFileName}
+- snapshotId: {r.RouteADetailHandoff.SnapshotId ?? "(none)"}
+- compareSessionId: {r.RouteADetailHandoff.CompareSessionId ?? "(none)"}
+- availableFields: {(r.RouteADetailHandoff.AvailableFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteADetailHandoff.AvailableFields))}
+- missingFields: {(r.RouteADetailHandoff.MissingFields.Count == 0 ? "(none)" : string.Join(", ", r.RouteADetailHandoff.MissingFields))}
+- warnings: {(r.RouteADetailHandoff.Warnings.Count == 0 ? "(none)" : string.Join(" | ", r.RouteADetailHandoff.Warnings))}
 """;
     }
 
@@ -1302,6 +1429,7 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwareHistoryMatchingSummary HistoryMatching,
     SceneAwareHistoryPreviewSummaryMetrics HistoryPreview,
     IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
+    SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1349,6 +1477,7 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     IReadOnlyList<SceneAwareHistoryMatchCandidate> HistoryMatchCandidates,
     SceneAwareHistoryPreviewSummaryMetrics HistoryPreview,
     IReadOnlyList<SceneAwareHistoryPreviewItem> HistoryPreviewItems,
+    SceneAwareRouteADetailHandoffCandidate RouteADetailHandoff,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -1573,3 +1702,32 @@ public sealed record SceneAwareHistoryPreviewItem(
     IReadOnlyList<string> MissingFields,
     string SummaryText,
     string DetailText);
+
+internal sealed record SceneAwareRouteADetailHandoffCandidate(
+    bool Prepared,
+    bool CanOpen,
+    string Reason,
+    string SourceKind,
+    string SourceFileName,
+    string SourcePath,
+    string? SnapshotId,
+    string? CompareSessionId,
+    string? RouteValidationReportPath,
+    string? PreviewWorkspaceStatePath,
+    string? ComparisonHistoryPath,
+    string RuntimeStableHash,
+    string HistoryStableHash,
+    int Score,
+    string Confidence,
+    IReadOnlyList<string> AvailableFields,
+    IReadOnlyList<string> MissingFields,
+    IReadOnlyList<string> Warnings,
+    string SummaryText);
+
+internal sealed record SceneAwareRouteAExtractedFields(
+    string? SnapshotId,
+    string? CompareSessionId,
+    string? RouteValidationReportPath,
+    string? PreviewWorkspaceStatePath,
+    string? ComparisonHistoryPath,
+    IReadOnlyList<string> Warnings);
