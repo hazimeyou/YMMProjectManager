@@ -183,6 +183,25 @@ internal static partial class SceneAwareHistoryPreviewProbe
         };
         var routeBFinalRc = BuildRouteBFinalInvestigationRc();
         var routeBFinalReadiness = BuildRouteBFinalReadiness();
+        var routeBPreviewCandidateFinalization = new RouteBPreviewCandidateFinalization(
+            PreviewCandidate: true,
+            ProductionFeature: false,
+            ViewerWired: true,
+            OpenMode: "ReadOnlySandbox",
+            ManualOnly: true,
+            ReadOnly: true,
+            RouteAPreserved: true,
+            FallbackPreserved: true,
+            DefaultDisabled: true,
+            RuntimeMutation: false,
+            DiffApply: false,
+            HistoryRestore: false,
+            SnapshotOverwrite: false,
+            UiValidated: false,
+            ViewerOpenValidated: false,
+            DiagnosticsValidated: true,
+            FinalReadiness: "ReadyWithWarnings",
+            Warnings: ["Runtime UI validation must be completed on target machine."]);
         totalStopwatch.Stop();
         var previewPerformanceDiagnostics = BuildPreviewPerformanceDiagnostics(
             timelineDetectionMs,
@@ -298,6 +317,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewVirtualization: previewVirtualization,
             RouteBFinalInvestigationRc: routeBFinalRc,
             RouteBFinalReadiness: routeBFinalReadiness,
+            RouteBPreviewCandidateFinalization: routeBPreviewCandidateFinalization,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -347,6 +367,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewVirtualization: result.PreviewVirtualization,
             RouteBFinalInvestigationRc: result.RouteBFinalInvestigationRc,
             RouteBFinalReadiness: result.RouteBFinalReadiness,
+            RouteBPreviewCandidateFinalization: result.RouteBPreviewCandidateFinalization,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -1795,6 +1816,16 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - confidence: {r.RouteBFinalReadiness.Confidence}
 - canPromoteToPreviewFeature: {r.RouteBFinalReadiness.CanPromoteToPreviewFeature}
 - reason: {r.RouteBFinalReadiness.Reason}
+
+## RouteB Preview Candidate Finalization
+- previewCandidate: {r.RouteBPreviewCandidateFinalization.PreviewCandidate}
+- productionFeature: {r.RouteBPreviewCandidateFinalization.ProductionFeature}
+- viewerWired: {r.RouteBPreviewCandidateFinalization.ViewerWired}
+- openMode: {r.RouteBPreviewCandidateFinalization.OpenMode}
+- manualOnly: {r.RouteBPreviewCandidateFinalization.ManualOnly}
+- readOnly: {r.RouteBPreviewCandidateFinalization.ReadOnly}
+- finalReadiness: {r.RouteBPreviewCandidateFinalization.FinalReadiness}
+- warnings: {(r.RouteBPreviewCandidateFinalization.Warnings.Count == 0 ? "(none)" : string.Join(" | ", r.RouteBPreviewCandidateFinalization.Warnings))}
 """;
     }
 
@@ -1925,6 +1956,7 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     SceneAwarePreviewVirtualization PreviewVirtualization,
     RouteBFinalInvestigationRc RouteBFinalInvestigationRc,
     RouteBFinalReadiness RouteBFinalReadiness,
+    RouteBPreviewCandidateFinalization RouteBPreviewCandidateFinalization,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1995,6 +2027,7 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     SceneAwarePreviewVirtualization PreviewVirtualization,
     RouteBFinalInvestigationRc RouteBFinalInvestigationRc,
     RouteBFinalReadiness RouteBFinalReadiness,
+    RouteBPreviewCandidateFinalization RouteBPreviewCandidateFinalization,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -2520,6 +2553,26 @@ internal sealed record RouteBFinalReadiness(
     string Reason,
     IReadOnlyList<string> CompletedCapabilities,
     IReadOnlyList<string> RemainingBeforeProduction);
+
+internal sealed record RouteBPreviewCandidateFinalization(
+    bool PreviewCandidate,
+    bool ProductionFeature,
+    bool ViewerWired,
+    string OpenMode,
+    bool ManualOnly,
+    bool ReadOnly,
+    bool RouteAPreserved,
+    bool FallbackPreserved,
+    bool DefaultDisabled,
+    bool RuntimeMutation,
+    bool DiffApply,
+    bool HistoryRestore,
+    bool SnapshotOverwrite,
+    bool UiValidated,
+    bool ViewerOpenValidated,
+    bool DiagnosticsValidated,
+    string FinalReadiness,
+    IReadOnlyList<string> Warnings);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,
