@@ -358,6 +358,46 @@ Updated Decision:
   - diagnostics/timing/heuristics only
   - no optimization rewrite
   - no runtime mutation
+
+## Step 14.5 Heavy Project Runtime Validation
+- runtime validation:
+  - pending in this workspace (YMM runtime execution is not available here)
+- build contract:
+  - no-deploy build succeeds with `0 warning / 0 error`
+- expected runtime fields:
+  - `heavyProjectHeuristics.prepared=True`
+  - `previewPerformanceDiagnostics.prepared=True`
+  - `previewListSafety.prepared=True`
+  - `previewListSafety.previewItemLimit=20`
+
+## Step 15: Virtualization / Deferred Materialization Foundation
+- Added:
+  - `previewVirtualization`
+- Foundation state:
+  - `enabled=false`
+  - `defaultDisabled=true`
+  - `mode=FoundationOnly`
+  - `deferredDetailMaterialization=true`
+  - `lightweightProjection=true`
+  - `viewerWired=false`
+  - `openMode=ReadOnlyDryRun`
+- Notes:
+  - Preview list display remains capped at 20.
+  - Large source warning is surfaced via diagnostics/UI warning text.
+
+## Step 16: RouteB Final Investigation RC
+- RC version:
+  - `RouteB-SceneAwareHistoryPreview-RC2`
+- Previous RC:
+  - `RouteB-SceneAwareHistoryPreview-RC1`
+- Added:
+  - `routeBFinalInvestigationRc`
+  - `routeBFinalReadiness`
+- Still disabled:
+  - production embedding
+  - viewer wiring
+  - runtime mutation
+  - input injection
 - Updated `CanOpen` rule:
   - `compareSessionId` present
   - OR `snapshotPair(old/new)` present

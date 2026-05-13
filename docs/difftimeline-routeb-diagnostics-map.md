@@ -31,3 +31,6 @@
 - `HeavyProjectHeuristics`
 - `PreviewPerformanceDiagnostics`
 - `PreviewListSafety`
+- `PreviewVirtualization`
+- `RouteBFinalInvestigationRc`
+- `RouteBFinalReadiness`
