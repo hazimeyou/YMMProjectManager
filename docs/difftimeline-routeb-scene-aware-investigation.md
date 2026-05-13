@@ -552,3 +552,11 @@ Probe execution writes into `diagnostics`:
   - RouteA readiness canOpen
   - readOnly=true, no apply/restore/mutation
 - On failure, fallback returns to dry-run status.
+
+## Step 16-17: RouteA Read-only Viewer Wiring & Preview Flow Advance
+- RouteB Related History candidate can handoff to RouteA standalone viewer.
+- Open is manual button click only.
+- Open mode is read-only sandbox (`ReadOnlySandbox`).
+- Production embedding is still disabled.
+- Diff apply / history restore / runtime mutation remain blocked.
+- Failure path falls back to dry-run messaging.

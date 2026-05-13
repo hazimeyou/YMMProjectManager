@@ -52,7 +52,7 @@
         <GroupBox Grid.Row="7" Header="4. RouteA Detail Preview" Margin="0,8,0,0">
             <StackPanel Margin="6">
                 <TextBlock Text="{Binding RouteADetailPreviewText}" TextWrapping="Wrap"/>
-                <Button Margin="0,6,0,0" Content="RouteA detail (read-only preview)" IsEnabled="{Binding CanOpenRouteADetailDiff}" Click="OpenRouteADetailPreview_OnClick"/>
+                <Button Margin="0,6,0,0" Content="RouteA詳細を開く（読み取り専用）" IsEnabled="{Binding CanOpenRouteADetailDiff}" Click="OpenRouteADetailPreview_OnClick"/>
                 <TextBlock Margin="0,6,0,0" Text="{Binding RouteADetailOpenResultText}" TextWrapping="Wrap" FontFamily="Consolas"/>
             </StackPanel>
         </GroupBox>

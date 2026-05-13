@@ -110,8 +110,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             UiMode: "PreviewCandidate",
             DiagnosticsCollapsed: true,
             UserFacingSections: ["CurrentScene", "RelatedHistory", "MatchReason", "RouteADetailPreview", "DiagnosticsSafety"],
-            ViewerWired: false,
-            OpenMode: "ReadOnlyDryRun",
+            ViewerWired: true,
+            OpenMode: "ReadOnlySandbox",
             DefaultDisabled: true,
             FallbackPreserved: true);
         var previewUiReadModel = new RouteBPreviewUiReadModel(
@@ -123,13 +123,44 @@ internal static partial class SceneAwareHistoryPreviewProbe
             DiagnosticsSafetyLabel: "Diagnostics / Safety");
         var previewUiSafetySummary = new RouteBPreviewUiSafetySummary(
             Prepared: true,
-            ViewerWired: false,
-            OpenMode: "ReadOnlyDryRun",
+            ViewerWired: true,
+            OpenMode: "ReadOnlySandbox",
             DefaultDisabled: true,
             FallbackPreserved: true,
+            ReadOnly: true,
+            AllowDiffApply: false,
+            AllowHistoryRestore: false,
+            AllowRuntimeMutation: false,
             RuntimeMutation: false,
             InputInjection: false,
             ProductionEmbedding: false);
+        var routeADetailViewerOpenReadiness = new RouteADetailViewerOpenReadiness(
+            Prepared: true,
+            SelectedCandidatePresent: historyPreviewItems.Count > 0,
+            SnapshotPairResolved: snapshotPairResolution.Resolved,
+            OldSnapshotFound: snapshotPairResolution.OldSnapshotFound,
+            NewSnapshotFound: snapshotPairResolution.NewSnapshotFound,
+            RouteAOpenCanOpen: routeAOpenReadiness.CanOpen,
+            PreviewOnly: previewFeatureGate.PreviewOnly,
+            FeatureEnabled: previewFeatureGate.Enabled);
+        var routeADetailViewerOpenSafety = new RouteADetailViewerOpenSafety(
+            Prepared: true,
+            ViewerWired: true,
+            OpenMode: "ReadOnlySandbox",
+            ManualOnly: true,
+            ReadOnly: true,
+            AllowDiffApply: false,
+            AllowHistoryRestore: false,
+            AllowRuntimeMutation: false,
+            AllowSnapshotOverwrite: false);
+        var routeADetailViewerOpenResult = new RouteADetailViewerOpenResult(
+            OpenAttempted: false,
+            OpenSucceeded: false,
+            FallbackToDryRun: false,
+            ErrorMessage: "",
+            SelectedCandidateId: historyPreviewItems.FirstOrDefault()?.SourceFileName ?? "",
+            OldSnapshotHash: snapshotPairResolution.OldSnapshotHash,
+            NewSnapshotHash: snapshotPairResolution.NewSnapshotHash);
         var heavyProjectHeuristics = BuildHeavyProjectHeuristics(
             historySources,
             historyMatchCandidates,
@@ -258,6 +289,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewUiIntegration: previewUiIntegration,
             PreviewUiReadModel: previewUiReadModel,
             PreviewUiSafetySummary: previewUiSafetySummary,
+            RouteADetailViewerOpenReadiness: routeADetailViewerOpenReadiness,
+            RouteADetailViewerOpenSafety: routeADetailViewerOpenSafety,
+            RouteADetailViewerOpenResult: routeADetailViewerOpenResult,
             HeavyProjectHeuristics: heavyProjectHeuristics,
             PreviewPerformanceDiagnostics: previewPerformanceDiagnostics,
             PreviewListSafety: previewListSafety,
@@ -304,6 +338,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewUiIntegration: result.PreviewUiIntegration,
             PreviewUiReadModel: result.PreviewUiReadModel,
             PreviewUiSafetySummary: result.PreviewUiSafetySummary,
+            RouteADetailViewerOpenReadiness: result.RouteADetailViewerOpenReadiness,
+            RouteADetailViewerOpenSafety: result.RouteADetailViewerOpenSafety,
+            RouteADetailViewerOpenResult: result.RouteADetailViewerOpenResult,
             HeavyProjectHeuristics: result.HeavyProjectHeuristics,
             PreviewPerformanceDiagnostics: result.PreviewPerformanceDiagnostics,
             PreviewListSafety: result.PreviewListSafety,
@@ -1675,6 +1712,21 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - defaultDisabled: {r.PreviewUiIntegration.DefaultDisabled}
 - fallbackPreserved: {r.PreviewUiIntegration.FallbackPreserved}
 
+## RouteA Detail Viewer Open
+- readiness.prepared: {r.RouteADetailViewerOpenReadiness.Prepared}
+- readiness.selectedCandidatePresent: {r.RouteADetailViewerOpenReadiness.SelectedCandidatePresent}
+- readiness.snapshotPairResolved: {r.RouteADetailViewerOpenReadiness.SnapshotPairResolved}
+- readiness.oldSnapshotFound: {r.RouteADetailViewerOpenReadiness.OldSnapshotFound}
+- readiness.newSnapshotFound: {r.RouteADetailViewerOpenReadiness.NewSnapshotFound}
+- readiness.routeAOpenCanOpen: {r.RouteADetailViewerOpenReadiness.RouteAOpenCanOpen}
+- safety.viewerWired: {r.RouteADetailViewerOpenSafety.ViewerWired}
+- safety.openMode: {r.RouteADetailViewerOpenSafety.OpenMode}
+- safety.manualOnly: {r.RouteADetailViewerOpenSafety.ManualOnly}
+- safety.readOnly: {r.RouteADetailViewerOpenSafety.ReadOnly}
+- result.openAttempted: {r.RouteADetailViewerOpenResult.OpenAttempted}
+- result.openSucceeded: {r.RouteADetailViewerOpenResult.OpenSucceeded}
+- result.fallbackToDryRun: {r.RouteADetailViewerOpenResult.FallbackToDryRun}
+
 ## Step 12: Preview Feature Gate Foundation
 - prepared: {r.PreviewFeatureGate.Prepared}
 - enabled: {r.PreviewFeatureGate.Enabled}
@@ -1864,6 +1916,9 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     RouteBPreviewUiIntegration PreviewUiIntegration,
     RouteBPreviewUiReadModel PreviewUiReadModel,
     RouteBPreviewUiSafetySummary PreviewUiSafetySummary,
+    RouteADetailViewerOpenReadiness RouteADetailViewerOpenReadiness,
+    RouteADetailViewerOpenSafety RouteADetailViewerOpenSafety,
+    RouteADetailViewerOpenResult RouteADetailViewerOpenResult,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
     SceneAwarePreviewListSafety PreviewListSafety,
@@ -1931,6 +1986,9 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     RouteBPreviewUiIntegration PreviewUiIntegration,
     RouteBPreviewUiReadModel PreviewUiReadModel,
     RouteBPreviewUiSafetySummary PreviewUiSafetySummary,
+    RouteADetailViewerOpenReadiness RouteADetailViewerOpenReadiness,
+    RouteADetailViewerOpenSafety RouteADetailViewerOpenSafety,
+    RouteADetailViewerOpenResult RouteADetailViewerOpenResult,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
     SceneAwarePreviewListSafety PreviewListSafety,
@@ -2348,9 +2406,43 @@ internal sealed record RouteBPreviewUiSafetySummary(
     string OpenMode,
     bool DefaultDisabled,
     bool FallbackPreserved,
+    bool ReadOnly,
+    bool AllowDiffApply,
+    bool AllowHistoryRestore,
+    bool AllowRuntimeMutation,
     bool RuntimeMutation,
     bool InputInjection,
     bool ProductionEmbedding);
+
+internal sealed record RouteADetailViewerOpenReadiness(
+    bool Prepared,
+    bool SelectedCandidatePresent,
+    bool SnapshotPairResolved,
+    bool OldSnapshotFound,
+    bool NewSnapshotFound,
+    bool RouteAOpenCanOpen,
+    bool PreviewOnly,
+    bool FeatureEnabled);
+
+internal sealed record RouteADetailViewerOpenSafety(
+    bool Prepared,
+    bool ViewerWired,
+    string OpenMode,
+    bool ManualOnly,
+    bool ReadOnly,
+    bool AllowDiffApply,
+    bool AllowHistoryRestore,
+    bool AllowRuntimeMutation,
+    bool AllowSnapshotOverwrite);
+
+internal sealed record RouteADetailViewerOpenResult(
+    bool OpenAttempted,
+    bool OpenSucceeded,
+    bool FallbackToDryRun,
+    string ErrorMessage,
+    string SelectedCandidateId,
+    string? OldSnapshotHash,
+    string? NewSnapshotHash);
 
 internal sealed record SceneAwareHeavyProjectHeuristics(
     bool Prepared,

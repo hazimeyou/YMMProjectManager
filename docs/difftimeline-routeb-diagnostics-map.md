@@ -48,3 +48,17 @@
 - `openMode=ReadOnlyDryRun`
 - `defaultDisabled=true`
 - `fallbackPreserved=true`
+
+## Step 16-17 Additions
+- `RouteADetailViewerOpenReadiness`
+- `RouteADetailViewerOpenSafety`
+- `RouteADetailViewerOpenResult`
+
+### RouteADetailViewerOpenSafety
+- `viewerWired=true`
+- `openMode=ReadOnlySandbox`
+- `manualOnly=true`
+- `readOnly=true`
+- `allowDiffApply=false`
+- `allowHistoryRestore=false`
+- `allowRuntimeMutation=false`
