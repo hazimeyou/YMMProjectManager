@@ -307,6 +307,38 @@ Updated Decision:
   - investigation preview only
   - production UI not enabled
   - RouteA viewer wiring not included
+
+## Step 12.5 Preview Feature Gate Validation Result (2026-05-13)
+- branch:
+  - `investigation/scene-aware-history-preview`
+- no-deploy build:
+  - `dotnet build YMMProjectManager\YMMProjectManager.csproj /p:YMM4DirPath=Z:\__no_deploy__`
+  - `0 warning / 0 error`
+- probe:
+  - runtime revalidation pending in this workspace (YMM UI execution is not available here)
+- summary:
+  - runtime revalidation pending in this workspace
+- previewFeatureGate output:
+  - expected `Yes` (implemented in probe/summary/report path)
+- previewFeatureReadiness output:
+  - expected `Yes` (implemented in probe/summary/report path)
+- enabled:
+  - `False`
+- previewOnly:
+  - `True`
+- viewerWired:
+  - `False`
+- openMode:
+  - `ReadOnlyDryRun`
+- canEnablePreviewUi:
+  - `False`
+- existing RouteB runtime baseline (latest known):
+  - `historyPreview.previewItemCount > 0`
+  - `historyPreview.hasHighConfidenceMatch=True`
+  - `snapshotPairResolution.resolved=True`
+  - `routeAOpenReadiness.canOpen=True`
+- decision:
+  - `Preview feature gate validation passed (build/output contract). Runtime revalidation pending.`
 - Updated `CanOpen` rule:
   - `compareSessionId` present
   - OR `snapshotPair(old/new)` present
