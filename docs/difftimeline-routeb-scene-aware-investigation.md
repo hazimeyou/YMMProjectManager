@@ -560,3 +560,13 @@ Probe execution writes into `diagnostics`:
 - Production embedding is still disabled.
 - Diff apply / history restore / runtime mutation remain blocked.
 - Failure path falls back to dry-run messaging.
+
+## Step 18.5 (RouteA Viewer Open Diagnostics Synchronization)
+- Fixed synchronization between manual open action and diagnostics output.
+- On `RouteA詳細を開く（読み取り専用）`:
+  - open result is captured in ViewModel state
+  - probe/summary/report are regenerated immediately
+  - `RouteADetailViewerOpenResult` reflects actual last open attempt
+- Added compatibility-safe diagnostics semantics:
+  - RC2 compatibility snapshot values remain explicit
+  - current preview-candidate values are emitted in parallel fields to avoid ambiguity

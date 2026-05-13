@@ -10,7 +10,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    public static SceneAwareHistoryPreviewProbeResult Run(string diagnosticsDirectory)
+    public static SceneAwareHistoryPreviewProbeResult Run(
+        string diagnosticsDirectory,
+        YMMProjectManager.Presentation.Timeline.Experimental.ViewModels.RouteADetailPreviewOpenResult? latestOpenResult = null)
     {
         var totalStopwatch = Stopwatch.StartNew();
         Directory.CreateDirectory(diagnosticsDirectory);
@@ -154,13 +156,20 @@ internal static partial class SceneAwareHistoryPreviewProbe
             AllowRuntimeMutation: false,
             AllowSnapshotOverwrite: false);
         var routeADetailViewerOpenResult = new RouteADetailViewerOpenResult(
-            OpenAttempted: false,
-            OpenSucceeded: false,
-            FallbackToDryRun: false,
-            ErrorMessage: "",
-            SelectedCandidateId: historyPreviewItems.FirstOrDefault()?.SourceFileName ?? "",
-            OldSnapshotHash: snapshotPairResolution.OldSnapshotHash,
-            NewSnapshotHash: snapshotPairResolution.NewSnapshotHash);
+            OpenAttempted: latestOpenResult?.OpenAttempted ?? false,
+            OpenSucceeded: latestOpenResult?.OpenSucceeded ?? false,
+            FallbackToDryRun: latestOpenResult?.FallbackToDryRun ?? false,
+            ErrorMessage: latestOpenResult?.ErrorMessage ?? string.Empty,
+            SelectedCandidateId: string.IsNullOrWhiteSpace(latestOpenResult?.SelectedCandidateId)
+                ? historyPreviewItems.FirstOrDefault()?.SourceFileName ?? string.Empty
+                : latestOpenResult.SelectedCandidateId,
+            OldSnapshotHash: latestOpenResult?.OldSnapshotHash ?? snapshotPairResolution.OldSnapshotHash,
+            NewSnapshotHash: latestOpenResult?.NewSnapshotHash ?? snapshotPairResolution.NewSnapshotHash,
+            OpenMode: latestOpenResult?.OpenMode ?? "ReadOnlySandbox",
+            ViewerWired: latestOpenResult?.ViewerWired ?? true,
+            ReadOnly: true,
+            ManualOnly: true,
+            OpenedWindowType: latestOpenResult?.OpenSucceeded == true ? "ProjectDiffWindow" : string.Empty);
         var heavyProjectHeuristics = BuildHeavyProjectHeuristics(
             historySources,
             historyMatchCandidates,
@@ -1459,6 +1468,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             Enabled: false,
             DefaultDisabled: true,
             Mode: "FoundationOnly",
+            CompatibilitySnapshot: true,
+            CapturedAtRc: "RouteB-SceneAwareHistoryPreview-RC2",
             Recommended: recommended,
             Reason: recommended ? "Large history source detected. Preview list is limited to 20 items." : string.Empty,
             PreviewItemLimit: 20,
@@ -1467,7 +1478,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             DeferredDetailMaterialization: true,
             LightweightProjection: true,
             ViewerWired: false,
-            OpenMode: "ReadOnlyDryRun");
+            OpenMode: "ReadOnlyDryRun",
+            CurrentViewerWired: true,
+            CurrentOpenMode: "ReadOnlySandbox");
 
     private static RouteBFinalInvestigationRc BuildRouteBFinalInvestigationRc()
         => new(
@@ -1475,11 +1488,14 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviousRcVersion: "RouteB-SceneAwareHistoryPreview-RC1",
             RouteIdentity: "RouteBSceneAwareHistoryPreviewFinalInvestigationRC",
             Prepared: true,
+            CompatibilitySnapshot: true,
             DefaultDisabled: true,
             FallbackPreserved: true,
             RouteAPreserved: true,
             ViewerWired: false,
             OpenMode: "ReadOnlyDryRun",
+            CurrentViewerWired: true,
+            CurrentOpenMode: "ReadOnlySandbox",
             PreviewFeatureGatePrepared: true,
             HeavyProjectFoundationPrepared: true,
             VirtualizationFoundationPrepared: true,
@@ -1747,6 +1763,11 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - result.openAttempted: {r.RouteADetailViewerOpenResult.OpenAttempted}
 - result.openSucceeded: {r.RouteADetailViewerOpenResult.OpenSucceeded}
 - result.fallbackToDryRun: {r.RouteADetailViewerOpenResult.FallbackToDryRun}
+- result.openMode: {r.RouteADetailViewerOpenResult.OpenMode}
+- result.viewerWired: {r.RouteADetailViewerOpenResult.ViewerWired}
+- result.readOnly: {r.RouteADetailViewerOpenResult.ReadOnly}
+- result.manualOnly: {r.RouteADetailViewerOpenResult.ManualOnly}
+- result.openedWindowType: {(string.IsNullOrWhiteSpace(r.RouteADetailViewerOpenResult.OpenedWindowType) ? "(none)" : r.RouteADetailViewerOpenResult.OpenedWindowType)}
 
 ## Step 12: Preview Feature Gate Foundation
 - prepared: {r.PreviewFeatureGate.Prepared}
@@ -1795,19 +1816,28 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - prepared: {r.PreviewVirtualization.Prepared}
 - enabled: {r.PreviewVirtualization.Enabled}
 - mode: {r.PreviewVirtualization.Mode}
+- compatibilitySnapshot: {r.PreviewVirtualization.CompatibilitySnapshot}
+- capturedAtRc: {r.PreviewVirtualization.CapturedAtRc}
 - recommended: {r.PreviewVirtualization.Recommended}
 - reason: {r.PreviewVirtualization.Reason}
 - previewItemLimit: {r.PreviewVirtualization.PreviewItemLimit}
 - deferredDetailMaterialization: {r.PreviewVirtualization.DeferredDetailMaterialization}
 - lightweightProjection: {r.PreviewVirtualization.LightweightProjection}
+- viewerWiredAtCapture: {r.PreviewVirtualization.ViewerWired}
+- openModeAtCapture: {r.PreviewVirtualization.OpenMode}
+- currentViewerWired: {r.PreviewVirtualization.CurrentViewerWired}
+- currentOpenMode: {r.PreviewVirtualization.CurrentOpenMode}
 
 ## Step 16: RouteB Final Investigation RC
 - rcVersion: {r.RouteBFinalInvestigationRc.RcVersion}
 - previousRcVersion: {r.RouteBFinalInvestigationRc.PreviousRcVersion}
 - routeIdentity: {r.RouteBFinalInvestigationRc.RouteIdentity}
 - prepared: {r.RouteBFinalInvestigationRc.Prepared}
-- openMode: {r.RouteBFinalInvestigationRc.OpenMode}
-- viewerWired: {r.RouteBFinalInvestigationRc.ViewerWired}
+- compatibilitySnapshot: {r.RouteBFinalInvestigationRc.CompatibilitySnapshot}
+- openModeAtCapture: {r.RouteBFinalInvestigationRc.OpenMode}
+- viewerWiredAtCapture: {r.RouteBFinalInvestigationRc.ViewerWired}
+- currentOpenMode: {r.RouteBFinalInvestigationRc.CurrentOpenMode}
+- currentViewerWired: {r.RouteBFinalInvestigationRc.CurrentViewerWired}
 - heavyProjectFoundationPrepared: {r.RouteBFinalInvestigationRc.HeavyProjectFoundationPrepared}
 - virtualizationFoundationPrepared: {r.RouteBFinalInvestigationRc.VirtualizationFoundationPrepared}
 
@@ -2475,7 +2505,12 @@ internal sealed record RouteADetailViewerOpenResult(
     string ErrorMessage,
     string SelectedCandidateId,
     string? OldSnapshotHash,
-    string? NewSnapshotHash);
+    string? NewSnapshotHash,
+    string OpenMode,
+    bool ViewerWired,
+    bool ReadOnly,
+    bool ManualOnly,
+    string OpenedWindowType);
 
 internal sealed record SceneAwareHeavyProjectHeuristics(
     bool Prepared,
@@ -2519,6 +2554,8 @@ internal sealed record SceneAwarePreviewVirtualization(
     bool Enabled,
     bool DefaultDisabled,
     string Mode,
+    bool CompatibilitySnapshot,
+    string CapturedAtRc,
     bool Recommended,
     string Reason,
     int PreviewItemLimit,
@@ -2527,18 +2564,23 @@ internal sealed record SceneAwarePreviewVirtualization(
     bool DeferredDetailMaterialization,
     bool LightweightProjection,
     bool ViewerWired,
-    string OpenMode);
+    string OpenMode,
+    bool CurrentViewerWired,
+    string CurrentOpenMode);
 
 internal sealed record RouteBFinalInvestigationRc(
     string RcVersion,
     string PreviousRcVersion,
     string RouteIdentity,
     bool Prepared,
+    bool CompatibilitySnapshot,
     bool DefaultDisabled,
     bool FallbackPreserved,
     bool RouteAPreserved,
     bool ViewerWired,
     string OpenMode,
+    bool CurrentViewerWired,
+    string CurrentOpenMode,
     bool PreviewFeatureGatePrepared,
     bool HeavyProjectFoundationPrepared,
     bool VirtualizationFoundationPrepared,

@@ -18,12 +18,17 @@ public sealed record RouteADetailPreviewOpenResult(
     bool FallbackToDryRun,
     string ErrorMessage,
     bool ViewerWired,
-    string OpenMode);
+    string OpenMode,
+    string SelectedCandidateId,
+    string? OldSnapshotHash,
+    string? NewSnapshotHash);
 
 public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBase
 {
+    private readonly string diagnosticsDirectory;
     private SceneAwareHistoryPreviewProbeResult? latestResult;
     private Func<RouteADetailPreviewOpenRequest, RouteADetailPreviewOpenResult>? openHandler;
+    private RouteADetailPreviewOpenResult? lastRouteADetailOpenResult;
 
     private string summaryText = "Preview candidate (read-only / default disabled)";
     private string currentSceneText = "(not-run)";
@@ -58,6 +63,11 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
 
     public ObservableCollection<SceneAwareHistoryPreviewItem> HistoryPreviewItems { get; } = [];
 
+    public SceneAwareHistoryPreviewInvestigationViewModel(string diagnosticsDirectory)
+    {
+        this.diagnosticsDirectory = diagnosticsDirectory;
+    }
+
     public SceneAwareHistoryPreviewItem? SelectedHistoryPreviewItem
     {
         get => selectedHistoryPreviewItem;
@@ -72,6 +82,13 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     }
 
     public void SetOpenHandler(Func<RouteADetailPreviewOpenRequest, RouteADetailPreviewOpenResult> handler) => openHandler = handler;
+
+    public void RerunInvestigation()
+    {
+        if (string.IsNullOrWhiteSpace(diagnosticsDirectory)) return;
+        var refreshed = SceneAwareHistoryPreviewProbe.Run(diagnosticsDirectory, lastRouteADetailOpenResult);
+        Apply(refreshed);
+    }
 
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
@@ -164,11 +181,18 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             ManualButtonClick: true);
 
         var res = openHandler(req);
+        lastRouteADetailOpenResult = res;
         RouteADetailOpenResultText = res.OpenSucceeded
             ? "RouteA detail viewer opened in read-only sandbox."
             : (res.FallbackToDryRun
                 ? $"Open failed. Fallback to dry-run. {res.ErrorMessage}"
                 : $"Open failed. {res.ErrorMessage}");
+
+        if (!string.IsNullOrWhiteSpace(diagnosticsDirectory))
+        {
+            var refreshed = SceneAwareHistoryPreviewProbe.Run(diagnosticsDirectory, lastRouteADetailOpenResult);
+            Apply(refreshed);
+        }
     }
 
     private static string BuildMatchReasonText(SceneAwareHistoryPreviewItem item)

@@ -62,3 +62,19 @@
 - `allowDiffApply=false`
 - `allowHistoryRestore=false`
 - `allowRuntimeMutation=false`
+
+## Step 18.5 Diagnostics Synchronization
+- `RouteADetailViewerOpenResult` now reflects manual button execution result.
+- After `RouteA詳細を開く（読み取り専用）`, probe/summary/report are regenerated with latest open result.
+- Success path:
+  - `openAttempted=true`
+  - `openSucceeded=true`
+  - `fallbackToDryRun=false`
+  - `openedWindowType=ProjectDiffWindow`
+- Failure path:
+  - `openAttempted=true`
+  - `openSucceeded=false`
+  - `fallbackToDryRun=true`
+  - `errorMessage` populated
+- Compatibility clarification:
+  - `PreviewVirtualization` and `RouteBFinalInvestigationRc` include RC2 compatibility snapshot values and current values side-by-side.

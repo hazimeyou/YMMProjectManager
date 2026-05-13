@@ -27,8 +27,6 @@ public partial class SceneAwareHistoryPreviewInvestigationWindow : Window
             return;
         }
 
-        var diagnosticsDir = Path.Combine(AppContext.BaseDirectory, "diagnostics");
-        var probeResult = SceneAwareHistoryPreviewProbe.Run(diagnosticsDir);
-        vm.Apply(probeResult);
+        vm.RerunInvestigation();
     }
 }
