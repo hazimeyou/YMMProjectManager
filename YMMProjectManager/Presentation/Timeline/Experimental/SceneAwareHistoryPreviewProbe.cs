@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Media;
@@ -11,8 +12,15 @@ internal static partial class SceneAwareHistoryPreviewProbe
 
     public static SceneAwareHistoryPreviewProbeResult Run(string diagnosticsDirectory)
     {
+        var totalStopwatch = Stopwatch.StartNew();
         Directory.CreateDirectory(diagnosticsDirectory);
         var now = DateTimeOffset.Now;
+        var timelineDetectionMs = 0L;
+        var fingerprintGenerationMs = 0L;
+        var historyScanMs = 0L;
+        var historyMatchingMs = 0L;
+        var snapshotPairResolutionMs = 0L;
+        var previewGenerationMs = 0L;
         var windows = System.Windows.Application.Current?.Windows.OfType<Window>().ToList() ?? [];
 
         var windowReports = windows.Select(BuildWindowReport).ToList();
@@ -44,11 +52,18 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var selectionCandidates = allProperties.Where(x => x.Category == "SelectionCandidate").ToList();
         var bestSceneCandidate = ResolveBestSceneCandidate(sceneCandidates);
         var bestTimelineCollectionCandidate = ResolveBestCollectionCandidate(collectionCandidates);
+        timelineDetectionMs = totalStopwatch.ElapsedMilliseconds;
 
+        var fingerprintSw = Stopwatch.StartNew();
         var timelineFingerprint = BuildTimelineFingerprintCandidate(bestTimelineCollectionCandidate, getterErrors.Count);
         var sceneIdentityCandidate = BuildSceneIdentityCandidate(bestSceneCandidate, bestCandidate, timelineFingerprint);
+        fingerprintGenerationMs = fingerprintSw.ElapsedMilliseconds;
+        var historyScanSw = Stopwatch.StartNew();
         var historySources = ScanHistorySources(diagnosticsDirectory);
+        historyScanMs = historyScanSw.ElapsedMilliseconds;
+        var historyMatchSw = Stopwatch.StartNew();
         var historyMatchCandidates = BuildHistoryMatchCandidates(historySources, sceneIdentityCandidate, timelineFingerprint);
+        historyMatchingMs = historyMatchSw.ElapsedMilliseconds;
         var bestHistoryMatchCandidate = historyMatchCandidates.OrderByDescending(x => x.Score).FirstOrDefault();
         var historyMatching = new SceneAwareHistoryMatchingSummary(
             SourceCount: historySources.Count,
@@ -58,7 +73,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             BestMatchScore: bestHistoryMatchCandidate?.Score ?? 0,
             BestMatchConfidence: bestHistoryMatchCandidate?.Confidence ?? "None",
             HistoryLinkFeasible: historyMatchCandidates.Any(x => x.Confidence is "High" or "Medium"));
+        var previewGenerationSw = Stopwatch.StartNew();
         var historyPreviewItems = BuildHistoryPreviewItems(historyMatchCandidates, bestHistoryMatchCandidate);
+        previewGenerationMs = previewGenerationSw.ElapsedMilliseconds;
         var historyPreview = new SceneAwareHistoryPreviewSummaryMetrics(
             PreviewItemCount: historyPreviewItems.Count,
             BestPreviewItemScore: historyPreviewItems.FirstOrDefault()?.Score ?? 0,
@@ -70,7 +87,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             sceneIdentityCandidate.TimelineFingerprintHash);
         var routeAHandoffGap = BuildRouteAHandoffGap(defaultRouteAHandoff);
         var routeAHandoffMetadata = BuildRouteAHandoffMetadata(defaultRouteAHandoff, sceneIdentityCandidate, now);
+        var snapshotPairResolutionSw = Stopwatch.StartNew();
         var snapshotPairResolution = ResolveSnapshotPairFromHistory(diagnosticsDirectory);
+        snapshotPairResolutionMs = snapshotPairResolutionSw.ElapsedMilliseconds;
         var routeAHandoffMetadataWithResolvedPair = ApplyResolvedSnapshotPair(routeAHandoffMetadata, snapshotPairResolution);
         var routeAOpenReadiness = BuildRouteAOpenReadiness(defaultRouteAHandoff, routeAHandoffGap, historyPreview.BestPreviewItemConfidence, snapshotPairResolution);
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
@@ -86,6 +105,24 @@ internal static partial class SceneAwareHistoryPreviewProbe
             Sections: ["RuntimeContext", "HistoryMatches", "RouteAHandoff", "RcStatus"],
             ViewerWired: false,
             OpenMode: "ReadOnlyDryRun");
+        var heavyProjectHeuristics = BuildHeavyProjectHeuristics(
+            historySources,
+            historyMatchCandidates,
+            timelineFingerprint,
+            historyPreview,
+            snapshotPairResolution);
+        var previewListSafety = BuildPreviewListSafety(historyMatchCandidates.Count, historyPreviewItems.Count);
+        totalStopwatch.Stop();
+        var previewPerformanceDiagnostics = BuildPreviewPerformanceDiagnostics(
+            timelineDetectionMs,
+            fingerprintGenerationMs,
+            historyScanMs,
+            historyMatchingMs,
+            snapshotPairResolutionMs,
+            previewGenerationMs,
+            totalStopwatch.ElapsedMilliseconds,
+            historySources.Count,
+            snapshotPairResolution.Debug.SnapshotEntryCount);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -178,6 +215,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewFeatureGate: previewFeatureGate,
             PreviewFeatureReadiness: previewFeatureReadiness,
             PreviewUiConsolidation: previewUiConsolidation,
+            HeavyProjectHeuristics: heavyProjectHeuristics,
+            PreviewPerformanceDiagnostics: previewPerformanceDiagnostics,
+            PreviewListSafety: previewListSafety,
             BestHistoryMatchCandidate: bestHistoryMatchCandidate);
 
         var stamp = now.ToString("yyyyMMdd-HHmmss");
@@ -215,6 +255,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewFeatureGate: result.PreviewFeatureGate,
             PreviewFeatureReadiness: result.PreviewFeatureReadiness,
             PreviewUiConsolidation: result.PreviewUiConsolidation,
+            HeavyProjectHeuristics: result.HeavyProjectHeuristics,
+            PreviewPerformanceDiagnostics: result.PreviewPerformanceDiagnostics,
+            PreviewListSafety: result.PreviewListSafety,
             BestHistoryMatchCandidate: result.BestHistoryMatchCandidate);
         var summaryPath = Path.Combine(diagnosticsDirectory, $"scene-aware-history-preview-summary-{stamp}.json");
         File.WriteAllText(summaryPath, JsonSerializer.Serialize(summary, JsonOptions));
@@ -1225,6 +1268,81 @@ internal static partial class SceneAwareHistoryPreviewProbe
                 "input injection"
             ]);
 
+    private static SceneAwareHeavyProjectHeuristics BuildHeavyProjectHeuristics(
+        IReadOnlyList<SceneAwareHistorySource> historySources,
+        IReadOnlyList<SceneAwareHistoryMatchCandidate> historyMatchCandidates,
+        SceneAwareTimelineFingerprint timelineFingerprint,
+        SceneAwareHistoryPreviewSummaryMetrics historyPreview,
+        SceneAwareSnapshotPairResolution snapshotPairResolution)
+    {
+        var estimatedHistoryBytes = historySources
+            .Where(x => x.SourceKind.Contains("history", StringComparison.OrdinalIgnoreCase) || x.SourceKind.Contains("summary", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.SizeBytes);
+        var estimatedSnapshotBytes = historySources
+            .Where(x => x.SourceKind.Contains("snapshot", StringComparison.OrdinalIgnoreCase) || x.SourceFileName.Contains("snapshot", StringComparison.OrdinalIgnoreCase))
+            .Sum(x => x.SizeBytes);
+
+        var isHeavy = historySources.Count >= 200
+            || snapshotPairResolution.Debug.SnapshotEntryCount >= 500
+            || timelineFingerprint.ItemCount >= 500
+            || estimatedHistoryBytes >= 50L * 1024L * 1024L;
+
+        var warnings = new List<string>();
+        if (isHeavy)
+        {
+            warnings.Add("Heavy Project Detected");
+            warnings.Add("Preview virtualization recommended");
+        }
+
+        return new SceneAwareHeavyProjectHeuristics(
+            Prepared: true,
+            IsHeavyProject: isHeavy,
+            HistorySourceCount: historySources.Count,
+            HistoryMatchCandidateCount: historyMatchCandidates.Count,
+            SnapshotRepositoryCount: snapshotPairResolution.Debug.SnapshotEntryCount,
+            ComparisonHistoryCount: snapshotPairResolution.Debug.ComparisonEntryCount,
+            EstimatedHistoryJsonBytes: estimatedHistoryBytes,
+            EstimatedSnapshotJsonBytes: estimatedSnapshotBytes,
+            TimelineItemCount: timelineFingerprint.ItemCount,
+            RowCount: null,
+            GroupCount: null,
+            PreviewItemCount: historyPreview.PreviewItemCount,
+            RecommendedPreviewItemLimit: 20,
+            RecommendedVirtualization: isHeavy,
+            Warnings: warnings);
+    }
+
+    private static SceneAwarePreviewPerformanceDiagnostics BuildPreviewPerformanceDiagnostics(
+        long timelineDetectionMs,
+        long fingerprintGenerationMs,
+        long historyScanMs,
+        long historyMatchingMs,
+        long snapshotPairResolutionMs,
+        long previewGenerationMs,
+        long totalProbeMs,
+        int historyFilesScanned,
+        int snapshotFilesScanned)
+        => new(
+            Prepared: true,
+            TimelineDetectionMs: timelineDetectionMs,
+            FingerprintGenerationMs: fingerprintGenerationMs,
+            HistoryScanMs: historyScanMs,
+            HistoryMatchingMs: historyMatchingMs,
+            SnapshotPairResolutionMs: snapshotPairResolutionMs,
+            PreviewGenerationMs: previewGenerationMs,
+            TotalProbeMs: totalProbeMs,
+            HistoryFilesScanned: historyFilesScanned,
+            SnapshotFilesScanned: snapshotFilesScanned,
+            Warnings: []);
+
+    private static SceneAwarePreviewListSafety BuildPreviewListSafety(int totalCandidates, int displayedCandidates)
+        => new(
+            Prepared: true,
+            PreviewItemLimit: 20,
+            TotalCandidates: totalCandidates,
+            DisplayedCandidates: displayedCandidates,
+            Truncated: totalCandidates > displayedCandidates);
+
     private static string BuildMarkdownReport(SceneAwareHistoryPreviewProbeResult r, string probePath, string summaryPath)
     {
         return $"""
@@ -1446,6 +1564,33 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - confidence: {r.PreviewFeatureReadiness.Confidence}
 - canEnablePreviewUi: {r.PreviewFeatureReadiness.CanEnablePreviewUi}
 - reason: {r.PreviewFeatureReadiness.Reason}
+
+## Step 14: Heavy Project Validation Foundation
+- heavyPrepared: {r.HeavyProjectHeuristics.Prepared}
+- isHeavyProject: {r.HeavyProjectHeuristics.IsHeavyProject}
+- historySourceCount: {r.HeavyProjectHeuristics.HistorySourceCount}
+- historyMatchCandidateCount: {r.HeavyProjectHeuristics.HistoryMatchCandidateCount}
+- snapshotRepositoryCount: {r.HeavyProjectHeuristics.SnapshotRepositoryCount}
+- comparisonHistoryCount: {r.HeavyProjectHeuristics.ComparisonHistoryCount}
+- estimatedHistoryJsonBytes: {r.HeavyProjectHeuristics.EstimatedHistoryJsonBytes}
+- estimatedSnapshotJsonBytes: {r.HeavyProjectHeuristics.EstimatedSnapshotJsonBytes}
+- recommendedPreviewItemLimit: {r.HeavyProjectHeuristics.RecommendedPreviewItemLimit}
+- recommendedVirtualization: {r.HeavyProjectHeuristics.RecommendedVirtualization}
+
+## Preview Performance Diagnostics
+- timelineDetectionMs: {r.PreviewPerformanceDiagnostics.TimelineDetectionMs}
+- fingerprintGenerationMs: {r.PreviewPerformanceDiagnostics.FingerprintGenerationMs}
+- historyScanMs: {r.PreviewPerformanceDiagnostics.HistoryScanMs}
+- historyMatchingMs: {r.PreviewPerformanceDiagnostics.HistoryMatchingMs}
+- snapshotPairResolutionMs: {r.PreviewPerformanceDiagnostics.SnapshotPairResolutionMs}
+- previewGenerationMs: {r.PreviewPerformanceDiagnostics.PreviewGenerationMs}
+- totalProbeMs: {r.PreviewPerformanceDiagnostics.TotalProbeMs}
+
+## Preview List Safety
+- previewItemLimit: {r.PreviewListSafety.PreviewItemLimit}
+- totalCandidates: {r.PreviewListSafety.TotalCandidates}
+- displayedCandidates: {r.PreviewListSafety.DisplayedCandidates}
+- truncated: {r.PreviewListSafety.Truncated}
 """;
     }
 
@@ -1564,6 +1709,9 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     RouteBPreviewFeatureGate PreviewFeatureGate,
     RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
+    SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
+    SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
+    SceneAwarePreviewListSafety PreviewListSafety,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate);
 
 internal sealed record SceneAwareHistoryPreviewProbeResult(
@@ -1622,6 +1770,9 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     RouteBPreviewFeatureGate PreviewFeatureGate,
     RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
+    SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
+    SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
+    SceneAwarePreviewListSafety PreviewListSafety,
     SceneAwareHistoryMatchCandidate? BestHistoryMatchCandidate,
     string ProbePath = "",
     string SummaryPath = "",
@@ -1995,6 +2146,43 @@ internal sealed record PreviewUiConsolidationStatus(
     IReadOnlyList<string> Sections,
     bool ViewerWired,
     string OpenMode);
+
+internal sealed record SceneAwareHeavyProjectHeuristics(
+    bool Prepared,
+    bool IsHeavyProject,
+    int HistorySourceCount,
+    int HistoryMatchCandidateCount,
+    int SnapshotRepositoryCount,
+    int ComparisonHistoryCount,
+    long EstimatedHistoryJsonBytes,
+    long EstimatedSnapshotJsonBytes,
+    int TimelineItemCount,
+    int? RowCount,
+    int? GroupCount,
+    int PreviewItemCount,
+    int RecommendedPreviewItemLimit,
+    bool RecommendedVirtualization,
+    IReadOnlyList<string> Warnings);
+
+internal sealed record SceneAwarePreviewPerformanceDiagnostics(
+    bool Prepared,
+    long TimelineDetectionMs,
+    long FingerprintGenerationMs,
+    long HistoryScanMs,
+    long HistoryMatchingMs,
+    long SnapshotPairResolutionMs,
+    long PreviewGenerationMs,
+    long TotalProbeMs,
+    int HistoryFilesScanned,
+    int SnapshotFilesScanned,
+    IReadOnlyList<string> Warnings);
+
+internal sealed record SceneAwarePreviewListSafety(
+    bool Prepared,
+    int PreviewItemLimit,
+    int TotalCandidates,
+    int DisplayedCandidates,
+    bool Truncated);
 
 internal sealed record SceneAwareRouteADetailHandoffGap(
     IReadOnlyList<string> CriticalMissingFields,

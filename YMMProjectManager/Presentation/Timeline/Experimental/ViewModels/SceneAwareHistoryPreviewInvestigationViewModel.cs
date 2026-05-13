@@ -17,6 +17,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
     private bool previewFeatureEnabled;
     private string previewFeatureMode = "InvestigationPreview";
     private string previewFeatureStatusText = "(unknown)";
+    private string heavyProjectWarningText = string.Empty;
 
     public string SummaryText
     {
@@ -120,6 +121,12 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         set => SetProperty(ref previewFeatureStatusText, value);
     }
 
+    public string HeavyProjectWarningText
+    {
+        get => heavyProjectWarningText;
+        set => SetProperty(ref heavyProjectWarningText, value);
+    }
+
     internal void Apply(SceneAwareHistoryPreviewProbeResult result)
     {
         SummaryText = $"sceneDetected={result.CurrentSceneDetected}, linkFeasible={result.SceneHistoryLinkFeasible}, confidence={result.Confidence}";
@@ -158,6 +165,9 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         PreviewFeatureEnabled = result.PreviewFeatureGate.Enabled;
         PreviewFeatureMode = result.PreviewUiConsolidation.Mode;
         PreviewFeatureStatusText = $"prepared={result.PreviewFeatureGate.Prepared}, enabled={result.PreviewFeatureGate.Enabled}, previewOnly={result.PreviewFeatureGate.PreviewOnly}, investigationRc={result.PreviewFeatureGate.InvestigationRc}, feature={result.PreviewFeatureGate.FeatureIdentity}/{result.PreviewFeatureGate.FeatureVersion}, openMode={result.PreviewFeatureGate.OpenMode}, viewerWired={result.PreviewFeatureGate.ViewerWired}, canEnablePreviewUi={result.PreviewFeatureReadiness.CanEnablePreviewUi}, readiness={result.PreviewFeatureReadiness.Confidence}";
+        HeavyProjectWarningText = result.HeavyProjectHeuristics.IsHeavyProject
+            ? "Heavy Project Detected: preview virtualization recommended."
+            : string.Empty;
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
@@ -177,6 +187,9 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
             $"history sourceCount={result.HistoryMatching.SourceCount} readOk={result.HistoryMatching.ReadSucceededCount} metadataCandidates={result.HistoryMatching.MetadataCandidateCount}",
             $"history matchCandidates={result.HistoryMatching.MatchCandidateCount} bestScore={result.HistoryMatching.BestMatchScore} bestConfidence={result.HistoryMatching.BestMatchConfidence} linkFeasible={result.HistoryMatching.HistoryLinkFeasible}",
             $"history best source={result.BestHistoryMatchCandidate?.SourceKind ?? "(none)"} file={result.BestHistoryMatchCandidate?.SourceFileName ?? "(none)"} score={result.BestHistoryMatchCandidate?.Score.ToString() ?? "0"}",
+            $"heavyProject isHeavy={result.HeavyProjectHeuristics.IsHeavyProject} historySources={result.HeavyProjectHeuristics.HistorySourceCount} snapshotRepo={result.HeavyProjectHeuristics.SnapshotRepositoryCount} recommendedVirtualization={result.HeavyProjectHeuristics.RecommendedVirtualization}",
+            $"performance totalMs={result.PreviewPerformanceDiagnostics.TotalProbeMs} historyScanMs={result.PreviewPerformanceDiagnostics.HistoryScanMs} matchMs={result.PreviewPerformanceDiagnostics.HistoryMatchingMs}",
+            $"previewListSafety limit={result.PreviewListSafety.PreviewItemLimit} total={result.PreviewListSafety.TotalCandidates} displayed={result.PreviewListSafety.DisplayedCandidates} truncated={result.PreviewListSafety.Truncated}",
             $"handoffGap critical=[{string.Join(", ", result.RouteADetailHandoffGap.CriticalMissingFields)}] important=[{string.Join(", ", result.RouteADetailHandoffGap.ImportantMissingFields)}] optional=[{string.Join(", ", result.RouteADetailHandoffGap.OptionalMissingFields)}]",
             "windows:",
             string.Join(Environment.NewLine, result.Windows.Select(x => $"- {x.WindowType} title={x.Title} excluded={x.Excluded} reason={x.ExcludedReason}")),

@@ -339,6 +339,25 @@ Updated Decision:
   - `routeAOpenReadiness.canOpen=True`
 - decision:
   - `Preview feature gate validation passed (build/output contract). Runtime revalidation pending.`
+
+## Step 14: Heavy Project Validation Foundation
+- Added:
+  - `heavyProjectHeuristics`
+  - `previewPerformanceDiagnostics`
+  - `previewListSafety`
+- Heuristics:
+  - heavy project is flagged when any of:
+    - `historySourceCount >= 200`
+    - `snapshotRepositoryCount >= 500`
+    - `timelineItemCount >= 500`
+    - `estimatedHistoryJsonBytes >= 50MB`
+- Safety:
+  - preview list UI display limit remains `20`
+  - truncation state is reported via `previewListSafety.truncated`
+- Scope:
+  - diagnostics/timing/heuristics only
+  - no optimization rewrite
+  - no runtime mutation
 - Updated `CanOpen` rule:
   - `compareSessionId` present
   - OR `snapshotPair(old/new)` present

@@ -28,3 +28,6 @@
 - `PreviewFeatureGate`
 - `PreviewFeatureReadiness`
 - `PreviewUiConsolidation`
+- `HeavyProjectHeuristics`
+- `PreviewPerformanceDiagnostics`
+- `PreviewListSafety`
