@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Diagnostics;
 using System.Text.Json;
 using System.Windows;
@@ -99,12 +99,37 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var previewFeatureReadiness = BuildPreviewFeatureReadiness(historyPreview.BestPreviewItemConfidence);
         var previewUiConsolidation = new PreviewUiConsolidationStatus(
             Prepared: true,
-            Mode: "InvestigationPreview",
+            Mode: "PreviewCandidate",
             DefaultDisabled: true,
             ProductionUiEnabled: false,
-            Sections: ["RuntimeContext", "HistoryMatches", "RouteAHandoff", "RcStatus"],
+            Sections: ["CurrentScene", "RelatedHistory", "MatchReason", "RouteADetailPreview", "DiagnosticsSafety"],
             ViewerWired: false,
             OpenMode: "ReadOnlyDryRun");
+        var previewUiIntegration = new RouteBPreviewUiIntegration(
+            Prepared: true,
+            UiMode: "PreviewCandidate",
+            DiagnosticsCollapsed: true,
+            UserFacingSections: ["CurrentScene", "RelatedHistory", "MatchReason", "RouteADetailPreview", "DiagnosticsSafety"],
+            ViewerWired: false,
+            OpenMode: "ReadOnlyDryRun",
+            DefaultDisabled: true,
+            FallbackPreserved: true);
+        var previewUiReadModel = new RouteBPreviewUiReadModel(
+            Prepared: true,
+            CurrentSceneLabel: "Current Scene",
+            RelatedHistoryLabel: "Related History",
+            MatchReasonLabel: "Match Reason",
+            RouteADetailPreviewLabel: "RouteA Detail Preview (Read-only)",
+            DiagnosticsSafetyLabel: "Diagnostics / Safety");
+        var previewUiSafetySummary = new RouteBPreviewUiSafetySummary(
+            Prepared: true,
+            ViewerWired: false,
+            OpenMode: "ReadOnlyDryRun",
+            DefaultDisabled: true,
+            FallbackPreserved: true,
+            RuntimeMutation: false,
+            InputInjection: false,
+            ProductionEmbedding: false);
         var heavyProjectHeuristics = BuildHeavyProjectHeuristics(
             historySources,
             historyMatchCandidates,
@@ -230,6 +255,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewFeatureGate: previewFeatureGate,
             PreviewFeatureReadiness: previewFeatureReadiness,
             PreviewUiConsolidation: previewUiConsolidation,
+            PreviewUiIntegration: previewUiIntegration,
+            PreviewUiReadModel: previewUiReadModel,
+            PreviewUiSafetySummary: previewUiSafetySummary,
             HeavyProjectHeuristics: heavyProjectHeuristics,
             PreviewPerformanceDiagnostics: previewPerformanceDiagnostics,
             PreviewListSafety: previewListSafety,
@@ -273,6 +301,9 @@ internal static partial class SceneAwareHistoryPreviewProbe
             PreviewFeatureGate: result.PreviewFeatureGate,
             PreviewFeatureReadiness: result.PreviewFeatureReadiness,
             PreviewUiConsolidation: result.PreviewUiConsolidation,
+            PreviewUiIntegration: result.PreviewUiIntegration,
+            PreviewUiReadModel: result.PreviewUiReadModel,
+            PreviewUiSafetySummary: result.PreviewUiSafetySummary,
             HeavyProjectHeuristics: result.HeavyProjectHeuristics,
             PreviewPerformanceDiagnostics: result.PreviewPerformanceDiagnostics,
             PreviewListSafety: result.PreviewListSafety,
@@ -1634,6 +1665,16 @@ internal static partial class SceneAwareHistoryPreviewProbe
 - openMode: {r.PreviewUiConsolidation.OpenMode}
 - sections: {(r.PreviewUiConsolidation.Sections.Count == 0 ? "(none)" : string.Join(", ", r.PreviewUiConsolidation.Sections))}
 
+## Step 15: Preview UI Integration
+- prepared: {r.PreviewUiIntegration.Prepared}
+- uiMode: {r.PreviewUiIntegration.UiMode}
+- diagnosticsCollapsed: {r.PreviewUiIntegration.DiagnosticsCollapsed}
+- userFacingSections: {(r.PreviewUiIntegration.UserFacingSections.Count == 0 ? "(none)" : string.Join(", ", r.PreviewUiIntegration.UserFacingSections))}
+- viewerWired: {r.PreviewUiIntegration.ViewerWired}
+- openMode: {r.PreviewUiIntegration.OpenMode}
+- defaultDisabled: {r.PreviewUiIntegration.DefaultDisabled}
+- fallbackPreserved: {r.PreviewUiIntegration.FallbackPreserved}
+
 ## Step 12: Preview Feature Gate Foundation
 - prepared: {r.PreviewFeatureGate.Prepared}
 - enabled: {r.PreviewFeatureGate.Enabled}
@@ -1820,6 +1861,9 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     RouteBPreviewFeatureGate PreviewFeatureGate,
     RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
+    RouteBPreviewUiIntegration PreviewUiIntegration,
+    RouteBPreviewUiReadModel PreviewUiReadModel,
+    RouteBPreviewUiSafetySummary PreviewUiSafetySummary,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
     SceneAwarePreviewListSafety PreviewListSafety,
@@ -1884,6 +1928,9 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     RouteBPreviewFeatureGate PreviewFeatureGate,
     RouteBPreviewFeatureReadiness PreviewFeatureReadiness,
     PreviewUiConsolidationStatus PreviewUiConsolidation,
+    RouteBPreviewUiIntegration PreviewUiIntegration,
+    RouteBPreviewUiReadModel PreviewUiReadModel,
+    RouteBPreviewUiSafetySummary PreviewUiSafetySummary,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
     SceneAwarePreviewListSafety PreviewListSafety,
@@ -2277,6 +2324,34 @@ internal sealed record PreviewUiConsolidationStatus(
     bool ViewerWired,
     string OpenMode);
 
+internal sealed record RouteBPreviewUiIntegration(
+    bool Prepared,
+    string UiMode,
+    bool DiagnosticsCollapsed,
+    IReadOnlyList<string> UserFacingSections,
+    bool ViewerWired,
+    string OpenMode,
+    bool DefaultDisabled,
+    bool FallbackPreserved);
+
+internal sealed record RouteBPreviewUiReadModel(
+    bool Prepared,
+    string CurrentSceneLabel,
+    string RelatedHistoryLabel,
+    string MatchReasonLabel,
+    string RouteADetailPreviewLabel,
+    string DiagnosticsSafetyLabel);
+
+internal sealed record RouteBPreviewUiSafetySummary(
+    bool Prepared,
+    bool ViewerWired,
+    string OpenMode,
+    bool DefaultDisabled,
+    bool FallbackPreserved,
+    bool RuntimeMutation,
+    bool InputInjection,
+    bool ProductionEmbedding);
+
 internal sealed record SceneAwareHeavyProjectHeuristics(
     bool Prepared,
     bool IsHeavyProject,
@@ -2403,3 +2478,4 @@ internal sealed record SceneAwareMetadataPrivacy(
     bool FullPathExcluded,
     bool TextBodyExcluded,
     bool ProjectPathHashOnly);
+

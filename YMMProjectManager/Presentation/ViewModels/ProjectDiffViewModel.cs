@@ -449,6 +449,7 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             var probeResult = SceneAwareHistoryPreviewProbe.Run(diagnosticsDir);
             var vm = new SceneAwareHistoryPreviewInvestigationViewModel();
             vm.Apply(probeResult);
+            vm.SetOpenHandler(OpenRouteADetailViewerReadOnlySandbox);
             var window = new SceneAwareHistoryPreviewInvestigationWindow(vm);
             var owner = System.Windows.Application.Current?.Windows.OfType<System.Windows.Window>().FirstOrDefault(x => x.IsActive);
             if (owner is not null && !ReferenceEquals(owner, window))
@@ -461,6 +462,67 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
         catch (Exception ex)
         {
             logger.Error(ex, "OpenSceneAwareHistoryPreviewInvestigation failed");
+        }
+    }
+
+    private RouteADetailPreviewOpenResult OpenRouteADetailViewerReadOnlySandbox(RouteADetailPreviewOpenRequest request)
+    {
+        try
+        {
+            if (!request.ManualButtonClick || !request.ReadOnly || request.AllowDiffApply || request.AllowHistoryRestore || request.AllowRuntimeMutation || request.OpenMode != "ReadOnlySandbox")
+            {
+                return new RouteADetailPreviewOpenResult(true, false, true, "Safety guard blocked request.", false, "ReadOnlyDryRun");
+            }
+
+            if (string.IsNullOrWhiteSpace(request.OldSnapshotHash) || string.IsNullOrWhiteSpace(request.NewSnapshotHash))
+            {
+                return new RouteADetailPreviewOpenResult(true, false, true, "Snapshot pair is missing.", false, "ReadOnlyDryRun");
+            }
+
+            if (!snapshotRepository.TryGetSnapshotByHash(request.OldSnapshotHash, out var oldSnapshot) ||
+                !snapshotRepository.TryGetSnapshotByHash(request.NewSnapshotHash, out var newSnapshot) ||
+                oldSnapshot is null || newSnapshot is null)
+            {
+                return new RouteADetailPreviewOpenResult(true, false, true, "Snapshot body was not found in repository.", false, "ReadOnlyDryRun");
+            }
+
+            var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
+                oldSnapshot,
+                newSnapshot,
+                new DiffTimelineStandalonePipelineOptions(
+                    OptionSnapshot: new Dictionary<string, string>(StringComparer.Ordinal)
+                    {
+                        ["requestedRoute"] = "routeb-scene-aware-readonly-sandbox",
+                        ["compareMode"] = "manual-readonly-sandbox",
+                    },
+                    SnapshotCache: standalonePipelineCache));
+            if (!envelope.IsSuccess || envelope.Result is null)
+            {
+                return new RouteADetailPreviewOpenResult(true, false, true, "Standalone pipeline failed.", false, "ReadOnlyDryRun");
+            }
+
+            var vm = new ProjectDiffViewModel(logger, snapshotService, normalizeService, jsonDiffService, ymmDiffService);
+            vm.latestCoreResult = envelope.Result.CoreResult;
+            vm.MaterializeRowsForCurrentWindow(envelope.Result.CoreResult);
+            vm.DiffGroups.Clear();
+            vm.BuildGroups(envelope.Result.CoreResult.Groups);
+            vm.MatchStatisticsText = envelope.Result.CoreResult.Summary.SummaryText;
+            vm.Title = $"Read-only Sandbox: {DiffTimelineSnapshotBrowserViewModel.ToShortHash(request.OldSnapshotHash)} -> {DiffTimelineSnapshotBrowserViewModel.ToShortHash(request.NewSnapshotHash)}";
+
+            var window = new ProjectDiffWindow(vm);
+            var owner = System.Windows.Application.Current?.Windows.OfType<System.Windows.Window>().FirstOrDefault(x => x.IsActive);
+            if (owner is not null && !ReferenceEquals(owner, window))
+            {
+                window.Owner = owner;
+            }
+
+            window.Show();
+            return new RouteADetailPreviewOpenResult(true, true, false, string.Empty, true, "ReadOnlySandbox");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "OpenRouteADetailViewerReadOnlySandbox failed");
+            return new RouteADetailPreviewOpenResult(true, false, true, ex.Message, false, "ReadOnlyDryRun");
         }
     }
 

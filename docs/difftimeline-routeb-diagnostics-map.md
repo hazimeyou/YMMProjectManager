@@ -34,3 +34,17 @@
 - `PreviewVirtualization`
 - `RouteBFinalInvestigationRc`
 - `RouteBFinalReadiness`
+
+## Step 15 Additions
+- `PreviewUiIntegration`
+- `PreviewUiReadModel`
+- `PreviewUiSafetySummary`
+
+### PreviewUiIntegration
+- `uiMode=PreviewCandidate`
+- `diagnosticsCollapsed=true`
+- `userFacingSections=[CurrentScene, RelatedHistory, MatchReason, RouteADetailPreview, DiagnosticsSafety]`
+- `viewerWired=false`
+- `openMode=ReadOnlyDryRun`
+- `defaultDisabled=true`
+- `fallbackPreserved=true`

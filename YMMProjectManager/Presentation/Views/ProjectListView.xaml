@@ -21,6 +21,7 @@
                 <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
                 <Button Content="スナップショット" Width="90" Margin="0,0,8,0" Command="{Binding CreateSnapshotCommand}" />
                 <Button Content="履歴/差分" Width="90" Command="{Binding OpenHistoryDiffCommand}" />
+                <Button Content="Scene-aware調査" Width="120" Margin="8,0,0,0" Command="{Binding OpenSceneAwareHistoryPreviewInvestigationCommand}" />
             </StackPanel>
 
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">

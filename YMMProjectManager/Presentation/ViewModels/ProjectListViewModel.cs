@@ -74,6 +74,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand ExtractBundleCommand { get; }
     public ICommand CreateSnapshotCommand { get; }
     public ICommand OpenHistoryDiffCommand { get; }
+    public ICommand OpenSceneAwareHistoryPreviewInvestigationCommand { get; }
     public ICommand OpenProjectFolderCommand { get; }
 
     public ProjectListViewModel()
@@ -105,6 +106,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
         CreateSnapshotCommand = new AsyncRelayCommand(CreateSnapshotAsync, () => !IsBusy && SelectedProject is not null);
         OpenHistoryDiffCommand = new AsyncRelayCommand(OpenHistoryDiffAsync, () => !IsBusy && SelectedProject is not null);
+        OpenSceneAwareHistoryPreviewInvestigationCommand = new AsyncRelayCommand(OpenSceneAwareHistoryPreviewInvestigationAsync, () => !IsBusy && SelectedProject is not null);
         OpenProjectFolderCommand = new AsyncRelayCommand(OpenProjectFolderAsync, () => !IsBusy && SelectedProject is not null);
     }
 
@@ -555,6 +557,26 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
 
             window.ShowDialog();
+            return Task.CompletedTask;
+        }).ConfigureAwait(true);
+    }
+
+    private async Task OpenSceneAwareHistoryPreviewInvestigationAsync()
+    {
+        if (SelectedProject is null)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("OpenSceneAwareHistoryPreviewInvestigation", () =>
+        {
+            var vm = new ProjectDiffViewModel(
+                logger,
+                snapshotService,
+                jsonNormalizeService,
+                jsonDiffService,
+                ymmDiffService);
+            vm.OpenSceneAwareHistoryPreviewInvestigation();
             return Task.CompletedTask;
         }).ConfigureAwait(true);
     }
