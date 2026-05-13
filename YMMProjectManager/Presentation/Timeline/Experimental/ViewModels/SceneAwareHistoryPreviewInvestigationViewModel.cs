@@ -113,8 +113,11 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         SelectedHistoryPreviewItem = HistoryPreviewItems.FirstOrDefault();
 
         HistoryPreviewSummaryText = $"Related history: {result.HistoryPreview.PreviewItemCount} items / Best={result.HistoryPreview.BestPreviewItemConfidence}";
+        var heavyDetected = result.RouteBHeavyRuntimeValidation.IsHeavyProject;
         RelatedHistoryStatusText = result.PreviewListSafety.Truncated
-            ? $"重い履歴データを検出しました。安全のため20件まで表示しています（候補総数: {result.PreviewListSafety.TotalCandidates}）。"
+            ? (heavyDetected
+                ? $"重い履歴データを検出しました。安全のため20件まで表示しています（候補総数: {result.PreviewListSafety.TotalCandidates}）。"
+                : $"候補が多いため20件まで表示しています（候補総数: {result.PreviewListSafety.TotalCandidates}）。")
             : $"Showing {result.PreviewListSafety.TotalCandidates} candidates";
 
         CanOpenRouteADetailDiff = result.PreviewFeatureGate.Prepared
@@ -133,7 +136,7 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
 
         RouteADetailPreviewText = "選択中の履歴候補を RouteA 詳細ビューで読み取り専用表示します。復元・適用・YMM本体への反映は行いません。";
         RouteADetailOpenResultText = "Manual open only. Diff apply / restore / runtime mutation are disabled.";
-        RcStatusText = $"rc={result.RouteBFinalInvestigationRc.RcVersion}, viewerWired=False, openMode=ReadOnlyDryRun";
+        RcStatusText = $"rc={result.RouteBFinalInvestigationRc.RcVersion}, viewerWiredAtCapture={result.RouteBFinalInvestigationRc.ViewerWired}, openModeAtCapture={result.RouteBFinalInvestigationRc.OpenMode}, currentViewerWired={result.RouteBFinalInvestigationRc.CurrentViewerWired}, currentOpenMode={result.RouteBFinalInvestigationRc.CurrentOpenMode}";
         PreviewFeatureStatusText = $"enabled={result.PreviewFeatureGate.Enabled}, previewOnly={result.PreviewFeatureGate.PreviewOnly}, viewerWired={result.PreviewFeatureGate.ViewerWired}, openMode={result.PreviewFeatureGate.OpenMode}";
         DiagnosticsSafetyText = "Preview feature: Disabled\nMode: Preview only\nRouteA viewer: Read-only sandbox\nSafety: Fallback preserved\nRuntime mutation: Disabled\nInput injection: Disabled";
 
