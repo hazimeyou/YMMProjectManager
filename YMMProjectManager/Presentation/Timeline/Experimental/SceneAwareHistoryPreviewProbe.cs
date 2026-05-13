@@ -176,6 +176,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
             timelineFingerprint,
             historyPreview,
             snapshotPairResolution);
+        var heavyRuntimeValidation = BuildHeavyRuntimeValidation(heavyProjectHeuristics);
         var previewListSafety = BuildPreviewListSafety(historyMatchCandidates.Count, historyPreviewItems.Count);
         var previewVirtualization = BuildPreviewVirtualization(historyMatchCandidates.Count, historyPreviewItems.Count, heavyProjectHeuristics.IsHeavyProject);
         previewFeatureReadiness = previewFeatureReadiness with
@@ -222,6 +223,8 @@ internal static partial class SceneAwareHistoryPreviewProbe
             totalStopwatch.ElapsedMilliseconds,
             historySources.Count,
             snapshotPairResolution.Debug.SnapshotEntryCount);
+        var heavyPerformanceSummary = BuildHeavyPerformanceSummary(previewPerformanceDiagnostics);
+        var previewScalabilityReadiness = BuildPreviewScalabilityReadiness(heavyProjectHeuristics, previewListSafety, previewVirtualization);
         var confidence = ResolveConfidence(bestCandidate, timelineCandidates.Count);
         var sceneName = bestCandidate?.SceneName ?? "(unknown)";
         var sceneIndex = bestCandidate?.SceneIndex;
@@ -321,9 +324,12 @@ internal static partial class SceneAwareHistoryPreviewProbe
             RouteADetailViewerOpenSafety: routeADetailViewerOpenSafety,
             RouteADetailViewerOpenResult: routeADetailViewerOpenResult,
             HeavyProjectHeuristics: heavyProjectHeuristics,
+            RouteBHeavyRuntimeValidation: heavyRuntimeValidation,
             PreviewPerformanceDiagnostics: previewPerformanceDiagnostics,
+            RouteBHeavyPerformanceSummary: heavyPerformanceSummary,
             PreviewListSafety: previewListSafety,
             PreviewVirtualization: previewVirtualization,
+            RouteBPreviewScalabilityReadiness: previewScalabilityReadiness,
             RouteBFinalInvestigationRc: routeBFinalRc,
             RouteBFinalReadiness: routeBFinalReadiness,
             RouteBPreviewCandidateFinalization: routeBPreviewCandidateFinalization,
@@ -371,9 +377,12 @@ internal static partial class SceneAwareHistoryPreviewProbe
             RouteADetailViewerOpenSafety: result.RouteADetailViewerOpenSafety,
             RouteADetailViewerOpenResult: result.RouteADetailViewerOpenResult,
             HeavyProjectHeuristics: result.HeavyProjectHeuristics,
+            RouteBHeavyRuntimeValidation: result.RouteBHeavyRuntimeValidation,
             PreviewPerformanceDiagnostics: result.PreviewPerformanceDiagnostics,
+            RouteBHeavyPerformanceSummary: result.RouteBHeavyPerformanceSummary,
             PreviewListSafety: result.PreviewListSafety,
             PreviewVirtualization: result.PreviewVirtualization,
+            RouteBPreviewScalabilityReadiness: result.RouteBPreviewScalabilityReadiness,
             RouteBFinalInvestigationRc: result.RouteBFinalInvestigationRc,
             RouteBFinalReadiness: result.RouteBFinalReadiness,
             RouteBPreviewCandidateFinalization: result.RouteBPreviewCandidateFinalization,
@@ -1482,6 +1491,34 @@ internal static partial class SceneAwareHistoryPreviewProbe
             CurrentViewerWired: true,
             CurrentOpenMode: "ReadOnlySandbox");
 
+    private static RouteBHeavyRuntimeValidation BuildHeavyRuntimeValidation(SceneAwareHeavyProjectHeuristics h)
+    {
+        var reasons = new List<string>();
+        if (h.HistorySourceCount >= 200) reasons.Add("historySourceCount>=200");
+        if (h.SnapshotRepositoryCount >= 500) reasons.Add("snapshotRepositoryCount>=500");
+        if (h.TimelineItemCount >= 500) reasons.Add("timelineItemCount>=500");
+        if (h.EstimatedHistoryJsonBytes >= 50L * 1024L * 1024L) reasons.Add("estimatedHistoryJsonBytes>=50MB");
+        if (reasons.Count == 0) reasons.Add("heavy-threshold-not-reached");
+        return new RouteBHeavyRuntimeValidation(h.IsHeavyProject, reasons, h.RecommendedVirtualization, h.HistorySourceCount, h.SnapshotRepositoryCount, h.TimelineItemCount, h.EstimatedHistoryJsonBytes);
+    }
+
+    private static RouteBHeavyPerformanceSummary BuildHeavyPerformanceSummary(SceneAwarePreviewPerformanceDiagnostics p)
+        => new(p.TotalProbeMs, p.HistoryMatchingMs, p.SnapshotPairResolutionMs, p.PreviewGenerationMs, p.TotalProbeMs > 2000 ? "ReadyWithWarnings" : "Ready");
+
+    private static RouteBPreviewScalabilityReadiness BuildPreviewScalabilityReadiness(
+        SceneAwareHeavyProjectHeuristics h,
+        SceneAwarePreviewListSafety s,
+        SceneAwarePreviewVirtualization v)
+    {
+        var warnings = new List<string>();
+        if (s.PreviewItemLimit != 20) warnings.Add("previewItemLimit-is-not-20");
+        if (!v.DeferredDetailMaterialization) warnings.Add("deferredDetailMaterialization-disabled");
+        if (!v.LightweightProjection) warnings.Add("lightweightProjection-disabled");
+        if (h.IsHeavyProject && !h.RecommendedVirtualization) warnings.Add("heavy-but-virtualization-not-recommended");
+        var readiness = warnings.Count == 0 ? "Ready" : "ReadyWithWarnings";
+        return new RouteBPreviewScalabilityReadiness(s.PreviewItemLimit, s.DisplayedCandidates, s.Truncated, v.DeferredDetailMaterialization, v.LightweightProjection, readiness, warnings);
+    }
+
     private static RouteBFinalInvestigationRc BuildRouteBFinalInvestigationRc()
         => new(
             RcVersion: "RouteB-SceneAwareHistoryPreview-RC2",
@@ -1981,9 +2018,12 @@ internal sealed record SceneAwareHistoryPreviewSummary(
     RouteADetailViewerOpenSafety RouteADetailViewerOpenSafety,
     RouteADetailViewerOpenResult RouteADetailViewerOpenResult,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
+    RouteBHeavyRuntimeValidation RouteBHeavyRuntimeValidation,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
+    RouteBHeavyPerformanceSummary RouteBHeavyPerformanceSummary,
     SceneAwarePreviewListSafety PreviewListSafety,
     SceneAwarePreviewVirtualization PreviewVirtualization,
+    RouteBPreviewScalabilityReadiness RouteBPreviewScalabilityReadiness,
     RouteBFinalInvestigationRc RouteBFinalInvestigationRc,
     RouteBFinalReadiness RouteBFinalReadiness,
     RouteBPreviewCandidateFinalization RouteBPreviewCandidateFinalization,
@@ -2052,9 +2092,12 @@ internal sealed record SceneAwareHistoryPreviewProbeResult(
     RouteADetailViewerOpenSafety RouteADetailViewerOpenSafety,
     RouteADetailViewerOpenResult RouteADetailViewerOpenResult,
     SceneAwareHeavyProjectHeuristics HeavyProjectHeuristics,
+    RouteBHeavyRuntimeValidation RouteBHeavyRuntimeValidation,
     SceneAwarePreviewPerformanceDiagnostics PreviewPerformanceDiagnostics,
+    RouteBHeavyPerformanceSummary RouteBHeavyPerformanceSummary,
     SceneAwarePreviewListSafety PreviewListSafety,
     SceneAwarePreviewVirtualization PreviewVirtualization,
+    RouteBPreviewScalabilityReadiness RouteBPreviewScalabilityReadiness,
     RouteBFinalInvestigationRc RouteBFinalInvestigationRc,
     RouteBFinalReadiness RouteBFinalReadiness,
     RouteBPreviewCandidateFinalization RouteBPreviewCandidateFinalization,
@@ -2529,6 +2572,15 @@ internal sealed record SceneAwareHeavyProjectHeuristics(
     bool RecommendedVirtualization,
     IReadOnlyList<string> Warnings);
 
+internal sealed record RouteBHeavyRuntimeValidation(
+    bool IsHeavyProject,
+    IReadOnlyList<string> HeavyReasons,
+    bool RecommendedVirtualization,
+    int HistorySourceCount,
+    int SnapshotRepositoryCount,
+    int TimelineItemCount,
+    long EstimatedHistoryJsonBytes);
+
 internal sealed record SceneAwarePreviewPerformanceDiagnostics(
     bool Prepared,
     long TimelineDetectionMs,
@@ -2541,6 +2593,13 @@ internal sealed record SceneAwarePreviewPerformanceDiagnostics(
     int HistoryFilesScanned,
     int SnapshotFilesScanned,
     IReadOnlyList<string> Warnings);
+
+internal sealed record RouteBHeavyPerformanceSummary(
+    long TotalProbeMs,
+    long HistoryMatchingMs,
+    long SnapshotPairResolutionMs,
+    long PreviewGenerationMs,
+    string Readiness);
 
 internal sealed record SceneAwarePreviewListSafety(
     bool Prepared,
@@ -2567,6 +2626,15 @@ internal sealed record SceneAwarePreviewVirtualization(
     string OpenMode,
     bool CurrentViewerWired,
     string CurrentOpenMode);
+
+internal sealed record RouteBPreviewScalabilityReadiness(
+    int PreviewItemLimit,
+    int DisplayedCandidates,
+    bool Truncated,
+    bool DeferredDetailMaterialization,
+    bool LightweightProjection,
+    string Readiness,
+    IReadOnlyList<string> Warnings);
 
 internal sealed record RouteBFinalInvestigationRc(
     string RcVersion,

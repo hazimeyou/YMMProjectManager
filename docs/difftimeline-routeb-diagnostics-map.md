@@ -78,3 +78,33 @@
   - `errorMessage` populated
 - Compatibility clarification:
   - `PreviewVirtualization` and `RouteBFinalInvestigationRc` include RC2 compatibility snapshot values and current values side-by-side.
+
+## Step 27-32 Additions
+- `RouteBHeavyRuntimeValidation`
+- `RouteBHeavyPerformanceSummary`
+- `RouteBPreviewScalabilityReadiness`
+
+### RouteBHeavyRuntimeValidation
+- `isHeavyProject`
+- `heavyReasons[]`
+- `recommendedVirtualization`
+- `historySourceCount`
+- `snapshotRepositoryCount`
+- `timelineItemCount`
+- `estimatedHistoryJsonBytes`
+
+### RouteBHeavyPerformanceSummary
+- `totalProbeMs`
+- `historyMatchingMs`
+- `snapshotPairResolutionMs`
+- `previewGenerationMs`
+- `readiness`
+
+### RouteBPreviewScalabilityReadiness
+- `previewItemLimit`
+- `displayedCandidates`
+- `truncated`
+- `deferredDetailMaterialization`
+- `lightweightProjection`
+- `readiness`
+- `warnings[]`

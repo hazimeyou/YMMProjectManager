@@ -570,3 +570,20 @@ Probe execution writes into `diagnostics`:
 - Added compatibility-safe diagnostics semantics:
   - RC2 compatibility snapshot values remain explicit
   - current preview-candidate values are emitted in parallel fields to avoid ambiguity
+
+## Step 27-32 (Heavy Project Runtime Validation & Preview Candidate Hardening)
+- Added heavy runtime validation diagnostics blocks:
+  - `RouteBHeavyRuntimeValidation`
+  - `RouteBHeavyPerformanceSummary`
+  - `RouteBPreviewScalabilityReadiness`
+- Heavy threshold logic is now explicit and emitted as `heavyReasons`:
+  - `historySourceCount>=200`
+  - `snapshotRepositoryCount>=500`
+  - `timelineItemCount>=500`
+  - `estimatedHistoryJsonBytes>=50MB`
+- Preview scalability safety remains fixed:
+  - `previewItemLimit=20`
+  - `deferredDetailMaterialization=true`
+  - `lightweightProjection=true`
+- RouteA read-only open diagnostics remain synchronized after manual button click.
+- Scope remains preview-candidate only (not production feature).
