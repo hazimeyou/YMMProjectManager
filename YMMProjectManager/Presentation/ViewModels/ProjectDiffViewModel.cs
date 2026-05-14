@@ -3,6 +3,8 @@ using YMMProjectManager.Presentation.TimelinePresentation.State;
 using YMMProjectManager.Presentation.Timeline.Experimental;
 using YMMProjectManager.Presentation.Timeline.Experimental.ViewModels;
 using YMMProjectManager.Presentation.Timeline.Experimental.Views;
+using System.Text.Json;
+using System.Windows.Media;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -336,6 +338,29 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
         TryInitializeHost();
         TryValidateStandalonePipeline();
         RefreshReusableSessionState();
+        TryWriteRouteARenderPerfDiagnostics(
+            new RouteARenderPerfDiagnostics(
+                Timestamp: DateTimeOffset.Now,
+                MeasurementSource: "ProjectDiffViewModel.ctor",
+                ProcessStartTime: SafeGetStartTime(Process.GetCurrentProcess()),
+                ProcessUptimeMs: GetProcessUptimeMs(),
+                TotalOpenMs: 0,
+                SnapshotResolveMs: 0,
+                PipelineBuildMs: 0,
+                ViewModelCreateMs: 0,
+                MaterializationMs: 0,
+                VisibleItemsUpdateMs: 0,
+                TotalItemCount: 0,
+                ProjectedItemCount: 0,
+                VisibleItemCount: 0,
+                InitialRenderItemCap: TimelineViewModel.InitialRenderItemCap,
+                InitialRenderCapApplied: false,
+                ProjectionReused: false,
+                ProjectionRebuilt: false,
+                LastInvalidationReason: "None",
+                ProjectionStatusText: "startup-baseline",
+                ProcessMetrics: CaptureRelatedProcessMetrics(),
+                GpuEnvironmentMetrics: CaptureGpuEnvironmentMetrics()));
     }
 
     public void SyncFrameFromPlaceholder()
@@ -537,6 +562,29 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             openSw.Stop();
             logger.Info(
                 $"RouteA readonly open perf: totalOpenMs={openSw.ElapsedMilliseconds}, snapshotResolveMs={snapshotResolveMs}, pipelineBuildMs={pipelineBuildMs}, viewModelCreateMs={viewModelCreateMs}, materializationMs={materializationMs}, visibleItemsUpdateMs={visibleItemsUpdateMs}, totalItemCount={envelope.Result.CoreResult.RowSet.Rows.Count}");
+            TryWriteRouteARenderPerfDiagnostics(
+                new RouteARenderPerfDiagnostics(
+                    Timestamp: DateTimeOffset.Now,
+                    MeasurementSource: "OpenRouteADetailViewerReadOnlySandbox",
+                    ProcessStartTime: SafeGetStartTime(Process.GetCurrentProcess()),
+                    ProcessUptimeMs: GetProcessUptimeMs(),
+                    TotalOpenMs: openSw.ElapsedMilliseconds,
+                    SnapshotResolveMs: snapshotResolveMs,
+                    PipelineBuildMs: pipelineBuildMs,
+                    ViewModelCreateMs: viewModelCreateMs,
+                    MaterializationMs: materializationMs,
+                    VisibleItemsUpdateMs: visibleItemsUpdateMs,
+                    TotalItemCount: envelope.Result.CoreResult.RowSet.Rows.Count,
+                    ProjectedItemCount: vm.TimelineViewModel.ProjectedItemCount,
+                    VisibleItemCount: vm.TimelineViewModel.LastVisibleCount,
+                    InitialRenderItemCap: vm.TimelineViewModel.InitialRenderItemCap,
+                    InitialRenderCapApplied: vm.TimelineViewModel.InitialRenderCapApplied,
+                    ProjectionReused: vm.TimelineViewModel.ProjectionReused,
+                    ProjectionRebuilt: vm.TimelineViewModel.ProjectionRebuilt,
+                    LastInvalidationReason: vm.TimelineViewModel.LastInvalidationReason.ToString(),
+                    ProjectionStatusText: vm.TimelineViewModel.LatestDiagnosticsSnapshot?.Display.OptimizationStatusText ?? string.Empty,
+                    ProcessMetrics: CaptureRelatedProcessMetrics(),
+                    GpuEnvironmentMetrics: CaptureGpuEnvironmentMetrics()));
             return new RouteADetailPreviewOpenResult(true, true, false, string.Empty, true, "ReadOnlySandbox", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
         }
         catch (Exception ex)
@@ -545,6 +593,226 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             return new RouteADetailPreviewOpenResult(true, false, true, ex.Message, false, "ReadOnlyDryRun", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
         }
     }
+
+    private static void TryWriteRouteARenderPerfDiagnostics(RouteARenderPerfDiagnostics data)
+    {
+        try
+        {
+            var baseDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory),
+                "YukkuriMovieMaker_v4_Lite",
+                "diagnostics");
+            Directory.CreateDirectory(baseDir);
+            var fileName = $"routea-render-perf-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+            var path = Path.Combine(baseDir, fileName);
+            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+        }
+        catch
+        {
+            // Keep viewer open flow resilient even when diagnostics write fails.
+        }
+    }
+
+    private static IReadOnlyList<RouteAProcessMetric> CaptureRelatedProcessMetrics()
+    {
+        var now = DateTimeOffset.Now;
+        var first = Process.GetProcesses()
+            .Where(IsRelatedYmmProcess)
+            .ToDictionary(
+                p => p.Id,
+                p => new { Process = p, Cpu = SafeGetCpu(p), Mem = SafeGetWorkingSet(p), Name = p.ProcessName, StartTime = SafeGetStartTime(p) });
+
+        Thread.Sleep(250);
+
+        var second = Process.GetProcesses()
+            .Where(IsRelatedYmmProcess)
+            .ToDictionary(
+                p => p.Id,
+                p => new { Process = p, Cpu = SafeGetCpu(p), Mem = SafeGetWorkingSet(p), Name = p.ProcessName, StartTime = SafeGetStartTime(p), Path = SafeGetMainModulePath(p) });
+
+        var cpuScale = 100.0 / (Environment.ProcessorCount * 0.25);
+        var gpuUsageByPid = CaptureGpuUsageByProcess();
+        var list = new List<RouteAProcessMetric>();
+        foreach (var kv in second)
+        {
+            first.TryGetValue(kv.Key, out var prev);
+            var cpuDeltaMs = (kv.Value.Cpu - (prev?.Cpu ?? kv.Value.Cpu)).TotalMilliseconds;
+            var cpuPercent = Math.Max(0, cpuDeltaMs * cpuScale);
+            list.Add(new RouteAProcessMetric(
+                Timestamp: now,
+                ProcessId: kv.Key,
+                ProcessName: kv.Value.Name,
+                MainModulePath: kv.Value.Path,
+                StartTime: kv.Value.StartTime,
+                WorkingSetBytes: kv.Value.Mem,
+                CpuPercentApprox: Math.Round(cpuPercent, 2),
+                GpuPercentApprox: Math.Round(gpuUsageByPid.GetValueOrDefault(kv.Key), 2)));
+        }
+
+        return list.OrderByDescending(x => x.WorkingSetBytes).ToList();
+    }
+
+    private static Dictionary<int, double> CaptureGpuUsageByProcess()
+    {
+        var result = new Dictionary<int, double>();
+        try
+        {
+            var category = new PerformanceCounterCategory("GPU Engine");
+            var instanceNames = category.GetInstanceNames();
+            var counters = new List<(int Pid, PerformanceCounter Counter)>();
+            foreach (var instance in instanceNames)
+            {
+                var pidIndex = instance.IndexOf("pid_", StringComparison.OrdinalIgnoreCase);
+                if (pidIndex < 0)
+                {
+                    continue;
+                }
+
+                var pidTokenStart = pidIndex + 4;
+                var pidTokenEnd = instance.IndexOf('_', pidTokenStart);
+                var pidText = pidTokenEnd > pidTokenStart
+                    ? instance[pidTokenStart..pidTokenEnd]
+                    : instance[pidTokenStart..];
+                if (!int.TryParse(pidText, out var pid))
+                {
+                    continue;
+                }
+
+                var counter = new PerformanceCounter("GPU Engine", "Utilization Percentage", instance, readOnly: true);
+                _ = counter.NextValue();
+                counters.Add((pid, counter));
+            }
+
+            Thread.Sleep(180);
+            foreach (var item in counters)
+            {
+                var value = item.Counter.NextValue();
+                if (!result.TryAdd(item.Pid, value))
+                {
+                    result[item.Pid] += value;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore GPU counter errors on unsupported environments.
+        }
+
+        return result;
+    }
+
+    private static RouteAGpuEnvironmentMetrics CaptureGpuEnvironmentMetrics()
+    {
+        var tierRaw = RenderCapability.Tier;
+        var tierLevel = tierRaw >> 16;
+        var supportsHardware = tierLevel > 0;
+        var primary = CapturePrimaryVideoControllerInfo();
+        return new RouteAGpuEnvironmentMetrics(
+            WpfRenderTierRaw: tierRaw,
+            WpfRenderTierLevel: tierLevel,
+            WpfHardwareRenderingAvailable: supportsHardware,
+            PrimaryGpuName: primary.Name,
+            DriverVersion: primary.DriverVersion,
+            DedicatedVramBytes: primary.DedicatedVramBytes,
+            SharedVramBytes: primary.SharedVramBytes);
+    }
+
+    private static (string Name, string DriverVersion, long DedicatedVramBytes, long SharedVramBytes) CapturePrimaryVideoControllerInfo()
+    {
+        // Keep this dependency-free for no-deploy builds.
+        return (string.Empty, string.Empty, 0, 0);
+    }
+
+    private static bool IsRelatedYmmProcess(Process p)
+    {
+        var name = p.ProcessName ?? string.Empty;
+        if (name.Contains("YukkuriMovieMaker", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("YMMProjectManager", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("YMM", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var path = SafeGetMainModulePath(p);
+        return !string.IsNullOrWhiteSpace(path) &&
+               path.Contains("YukkuriMovieMaker", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static TimeSpan SafeGetCpu(Process p)
+    {
+        try { return p.TotalProcessorTime; } catch { return TimeSpan.Zero; }
+    }
+
+    private static long SafeGetWorkingSet(Process p)
+    {
+        try { return p.WorkingSet64; } catch { return 0; }
+    }
+
+    private static DateTimeOffset? SafeGetStartTime(Process p)
+    {
+        try { return p.StartTime; } catch { return null; }
+    }
+
+    private static long GetProcessUptimeMs()
+    {
+        try
+        {
+            var start = Process.GetCurrentProcess().StartTime;
+            return Math.Max(0, (long)(DateTime.Now - start).TotalMilliseconds);
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    private static string SafeGetMainModulePath(Process p)
+    {
+        try { return p.MainModule?.FileName ?? string.Empty; } catch { return string.Empty; }
+    }
+
+    private sealed record RouteAProcessMetric(
+        DateTimeOffset Timestamp,
+        int ProcessId,
+        string ProcessName,
+        string MainModulePath,
+        DateTimeOffset? StartTime,
+        long WorkingSetBytes,
+        double CpuPercentApprox,
+        double GpuPercentApprox);
+
+    private sealed record RouteAGpuEnvironmentMetrics(
+        int WpfRenderTierRaw,
+        int WpfRenderTierLevel,
+        bool WpfHardwareRenderingAvailable,
+        string PrimaryGpuName,
+        string DriverVersion,
+        long DedicatedVramBytes,
+        long SharedVramBytes);
+
+    private sealed record RouteARenderPerfDiagnostics(
+        DateTimeOffset Timestamp,
+        string MeasurementSource,
+        DateTimeOffset? ProcessStartTime,
+        long ProcessUptimeMs,
+        long TotalOpenMs,
+        long SnapshotResolveMs,
+        long PipelineBuildMs,
+        long ViewModelCreateMs,
+        long MaterializationMs,
+        long VisibleItemsUpdateMs,
+        int TotalItemCount,
+        int ProjectedItemCount,
+        int VisibleItemCount,
+        int InitialRenderItemCap,
+        bool InitialRenderCapApplied,
+        bool ProjectionReused,
+        bool ProjectionRebuilt,
+        string LastInvalidationReason,
+        string ProjectionStatusText,
+        IReadOnlyList<RouteAProcessMetric> ProcessMetrics,
+        RouteAGpuEnvironmentMetrics GpuEnvironmentMetrics);
 
     public async Task LoadSnapshotsDiffAsync(string projectPath, string leftSnapshotId, string rightSnapshotId)
     {

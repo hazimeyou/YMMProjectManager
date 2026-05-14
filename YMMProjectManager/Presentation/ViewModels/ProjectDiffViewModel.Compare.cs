@@ -94,6 +94,29 @@ public sealed partial class ProjectDiffViewModel
             SnapshotBrowser.LastCompareDiagnosticsPath = Path.Combine(AppContext.BaseDirectory, "diagnostics");
             SnapshotBrowser.LastCompareTimestamp = DateTimeOffset.Now;
             SnapshotBrowser.LastCompareStatusText = "success (preview/manual)";
+            TryWriteRouteARenderPerfDiagnostics(
+                new RouteARenderPerfDiagnostics(
+                    Timestamp: DateTimeOffset.Now,
+                    MeasurementSource: "RunSelectedSnapshotCompare",
+                    ProcessStartTime: SafeGetStartTime(System.Diagnostics.Process.GetCurrentProcess()),
+                    ProcessUptimeMs: GetProcessUptimeMs(),
+                    TotalOpenMs: compareSw.ElapsedMilliseconds,
+                    SnapshotResolveMs: 0,
+                    PipelineBuildMs: 0,
+                    ViewModelCreateMs: 0,
+                    MaterializationMs: uiSw.ElapsedMilliseconds,
+                    VisibleItemsUpdateMs: uiSw.ElapsedMilliseconds,
+                    TotalItemCount: envelope.Result.CoreResult.RowSet.Rows.Count,
+                    ProjectedItemCount: TimelineViewModel.ProjectedItemCount,
+                    VisibleItemCount: TimelineViewModel.LastVisibleCount,
+                    InitialRenderItemCap: TimelineViewModel.InitialRenderItemCap,
+                    InitialRenderCapApplied: TimelineViewModel.InitialRenderCapApplied,
+                    ProjectionReused: TimelineViewModel.ProjectionReused,
+                    ProjectionRebuilt: TimelineViewModel.ProjectionRebuilt,
+                    LastInvalidationReason: TimelineViewModel.LastInvalidationReason.ToString(),
+                    ProjectionStatusText: TimelineViewModel.LatestDiagnosticsSnapshot?.Display.OptimizationStatusText ?? string.Empty,
+                    ProcessMetrics: CaptureRelatedProcessMetrics(),
+                    GpuEnvironmentMetrics: CaptureGpuEnvironmentMetrics()));
             SaveCurrentCompareSession();
             TrackManualUiAction("CompareSucceeded", SnapshotBrowser.LastCompareResultSummary);
             PersistManualValidationLog();

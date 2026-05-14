@@ -766,3 +766,103 @@ Probe execution writes into `diagnostics`:
   - first layout timestamp
   - first render hook (`CompositionTarget.Rendering` first pass)
 - Objective: isolate whether bottleneck is pipeline/materialization/WPF first render.
+
+## Step 239-252 Freeze / Cleanup / 0.3.0 Go-NoGo Investigation
+
+### Status Freeze
+- Tag fixed: `routea-readonly-viewer-investigation-freeze`
+- Purpose: rollback-safe checkpoint before any additional optimization attempt.
+
+### Experimental Scope (explicit)
+- RouteA readonly timeline viewer is **experimental**.
+- Performance investigation is still required.
+- Not production ready at this stage.
+
+### Keep / Experimental / Candidate / Frozen Inventory
+- Keep:
+  - `ReadonlyTimelineProjectionService`
+  - `ReadonlyTimelineViewportState`
+  - `ReadonlyTimelineInteractionState`
+  - `ReadonlyTimelineDiagnosticsSnapshot`
+  - RouteB preview gate and readonly safety guards
+- Experimental keep:
+  - incremental projection foundation
+  - render invalidation foundation
+  - lightweight rendering mode
+  - initial render cap behavior
+- Candidate for removal (review required, no immediate deletion in this step):
+  - duplicated temporary timing/probe blocks
+  - legacy investigation-only UI fragments
+  - stale one-off profiling helpers
+- Frozen / do not touch:
+  - RouteA fallback paths
+  - snapshot/history compatibility contracts
+  - routeA preservation constraints
+  - frozen inventory references
+
+### RouteA Readonly Viewer Responsibility Boundary
+- Required responsibilities:
+  - readonly timeline visualization
+  - history diff preview
+  - selection detail
+  - basic zoom/navigation
+- Potentially unnecessary responsibilities (subject to prune):
+  - advanced hover behavior tuning layers
+  - deep diagnostics shown in main UI
+  - too many optimization toggles exposed to user-facing surface
+
+### Diagnostics Classification
+- User-facing diagnostics (keep visible):
+  - displayed item count
+  - optimization mode (Standard/Heavy)
+  - readonly status
+- Internal diagnostics (keep hidden/detail-only):
+  - projection diff / reuse state / drop counts
+  - cache hit and invalidation counters
+  - layout and render timings
+- Investigation-only diagnostics (candidate cleanup):
+  - duplicate temporary timing fields
+  - obsolete probe aliases from earlier RC stages
+
+### Rendering Path (current)
+- `snapshot -> standalone pipeline -> projection -> projection result -> ViewModel -> WPF element materialization -> layout/render`
+- Current bottleneck suspicion remains WPF materialization/layout cost under heavy item counts (not yet production-acceptable).
+
+### Dependency Boundary (DiffTimelineViewModel)
+- Owned concerns currently:
+  - UI binding state
+  - command coordination
+  - viewport/interaction state coordination
+  - projection service request/response bridging
+  - diagnostics snapshot refresh
+- Complexity risk:
+  - still high for long-term maintainability without deeper renderer split.
+
+### 0.3.0 Go / No-Go Criteria
+- Go minimum:
+  - initial open under 10s
+  - readonly safety guards intact
+  - usable under heavy project conditions
+  - no persistent freeze during basic operations
+- No-Go triggers:
+  - initial open remains near 30s class
+  - heavy interaction practically unusable
+  - complexity exceeds maintainable boundary for release timeline
+  - WPF materialization limits cannot be mitigated safely
+
+### Fallback Plan (if RouteA readonly timeline viewer is dropped for 0.3.0)
+- Keep:
+  - RouteB preview candidate flow
+  - history matching
+  - snapshot pair resolution
+  - readonly dry-run handoff
+  - diagnostics/export path
+  - standalone fallback comparison path
+- Stop/Defer:
+  - heavy readonly timeline renderer
+  - advanced projection engine evolution
+  - full readonly timeline viewer delivery in 0.3.0
+
+### Decision posture
+- This phase is freeze-and-review, not feature expansion.
+- Any next optimization should be gated by explicit Go/No-Go review outcomes.

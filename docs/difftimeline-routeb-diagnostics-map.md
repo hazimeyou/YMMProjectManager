@@ -264,3 +264,48 @@ Rendering/tiny-item state is now traceable through:
   - `viewLoaded`
   - `firstLayout`
   - `firstRender`
+
+## Step 239-252 Freeze Review Mapping
+
+### Release Readiness Classification
+- RouteA readonly timeline viewer: `experimental / investigation required / not production ready`
+- RouteB preview navigation: `retainable with current safety gates`
+
+### Keep / Freeze Mapping
+- Keep (active):
+  - `ReadonlyTimelineProjectionState`
+  - `ReadonlyTimelineViewportState`
+  - `ReadonlyTimelineInteractionState`
+  - `ReadonlyTimelineDiagnosticsSnapshot`
+  - `RouteBPreviewCandidateFinalization`
+- Keep (detail-only/internal):
+  - projection diff/reuse diagnostics
+  - cache/invalidation counters
+  - render profiling timings
+- Freeze (do not change without explicit review):
+  - RouteA fallback and compatibility blocks
+  - snapshot/history preservation contracts
+
+### Candidate Cleanup Scope (no destructive action yet)
+- duplicate temporary diagnostics aliases
+- one-off profiling outputs no longer used by validation flow
+- legacy investigation labels duplicated in current blocks
+
+### 0.3.0 Go / No-Go Diagnostic Anchors
+- Go anchors:
+  - initial open time under target threshold
+  - stable heavy-mode interaction
+  - readonly/manualOnly safety unchanged
+- No-Go anchors:
+  - persistent high initial open time class
+  - heavy-mode unusable UI response
+  - unsustainable diagnostics/renderer complexity
+
+### Fallback Mapping (No-Go)
+- Keep diagnostics and matching foundation blocks:
+  - `PreviewUiIntegration`
+  - `RouteAOpenReadiness`
+  - `SnapshotPairResolution`
+  - `RouteBPreviewCandidateFinalization`
+- Defer blocks tied to full readonly renderer rollout:
+  - advanced projection/runtime optimization layers
