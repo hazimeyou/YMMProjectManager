@@ -679,3 +679,10 @@ Probe execution writes into `diagnostics`:
 - drop reasons are internally split (frame/layer/cap/viewport aggregate) for tuning
 - heavy mode keeps lightweight rendering intent while improving item visibility
 
+
+## Step 152-160 ReadonlyTimelineProjectionService Extraction
+- projection filtering/cap/priority logic extracted from DiffTimelineViewModel to ReadonlyTimelineProjectionService
+- options/request/result model introduced to isolate projection responsibility
+- ViewModel now focuses on UI state and projection result binding
+- behavior baseline preserved: selected priority, viewport-near priority, heavy cap, status text
+

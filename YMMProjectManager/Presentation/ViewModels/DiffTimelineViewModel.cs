@@ -1,3 +1,4 @@
+using YMMProjectManager.Presentation.Timeline.Services;
 using YMMProjectManager.Presentation.TimelinePresentation.Display;
 
 namespace YMMProjectManager.Presentation.ViewModels;
@@ -30,6 +31,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int projectionInvalidationCount;
     private int heavyProjectionDropCount;
     private int cachedProjectionCount;
+    private readonly IReadonlyTimelineProjectionService projectionService = new ReadonlyTimelineProjectionService();
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -510,73 +512,37 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     private void FilterVisibleItems()
     {
+        var options = new ReadonlyTimelineProjectionOptions(
+            ProjectionMarginFramesConst,
+            ProjectionMarginLayersConst,
+            HeavyProjectionCapConst,
+            MinimumVisualWidth: 14,
+            EnablePriorityProjection: true,
+            EnableHeavyOptimization: true);
+
+        var request = new ReadonlyTimelineProjectionRequest(
+            allItems,
+            SelectedDiffItem?.Id,
+            VisibleStartFrame,
+            VisibleEndFrame,
+            VisibleMinLayer,
+            VisibleMaxLayer,
+            Scale,
+            ShowUnchangedItems,
+            HeavyProjectionMode,
+            options);
+
+        var result = projectionService.Project(request);
+
         VisibleItems.Clear();
-        heavyProjectionDropCount = 0;
-
-        var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFramesConst);
-        var frameEnd = VisibleEndFrame + ProjectionMarginFramesConst;
-        var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayersConst);
-        var layerEnd = VisibleMaxLayer + ProjectionMarginLayersConst;
-        var viewportCenter = (VisibleStartFrame + VisibleEndFrame) / 2;
-
-        var candidates = new List<(DiffTimelineItemViewModel Item, int Priority)>();
-
-        foreach (var item in allItems)
+        foreach (var item in result.ProjectedItems)
         {
-            var itemStart = item.Frame;
-            var itemEnd = item.Frame + Math.Max(1, item.Length);
-            var frameVisible = itemEnd >= frameStart && itemStart <= frameEnd;
-            var layerVisible = item.Layer >= layerStart && item.Layer <= layerEnd;
-            var unchangedVisible = ShowUnchangedItems || !item.IsUnchanged;
-
-            if (!frameVisible)
-            {
-                continue;
-            }
-
-            if (!layerVisible)
-            {
-                continue;
-            }
-
-            if (!unchangedVisible)
-            {
-                continue;
-            }
-
-            var priority = 0;
-            if (ReferenceEquals(item, SelectedDiffItem))
-            {
-                priority += 10000;
-            }
-
-            var distance = Math.Abs(item.Frame - viewportCenter);
-            priority += Math.Max(0, 4000 - distance);
-            priority += (itemStart >= VisibleStartFrame && itemEnd <= VisibleEndFrame) ? 500 : 100;
-            candidates.Add((item, priority));
+            VisibleItems.Add(item);
         }
 
-        var ordered = candidates
-            .OrderByDescending(x => x.Priority)
-            .ThenBy(x => x.Item.Frame)
-            .ThenBy(x => x.Item.Layer);
+        heavyProjectionDropCount = result.DropCounts.DropReasonCap;
+        LastVisibleCount = result.ProjectedItemCount;
 
-        foreach (var entry in ordered)
-        {
-            if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCapConst)
-            {
-                heavyProjectionDropCount++;
-                continue;
-            }
-
-            if (entry.Item.Width <= 14)
-            {
-            }
-
-            VisibleItems.Add(entry.Item);
-        }
-
-        LastVisibleCount = VisibleItems.Count;
         OnPropertyChanged(nameof(ProjectedItemCount));
         OnPropertyChanged(nameof(DisplayCountText));
         OnPropertyChanged(nameof(CachedProjectionCount));

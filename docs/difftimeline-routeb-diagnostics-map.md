@@ -181,3 +181,10 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineProjectionFilterResult: dropReasonFrame, dropReasonLayer, dropReasonCap, dropReasonViewport
 - ReadonlyTimelineRenderingOptimizationState: minimumVisualWidth, suppressedTextCount, lightweightTemplateEnabled
 
+
+## Step 158 Projection Service Extraction
+- projectionServiceEnabled=true (v1 extraction)
+- ReadonlyTimelineProjectionOptions: marginFrames/marginLayers/heavyCap/minVisualWidth/priority/heavyOptimization
+- ReadonlyTimelineProjectionRequest: visible frame/layer range + selectedItemId + zoom + showUnchanged + heavy flag
+- ReadonlyTimelineProjectionResult: projectedItems/projectedCount/dropCounts/suppressedText/optimizationMode/statusText
+
