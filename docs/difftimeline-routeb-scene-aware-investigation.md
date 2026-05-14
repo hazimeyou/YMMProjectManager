@@ -599,3 +599,20 @@ Probe execution writes into `diagnostics`:
 - RouteA readonly viewer wording polished to avoid developer-tool tone.
 - Cleanup: temporary bulk summary artifacts used for heavy-threshold simulation removed.
 - Constraints remain unchanged: defaultDisabled/readOnly/manualOnly, no diff apply/restore/runtime mutation.
+
+## Step 57-61 (Production Feature Flag Foundation & UX Refinement)
+- Added `RouteBFeatureConfiguration` / `IRouteBFeatureFlags` as production-flag foundation.
+- All RouteB flags default to `false`:
+  - `EnableRouteBPreviewUi`
+  - `EnableRouteBReadonlyViewer`
+  - `EnableHeavyDiagnostics`
+  - `EnableAdvancedDiagnostics`
+  - `EnableExperimentalUi`
+- Added `FeatureFlags` snapshot to `PreviewFeatureGate` diagnostics for explicit policy visibility.
+- Refined diagnostics/user-surface separation:
+  - user-facing labels emphasize readonly/history state
+  - developer details remain under diagnostics section
+- Added heavy UX terms in diagnostics detail:
+  - `heavyUiOptimizationMode`
+  - `virtualizationRecommendedReason`
+- Scope remains pre-production (`Enabled=False`, `productionFeature=False`).

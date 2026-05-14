@@ -9,6 +9,7 @@ namespace YMMProjectManager.Presentation.Timeline.Experimental;
 internal static partial class SceneAwareHistoryPreviewProbe
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly RouteBFeatureConfiguration FeatureFlags = RouteBFeatureConfiguration.Default;
 
     public static SceneAwareHistoryPreviewProbeResult Run(
         string diagnosticsDirectory,
@@ -97,7 +98,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
         var sceneAwareMetadata = BuildSceneAwareMetadata(now, sceneIdentityCandidate, timelineFingerprint, defaultRouteAHandoff);
         var routeBRc = BuildRouteBInvestigationRc();
         var routeBReadiness = BuildRouteBInvestigationReadiness(historyPreview.BestPreviewItemConfidence);
-        var previewFeatureGate = BuildPreviewFeatureGate();
+        var previewFeatureGate = BuildPreviewFeatureGate(FeatureFlags);
         var previewFeatureReadiness = BuildPreviewFeatureReadiness(historyPreview.BestPreviewItemConfidence);
         var previewUiConsolidation = new PreviewUiConsolidationStatus(
             Prepared: true,
@@ -1349,7 +1350,7 @@ internal static partial class SceneAwareHistoryPreviewProbe
                 "input injection"
             ]);
 
-    private static RouteBPreviewFeatureGate BuildPreviewFeatureGate()
+    private static RouteBPreviewFeatureGate BuildPreviewFeatureGate(IRouteBFeatureFlags flags)
         => new(
             Prepared: true,
             Enabled: false,
@@ -1358,13 +1359,19 @@ internal static partial class SceneAwareHistoryPreviewProbe
             InvestigationRc: true,
             FeatureIdentity: "RouteBSceneAwareHistoryPreview",
             FeatureVersion: "Preview-RC1",
-            ViewerWired: false,
+            ViewerWired: flags.EnableRouteBReadonlyViewer,
             OpenMode: "ReadOnlyDryRun",
             ProductionEmbedding: false,
             RuntimeMutation: false,
             InputInjection: false,
             RouteAPreserved: true,
-            FallbackPreserved: true);
+            FallbackPreserved: true,
+            FeatureFlags: new RouteBFeatureFlagsSnapshot(
+                flags.EnableRouteBPreviewUi,
+                flags.EnableRouteBReadonlyViewer,
+                flags.EnableHeavyDiagnostics,
+                flags.EnableAdvancedDiagnostics,
+                flags.EnableExperimentalUi));
 
     private static RouteBPreviewFeatureReadiness BuildPreviewFeatureReadiness(string confidence)
         => new(
@@ -2455,7 +2462,15 @@ internal sealed record RouteBPreviewFeatureGate(
     bool RuntimeMutation,
     bool InputInjection,
     bool RouteAPreserved,
-    bool FallbackPreserved);
+    bool FallbackPreserved,
+    RouteBFeatureFlagsSnapshot FeatureFlags);
+
+internal sealed record RouteBFeatureFlagsSnapshot(
+    bool EnableRouteBPreviewUi,
+    bool EnableRouteBReadonlyViewer,
+    bool EnableHeavyDiagnostics,
+    bool EnableAdvancedDiagnostics,
+    bool EnableExperimentalUi);
 
 internal sealed record RouteBPreviewFeatureReadiness(
     bool Prepared,

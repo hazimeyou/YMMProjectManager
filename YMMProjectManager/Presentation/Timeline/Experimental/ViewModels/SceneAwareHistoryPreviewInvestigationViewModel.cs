@@ -138,13 +138,18 @@ public sealed class SceneAwareHistoryPreviewInvestigationViewModel : ViewModelBa
         RouteADetailOpenResultText = "Manual open only. Diff apply / restore / runtime mutation are disabled.";
         RcStatusText = $"rc={result.RouteBFinalInvestigationRc.RcVersion}, viewerWiredAtCapture={result.RouteBFinalInvestigationRc.ViewerWired}, openModeAtCapture={result.RouteBFinalInvestigationRc.OpenMode}, currentViewerWired={result.RouteBFinalInvestigationRc.CurrentViewerWired}, currentOpenMode={result.RouteBFinalInvestigationRc.CurrentOpenMode}";
         PreviewFeatureStatusText = $"enabled={result.PreviewFeatureGate.Enabled}, previewOnly={result.PreviewFeatureGate.PreviewOnly}, viewerWired={result.PreviewFeatureGate.ViewerWired}, openMode={result.PreviewFeatureGate.OpenMode}";
-        DiagnosticsSafetyText = "Preview feature: Disabled\nMode: Preview only\nRouteA viewer: Read-only sandbox\nSafety: Fallback preserved\nRuntime mutation: Disabled\nInput injection: Disabled";
+        var heavyUiOptimizationMode = result.RouteBHeavyRuntimeValidation.IsHeavyProject ? "HeavyOptimized" : "Standard";
+        var virtualizationReason = result.RouteBHeavyRuntimeValidation.RecommendedVirtualization ? "表示を最適化しています（一覧は20件まで）。" : "標準表示です。";
+        DiagnosticsSafetyText = $"読み取り専用: 有効\n重い履歴状態: {(result.RouteBHeavyRuntimeValidation.IsHeavyProject ? "検出" : "通常")}\n{virtualizationReason}\nSafety: Fallback preserved\nRuntime mutation: Disabled\nInput injection: Disabled";
 
         DiagnosticsText = string.Join(Environment.NewLine, new[]
         {
-            $"previewListSafety limit={result.PreviewListSafety.PreviewItemLimit} total={result.PreviewListSafety.TotalCandidates} displayed={result.PreviewListSafety.DisplayedCandidates} truncated={result.PreviewListSafety.Truncated}",
-            $"snapshotPair resolved={result.SnapshotPairResolution.Resolved} oldFound={result.SnapshotPairResolution.OldSnapshotFound} newFound={result.SnapshotPairResolution.NewSnapshotFound}",
-            $"routeAOpen canOpen={result.RouteAOpenReadiness.CanOpen}",
+            $"重い履歴状態: isHeavyProject={result.RouteBHeavyRuntimeValidation.IsHeavyProject}, reason={string.Join(", ", result.RouteBHeavyRuntimeValidation.HeavyReasons)}",
+            $"heavyUiOptimizationMode={heavyUiOptimizationMode}, virtualizationRecommendedReason={virtualizationReason}",
+            $"表示安全: limit={result.PreviewListSafety.PreviewItemLimit} total={result.PreviewListSafety.TotalCandidates} displayed={result.PreviewListSafety.DisplayedCandidates} truncated={result.PreviewListSafety.Truncated}",
+            $"スナップショット整合: resolved={result.SnapshotPairResolution.Resolved} oldFound={result.SnapshotPairResolution.OldSnapshotFound} newFound={result.SnapshotPairResolution.NewSnapshotFound}",
+            $"RouteA open readiness: canOpen={result.RouteAOpenReadiness.CanOpen}",
+            $"featureFlags: previewUi={result.PreviewFeatureGate.FeatureFlags.EnableRouteBPreviewUi}, readonlyViewer={result.PreviewFeatureGate.FeatureFlags.EnableRouteBReadonlyViewer}, heavyDiag={result.PreviewFeatureGate.FeatureFlags.EnableHeavyDiagnostics}, advancedDiag={result.PreviewFeatureGate.FeatureFlags.EnableAdvancedDiagnostics}, experimentalUi={result.PreviewFeatureGate.FeatureFlags.EnableExperimentalUi}",
             $"probe={probePath}",
             $"summary={summaryPath}",
             $"report={reportPath}",

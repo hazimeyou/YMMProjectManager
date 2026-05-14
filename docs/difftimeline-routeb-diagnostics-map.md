@@ -117,3 +117,20 @@
   - `previewItemLimit=20`
   - `truncated=true`
 - Cleanup executed for temporary heavy-threshold helper artifacts (`summary-bulk-*`).
+
+## Step 57-61 Additions
+- `RouteBFeatureConfiguration` (`IRouteBFeatureFlags`)
+- `PreviewFeatureGate.FeatureFlags`
+
+### FeatureFlags (all default false)
+- `EnableRouteBPreviewUi`
+- `EnableRouteBReadonlyViewer`
+- `EnableHeavyDiagnostics`
+- `EnableAdvancedDiagnostics`
+- `EnableExperimentalUi`
+
+### UX / Heavy Runtime Diagnostics
+- `heavyUiOptimizationMode`
+- `virtualizationRecommendedReason`
+
+These remain diagnostics/readiness foundations only; production enable is still disabled.
