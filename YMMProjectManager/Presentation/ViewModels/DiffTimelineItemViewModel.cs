@@ -11,6 +11,7 @@ public sealed class DiffTimelineItemViewModel
     public int Layer { get; set; }
     public int Frame { get; set; }
     public int Length { get; set; }
+    public int EndFrame => Frame + Math.Max(1, Length);
     public string? OldValue { get; set; }
     public string? NewValue { get; set; }
     public string ClipTypeLabel { get; set; } = "その他";

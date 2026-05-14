@@ -134,3 +134,9 @@
 - `virtualizationRecommendedReason`
 
 These remain diagnostics/readiness foundations only; production enable is still disabled.
+
+## Step 71 Readonly Timeline Layout Diagnostics
+- ReadonlyTimelineItemLayout: itemCount, minFrame, maxFrame, timeScale, rowHeight, timeGuideExtendsFullHeight
+- ReadonlyTimelineLayerProjection: layerCount, row labels (Layer N)
+- ReadonlyTimelineItemSelection: selectedItemId, selectedItemLayer, selectedItemStartFrame, selectedItemEndFrame
+

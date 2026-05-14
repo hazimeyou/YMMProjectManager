@@ -9,6 +9,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     private readonly List<DiffTimelineItemViewModel> allItems = [];
     private readonly ObservableCollection<TimelineRulerMark> rulerMarks = [];
+    private readonly ObservableCollection<LayerRowMark> layerRows = [];
     private DiffTimelineItemViewModel? selectedDiffItem;
     private double scale = 0.1;
     private double rowHeight = 28;
@@ -26,6 +27,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
+    public ReadOnlyObservableCollection<LayerRowMark> LayerRows { get; }
 
     public double MinScale { get; } = 0.02;
     public double MaxScale { get; } = 5.0;
@@ -137,6 +139,13 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     }
 
     public double CurrentFrameX => CurrentFrame * Scale;
+    public bool HasVisibleItems => LastVisibleCount > 0;
+    public string EmptyTimelineMessage => "この履歴には表示できるタイムラインアイテムがありません";
+    public int ItemCount => allItems.Count;
+    public int LayerCount => allItems.Count == 0 ? 0 : allItems.Max(x => Math.Max(0, x.Layer)) + 1;
+    public int MinFrame => allItems.Count == 0 ? 0 : allItems.Min(x => Math.Max(0, x.Frame));
+    public int MaxFrame => allItems.Count == 0 ? 0 : allItems.Max(x => Math.Max(0, x.Frame + Math.Max(1, x.Length)));
+    public bool TimeGuideExtendsFullHeight => true;
 
     public TimelineSyncState SyncState
     {
@@ -223,6 +232,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public DiffTimelineViewModel()
     {
         RulerMarks = new ReadOnlyObservableCollection<TimelineRulerMark>(rulerMarks);
+        LayerRows = new ReadOnlyObservableCollection<LayerRowMark>(layerRows);
     }
 
     public void SetSyncMode(TimelineMode mode, TimelineSyncState state)
@@ -455,6 +465,11 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         CanvasHeight = Math.Max(1200, allItems.Count == 0 ? 1200 : allItems.Max(x => x.Y + x.Height + 24));
         FilterVisibleItems();
         RebuildRulerMarks();
+        RebuildLayerRows();
+        OnPropertyChanged(nameof(ItemCount));
+        OnPropertyChanged(nameof(LayerCount));
+        OnPropertyChanged(nameof(MinFrame));
+        OnPropertyChanged(nameof(MaxFrame));
 
         if (keepSelectionVisible && SelectedDiffItem is not null)
         {
@@ -487,6 +502,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         }
 
         LastVisibleCount = VisibleItems.Count;
+        OnPropertyChanged(nameof(HasVisibleItems));
 
         if (SelectedDiffItem is not null && !VisibleItems.Contains(SelectedDiffItem))
         {
@@ -515,6 +531,25 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         }
     }
 
+
+    private void RebuildLayerRows()
+    {
+        layerRows.Clear();
+        if (LayerCount <= 0)
+        {
+            return;
+        }
+
+        for (var layer = 0; layer < LayerCount; layer++)
+        {
+            layerRows.Add(new LayerRowMark
+            {
+                Layer = layer,
+                Y = layer * RowHeight,
+                Label = $"Layer {layer}",
+            });
+        }
+    }
     private int ResolveRulerStep()
     {
         if (Scale <= 0.05)
@@ -575,3 +610,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
 
 
+
+public sealed class LayerRowMark
+{
+    public int Layer { get; init; }
+    public double Y { get; init; }
+    public string Label { get; init; } = string.Empty;
+}
