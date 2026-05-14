@@ -25,6 +25,10 @@ public sealed class DiffTimelineItemViewModel
     public double X { get; set; }
     public double Y { get; set; }
     public double Width { get; set; }
+    public double ActualDurationWidth { get; set; }
+    public bool IsWidthExpandedForVisibility { get; set; }
+    public bool IsTextSuppressed { get; set; }
+    public string DisplayText { get; set; } = string.Empty;
     public double Height { get; set; }
 
     public Brush Fill { get; set; } = Brushes.Gray;

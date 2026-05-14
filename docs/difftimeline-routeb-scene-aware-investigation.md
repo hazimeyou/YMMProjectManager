@@ -731,3 +731,19 @@ Probe execution writes into `diagnostics`:
   - cache hit/miss counters
   - projection diff counters (added/removed/retained/updated)
 - Safety constraints unchanged (read-only/manual-only, no apply/restore/mutation).
+
+## Step 211-224 (Lightweight Rendering Optimization / Wider Items)
+- Added wider visual policy for timeline items: `MinimumVisualWidth=64`.
+- Preserved semantics:
+  - block = timeline item
+  - x-axis = time
+  - y-axis = layer
+- Added tiny-item visibility handling:
+  - `ActualDurationWidth`
+  - `IsWidthExpandedForVisibility`
+  - `IsTextSuppressed`
+  - `DisplayText`
+- Rendering optimization policy:
+  - heavy mode / zoom-out / very small width suppresses dense text
+  - display uses concise label to reduce redraw pressure
+- Projection diagnostics now include expanded item count for visibility tuning.

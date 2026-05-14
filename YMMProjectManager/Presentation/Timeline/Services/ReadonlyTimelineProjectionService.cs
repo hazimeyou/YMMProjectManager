@@ -33,6 +33,7 @@ public sealed record ReadonlyTimelineProjectionResult(
     int DroppedItemCount,
     ReadonlyTimelineProjectionDropCounts DropCounts,
     int SuppressedTextCount,
+    int ExpandedItemCount,
     string OptimizationMode,
     string StatusText);
 
@@ -57,6 +58,7 @@ public sealed class ReadonlyTimelineProjectionService : IReadonlyTimelineProject
         var dropFrame = 0;
         var dropCap = 0;
         var suppressedText = 0;
+        var expandedItemCount = 0;
 
         var candidates = new List<(YMMProjectManager.Presentation.ViewModels.DiffTimelineItemViewModel Item, int Priority)>();
 
@@ -116,9 +118,13 @@ public sealed class ReadonlyTimelineProjectionService : IReadonlyTimelineProject
                 continue;
             }
 
-            if (entry.Item.Width <= options.MinimumVisualWidth)
+            if (entry.Item.IsWidthExpandedForVisibility || entry.Item.Width <= options.MinimumVisualWidth)
             {
                 suppressedText++;
+            }
+            if (entry.Item.IsWidthExpandedForVisibility)
+            {
+                expandedItemCount++;
             }
 
             projected.Add(entry.Item);
@@ -137,6 +143,7 @@ public sealed class ReadonlyTimelineProjectionService : IReadonlyTimelineProject
             dropped,
             new ReadonlyTimelineProjectionDropCounts(dropViewport, dropLayer, dropFrame, dropCap),
             suppressedText,
+            expandedItemCount,
             mode,
             status);
     }

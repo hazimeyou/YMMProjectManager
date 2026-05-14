@@ -6,6 +6,7 @@ namespace YMMProjectManager.Presentation.ViewModels;
 public sealed class DiffTimelineViewModel : ViewModelBase
 {
     private const double MinimumWidth = 8;
+    private const double MinimumVisualWidthConst = 64;
     private const double ItemPadding = 4;
     private const int ProjectionMarginFramesConst = 240;
     private const int ProjectionMarginLayersConst = 3;
@@ -177,6 +178,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int ProjectionMarginFrames => ProjectionMarginFramesConst;
     public int ProjectionMarginLayers => ProjectionMarginLayersConst;
     public int ProjectionCap => HeavyProjectionCapConst;
+    public int MinimumVisualWidth => (int)MinimumVisualWidthConst;
     public ReadonlyTimelineRenderInvalidationReason LastInvalidationReason => lastInvalidationReason;
     public bool ProjectionReused => LatestProjectionReuseState?.ProjectionReused ?? false;
     public bool ProjectionRebuilt => !ProjectionReused;
@@ -539,7 +541,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         cachedProjectionCount++;
         item.X = item.Frame * Scale;
         item.Y = Math.Max(0, item.Layer) * RowHeight;
-        item.Width = Math.Max(item.Length * Scale, MinimumWidth);
+        item.ActualDurationWidth = Math.Max(item.Length * Scale, MinimumWidth);
+        var displayWidth = Math.Max(item.ActualDurationWidth, MinimumVisualWidthConst);
+        item.IsWidthExpandedForVisibility = displayWidth > item.ActualDurationWidth;
+        item.Width = displayWidth;
+        item.IsTextSuppressed = HeavyProjectionMode || Scale < 0.5 || item.Width < 80;
+        item.DisplayText = item.IsTextSuppressed ? item.ClipTypeLabel : item.ClipTitle;
         item.Height = RowHeight - ItemPadding;
     }
 
@@ -549,7 +556,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             ProjectionMarginFramesConst,
             ProjectionMarginLayersConst,
             HeavyProjectionCapConst,
-            MinimumVisualWidth: 14,
+            MinimumVisualWidth: MinimumVisualWidthConst,
             EnablePriorityProjection: true,
             EnableHeavyOptimization: true);
 

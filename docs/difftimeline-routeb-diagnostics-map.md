@@ -235,3 +235,15 @@ Tracked values:
 
 Interaction-only path:
 - `SelectionChanged` and `HoverChanged` are treated as lightweight updates with projection reuse when previous projection state exists.
+
+## Step 211-224 Diagnostics Additions
+- `minimumVisualWidth` (policy default: 64)
+- `expandedItemCount`
+- `suppressedTextCount`
+
+Rendering/tiny-item state is now traceable through:
+- `ReadonlyTimelineProjectionDiagnostics.SuppressedTextCount`
+- `ReadonlyTimelineProjectionDiagnostics.ExpandedItemCount`
+- per-item flags:
+  - `IsWidthExpandedForVisibility`
+  - `IsTextSuppressed`
