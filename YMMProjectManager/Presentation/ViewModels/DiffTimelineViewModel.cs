@@ -1,4 +1,4 @@
-using YMMProjectManager.Presentation.Timeline.Services;
+﻿using YMMProjectManager.Presentation.Timeline.Services;
 using YMMProjectManager.Presentation.TimelinePresentation.Display;
 
 namespace YMMProjectManager.Presentation.ViewModels;
@@ -210,7 +210,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         TimelineSyncState.Unavailable => "???p?s??",
         TimelineSyncState.Detached => "??f",
         TimelineSyncState.Synced => "??????",
-        TimelineSyncState.Manual => "?�@",
+        TimelineSyncState.Manual => "?蓮",
         TimelineSyncState.Error => "?G???[",
         _ => syncState.ToString(),
     };
