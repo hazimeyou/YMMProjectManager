@@ -140,3 +140,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineLayerProjection: layerCount, row labels (Layer N)
 - ReadonlyTimelineItemSelection: selectedItemId, selectedItemLayer, selectedItemStartFrame, selectedItemEndFrame
 
+
+## Step 82 Timeline Polish State
+- ReadonlyTimelineVisualPolish: rowHeight, hoverHighlight, selectionHighlight, timeGuideFullHeight
+- ReadonlyTimelineRulerState: majorTickEnabled, minorTickEnabled
+- ReadonlyTimelineDetailPanelState: detailPanelReadonlyVisible
+

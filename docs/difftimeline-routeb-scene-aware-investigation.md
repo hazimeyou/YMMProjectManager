@@ -625,3 +625,12 @@ Probe execution writes into `diagnostics`:
 - click selection updates timeline item detail (start/end/length/layer)
 - empty state: この履歴には表示できるタイムラインアイテムがありません
 
+
+## Step 75-83 YMM Standard-style Timeline Viewer Polish
+- layer row readability improved (row height, separator, labels)
+- timeline item visual polish (corner radius, padding, hover/selection emphasis)
+- readonly detail panel banner added
+- empty state wording refined for natural UX
+- diagnostics visibility remains collapsed-first in viewer flow
+- heavy mode message remains optimization-oriented
+

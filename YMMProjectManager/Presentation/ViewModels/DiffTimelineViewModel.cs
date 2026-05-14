@@ -12,7 +12,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private readonly ObservableCollection<LayerRowMark> layerRows = [];
     private DiffTimelineItemViewModel? selectedDiffItem;
     private double scale = 0.1;
-    private double rowHeight = 28;
+    private double rowHeight = 34;
     private int visibleStartFrame;
     private int visibleEndFrame = 1000;
     private int visibleMinLayer;
@@ -51,7 +51,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         get => rowHeight;
         set
         {
-            if (SetProperty(ref rowHeight, value <= 4 ? 28 : value))
+            if (SetProperty(ref rowHeight, value <= 4 ? 34 : value))
             {
                 ReprojectAndFilter(keepSelectionVisible: true);
             }
