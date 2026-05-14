@@ -6,9 +6,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 {
     private const double MinimumWidth = 8;
     private const double ItemPadding = 4;
-    private const int ProjectionMarginFrames = 180;
-    private const int ProjectionMarginLayers = 2;
-    private const int HeavyProjectionCap = 1500;
+    private const int ProjectionMarginFramesConst = 240;
+    private const int ProjectionMarginLayersConst = 3;
+    private const int HeavyProjectionCapConst = 1800;
 
     private readonly List<DiffTimelineItemViewModel> allItems = [];
     private readonly ObservableCollection<TimelineRulerMark> rulerMarks = [];
@@ -158,6 +158,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int HeavyProjectionDropCount => heavyProjectionDropCount;
     public string OptimizationMode => ItemCount >= 1000 ? "Heavy" : "Standard";
     public bool HeavyProjectionMode => ItemCount >= 1000;
+    public int ProjectionMarginFrames => ProjectionMarginFramesConst;
+    public int ProjectionMarginLayers => ProjectionMarginLayersConst;
+    public int ProjectionCap => HeavyProjectionCapConst;
+    public string ProjectionStatusText => HeavyProjectionMode ? "表示を最適化しています（一部アイテム表示を簡略化）" : "表示は安定モードです";
 
     public TimelineSyncState SyncState
     {
@@ -502,20 +506,21 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private void FilterVisibleItems()
     {
         VisibleItems.Clear();
+        heavyProjectionDropCount = 0;
 
         foreach (var item in allItems)
         {
             var itemStart = item.Frame;
             var itemEnd = item.Frame + Math.Max(1, item.Length);
-            var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFrames);
-            var frameEnd = VisibleEndFrame + ProjectionMarginFrames;
-            var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayers);
-            var layerEnd = VisibleMaxLayer + ProjectionMarginLayers;
+            var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFramesConst);
+            var frameEnd = VisibleEndFrame + ProjectionMarginFramesConst;
+            var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayersConst);
+            var layerEnd = VisibleMaxLayer + ProjectionMarginLayersConst;
             var frameVisible = itemEnd >= frameStart && itemStart <= frameEnd;
             var layerVisible = item.Layer >= layerStart && item.Layer <= layerEnd;
             if (frameVisible && layerVisible && (ShowUnchangedItems || !item.IsUnchanged))
             {
-                if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCap)
+                if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCapConst)
                 {
                     heavyProjectionDropCount++;
                     continue;

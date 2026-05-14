@@ -164,3 +164,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineProjectionCache: cachedProjectionCount, projectionInvalidationCount
 - ReadonlyTimelineVirtualizationState: visibleLayerStart, visibleLayerEnd, heavyProjectionDropCount
 
+
+## Step 119 Projection Diagnostics Expansion
+- ReadonlyTimelineProjectionValidation: projectionMarginFrames, projectionMarginLayers, projectionCap
+- ReadonlyTimelineProjectionCapState: projectedItemCount, heavyProjectionDropCount, optimizationMode
+- ReadonlyTimelineProjectionCacheState: cachedProjectionCount, projectionInvalidationCount
+

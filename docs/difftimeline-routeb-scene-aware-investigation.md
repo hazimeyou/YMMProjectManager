@@ -658,3 +658,10 @@ Probe execution writes into `diagnostics`:
 - optimization mode signal added (Standard/Heavy)
 - hover/zoom UX maintained while reducing projection pressure
 
+
+## Step 115-121 Projection Validation & Cap Tuning
+- projection margin tuned (frames/layers) to reduce viewport-edge flicker
+- heavy projection cap tuned for nearby item retention
+- dropped projection count now refreshed per projection pass for stable validation
+- optimization status text added for heavy runtime transparency
+
