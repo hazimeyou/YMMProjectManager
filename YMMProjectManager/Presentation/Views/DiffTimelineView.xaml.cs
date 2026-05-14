@@ -6,11 +6,49 @@ public partial class DiffTimelineView : UserControl
     private long lastHoverUpdateTicks;
     private int lastHoverFrame = -1;
     private const long HoverUpdateIntervalTicks = TimeSpan.TicksPerMillisecond * 16;
+    private readonly System.Diagnostics.Stopwatch openPerfSw = System.Diagnostics.Stopwatch.StartNew();
+    private long viewLoadedMs;
+    private long firstLayoutMs;
+    private long firstRenderMs;
+    private bool firstRenderCaptured;
 
     public DiffTimelineView()
     {
         InitializeComponent();
         DataContextChanged += OnDataContextChanged;
+        Loaded += OnViewLoaded;
+        LayoutUpdated += OnViewLayoutUpdated;
+    }
+
+    private void OnViewLoaded(object sender, RoutedEventArgs e)
+    {
+        if (viewLoadedMs == 0)
+        {
+            viewLoadedMs = openPerfSw.ElapsedMilliseconds;
+        }
+    }
+
+    private void OnViewLayoutUpdated(object? sender, EventArgs e)
+    {
+        if (firstLayoutMs == 0)
+        {
+            firstLayoutMs = openPerfSw.ElapsedMilliseconds;
+        }
+
+        if (firstRenderCaptured || DataContext is not DiffTimelineViewModel vm)
+        {
+            return;
+        }
+
+        CompositionTarget.Rendering -= OnFirstRendering;
+        CompositionTarget.Rendering += OnFirstRendering;
+        void OnFirstRendering(object? s, EventArgs args)
+        {
+            CompositionTarget.Rendering -= OnFirstRendering;
+            firstRenderCaptured = true;
+            firstRenderMs = openPerfSw.ElapsedMilliseconds;
+            vm.CompleteInitialRenderPhase();
+        }
     }
 
     private void OnDataContextChanged(object sender, DependencyPropertyChangedEventArgs e)

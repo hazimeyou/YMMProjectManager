@@ -469,6 +469,12 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
     {
         try
         {
+            var openSw = System.Diagnostics.Stopwatch.StartNew();
+            var snapshotResolveMs = 0L;
+            var pipelineBuildMs = 0L;
+            var viewModelCreateMs = 0L;
+            var materializationMs = 0L;
+            var visibleItemsUpdateMs = 0L;
             if (!request.ManualButtonClick || !request.ReadOnly || request.AllowDiffApply || request.AllowHistoryRestore || request.AllowRuntimeMutation || request.OpenMode != "ReadOnlySandbox")
             {
                 return new RouteADetailPreviewOpenResult(true, false, true, "Safety guard blocked request.", false, "ReadOnlyDryRun", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
@@ -485,7 +491,9 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             {
                 return new RouteADetailPreviewOpenResult(true, false, true, "Snapshot body was not found in repository.", false, "ReadOnlyDryRun", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
             }
+            snapshotResolveMs = openSw.ElapsedMilliseconds;
 
+            var pipelineSw = System.Diagnostics.Stopwatch.StartNew();
             var envelope = DiffTimelineStandalonePipeline.BuildEnvelopeFromSnapshots(
                 oldSnapshot,
                 newSnapshot,
@@ -496,18 +504,27 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
                         ["compareMode"] = "manual-readonly-sandbox",
                     },
                     SnapshotCache: standalonePipelineCache));
+            pipelineSw.Stop();
+            pipelineBuildMs = pipelineSw.ElapsedMilliseconds;
             if (!envelope.IsSuccess || envelope.Result is null)
             {
                 return new RouteADetailPreviewOpenResult(true, false, true, "Standalone pipeline failed.", false, "ReadOnlyDryRun", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
             }
 
+            var vmSw = System.Diagnostics.Stopwatch.StartNew();
             var vm = new ProjectDiffViewModel(logger, snapshotService, normalizeService, jsonDiffService, ymmDiffService);
+            vmSw.Stop();
+            viewModelCreateMs = vmSw.ElapsedMilliseconds;
             vm.latestCoreResult = envelope.Result.CoreResult;
+            var matSw = System.Diagnostics.Stopwatch.StartNew();
             vm.MaterializeRowsForCurrentWindow(envelope.Result.CoreResult);
             vm.DiffGroups.Clear();
             vm.BuildGroups(envelope.Result.CoreResult.Groups);
+            matSw.Stop();
+            materializationMs = matSw.ElapsedMilliseconds;
             vm.MatchStatisticsText = envelope.Result.CoreResult.Summary.SummaryText;
             vm.Title = $"Read-only Sandbox: {DiffTimelineSnapshotBrowserViewModel.ToShortHash(request.OldSnapshotHash)} -> {DiffTimelineSnapshotBrowserViewModel.ToShortHash(request.NewSnapshotHash)}";
+            visibleItemsUpdateMs = openSw.ElapsedMilliseconds;
 
             var window = new ProjectDiffWindow(vm);
             var owner = System.Windows.Application.Current?.Windows.OfType<System.Windows.Window>().FirstOrDefault(x => x.IsActive);
@@ -517,6 +534,9 @@ public sealed partial class ProjectDiffViewModel : ViewModelBase, IDisposable
             }
 
             window.Show();
+            openSw.Stop();
+            logger.Info(
+                $"RouteA readonly open perf: totalOpenMs={openSw.ElapsedMilliseconds}, snapshotResolveMs={snapshotResolveMs}, pipelineBuildMs={pipelineBuildMs}, viewModelCreateMs={viewModelCreateMs}, materializationMs={materializationMs}, visibleItemsUpdateMs={visibleItemsUpdateMs}, totalItemCount={envelope.Result.CoreResult.RowSet.Rows.Count}");
             return new RouteADetailPreviewOpenResult(true, true, false, string.Empty, true, "ReadOnlySandbox", request.SelectedCandidateId, request.OldSnapshotHash, request.NewSnapshotHash);
         }
         catch (Exception ex)

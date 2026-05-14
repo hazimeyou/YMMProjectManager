@@ -247,3 +247,20 @@ Rendering/tiny-item state is now traceable through:
 - per-item flags:
   - `IsWidthExpandedForVisibility`
   - `IsTextSuppressed`
+
+## Step 225-238 Diagnostics/Profiling Notes
+- RouteA open perf log now includes:
+  - `totalOpenMs`
+  - `snapshotResolveMs`
+  - `pipelineBuildMs`
+  - `viewModelCreateMs`
+  - `materializationMs`
+  - `visibleItemsUpdateMs`
+  - `totalItemCount`
+- Initial lightweight mode:
+  - `InitialRenderItemCap=300`
+  - `InitialRenderCapApplied`
+- WPF first-phase timing hooks added on timeline view:
+  - `viewLoaded`
+  - `firstLayout`
+  - `firstRender`

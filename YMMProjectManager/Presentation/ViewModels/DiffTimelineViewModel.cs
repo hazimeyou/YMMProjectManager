@@ -32,6 +32,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int projectionInvalidationCount;
     private int heavyProjectionDropCount;
     private int cachedProjectionCount;
+    private int initialRenderItemCap = 300;
+    private bool initialRenderCapEnabled = true;
+    private bool initialRenderCapApplied;
     private ReadonlyTimelineProjectionRequest? lastProjectionRequest;
     private ReadonlyTimelineProjectionResult? lastProjectionResult;
     private ReadonlyTimelineProjectionDiff lastProjectionDiff = new(0, 0, 0, 0, false, false, false, false);
@@ -178,6 +181,8 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int ProjectionMarginFrames => ProjectionMarginFramesConst;
     public int ProjectionMarginLayers => ProjectionMarginLayersConst;
     public int ProjectionCap => HeavyProjectionCapConst;
+    public int InitialRenderItemCap => initialRenderItemCap;
+    public bool InitialRenderCapApplied => initialRenderCapApplied;
     public int MinimumVisualWidth => (int)MinimumVisualWidthConst;
     public ReadonlyTimelineRenderInvalidationReason LastInvalidationReason => lastInvalidationReason;
     public bool ProjectionReused => LatestProjectionReuseState?.ProjectionReused ?? false;
@@ -586,7 +591,13 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         }
 
         VisibleItems.Clear();
-        foreach (var item in result.ProjectedItems)
+        var toShow = result.ProjectedItems;
+        if (initialRenderCapEnabled && !initialRenderCapApplied && result.ProjectedItems.Count > initialRenderItemCap)
+        {
+            toShow = result.ProjectedItems.Take(initialRenderItemCap).ToList();
+            initialRenderCapApplied = true;
+        }
+        foreach (var item in toShow)
         {
             VisibleItems.Add(item);
         }
@@ -620,11 +631,17 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         OnPropertyChanged(nameof(CachedProjectionHit));
         OnPropertyChanged(nameof(CachedProjectionMiss));
         OnPropertyChanged(nameof(LastProjectionDiff));
+        OnPropertyChanged(nameof(InitialRenderCapApplied));
 
         if (SelectedDiffItem is not null && !VisibleItems.Contains(SelectedDiffItem))
         {
             SelectedDiffItem = VisibleItems.FirstOrDefault();
         }
+    }
+
+    public void CompleteInitialRenderPhase()
+    {
+        initialRenderCapEnabled = false;
     }
 
     private bool TryReuseProjection(ReadonlyTimelineProjectionRequest request, out string reason)

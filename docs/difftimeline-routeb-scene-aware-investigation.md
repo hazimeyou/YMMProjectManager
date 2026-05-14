@@ -747,3 +747,22 @@ Probe execution writes into `diagnostics`:
   - heavy mode / zoom-out / very small width suppresses dense text
   - display uses concise label to reduce redraw pressure
 - Projection diagnostics now include expanded item count for visibility tuning.
+
+## Step 225-238 (Timeline Rendering Profiling / Initial Lightweight Mode)
+- Added open-path stopwatch profiling in RouteA readonly open flow.
+- Captured segments:
+  - snapshot resolve
+  - standalone pipeline build
+  - viewmodel creation
+  - materialization/build groups
+  - visible-items update checkpoint
+  - total open elapsed
+- Added initial render guard in timeline VM:
+  - `InitialRenderItemCap=300`
+  - first render uses capped visible list when projected count is large
+  - cap is released after first render phase completes
+- Added first-view lifecycle capture in `DiffTimelineView`:
+  - Loaded timestamp
+  - first layout timestamp
+  - first render hook (`CompositionTarget.Rendering` first pass)
+- Objective: isolate whether bottleneck is pipeline/materialization/WPF first render.
