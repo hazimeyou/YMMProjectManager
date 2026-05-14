@@ -32,6 +32,8 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int heavyProjectionDropCount;
     private int cachedProjectionCount;
     private readonly IReadonlyTimelineProjectionService projectionService = new ReadonlyTimelineProjectionService();
+    private readonly ReadonlyTimelineViewportState viewportState = new();
+    private readonly ReadonlyTimelineInteractionState interactionState = new();
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -48,6 +50,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             var clamped = Math.Max(MinScale, Math.Min(MaxScale, value));
             if (SetProperty(ref scale, clamped))
             {
+                viewportState.UpdateZoom(clamped);
                 OnPropertyChanged(nameof(CurrentFrameX));
                 ReprojectAndFilter(keepSelectionVisible: true);
             }
@@ -141,6 +144,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         {
             if (SetProperty(ref currentFrame, Math.Max(0, value)))
             {
+                interactionState.SetSelectedItem(interactionState.SelectedItemId, Math.Max(0, value));
                 OnPropertyChanged(nameof(CurrentFrameX));
             }
         }
@@ -234,6 +238,8 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             {
                 return;
             }
+
+            interactionState.SetSelectedItem(value?.Id, value?.Frame);
 
             foreach (var item in allItems)
             {
@@ -374,6 +380,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     {
         var normalizedStart = Math.Max(0, Math.Min(start, end));
         var normalizedEnd = Math.Max(normalizedStart, Math.Max(start, end));
+        viewportState.UpdateVisibleFrameRange(normalizedStart, normalizedEnd);
         VisibleStartFrame = normalizedStart;
         VisibleEndFrame = normalizedEnd;
     }
@@ -382,6 +389,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     {
         var normalizedMin = Math.Max(0, Math.Min(minLayer, maxLayer));
         var normalizedMax = Math.Max(normalizedMin, Math.Max(minLayer, maxLayer));
+        viewportState.UpdateVisibleLayerRange(normalizedMin, normalizedMax);
         VisibleMinLayer = normalizedMin;
         VisibleMaxLayer = normalizedMax;
     }
@@ -522,12 +530,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
         var request = new ReadonlyTimelineProjectionRequest(
             allItems,
-            SelectedDiffItem?.Id,
-            VisibleStartFrame,
-            VisibleEndFrame,
-            VisibleMinLayer,
-            VisibleMaxLayer,
-            Scale,
+            interactionState.SelectedItemId ?? SelectedDiffItem?.Id,
+            viewportState.VisibleStartFrame == 0 && viewportState.VisibleEndFrame == 1000 ? VisibleStartFrame : viewportState.VisibleStartFrame,
+            viewportState.VisibleStartFrame == 0 && viewportState.VisibleEndFrame == 1000 ? VisibleEndFrame : viewportState.VisibleEndFrame,
+            viewportState.VisibleMinLayer == 0 && viewportState.VisibleMaxLayer == 50 ? VisibleMinLayer : viewportState.VisibleMinLayer,
+            viewportState.VisibleMinLayer == 0 && viewportState.VisibleMaxLayer == 50 ? VisibleMaxLayer : viewportState.VisibleMaxLayer,
+            viewportState.ZoomLevel <= 0 ? Scale : viewportState.ZoomLevel,
             ShowUnchangedItems,
             HeavyProjectionMode,
             options);

@@ -686,3 +686,21 @@ Probe execution writes into `diagnostics`:
 - ViewModel now focuses on UI state and projection result binding
 - behavior baseline preserved: selected priority, viewport-near priority, heavy cap, status text
 
+
+## Step 164-174 (Viewport / Interaction State Extraction)
+- Added state objects to reduce `DiffTimelineViewModel` responsibility while preserving behavior:
+  - `ReadonlyTimelineViewportState`
+  - `ReadonlyTimelineInteractionState`
+- Projection request input now prefers state object values:
+  - visible frame range / visible layer range
+  - zoom level
+  - selected item id
+- `DiffTimelineViewModel` remains the UI binding coordinator:
+  - owns state objects
+  - coordinates commands and projection service calls
+  - reflects service results into bindable properties
+- Safety constraints remain unchanged:
+  - `readOnly=True`
+  - `manualOnly=True`
+  - `productionFeature=False`
+  - no runtime mutation / apply / restore

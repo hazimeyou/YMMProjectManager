@@ -188,3 +188,19 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineProjectionRequest: visible frame/layer range + selectedItemId + zoom + showUnchanged + heavy flag
 - ReadonlyTimelineProjectionResult: projectedItems/projectedCount/dropCounts/suppressedText/optimizationMode/statusText
 
+
+## Step 164-174 State Extraction
+- Added `ReadonlyTimelineViewportState` and `ReadonlyTimelineInteractionState`.
+- `DiffTimelineViewModel` now builds projection requests using state-object values for:
+  - `visibleStartFrame` / `visibleEndFrame`
+  - `visibleLayerStart` / `visibleLayerEnd`
+  - `zoomLevel`
+  - `selectedItemId`
+- Behavior remains preserved with compatibility fallbacks to legacy ViewModel fields when state values are not yet initialized.
+- Diagnostics continuity maintained for:
+  - `zoomLevel`
+  - `visibleStartFrame` / `visibleEndFrame`
+  - `visibleLayerStart` / `visibleLayerEnd`
+  - `hoverFrame`
+  - `selectedItemId`
+  - `fitTimelineEnabled`
