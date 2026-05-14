@@ -642,3 +642,11 @@ Probe execution writes into `diagnostics`:
 - viewport-aware visible frame/layer updates continue through scroll/selection
 - heavy mode UX remains optimization-first messaging with readonly constraints
 
+
+## Step 96-102 Timeline UX Validation & Mini Polish
+- hover guide tuned with lightweight update interval for heavy timelines
+- frame badge readability and non-intrusive behavior validated in readonly flow
+- fit timeline now uses clamp to avoid over-shrinking/over-zoom
+- selection auto-scroll now triggers only when selected item is out of viewport
+- detail panel frame grouping improved (start/end/length block)
+

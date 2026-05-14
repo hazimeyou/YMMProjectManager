@@ -152,3 +152,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineHoverState: hoverFrame, hoverGuideVisible
 - ReadonlyTimelineViewportState: zoomLevel, visibleStartFrame, visibleEndFrame, visibleLayerStart, visibleLayerEnd, fitTimelineEnabled
 
+
+## Step 101 Timeline UX Validation Signals
+- ReadonlyTimelineHoverState: hoverFrame, hoverGuideVisible (throttled updates in heavy state)
+- ReadonlyTimelineViewportState: zoomLevel, visibleStartFrame, visibleEndFrame, visibleLayerStart, visibleLayerEnd, fitTimelineEnabled
+- ReadonlyTimelineInteractionState: selectedItemId, selectedFrame, autoScrollEnabled (out-of-viewport only)
+

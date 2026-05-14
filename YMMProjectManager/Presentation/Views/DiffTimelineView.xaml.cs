@@ -3,6 +3,9 @@
 public partial class DiffTimelineView : UserControl
 {
     private bool suppressScrollUpdate;
+    private long lastHoverUpdateTicks;
+    private int lastHoverFrame = -1;
+    private const long HoverUpdateIntervalTicks = TimeSpan.TicksPerMillisecond * 16;
 
     public DiffTimelineView()
     {
@@ -121,7 +124,8 @@ public partial class DiffTimelineView : UserControl
         }
 
         var frameSpan = Math.Max(120, vm.MaxFrame - vm.MinFrame);
-        var targetScale = TimelineScrollViewer.ViewportWidth / frameSpan;
+        var rawScale = TimelineScrollViewer.ViewportWidth / frameSpan;
+        var targetScale = Math.Max(0.05, Math.Min(2.5, rawScale));
         vm.Scale = targetScale;
         vm.UpdateVisibleFrameRange(vm.MinFrame, vm.MaxFrame);
     }
@@ -157,6 +161,22 @@ public partial class DiffTimelineView : UserControl
 
     private void ScrollTo(DiffTimelineItemViewModel item)
     {
+        // Only auto-scroll when selection is outside the current viewport.
+        var itemLeft = item.X;
+        var itemRight = item.X + item.Width;
+        var itemTop = item.Y;
+        var itemBottom = item.Y + item.Height;
+        var viewportLeft = TimelineScrollViewer.HorizontalOffset;
+        var viewportRight = viewportLeft + TimelineScrollViewer.ViewportWidth;
+        var viewportTop = TimelineScrollViewer.VerticalOffset;
+        var viewportBottom = viewportTop + TimelineScrollViewer.ViewportHeight;
+        var isHorizontallyVisible = itemRight >= viewportLeft && itemLeft <= viewportRight;
+        var isVerticallyVisible = itemBottom >= viewportTop && itemTop <= viewportBottom;
+        if (isHorizontallyVisible && isVerticallyVisible)
+        {
+            return;
+        }
+
         suppressScrollUpdate = true;
         try
         {
@@ -188,8 +208,21 @@ public partial class DiffTimelineView : UserControl
             return;
         }
 
+        var now = DateTime.UtcNow.Ticks;
+        if (now - lastHoverUpdateTicks < HoverUpdateIntervalTicks)
+        {
+            return;
+        }
+
         var pos = e.GetPosition(TimelineScrollViewer);
         var frame = Math.Max(0, (int)((TimelineScrollViewer.HorizontalOffset + pos.X) / vm.Scale));
+        if (frame == lastHoverFrame)
+        {
+            return;
+        }
+
+        lastHoverUpdateTicks = now;
+        lastHoverFrame = frame;
         var x = Math.Max(0, TimelineScrollViewer.HorizontalOffset + pos.X);
 
         HoverFrameLine.X1 = x;
@@ -203,6 +236,7 @@ public partial class DiffTimelineView : UserControl
 
     private void OnTimelineMouseLeave(object sender, MouseEventArgs e)
     {
+        lastHoverFrame = -1;
         HoverFrameLine.Visibility = Visibility.Collapsed;
         HoverFrameBadge.Visibility = Visibility.Collapsed;
     }

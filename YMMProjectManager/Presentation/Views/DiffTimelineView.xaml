@@ -252,13 +252,19 @@
                     <TextBlock Text="項目" Style="{StaticResource DetailsLabelTextStyle}" />
                     <TextBlock Text="{Binding SelectedDiffItem.ClipTitle, TargetNullValue=-}" Style="{StaticResource DetailsValueTextStyle}" />
                     <TextBlock Text="位置" Style="{StaticResource DetailsLabelTextStyle}" />
-                    <TextBlock Style="{StaticResource DetailsValueTextStyle}">
-                        <Run Text="T=" /><Run Text="{Binding SelectedDiffItem.TimelineIndex}" />
-                        <Run Text=", L=" /><Run Text="{Binding SelectedDiffItem.Layer}" />
-                        <Run Text=", 開始F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
-                        <Run Text=", 終了F=" /><Run Text="{Binding SelectedDiffItem.EndFrame}" />
-                        <Run Text=", 長さF=" /><Run Text="{Binding SelectedDiffItem.Length}" />
-                    </TextBlock>
+                    <Border Background="#123F4A5A" BorderBrush="#1C7A8CA6" BorderThickness="1" CornerRadius="3" Padding="5,4" Margin="0,0,0,6">
+                        <StackPanel>
+                            <TextBlock Style="{StaticResource DetailsValueTextStyle}" Margin="0,0,0,2">
+                                <Run Text="T=" /><Run Text="{Binding SelectedDiffItem.TimelineIndex}" />
+                                <Run Text=", L=" /><Run Text="{Binding SelectedDiffItem.Layer}" />
+                            </TextBlock>
+                            <TextBlock Style="{StaticResource DetailsValueTextStyle}" Margin="0,0,0,0">
+                                <Run Text="開始F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
+                                <Run Text=" / 終了F=" /><Run Text="{Binding SelectedDiffItem.EndFrame}" />
+                                <Run Text=" / 長さF=" /><Run Text="{Binding SelectedDiffItem.Length}" />
+                            </TextBlock>
+                        </StackPanel>
+                    </Border>
                     <Expander Header="差分詳細（変更前）" IsExpanded="False">
                         <TextBlock TextWrapping="Wrap" Text="{Binding SelectedDiffItem.OldValue, TargetNullValue=(なし)}" Margin="0,3,0,6" FontSize="11" Opacity="0.9" />
                     </Expander>
