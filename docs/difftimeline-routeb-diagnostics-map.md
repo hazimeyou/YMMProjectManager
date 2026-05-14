@@ -146,3 +146,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineRulerState: majorTickEnabled, minorTickEnabled
 - ReadonlyTimelineDetailPanelState: detailPanelReadonlyVisible
 
+
+## Step 91 Timeline Interaction Diagnostics (Foundation)
+- ReadonlyTimelineInteractionState: selectedItemId, selectedFrame, hoverGuideVisible
+- ReadonlyTimelineHoverState: hoverFrame, hoverGuideVisible
+- ReadonlyTimelineViewportState: zoomLevel, visibleStartFrame, visibleEndFrame, visibleLayerStart, visibleLayerEnd, fitTimelineEnabled
+

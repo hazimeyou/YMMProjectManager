@@ -44,6 +44,11 @@
             <Button Content="縮小" Width="70" Margin="0,0,6,0" Click="OnZoomOutClick" />
             <Button Content="拡大" Width="70" Margin="0,0,6,0" Click="OnZoomInClick" />
             <Button Content="リセット" Width="70" Margin="0,0,10,0" Click="OnResetZoomClick" />
+            <Button Content="25%" Width="58" Margin="0,0,4,0" Click="OnZoomPreset25Click" />
+            <Button Content="50%" Width="58" Margin="0,0,4,0" Click="OnZoomPreset50Click" />
+            <Button Content="100%" Width="58" Margin="0,0,4,0" Click="OnZoomPreset100Click" />
+            <Button Content="200%" Width="58" Margin="0,0,8,0" Click="OnZoomPreset200Click" />
+            <Button Content="全体表示" Width="80" Margin="0,0,10,0" Click="OnFitTimelineClick" />
             <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="倍率:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding Scale, StringFormat=F2}" Margin="0,0,10,0" />
             <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="モード:" />
@@ -64,7 +69,7 @@
             </Grid.ColumnDefinitions>
 
             <Border Grid.Column="0" BorderBrush="{DynamicResource {x:Static SystemColors.ActiveBorderBrushKey}}" BorderThickness="1" CornerRadius="4" Padding="4" Margin="0,0,8,0" Background="{DynamicResource {x:Static SystemColors.WindowBrushKey}}">
-                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged" PreviewMouseWheel="OnTimelinePreviewMouseWheel">
+                <ScrollViewer x:Name="TimelineScrollViewer" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" ScrollChanged="OnTimelineScrollChanged" PreviewMouseWheel="OnTimelinePreviewMouseWheel" MouseMove="OnTimelineMouseMove" MouseLeave="OnTimelineMouseLeave">
                     <Grid Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}">
                         <ItemsControl IsHitTestVisible="False" ItemsSource="{Binding LayerRows}">
                             <ItemsControl.ItemsPanel>
@@ -201,6 +206,18 @@
                             StrokeThickness="1.5"
                             StrokeDashArray="2,2"
                             IsHitTestVisible="False" />
+                        <Line x:Name="HoverFrameLine"
+                              X1="0"
+                              X2="0"
+                              Y1="0"
+                              Y2="{Binding CanvasHeight}"
+                              Stroke="#80FFE082"
+                              StrokeThickness="1.2"
+                              Visibility="Collapsed"
+                              IsHitTestVisible="False" />
+                        <Border x:Name="HoverFrameBadge" Background="#CC1F2937" BorderBrush="#99FFE082" BorderThickness="1" CornerRadius="3" Padding="4,1" Visibility="Collapsed" IsHitTestVisible="False" HorizontalAlignment="Left" VerticalAlignment="Top">
+                            <TextBlock x:Name="HoverFrameText" Foreground="#FFFDE68A" FontSize="10" />
+                        </Border>
                         <Border Width="{Binding CanvasWidth}" Height="{Binding CanvasHeight}" IsHitTestVisible="False">
                             <TextBlock Text="{Binding EmptyTimelineMessage}" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#AAFFFFFF" FontSize="14" FontWeight="SemiBold">
                                 <TextBlock.Style>

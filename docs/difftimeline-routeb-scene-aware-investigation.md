@@ -634,3 +634,11 @@ Probe execution writes into `diagnostics`:
 - diagnostics visibility remains collapsed-first in viewer flow
 - heavy mode message remains optimization-oriented
 
+
+## Step 86-93 Timeline Interaction UX Polish & Lightweight Viewport Foundation
+- hover frame indicator added (vertical guide + frame badge)
+- selected item focus kept with existing auto-scroll-to-selection behavior
+- readonly navigation expanded with zoom presets (25/50/100/200) and fit timeline
+- viewport-aware visible frame/layer updates continue through scroll/selection
+- heavy mode UX remains optimization-first messaging with readonly constraints
+

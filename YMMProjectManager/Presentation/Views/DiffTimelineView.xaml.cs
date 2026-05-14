@@ -100,6 +100,32 @@ public partial class DiffTimelineView : UserControl
         }
     }
 
+    private void OnZoomPreset25Click(object sender, RoutedEventArgs e) => SetZoomPreset(0.25);
+    private void OnZoomPreset50Click(object sender, RoutedEventArgs e) => SetZoomPreset(0.5);
+    private void OnZoomPreset100Click(object sender, RoutedEventArgs e) => SetZoomPreset(1.0);
+    private void OnZoomPreset200Click(object sender, RoutedEventArgs e) => SetZoomPreset(2.0);
+
+    private void SetZoomPreset(double value)
+    {
+        if (DataContext is DiffTimelineViewModel vm)
+        {
+            vm.Scale = value;
+        }
+    }
+
+    private void OnFitTimelineClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not DiffTimelineViewModel vm || TimelineScrollViewer.ViewportWidth <= 0)
+        {
+            return;
+        }
+
+        var frameSpan = Math.Max(120, vm.MaxFrame - vm.MinFrame);
+        var targetScale = TimelineScrollViewer.ViewportWidth / frameSpan;
+        vm.Scale = targetScale;
+        vm.UpdateVisibleFrameRange(vm.MinFrame, vm.MaxFrame);
+    }
+
     private void OnTimelinePreviewMouseWheel(object sender, MouseWheelEventArgs e)
     {
         if (DataContext is not DiffTimelineViewModel vm)
@@ -153,5 +179,31 @@ public partial class DiffTimelineView : UserControl
             vm.UpdateVisibleFrameRange(startFrame, endFrame);
             vm.UpdateVisibleLayerRange(minLayer, maxLayer);
         }
+    }
+
+    private void OnTimelineMouseMove(object sender, MouseEventArgs e)
+    {
+        if (DataContext is not DiffTimelineViewModel vm || vm.Scale <= 0)
+        {
+            return;
+        }
+
+        var pos = e.GetPosition(TimelineScrollViewer);
+        var frame = Math.Max(0, (int)((TimelineScrollViewer.HorizontalOffset + pos.X) / vm.Scale));
+        var x = Math.Max(0, TimelineScrollViewer.HorizontalOffset + pos.X);
+
+        HoverFrameLine.X1 = x;
+        HoverFrameLine.X2 = x;
+        HoverFrameLine.Visibility = Visibility.Visible;
+
+        HoverFrameText.Text = $"F: {frame}";
+        HoverFrameBadge.Margin = new Thickness(Math.Min(x + 8, Math.Max(0, vm.CanvasWidth - 80)), 4, 0, 0);
+        HoverFrameBadge.Visibility = Visibility.Visible;
+    }
+
+    private void OnTimelineMouseLeave(object sender, MouseEventArgs e)
+    {
+        HoverFrameLine.Visibility = Visibility.Collapsed;
+        HoverFrameBadge.Visibility = Visibility.Collapsed;
     }
 }
