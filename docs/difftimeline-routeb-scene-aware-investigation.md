@@ -672,3 +672,10 @@ Probe execution writes into `diagnostics`:
 - user-facing header wording adjusted to: ï\é¶åèêî / ï\é¶ç≈ìKâª
 - tuning decision baseline: Keep (until heavy runtime measurements indicate increase/decrease)
 
+
+## Step 132-141 Timeline Item Projection Recovery & Rendering Optimization
+- projection selection changed from first-come cap to priority-based ordering
+- selected item and viewport-center-near items are prioritized before cap
+- drop reasons are internally split (frame/layer/cap/viewport aggregate) for tuning
+- heavy mode keeps lightweight rendering intent while improving item visibility
+

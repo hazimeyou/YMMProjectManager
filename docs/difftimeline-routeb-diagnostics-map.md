@@ -175,3 +175,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineProjectionRuntimeMeasurement: measuredHeavyProject, recommendedVirtualization, optimizationMode, projectedItemCount, heavyProjectionDropCount, projectionInvalidationCount
 - ReadonlyTimelineProjectionTuningDecision: projectionMarginFrames, projectionMarginLayers, projectionCap, tuningDecision, tuningReason
 
+
+## Step 132 Projection Visibility Recovery
+- ReadonlyTimelineProjectionVisibility: totalTimelineItemCount, visibleCandidateCount, projectedItemCount
+- ReadonlyTimelineProjectionFilterResult: dropReasonFrame, dropReasonLayer, dropReasonCap, dropReasonViewport
+- ReadonlyTimelineRenderingOptimizationState: minimumVisualWidth, suppressedTextCount, lightweightTemplateEnabled
+

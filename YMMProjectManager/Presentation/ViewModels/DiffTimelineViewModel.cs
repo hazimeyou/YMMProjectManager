@@ -162,7 +162,11 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int ProjectionMarginFrames => ProjectionMarginFramesConst;
     public int ProjectionMarginLayers => ProjectionMarginLayersConst;
     public int ProjectionCap => HeavyProjectionCapConst;
-    public string ProjectionStatusText => HeavyProjectionMode ? "表示を最適化しています（一部アイテム表示を簡略化）" : "表示は安定モードです";
+        
+    
+    
+    
+    
 
     public TimelineSyncState SyncState
     {
@@ -509,30 +513,72 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         VisibleItems.Clear();
         heavyProjectionDropCount = 0;
 
+        var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFramesConst);
+        var frameEnd = VisibleEndFrame + ProjectionMarginFramesConst;
+        var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayersConst);
+        var layerEnd = VisibleMaxLayer + ProjectionMarginLayersConst;
+        var viewportCenter = (VisibleStartFrame + VisibleEndFrame) / 2;
+
+        var candidates = new List<(DiffTimelineItemViewModel Item, int Priority)>();
+
         foreach (var item in allItems)
         {
             var itemStart = item.Frame;
             var itemEnd = item.Frame + Math.Max(1, item.Length);
-            var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFramesConst);
-            var frameEnd = VisibleEndFrame + ProjectionMarginFramesConst;
-            var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayersConst);
-            var layerEnd = VisibleMaxLayer + ProjectionMarginLayersConst;
             var frameVisible = itemEnd >= frameStart && itemStart <= frameEnd;
             var layerVisible = item.Layer >= layerStart && item.Layer <= layerEnd;
-            if (frameVisible && layerVisible && (ShowUnchangedItems || !item.IsUnchanged))
-            {
-                if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCapConst)
-                {
-                    heavyProjectionDropCount++;
-                    continue;
-                }
+            var unchangedVisible = ShowUnchangedItems || !item.IsUnchanged;
 
-                VisibleItems.Add(item);
+            if (!frameVisible)
+            {
+                continue;
             }
+
+            if (!layerVisible)
+            {
+                continue;
+            }
+
+            if (!unchangedVisible)
+            {
+                continue;
+            }
+
+            var priority = 0;
+            if (ReferenceEquals(item, SelectedDiffItem))
+            {
+                priority += 10000;
+            }
+
+            var distance = Math.Abs(item.Frame - viewportCenter);
+            priority += Math.Max(0, 4000 - distance);
+            priority += (itemStart >= VisibleStartFrame && itemEnd <= VisibleEndFrame) ? 500 : 100;
+            candidates.Add((item, priority));
+        }
+
+        var ordered = candidates
+            .OrderByDescending(x => x.Priority)
+            .ThenBy(x => x.Item.Frame)
+            .ThenBy(x => x.Item.Layer);
+
+        foreach (var entry in ordered)
+        {
+            if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCapConst)
+            {
+                heavyProjectionDropCount++;
+                continue;
+            }
+
+            if (entry.Item.Width <= 14)
+            {
+            }
+
+            VisibleItems.Add(entry.Item);
         }
 
         LastVisibleCount = VisibleItems.Count;
         OnPropertyChanged(nameof(ProjectedItemCount));
+        OnPropertyChanged(nameof(DisplayCountText));
         OnPropertyChanged(nameof(CachedProjectionCount));
         OnPropertyChanged(nameof(ProjectionInvalidationCount));
         OnPropertyChanged(nameof(HeavyProjectionDropCount));
@@ -545,7 +591,6 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             SelectedDiffItem = VisibleItems.FirstOrDefault();
         }
     }
-
     private void RebuildRulerMarks()
     {
         rulerMarks.Clear();

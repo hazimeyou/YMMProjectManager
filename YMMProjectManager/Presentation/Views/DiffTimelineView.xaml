@@ -164,8 +164,19 @@
                                                     <RowDefinition Height="*"/>
                                                 </Grid.RowDefinitions>
                                                 <DockPanel Grid.Row="0">
-                                                    <TextBlock Text="{Binding ClipTypeLabel}" FontSize="10" FontWeight="SemiBold" Foreground="White" />
-                                                    <TextBlock Text="{Binding DurationHint}" DockPanel.Dock="Right" FontSize="9" Foreground="#DDEFFFFF" />
+                                                    <TextBlock Text="{Binding ClipTypeLabel}" FontSize="10" FontWeight="SemiBold" Foreground="White">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Width}" Value="14">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                    <TextBlock Text="{Binding DurationHint}" DockPanel.Dock="Right" FontSize="9" Foreground="#DDEFFFFF" TextTrimming="CharacterEllipsis" />
                                                 </DockPanel>
                                                 <DockPanel Grid.Row="1">
                                                     <TextBlock Text="{Binding ClipTitle}" FontSize="11" Foreground="White" TextTrimming="CharacterEllipsis" />
