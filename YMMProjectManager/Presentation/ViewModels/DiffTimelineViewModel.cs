@@ -32,8 +32,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int heavyProjectionDropCount;
     private int cachedProjectionCount;
     private readonly IReadonlyTimelineProjectionService projectionService = new ReadonlyTimelineProjectionService();
+    private readonly ReadonlyTimelineDiagnosticsSnapshotBuilder diagnosticsSnapshotBuilder = new();
     private readonly ReadonlyTimelineViewportState viewportState = new();
     private readonly ReadonlyTimelineInteractionState interactionState = new();
+    private ReadonlyTimelineDiagnosticsSnapshot? latestDiagnosticsSnapshot;
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -152,7 +154,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     public double CurrentFrameX => CurrentFrame * Scale;
     public bool HasVisibleItems => LastVisibleCount > 0;
-    public string EmptyTimelineMessage => "この履歴には表示できるタイムラインアイテムがありません";
+    public string EmptyTimelineMessage => "No timeline items available for this history.";
     public int ItemCount => allItems.Count;
     public int LayerCount => allItems.Count == 0 ? 0 : allItems.Max(x => Math.Max(0, x.Layer)) + 1;
     public int MinFrame => allItems.Count == 0 ? 0 : allItems.Min(x => Math.Max(0, x.Frame));
@@ -168,6 +170,11 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int ProjectionMarginFrames => ProjectionMarginFramesConst;
     public int ProjectionMarginLayers => ProjectionMarginLayersConst;
     public int ProjectionCap => HeavyProjectionCapConst;
+    public ReadonlyTimelineDiagnosticsSnapshot? LatestDiagnosticsSnapshot
+    {
+        get => latestDiagnosticsSnapshot;
+        private set => SetProperty(ref latestDiagnosticsSnapshot, value);
+    }
         
     
     
@@ -200,19 +207,19 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     public string SyncStateLabel => syncState switch
     {
-        TimelineSyncState.Unavailable => "利用不可",
-        TimelineSyncState.Detached => "切断",
-        TimelineSyncState.Synced => "同期中",
-        TimelineSyncState.Manual => "手動",
-        TimelineSyncState.Error => "エラー",
+        TimelineSyncState.Unavailable => "???p?s??",
+        TimelineSyncState.Detached => "??f",
+        TimelineSyncState.Synced => "??????",
+        TimelineSyncState.Manual => "?蓮",
+        TimelineSyncState.Error => "?G???[",
         _ => syncState.ToString(),
     };
 
     public string ModeLabel => mode switch
     {
-        TimelineMode.Standalone => "単独",
-        TimelineMode.Synced => "同期",
-        TimelineMode.Comparison => "比較",
+        TimelineMode.Standalone => "?P??",
+        TimelineMode.Synced => "????",
+        TimelineMode.Comparison => "??r",
         _ => mode.ToString(),
     };
 
@@ -550,6 +557,14 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
         heavyProjectionDropCount = result.DropCounts.DropReasonCap;
         LastVisibleCount = result.ProjectedItemCount;
+        LatestDiagnosticsSnapshot = diagnosticsSnapshotBuilder.Build(
+            result,
+            options,
+            viewportState,
+            interactionState,
+            readOnly: true,
+            manualOnly: true,
+            productionFeature: false);
 
         OnPropertyChanged(nameof(ProjectedItemCount));
         OnPropertyChanged(nameof(DisplayCountText));
@@ -623,7 +638,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     private static bool IsUnchangedKind(string kind)
     {
-        return string.Equals(kind, "一致", StringComparison.Ordinal) ||
+        return string.Equals(kind, "??v", StringComparison.Ordinal) ||
                string.Equals(kind, "Unchanged", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(kind, "Same", StringComparison.OrdinalIgnoreCase) ||
                string.Equals(kind, "None", StringComparison.OrdinalIgnoreCase);
@@ -634,11 +649,11 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         // Prefer clip semantic coloring (YMM-like subdued tones), then fallback to diff-kind color.
         var clipBrush = clipTypeLabel switch
         {
-            "テキスト" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
-            "図形" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
-            "画像" => new SolidColorBrush(Color.FromRgb(116, 98, 154)),
-            "音声" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
-            "動画" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
+            "Text" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
+            "Shape" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
+            "Image" => new SolidColorBrush(Color.FromRgb(116, 98, 154)),
+            "Audio" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
+            "Video" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
             _ => null,
         };
         if (clipBrush is not null)
@@ -649,10 +664,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
         var kindBrush = kind switch
         {
-            "Added" or "追加" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
-            "Removed" or "削除" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
-            "Moved" or "移動" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
-            "Changed" or "変更" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
+            "Added" or "???" => new SolidColorBrush(Color.FromRgb(82, 138, 108)),
+            "Removed" or "??" => new SolidColorBrush(Color.FromRgb(150, 88, 88)),
+            "Moved" or "???" => new SolidColorBrush(Color.FromRgb(166, 120, 72)),
+            "Changed" or "??X" => new SolidColorBrush(Color.FromRgb(76, 124, 168)),
             _ => new SolidColorBrush(Color.FromRgb(108, 108, 108)),
         };
         kindBrush.Freeze();
@@ -672,3 +687,4 @@ public sealed class LayerRowMark
     public double Y { get; init; }
     public string Label { get; init; } = string.Empty;
 }
+

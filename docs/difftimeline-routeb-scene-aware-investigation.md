@@ -704,3 +704,14 @@ Probe execution writes into `diagnostics`:
   - `manualOnly=True`
   - `productionFeature=False`
   - no runtime mutation / apply / restore
+
+## Step 175-185 (ReadonlyTimelineDiagnosticsSnapshot)
+- Added `ReadonlyTimelineDiagnosticsSnapshot` to separate internal diagnostics from user-facing display text.
+- Snapshot sections:
+  - Projection
+  - Viewport
+  - Interaction
+  - Safety
+  - Display
+- Added `ReadonlyTimelineDiagnosticsSnapshotBuilder` and connected it after projection updates in `DiffTimelineViewModel`.
+- Existing read-only/manual-only constraints remain unchanged and diagnostics names for existing blocks are preserved.
