@@ -264,7 +264,7 @@
                             </TextBlock>
                             <TextBlock Style="{StaticResource DetailsValueTextStyle}" Margin="0,0,0,0">
                                 <Run Text="開始F=" /><Run Text="{Binding SelectedDiffItem.Frame}" />
-                                <Run Text=" / 終了F=" /><Run Text="{Binding SelectedDiffItem.EndFrame}" />
+                                <Run Text=" / 終了F=" /><Run Text="{Binding SelectedDiffItem.EndFrame, Mode=OneWay}" />
                                 <Run Text=" / 長さF=" /><Run Text="{Binding SelectedDiffItem.Length}" />
                             </TextBlock>
                         </StackPanel>
