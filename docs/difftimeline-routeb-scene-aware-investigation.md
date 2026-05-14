@@ -650,3 +650,11 @@ Probe execution writes into `diagnostics`:
 - selection auto-scroll now triggers only when selected item is out of viewport
 - detail panel frame grouping improved (start/end/length block)
 
+
+## Step 105-112 Timeline Projection Optimization & Lightweight Virtualization Foundation
+- viewport-aware projection margin added (frame/layer prefetch window)
+- lightweight projection cap introduced for heavy mode
+- projection invalidation/cached projection counters added for diagnostics foundation
+- optimization mode signal added (Standard/Heavy)
+- hover/zoom UX maintained while reducing projection pressure
+

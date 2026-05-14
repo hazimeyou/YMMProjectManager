@@ -158,3 +158,9 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineViewportState: zoomLevel, visibleStartFrame, visibleEndFrame, visibleLayerStart, visibleLayerEnd, fitTimelineEnabled
 - ReadonlyTimelineInteractionState: selectedItemId, selectedFrame, autoScrollEnabled (out-of-viewport only)
 
+
+## Step 110 Projection/ViewPort Diagnostics Expansion
+- ReadonlyTimelineProjectionState: projectedItemCount, visibleItemCount, optimizationMode, heavyProjectionMode
+- ReadonlyTimelineProjectionCache: cachedProjectionCount, projectionInvalidationCount
+- ReadonlyTimelineVirtualizationState: visibleLayerStart, visibleLayerEnd, heavyProjectionDropCount
+

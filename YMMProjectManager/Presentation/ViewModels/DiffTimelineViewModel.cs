@@ -6,6 +6,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 {
     private const double MinimumWidth = 8;
     private const double ItemPadding = 4;
+    private const int ProjectionMarginFrames = 180;
+    private const int ProjectionMarginLayers = 2;
+    private const int HeavyProjectionCap = 1500;
 
     private readonly List<DiffTimelineItemViewModel> allItems = [];
     private readonly ObservableCollection<TimelineRulerMark> rulerMarks = [];
@@ -24,6 +27,9 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private TimelineSyncState syncState = TimelineSyncState.Unavailable;
     private TimelineMode mode = TimelineMode.Standalone;
     private bool showUnchangedItems = true;
+    private int projectionInvalidationCount;
+    private int heavyProjectionDropCount;
+    private int cachedProjectionCount;
 
     public ObservableCollection<DiffTimelineItemViewModel> VisibleItems { get; } = [];
     public ReadOnlyObservableCollection<TimelineRulerMark> RulerMarks { get; }
@@ -146,6 +152,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int MinFrame => allItems.Count == 0 ? 0 : allItems.Min(x => Math.Max(0, x.Frame));
     public int MaxFrame => allItems.Count == 0 ? 0 : allItems.Max(x => Math.Max(0, x.Frame + Math.Max(1, x.Length)));
     public bool TimeGuideExtendsFullHeight => true;
+    public int ProjectedItemCount => LastVisibleCount;
+    public int CachedProjectionCount => cachedProjectionCount;
+    public int ProjectionInvalidationCount => projectionInvalidationCount;
+    public int HeavyProjectionDropCount => heavyProjectionDropCount;
+    public string OptimizationMode => ItemCount >= 1000 ? "Heavy" : "Standard";
+    public bool HeavyProjectionMode => ItemCount >= 1000;
 
     public TimelineSyncState SyncState
     {
@@ -456,6 +468,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     private void ReprojectAndFilter(bool keepSelectionVisible)
     {
+        projectionInvalidationCount++;
         foreach (var item in allItems)
         {
             ProjectItem(item);
@@ -479,6 +492,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
 
     private void ProjectItem(DiffTimelineItemViewModel item)
     {
+        cachedProjectionCount++;
         item.X = item.Frame * Scale;
         item.Y = Math.Max(0, item.Layer) * RowHeight;
         item.Width = Math.Max(item.Length * Scale, MinimumWidth);
@@ -493,15 +507,31 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         {
             var itemStart = item.Frame;
             var itemEnd = item.Frame + Math.Max(1, item.Length);
-            var frameVisible = itemEnd >= VisibleStartFrame && itemStart <= VisibleEndFrame;
-            var layerVisible = item.Layer >= VisibleMinLayer && item.Layer <= VisibleMaxLayer;
+            var frameStart = Math.Max(0, VisibleStartFrame - ProjectionMarginFrames);
+            var frameEnd = VisibleEndFrame + ProjectionMarginFrames;
+            var layerStart = Math.Max(0, VisibleMinLayer - ProjectionMarginLayers);
+            var layerEnd = VisibleMaxLayer + ProjectionMarginLayers;
+            var frameVisible = itemEnd >= frameStart && itemStart <= frameEnd;
+            var layerVisible = item.Layer >= layerStart && item.Layer <= layerEnd;
             if (frameVisible && layerVisible && (ShowUnchangedItems || !item.IsUnchanged))
             {
+                if (HeavyProjectionMode && VisibleItems.Count >= HeavyProjectionCap)
+                {
+                    heavyProjectionDropCount++;
+                    continue;
+                }
+
                 VisibleItems.Add(item);
             }
         }
 
         LastVisibleCount = VisibleItems.Count;
+        OnPropertyChanged(nameof(ProjectedItemCount));
+        OnPropertyChanged(nameof(CachedProjectionCount));
+        OnPropertyChanged(nameof(ProjectionInvalidationCount));
+        OnPropertyChanged(nameof(HeavyProjectionDropCount));
+        OnPropertyChanged(nameof(OptimizationMode));
+        OnPropertyChanged(nameof(HeavyProjectionMode));
         OnPropertyChanged(nameof(HasVisibleItems));
 
         if (SelectedDiffItem is not null && !VisibleItems.Contains(SelectedDiffItem))

@@ -57,6 +57,10 @@
             <TextBlock VerticalAlignment="Center" Text="{Binding SyncStateLabel}" Margin="0,0,10,0" />
             <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="表示:" />
             <TextBlock VerticalAlignment="Center" Text="{Binding LastVisibleCount}" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="投影:" Margin="10,0,0,0" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding ProjectedItemCount}" Margin="0,0,8,0" />
+            <TextBlock Style="{StaticResource CompactHeaderTextStyle}" Text="最適化:" />
+            <TextBlock VerticalAlignment="Center" Text="{Binding OptimizationMode}" Margin="0,0,8,0" />
             <CheckBox Content="一致を表示" IsChecked="{Binding ShowUnchangedItems, Mode=TwoWay}" Margin="10,0,0,0" VerticalAlignment="Center" />
         </StackPanel>
 
