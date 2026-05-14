@@ -153,6 +153,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int MaxFrame => allItems.Count == 0 ? 0 : allItems.Max(x => Math.Max(0, x.Frame + Math.Max(1, x.Length)));
     public bool TimeGuideExtendsFullHeight => true;
     public int ProjectedItemCount => LastVisibleCount;
+    public string DisplayCountText => $"{ProjectedItemCount} / {ItemCount}";
     public int CachedProjectionCount => cachedProjectionCount;
     public int ProjectionInvalidationCount => projectionInvalidationCount;
     public int HeavyProjectionDropCount => heavyProjectionDropCount;

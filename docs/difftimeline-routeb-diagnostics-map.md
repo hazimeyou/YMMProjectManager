@@ -170,3 +170,8 @@ These remain diagnostics/readiness foundations only; production enable is still 
 - ReadonlyTimelineProjectionCapState: projectedItemCount, heavyProjectionDropCount, optimizationMode
 - ReadonlyTimelineProjectionCacheState: cachedProjectionCount, projectionInvalidationCount
 
+
+## Step 127 Runtime Measurement Blocks
+- ReadonlyTimelineProjectionRuntimeMeasurement: measuredHeavyProject, recommendedVirtualization, optimizationMode, projectedItemCount, heavyProjectionDropCount, projectionInvalidationCount
+- ReadonlyTimelineProjectionTuningDecision: projectionMarginFrames, projectionMarginLayers, projectionCap, tuningDecision, tuningReason
+

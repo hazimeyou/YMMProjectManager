@@ -665,3 +665,10 @@ Probe execution writes into `diagnostics`:
 - dropped projection count now refreshed per projection pass for stable validation
 - optimization status text added for heavy runtime transparency
 
+
+## Step 124-131 Projection Runtime Measurement & Final Tuning
+- runtime measurement should be executed on actual YMM heavy project environment
+- current tuned defaults: ProjectionMarginFrames=240, ProjectionMarginLayers=3, HeavyProjectionCap=1800
+- user-facing header wording adjusted to: ï\é¶åèêî / ï\é¶ç≈ìKâª
+- tuning decision baseline: Keep (until heavy runtime measurements indicate increase/decrease)
+
