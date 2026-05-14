@@ -715,3 +715,19 @@ Probe execution writes into `diagnostics`:
   - Display
 - Added `ReadonlyTimelineDiagnosticsSnapshotBuilder` and connected it after projection updates in `DiffTimelineViewModel`.
 - Existing read-only/manual-only constraints remain unchanged and diagnostics names for existing blocks are preserved.
+
+## Step 186-199 (Incremental Projection / Render Invalidation Foundation)
+- Added incremental foundation types:
+  - `ReadonlyTimelineProjectionDiff`
+  - `ReadonlyTimelineRenderInvalidationReason`
+  - `ReadonlyTimelineRenderInvalidationState`
+  - `ReadonlyTimelineProjectionReuseState`
+- Added lightweight decision path in `DiffTimelineViewModel`:
+  - interaction-only changes (`SelectionChanged`/`HoverChanged`) can reuse the previous projection result
+  - viewport/zoom/options changes trigger projection rebuild
+- Added projection reuse diagnostics:
+  - last invalidation reason
+  - projection reused/rebuilt
+  - cache hit/miss counters
+  - projection diff counters (added/removed/retained/updated)
+- Safety constraints unchanged (read-only/manual-only, no apply/restore/mutation).

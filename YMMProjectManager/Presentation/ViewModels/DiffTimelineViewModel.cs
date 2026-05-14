@@ -31,6 +31,12 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     private int projectionInvalidationCount;
     private int heavyProjectionDropCount;
     private int cachedProjectionCount;
+    private ReadonlyTimelineProjectionRequest? lastProjectionRequest;
+    private ReadonlyTimelineProjectionResult? lastProjectionResult;
+    private ReadonlyTimelineProjectionDiff lastProjectionDiff = new(0, 0, 0, 0, false, false, false, false);
+    private ReadonlyTimelineRenderInvalidationReason lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.None;
+    private int cachedProjectionHit;
+    private int cachedProjectionMiss;
     private readonly IReadonlyTimelineProjectionService projectionService = new ReadonlyTimelineProjectionService();
     private readonly ReadonlyTimelineDiagnosticsSnapshotBuilder diagnosticsSnapshotBuilder = new();
     private readonly ReadonlyTimelineViewportState viewportState = new();
@@ -53,6 +59,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             if (SetProperty(ref scale, clamped))
             {
                 viewportState.UpdateZoom(clamped);
+                lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.ZoomChanged;
                 OnPropertyChanged(nameof(CurrentFrameX));
                 ReprojectAndFilter(keepSelectionVisible: true);
             }
@@ -170,6 +177,13 @@ public sealed class DiffTimelineViewModel : ViewModelBase
     public int ProjectionMarginFrames => ProjectionMarginFramesConst;
     public int ProjectionMarginLayers => ProjectionMarginLayersConst;
     public int ProjectionCap => HeavyProjectionCapConst;
+    public ReadonlyTimelineRenderInvalidationReason LastInvalidationReason => lastInvalidationReason;
+    public bool ProjectionReused => LatestProjectionReuseState?.ProjectionReused ?? false;
+    public bool ProjectionRebuilt => !ProjectionReused;
+    public int CachedProjectionHit => cachedProjectionHit;
+    public int CachedProjectionMiss => cachedProjectionMiss;
+    public ReadonlyTimelineProjectionDiff LastProjectionDiff => lastProjectionDiff;
+    public ReadonlyTimelineProjectionReuseState? LatestProjectionReuseState { get; private set; }
     public ReadonlyTimelineDiagnosticsSnapshot? LatestDiagnosticsSnapshot
     {
         get => latestDiagnosticsSnapshot;
@@ -230,6 +244,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         {
             if (SetProperty(ref showUnchangedItems, value))
             {
+                lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.ProjectionOptionsChanged;
                 FilterVisibleItems();
             }
         }
@@ -247,6 +262,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             }
 
             interactionState.SetSelectedItem(value?.Id, value?.Frame);
+            lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.SelectionChanged;
 
             foreach (var item in allItems)
             {
@@ -388,6 +404,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         var normalizedStart = Math.Max(0, Math.Min(start, end));
         var normalizedEnd = Math.Max(normalizedStart, Math.Max(start, end));
         viewportState.UpdateVisibleFrameRange(normalizedStart, normalizedEnd);
+        lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.ViewportChanged;
         VisibleStartFrame = normalizedStart;
         VisibleEndFrame = normalizedEnd;
     }
@@ -397,6 +414,7 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         var normalizedMin = Math.Max(0, Math.Min(minLayer, maxLayer));
         var normalizedMax = Math.Max(normalizedMin, Math.Max(minLayer, maxLayer));
         viewportState.UpdateVisibleLayerRange(normalizedMin, normalizedMax);
+        lastInvalidationReason = ReadonlyTimelineRenderInvalidationReason.ViewportChanged;
         VisibleMinLayer = normalizedMin;
         VisibleMaxLayer = normalizedMax;
     }
@@ -547,7 +565,18 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             HeavyProjectionMode,
             options);
 
-        var result = projectionService.Project(request);
+        var reuse = TryReuseProjection(request, out var reuseReason);
+        ReadonlyTimelineProjectionResult result;
+        if (reuse && lastProjectionResult is not null)
+        {
+            result = lastProjectionResult;
+            cachedProjectionHit++;
+        }
+        else
+        {
+            result = projectionService.Project(request);
+            cachedProjectionMiss++;
+        }
 
         VisibleItems.Clear();
         foreach (var item in result.ProjectedItems)
@@ -555,6 +584,10 @@ public sealed class DiffTimelineViewModel : ViewModelBase
             VisibleItems.Add(item);
         }
 
+        lastProjectionDiff = BuildProjectionDiff(lastProjectionResult, result, lastInvalidationReason);
+        LatestProjectionReuseState = BuildReuseState(reuse, reuseReason, lastProjectionDiff);
+        lastProjectionRequest = request;
+        lastProjectionResult = result;
         heavyProjectionDropCount = result.DropCounts.DropReasonCap;
         LastVisibleCount = result.ProjectedItemCount;
         LatestDiagnosticsSnapshot = diagnosticsSnapshotBuilder.Build(
@@ -574,12 +607,73 @@ public sealed class DiffTimelineViewModel : ViewModelBase
         OnPropertyChanged(nameof(OptimizationMode));
         OnPropertyChanged(nameof(HeavyProjectionMode));
         OnPropertyChanged(nameof(HasVisibleItems));
+        OnPropertyChanged(nameof(LastInvalidationReason));
+        OnPropertyChanged(nameof(ProjectionReused));
+        OnPropertyChanged(nameof(ProjectionRebuilt));
+        OnPropertyChanged(nameof(CachedProjectionHit));
+        OnPropertyChanged(nameof(CachedProjectionMiss));
+        OnPropertyChanged(nameof(LastProjectionDiff));
 
         if (SelectedDiffItem is not null && !VisibleItems.Contains(SelectedDiffItem))
         {
             SelectedDiffItem = VisibleItems.FirstOrDefault();
         }
     }
+
+    private bool TryReuseProjection(ReadonlyTimelineProjectionRequest request, out string reason)
+    {
+        reason = "Rebuild";
+        if (lastProjectionRequest is null || lastProjectionResult is null)
+        {
+            return false;
+        }
+
+        if (lastInvalidationReason is ReadonlyTimelineRenderInvalidationReason.HoverChanged or ReadonlyTimelineRenderInvalidationReason.SelectionChanged)
+        {
+            reason = "InteractionOnly";
+            return true;
+        }
+
+        return false;
+    }
+
+    private static ReadonlyTimelineProjectionDiff BuildProjectionDiff(
+        ReadonlyTimelineProjectionResult? previous,
+        ReadonlyTimelineProjectionResult current,
+        ReadonlyTimelineRenderInvalidationReason reason)
+    {
+        if (previous is null)
+        {
+            return new ReadonlyTimelineProjectionDiff(current.ProjectedItemCount, 0, 0, 0, true, true, true, true);
+        }
+
+        var added = Math.Max(0, current.ProjectedItemCount - previous.ProjectedItemCount);
+        var removed = Math.Max(0, previous.ProjectedItemCount - current.ProjectedItemCount);
+        var retained = Math.Max(0, Math.Min(previous.ProjectedItemCount, current.ProjectedItemCount));
+        var updated = reason is ReadonlyTimelineRenderInvalidationReason.SelectionChanged or ReadonlyTimelineRenderInvalidationReason.HoverChanged ? 1 : 0;
+
+        return new ReadonlyTimelineProjectionDiff(
+            added,
+            removed,
+            retained,
+            updated,
+            reason == ReadonlyTimelineRenderInvalidationReason.ViewportChanged,
+            reason == ReadonlyTimelineRenderInvalidationReason.ZoomChanged,
+            reason == ReadonlyTimelineRenderInvalidationReason.SelectionChanged,
+            reason == ReadonlyTimelineRenderInvalidationReason.HoverChanged);
+    }
+
+    private ReadonlyTimelineProjectionReuseState BuildReuseState(bool reused, string reason, ReadonlyTimelineProjectionDiff diff)
+    {
+        var state = new ReadonlyTimelineRenderInvalidationState(
+            lastInvalidationReason,
+            reused,
+            !reused,
+            cachedProjectionHit,
+            cachedProjectionMiss);
+        return new ReadonlyTimelineProjectionReuseState(reused, reason, diff, state);
+    }
+
     private void RebuildRulerMarks()
     {
         rulerMarks.Clear();
