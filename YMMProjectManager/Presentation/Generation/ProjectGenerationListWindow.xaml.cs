@@ -1,5 +1,8 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
@@ -8,11 +11,16 @@ using YMMProjectManager.Infrastructure.Generations;
 
 namespace YMMProjectManager.Presentation.Generation;
 
-public partial class ProjectGenerationListWindow : Window
+public partial class ProjectGenerationListWindow : Window, INotifyPropertyChanged
 {
     private readonly FileLogger logger;
     private readonly IProjectGenerationService generationService;
     private readonly string projectPath;
+    private ProjectGenerationListRow? selectedGeneration;
+    private bool isEmptyStateVisible;
+    private string emptyStateMessage = "このプロジェクトには保存された世代がありません。";
+    private bool canRestore;
+    private bool canDelete;
 
     public ProjectGenerationListWindow(string projectPath, FileLogger logger)
     {
@@ -22,12 +30,82 @@ public partial class ProjectGenerationListWindow : Window
         generationService = new ProjectGenerationService(logger);
         DataContext = this;
         Loaded += OnLoaded;
+        Generations.CollectionChanged += (_, _) => UpdateState();
+        UpdateState();
     }
 
     public ObservableCollection<ProjectGenerationListRow> Generations { get; } = [];
-    public ProjectGenerationListRow? SelectedGeneration { get; set; }
+
+    public ProjectGenerationListRow? SelectedGeneration
+    {
+        get => selectedGeneration;
+        set
+        {
+            if (!ReferenceEquals(selectedGeneration, value))
+            {
+                selectedGeneration = value;
+                OnPropertyChanged(nameof(SelectedGeneration));
+                UpdateState();
+            }
+        }
+    }
+
     public string ProjectDisplayText => $"対象プロジェクト: {projectPath}";
     public string StoragePathText => $"保存先: {generationService.GetProjectDirectory(projectPath)}";
+
+    public bool IsEmptyStateVisible
+    {
+        get => isEmptyStateVisible;
+        private set
+        {
+            if (isEmptyStateVisible != value)
+            {
+                isEmptyStateVisible = value;
+                OnPropertyChanged(nameof(IsEmptyStateVisible));
+            }
+        }
+    }
+
+    public string EmptyStateMessage
+    {
+        get => emptyStateMessage;
+        private set
+        {
+            if (emptyStateMessage != value)
+            {
+                emptyStateMessage = value;
+                OnPropertyChanged(nameof(EmptyStateMessage));
+            }
+        }
+    }
+
+    public bool CanRestore
+    {
+        get => canRestore;
+        private set
+        {
+            if (canRestore != value)
+            {
+                canRestore = value;
+                OnPropertyChanged(nameof(CanRestore));
+            }
+        }
+    }
+
+    public bool CanDelete
+    {
+        get => canDelete;
+        private set
+        {
+            if (canDelete != value)
+            {
+                canDelete = value;
+                OnPropertyChanged(nameof(CanDelete));
+            }
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
@@ -98,12 +176,8 @@ public partial class ProjectGenerationListWindow : Window
     private void OnOpenStorageClick(object sender, RoutedEventArgs e)
     {
         var path = generationService.GetProjectDirectory(projectPath);
-        if (!Directory.Exists(path))
-        {
-            Directory.CreateDirectory(path);
-        }
-
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        Directory.CreateDirectory(path);
+        Process.Start(new ProcessStartInfo
         {
             FileName = path,
             UseShellExecute = true,
@@ -122,13 +196,31 @@ public partial class ProjectGenerationListWindow : Window
                 Generations.Add(ProjectGenerationListRow.FromRecord(generation));
             }
 
+            SelectedGeneration = Generations.FirstOrDefault();
             logger.Info($"GenerationListRefresh end. projectPath={projectPath}, count={Generations.Count}");
+            UpdateState();
         }
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationListRefresh failed. projectPath={projectPath}");
             MessageBox.Show("世代一覧の更新に失敗しました。ログを確認してください。", "世代一覧", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
+    }
+
+    private void UpdateState()
+    {
+        var hasItems = Generations.Count > 0;
+        IsEmptyStateVisible = !hasItems;
+        CanRestore = hasItems && SelectedGeneration is not null;
+        CanDelete = hasItems && SelectedGeneration is not null;
+        EmptyStateMessage = hasItems
+            ? string.Empty
+            : "このプロジェクトには保存された世代がありません。";
+    }
+
+    private void OnPropertyChanged(string propertyName)
+    {
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 
     public sealed class ProjectGenerationListRow

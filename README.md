@@ -32,12 +32,31 @@ YukkuriMovieMaker 用の補助ツールです。
 
 * 世代を保存
 * 世代一覧
+* 世代診断
 
 世代管理は Git を使わず、`%AppData%\YMMProjectManager\Generations\` にローカル保存します。
 
 保存対象は `.ymmp` 本体のみです。画像、動画、音声、フォント、素材フォルダ、Git 履歴は保存しません。
 
 復元時は既定で元ファイルへ戻し、復元前バックアップを作成します。
+
+## 世代診断
+
+`世代診断` では次の情報を確認できます。
+
+* ProjectId
+* ProjectPath
+* GenerationCount
+* StorageSize
+* LatestGeneration
+* ManifestStatus
+* DeletedGenerationCount
+
+破損時の動作:
+
+* manifest 破損時は空一覧として扱い、ログに記録します
+* metadata 破損時は壊れた世代だけを無効化し、残りは表示します
+* SHA256 不一致時は復元を禁止します
 
 ---
 

@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
@@ -11,8 +11,8 @@ using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
-using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Commands;
+using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
@@ -133,10 +133,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await ExecuteWithBusyAsync("Load", async () =>
         {
             logger.Info("Load start.");
-            var items = await repository.LoadAsync().ConfigureAwait(true);
+            var store = await repository.LoadAsync().ConfigureAwait(true);
 
             Projects.Clear();
-            foreach (var item in items)
+            foreach (var item in store.Projects)
             {
                 Projects.Add(item);
             }
@@ -257,11 +257,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
             var generation = await generationService.CreateGenerationAsync(projectPath, displayName, memo).ConfigureAwait(true);
             logger.Info($"Generation saved. projectPath={projectPath}, generationId={generation.GenerationId}");
-            MessageBox.Show(
-                $"世代を保存しました。\n{generation.DisplayName}",
-                "世代管理",
-                MessageBoxButton.OK,
-                MessageBoxImage.Information);
+            MessageBox.Show($"世代を保存しました。\n{generation.DisplayName}", "世代管理", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }
 
@@ -281,6 +277,29 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
 
         var window = new ProjectGenerationListWindow(projectPath, logger)
+        {
+            Owner = GetActiveWindow(),
+        };
+        window.ShowDialog();
+        await Task.CompletedTask;
+    }
+
+    public async Task ShowGenerationDiagnosticsAsync()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            MessageBox.Show("世代診断を表示するプロジェクトを選択してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(project.FullPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var window = new ProjectGenerationDiagnosticsWindow(projectPath, logger)
         {
             Owner = GetActiveWindow(),
         };
@@ -496,13 +515,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private void OpenRelinkWindowDialog(RelinkMainWindow window)
     {
-            var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
-            if (owner is not null && !ReferenceEquals(owner, window))
-            {
-                window.Owner = owner;
-            }
+        var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
+        if (owner is not null && !ReferenceEquals(owner, window))
+        {
+            window.Owner = owner;
+        }
 
-            window.ShowDialog();
+        window.ShowDialog();
     }
 
     private async Task GenerateThumbnailsFastAsync()
@@ -588,7 +607,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task SaveAsync()
     {
-        await repository.SaveAsync(Projects.ToList()).ConfigureAwait(true);
+        await repository.SaveAsync(new ProjectStore
+        {
+            Projects = Projects.ToList(),
+        }).ConfigureAwait(true);
     }
 
     private async Task ExecuteWithBusyAsync(string operationName, Func<Task> action)

@@ -13,98 +13,63 @@
     MinWidth="320"
     MinHeight="240">
 
-    <TabControl Margin="8">
-        <DockPanel Margin="0,8,0,0">
-                <StackPanel
-                    Orientation="Horizontal"
-                    DockPanel.Dock="Top"
-                    Margin="0,0,0,8">
-                    <Button
-                        Content="追加"
-                        Width="72"
-                        Margin="0,0,8,0"
-                        Command="{Binding AddCommand}" />
-                    <Button
-                        Content="削除"
-                        Width="72"
-                        Margin="0,0,8,0"
-                        Command="{Binding RemoveCommand}" />
-                    <Button
-                        Content="開く"
-                        Width="72"
-                        Margin="0,0,8,0"
-                        Command="{Binding OpenCommand}" />
-                </StackPanel>
-                <StackPanel
-                    Orientation="Horizontal"
-                    DockPanel.Dock="Top"
-                    Margin="0,0,0,8">
-                    <Button
-                        Content="開いているPFを再リンク"
-                        MinWidth="180"
-                        Margin="0,0,8,0"
-                        Command="{Binding OpenRelinkWindowCommand}" />
-                    <Button
-                        Content="サムネイル生成"
-                        MinWidth="180"
-                                                Margin="0,0,8,0"
-                        Command="{Binding GenerateThumbnailsFastCommand}" />
-                    <!-- <Button
-                        Content=".ymmpxの関連付け"
-                        MinWidth="180"
-                        Command="{Binding AssociateYmmpxCommand}" /> -->
-                </StackPanel>
-                <!-- <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,10">
-                    <Button
-                        Content="選択したPFを同梱化"
-                        MinWidth="180"
-                        Margin="0,0,8,0"
-                        Command="{Binding PackageSelectedProjectCommand}" />
-                    <Button
-                        Content="開いているPFを同梱化"
-                        MinWidth="180"
-                        Margin="0,0,8,0"
-                        Command="{Binding PackageOpenedProjectCommand}" />
-                    <Button
-                        Content="ymmpxを展開"
-                        MinWidth="180"
-                        Command="{Binding ExtractBundleCommand}" Click="Button_Click" />
-                </StackPanel> -->
+    <Grid Margin="8">
+        <DockPanel>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
+                <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
+                <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
+            </StackPanel>
 
-                <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
-                <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
-                <ListBox
-                    ItemsSource="{Binding Projects}"
-                    SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                    MouseDoubleClick="OnProjectListMouseDoubleClick"
-                    PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
-                    <ListBox.ContextMenu>
-                        <ContextMenu>
-                            <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
-                            <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
-                        </ContextMenu>
-                    </ListBox.ContextMenu>
-                    <ListBox.ItemTemplate>
-                        <DataTemplate>
-                            <Grid Margin="0,2">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="Auto" />
-                                    <ColumnDefinition Width="8" />
-                                    <ColumnDefinition Width="*" />
-                                </Grid.ColumnDefinitions>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <Button
+                    Content="開いているPFを再リンク"
+                    MinWidth="180"
+                    Margin="0,0,8,0"
+                    Command="{Binding OpenRelinkWindowCommand}" />
+                <Button
+                    Content="サムネイル生成"
+                    MinWidth="180"
+                    Margin="0,0,8,0"
+                    Command="{Binding GenerateThumbnailsFastCommand}" />
+            </StackPanel>
 
-                                <controls:ScrubThumbnailControl
-                                    Grid.Column="0"
-                                    CacheDirectory="{Binding ThumbnailCacheDirectory}" />
+            <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
+            <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
 
-                                <StackPanel Grid.Column="2" VerticalAlignment="Center">
-                                    <TextBlock Text="{Binding EffectiveDisplayName}" FontWeight="SemiBold" />
-                                    <TextBlock Text="{Binding FullPath}" FontSize="11" Opacity="0.8" />
-                                </StackPanel>
-                            </Grid>
-                        </DataTemplate>
-                    </ListBox.ItemTemplate>
-                </ListBox>
-            </DockPanel>
-    </TabControl>
+            <ListBox
+                ItemsSource="{Binding Projects}"
+                SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
+                MouseDoubleClick="OnProjectListMouseDoubleClick"
+                PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
+                <ListBox.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
+                        <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
+                        <MenuItem Header="世代診断" Click="OnShowGenerationDiagnosticsMenuClick" />
+                    </ContextMenu>
+                </ListBox.ContextMenu>
+                <ListBox.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Margin="0,2">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="8" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <controls:ScrubThumbnailControl
+                                Grid.Column="0"
+                                CacheDirectory="{Binding ThumbnailCacheDirectory}" />
+
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center">
+                                <TextBlock Text="{Binding EffectiveDisplayName}" FontWeight="SemiBold" />
+                                <TextBlock Text="{Binding FullPath}" FontSize="11" Opacity="0.8" />
+                            </StackPanel>
+                        </Grid>
+                    </DataTemplate>
+                </ListBox.ItemTemplate>
+            </ListBox>
+        </DockPanel>
+    </Grid>
 </UserControl>

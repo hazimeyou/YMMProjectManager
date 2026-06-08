@@ -1,4 +1,5 @@
 using System.IO;
+using System.Linq;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
@@ -32,14 +33,32 @@ internal static class Program
 
     private static async Task RunAllAsync(string workRoot)
     {
+        await TestZeroGenerationsAsync(workRoot);
         await TestCreateAndListAsync(workRoot);
         await TestMultipleGenerationsAsync(workRoot);
+        await TestManifestCorruptionAsync(workRoot);
+        await TestMetadataCorruptionAsync(workRoot);
         await TestRestoreAsync(workRoot);
         await TestDeleteAsync(workRoot);
+        await TestDeletedFolderExistsAsync(workRoot);
         await TestShaMismatchAsync(workRoot);
         await TestMissingGenerationAsync(workRoot);
         await TestLockedFileRestoreFailureAsync(workRoot);
-        await TestBrokenMetadataIsToleratedAsync(workRoot);
+        await TestDiagnosticsAsync(workRoot);
+    }
+
+    private static async Task TestZeroGenerationsAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestZeroGenerationsAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var service = CreateService(root);
+
+        var generations = await service.GetGenerationsAsync(projectPath);
+        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
+
+        AssertEx.Equal(0, generations.Count, "Empty project should have no generations.");
+        AssertEx.Equal(0, diagnostics.GenerationCount, "Diagnostics should report no valid generations.");
+        AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Missing, "Missing manifest should be reported for empty storage.");
     }
 
     private static async Task TestCreateAndListAsync(string workRoot)
@@ -67,6 +86,39 @@ internal static class Program
 
         var generations = await service.GetGenerationsAsync(projectPath);
         AssertEx.Equal(2, generations.Count, "Two generations should be listed.");
+    }
+
+    private static async Task TestManifestCorruptionAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestManifestCorruptionAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var service = CreateService(root);
+
+        await service.CreateGenerationAsync(projectPath, "first", null);
+        var manifestPath = Path.Combine(service.GetProjectDirectory(projectPath), "manifest.json");
+        File.WriteAllText(manifestPath, "{ broken json");
+
+        var generations = await service.GetGenerationsAsync(projectPath);
+        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
+
+        AssertEx.Equal(0, generations.Count, "Corrupted manifest should fall back to empty list.");
+        AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Corrupted, "Corrupted manifest should be reported.");
+    }
+
+    private static async Task TestMetadataCorruptionAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestMetadataCorruptionAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var service = CreateService(root);
+
+        await service.CreateGenerationAsync(projectPath, "first", null);
+        var second = await service.CreateGenerationAsync(projectPath, "second", null);
+        var metadataPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", second.GenerationId, "metadata.json");
+        File.Delete(metadataPath);
+
+        var generations = await service.GetGenerationsAsync(projectPath);
+        AssertEx.Equal(2, generations.Count, "Corrupted metadata should not remove the generation entry.");
+        AssertEx.True(generations.Any(x => !x.IsValid), "Broken generation should be marked invalid.");
     }
 
     private static async Task TestRestoreAsync(string workRoot)
@@ -147,19 +199,33 @@ internal static class Program
         AssertEx.True(!string.IsNullOrWhiteSpace(errorMessage), "Locked restore should provide a reason.");
     }
 
-    private static async Task TestBrokenMetadataIsToleratedAsync(string workRoot)
+    private static async Task TestDeletedFolderExistsAsync(string workRoot)
     {
-        var root = CreateRoot(workRoot, nameof(TestBrokenMetadataIsToleratedAsync));
+        var root = CreateRoot(workRoot, nameof(TestDeletedFolderExistsAsync));
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
         var service = CreateService(root);
 
-        var created = await service.CreateGenerationAsync(projectPath, "broken", null);
-        var metadataPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", created.GenerationId, "metadata.json");
-        File.Delete(metadataPath);
+        var created = await service.CreateGenerationAsync(projectPath, "delete", null);
+        await service.DeleteGenerationAsync(projectPath, created.GenerationId);
 
-        var generations = await service.GetGenerationsAsync(projectPath);
-        AssertEx.Equal(1, generations.Count, "Missing metadata should not drop the generation from the list.");
-        AssertEx.True(!generations[0].IsValid, "Broken generation should be marked invalid.");
+        var deletedPath = Path.Combine(service.GetProjectDirectory(projectPath), "deleted");
+        AssertEx.True(Directory.Exists(deletedPath), "Deleted folder should exist after deletion.");
+        AssertEx.True(Directory.EnumerateDirectories(deletedPath).Any(), "Deleted folder should contain moved generations.");
+    }
+
+    private static async Task TestDiagnosticsAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestDiagnosticsAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var service = CreateService(root);
+
+        await service.CreateGenerationAsync(projectPath, "diag", null);
+        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
+
+        AssertEx.Equal(1, diagnostics.GenerationCount, "Diagnostics should count valid generations.");
+        AssertEx.True(!string.IsNullOrWhiteSpace(diagnostics.ProjectId), "ProjectId should be populated.");
+        AssertEx.True(diagnostics.StorageSize > 0, "StorageSize should be populated.");
+        AssertEx.True(diagnostics.LatestGeneration is not null, "LatestGeneration should be populated.");
     }
 
     private static ProjectGenerationService CreateService(string root)

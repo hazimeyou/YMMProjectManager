@@ -137,9 +137,6 @@ public sealed class ProjectGenerationStorage
                 {
                     Directory.CreateDirectory(backupDirectory);
                 }
-
-                File.Copy(targetPath, backupPath, overwrite: true);
-
                 File.Replace(sourceTempPath, targetPath, backupPath, ignoreMetadataErrors: true);
                 return;
             }
@@ -180,5 +177,58 @@ public sealed class ProjectGenerationStorage
         }
 
         await Task.Run(() => Directory.Move(sourceDirectory, destinationDirectory), cancellationToken).ConfigureAwait(false);
+    }
+
+    public long GetDirectorySizeBytes(string directoryPath)
+    {
+        if (!Directory.Exists(directoryPath))
+        {
+            return 0;
+        }
+
+        long total = 0;
+        foreach (var file in Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories))
+        {
+            try
+            {
+                total += new FileInfo(file).Length;
+            }
+            catch
+            {
+            }
+        }
+
+        return total;
+    }
+
+    public int CountChildDirectories(string directoryPath)
+    {
+        if (!Directory.Exists(directoryPath))
+        {
+            return 0;
+        }
+
+        try
+        {
+            return Directory.EnumerateDirectories(directoryPath).Count();
+        }
+        catch
+        {
+            return 0;
+        }
+    }
+
+    public void DeleteFileIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
     }
 }

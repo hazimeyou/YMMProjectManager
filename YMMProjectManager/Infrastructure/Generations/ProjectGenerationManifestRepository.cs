@@ -15,30 +15,25 @@ public sealed class ProjectGenerationManifestRepository
         this.logger = logger;
     }
 
-    public async Task<ProjectGenerationManifest> LoadOrCreateAsync(string projectId, string projectPath, CancellationToken cancellationToken = default)
+    public async Task<ProjectGenerationManifestLoadResult> LoadAsync(string projectId, string projectPath, CancellationToken cancellationToken = default)
     {
         try
         {
             var manifest = await storage.ReadManifestAsync(projectId, cancellationToken).ConfigureAwait(false);
             if (manifest is not null)
             {
-                return manifest;
+                logger.Info($"GenerationManifestLoaded projectId={projectId}, projectPath={projectPath}");
+                return new ProjectGenerationManifestLoadResult(manifest, ProjectGenerationManifestStatus.Valid);
             }
         }
         catch (Exception ex)
         {
-            logger.Error(ex, $"Failed to load generation manifest. projectId={projectId}");
+            logger.Error(ex, $"GenerationManifestCorrupted projectId={projectId}, projectPath={projectPath}");
+            return new ProjectGenerationManifestLoadResult(CreateEmptyManifest(projectId, projectPath), ProjectGenerationManifestStatus.Corrupted, ex.Message);
         }
 
-        var now = DateTimeOffset.Now;
-        return new ProjectGenerationManifest
-        {
-            ProjectId = projectId,
-            ProjectPath = projectPath,
-            ProjectFileName = Path.GetFileName(projectPath),
-            CreatedAt = now,
-            UpdatedAt = now,
-        };
+        logger.Info($"GenerationManifestLoaded projectId={projectId}, projectPath={projectPath}, status=Missing");
+        return new ProjectGenerationManifestLoadResult(CreateEmptyManifest(projectId, projectPath), ProjectGenerationManifestStatus.Missing);
     }
 
     public async Task SaveAsync(string projectId, ProjectGenerationManifest manifest, CancellationToken cancellationToken = default)
@@ -51,5 +46,18 @@ public sealed class ProjectGenerationManifestRepository
         {
             logger.Error(ex, $"Failed to save generation manifest. projectId={projectId}");
         }
+    }
+
+    private static ProjectGenerationManifest CreateEmptyManifest(string projectId, string projectPath)
+    {
+        var now = DateTimeOffset.Now;
+        return new ProjectGenerationManifest
+        {
+            ProjectId = projectId,
+            ProjectPath = projectPath,
+            ProjectFileName = Path.GetFileName(projectPath),
+            CreatedAt = now,
+            UpdatedAt = now,
+        };
     }
 }
