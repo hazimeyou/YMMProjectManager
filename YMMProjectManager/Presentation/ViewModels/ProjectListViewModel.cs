@@ -6,14 +6,17 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using YMMProjectManager.Application;
+using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Output;
+using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
+using YMMProjectManager.Settings;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
 
@@ -538,6 +541,36 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             {
                 MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
+            }
+
+            var settings = YMMProjectManagerSettings.Current;
+            if (settings.ExperimentalFastThumbnailGenerationEnabled)
+            {
+                var experimentalOptions = new FastThumbnailGenerationOptions
+                {
+                    Enabled = true,
+                    SampleCount = settings.ExperimentalFastThumbnailSampleCount,
+                    SeekSettleDelayMilliseconds = settings.ExperimentalFastThumbnailSeekSettleDelayMilliseconds,
+                    MaxRetryCount = settings.ExperimentalFastThumbnailMaxRetryCount,
+                    AllowClipboardFallback = settings.ExperimentalFastThumbnailAllowClipboardFallback,
+                    AllowScreenCaptureFallback = settings.ExperimentalFastThumbnailAllowScreenCaptureFallback,
+                };
+
+                var experimentalService = new FastThumbnailGenerationService(logger, experimentalOptions);
+                var experimentalResult = await experimentalService
+                    .GenerateAsync(SelectedProject.FullPath, timeline, CancellationToken.None)
+                    .ConfigureAwait(true);
+
+                logger.Info(
+                    $"Experimental fast thumbnail result. success={experimentalResult.Success}, captured={experimentalResult.CapturedCount}, requested={experimentalResult.RequestedSampleCount}, fallback={experimentalResult.FallbackReason ?? "none"}");
+
+                if (experimentalResult.Success)
+                {
+                    UpdateThumbnailMetadata(SelectedProject);
+                    return;
+                }
+
+                logger.Info($"Experimental fast thumbnail falling back to existing generator. reason={experimentalResult.FallbackReason ?? "unknown"}");
             }
 
             var result = await fastThumbnailGenerator
