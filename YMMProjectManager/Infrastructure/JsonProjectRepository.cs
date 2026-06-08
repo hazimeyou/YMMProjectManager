@@ -74,7 +74,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         catch (Exception ex) { logger.Error("Failed to save projects.json", ex); }
     }
 
-    private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); return Path.Combine(AppDirectories.UserDirectory, "plugin", PluginDirectoryName, "data", "projects.json"); }
+    private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); return Path.Combine(appData, "YMMProjectManager", "plugin", PluginDirectoryName, "data", "projects.json"); }
 
     private sealed class ProjectListFileDto { public List<ProjectRecordDto> Projects { get; set; } = []; public List<ProjectFolderDto> Folders { get; set; } = []; }
     private sealed class ProjectRecordDto { public string? FullPath { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }

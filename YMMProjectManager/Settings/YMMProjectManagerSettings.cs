@@ -136,7 +136,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
 
     private static string GetSettingsFilePath()
     {
-        var assemblyDirectory = Path.GetDirectoryName(typeof(ToolPluginEntry).Assembly.Location) ?? AppContext.BaseDirectory;
+        var assemblyDirectory = Path.GetDirectoryName(typeof(YMMProjectManagerSettings).Assembly.Location) ?? AppContext.BaseDirectory;
         return Path.Combine(assemblyDirectory, SettingsDirectoryName, SettingsFileName);
     }
 

@@ -45,6 +45,7 @@ internal static class Program
         await TestMissingGenerationAsync(workRoot);
         await TestLockedFileRestoreFailureAsync(workRoot);
         await TestDiagnosticsAsync(workRoot);
+        await TestLegacyProjectStoreCompatibilityAsync(workRoot);
     }
 
     private static async Task TestZeroGenerationsAsync(string workRoot)
@@ -226,6 +227,46 @@ internal static class Program
         AssertEx.True(!string.IsNullOrWhiteSpace(diagnostics.ProjectId), "ProjectId should be populated.");
         AssertEx.True(diagnostics.StorageSize > 0, "StorageSize should be populated.");
         AssertEx.True(diagnostics.LatestGeneration is not null, "LatestGeneration should be populated.");
+    }
+
+    private static async Task TestLegacyProjectStoreCompatibilityAsync(string workRoot)
+    {
+        var runtimeRoot = Path.Combine(CreateRoot(workRoot, nameof(TestLegacyProjectStoreCompatibilityAsync)), "YMM4");
+        var dataDir = Path.Combine(runtimeRoot, "user", "plugin", "YMMProjectManager", "data");
+        Directory.CreateDirectory(dataDir);
+
+        var json = """
+        {
+          "Projects": [
+            {
+              "FullPath": "C:\\Temp\\legacy.ymmp",
+              "DisplayName": "legacy project",
+              "Pinned": true,
+              "LastAccess": "2026-06-08T00:00:00+09:00"
+            }
+          ]
+        }
+        """;
+
+        var original = Environment.GetEnvironmentVariable("YMM4DirPath");
+        try
+        {
+            Environment.SetEnvironmentVariable("YMM4DirPath", runtimeRoot);
+            var jsonPath = Path.Combine(dataDir, "projects.json");
+            await File.WriteAllTextAsync(jsonPath, json);
+
+            var logger = new FileLogger(Path.Combine(runtimeRoot, "logs", "test.log"));
+            var repository = new JsonProjectRepository(logger);
+            var store = await repository.LoadAsync();
+
+            AssertEx.Equal(1, store.Projects.Count, "Legacy project JSON should load.");
+            AssertEx.Equal("legacy project", store.Projects[0].DisplayName, "Legacy display name should round-trip.");
+            AssertEx.True(store.Projects[0].LinkedYmmpFiles.Count >= 1, "Legacy project should be normalized with a linked main file.");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("YMM4DirPath", original);
+        }
     }
 
     private static ProjectGenerationService CreateService(string root)

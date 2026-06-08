@@ -58,8 +58,27 @@ public sealed class ProjectGenerationStorage
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, manifest, JsonOptions, cancellationToken).ConfigureAwait(false);
+        var tempPath = path + ".tmp";
+        try
+        {
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, manifest, JsonOptions, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (File.Exists(path))
+            {
+                File.Replace(tempPath, path, null, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                File.Move(tempPath, path, overwrite: true);
+            }
+        }
+        finally
+        {
+            DeleteFileIfExists(tempPath);
+        }
     }
 
     public async Task<ProjectGenerationManifest?> ReadManifestAsync(string projectId, CancellationToken cancellationToken = default)
@@ -83,8 +102,27 @@ public sealed class ProjectGenerationStorage
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = File.Create(path);
-        await JsonSerializer.SerializeAsync(stream, metadata, JsonOptions, cancellationToken).ConfigureAwait(false);
+        var tempPath = path + ".tmp";
+        try
+        {
+            await using (var stream = File.Create(tempPath))
+            {
+                await JsonSerializer.SerializeAsync(stream, metadata, JsonOptions, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (File.Exists(path))
+            {
+                File.Replace(tempPath, path, null, ignoreMetadataErrors: true);
+            }
+            else
+            {
+                File.Move(tempPath, path, overwrite: true);
+            }
+        }
+        finally
+        {
+            DeleteFileIfExists(tempPath);
+        }
     }
 
     public async Task<ProjectGenerationManifestItem?> ReadMetadataAsync(string projectId, string generationId, CancellationToken cancellationToken = default)
