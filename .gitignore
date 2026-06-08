@@ -16,3 +16,5 @@
 *.ymme
 /YMMProjectManagerLauncher/bin
 /YMMProjectManagerLauncher/obj
+/YMMProjectManager.Tests/bin
+/YMMProjectManager.Tests/obj
