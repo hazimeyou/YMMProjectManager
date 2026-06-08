@@ -51,7 +51,7 @@ jobs:
           $pluginBin = "YMMProjectManager\bin\Release\net10.0-windows"
           $requiredFiles = @(
             "YMMProjectManager.dll",
-            "YMMProjectManager.deps.json",
+            "YMMProjectManager.deps.json"
           )
 
           foreach ($file in $requiredFiles) {
