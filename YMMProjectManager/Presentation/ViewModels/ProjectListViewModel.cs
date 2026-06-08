@@ -8,8 +8,10 @@ using Microsoft.Win32;
 using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
+using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
@@ -22,6 +24,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
+    private readonly IProjectGenerationService generationService;
     private readonly YmmpBundleService bundleService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
@@ -96,6 +99,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
+        generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpBundleService(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
@@ -215,6 +219,73 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
             logger.Info($"Add batch end. added={addedEntries.Count}, total={Projects.Count}");
         }).ConfigureAwait(true);
+    }
+
+    public async Task SaveGenerationAsync()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            MessageBox.Show("世代を保存するプロジェクトを選択してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(project.FullPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new ProjectGenerationSaveDialog
+        {
+            Owner = GetActiveWindow(),
+            DisplayName = DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm"),
+            Memo = string.Empty,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("GenerationSave", async () =>
+        {
+            var displayName = string.IsNullOrWhiteSpace(dialog.DisplayName)
+                ? DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm")
+                : dialog.DisplayName.Trim();
+            var memo = string.IsNullOrWhiteSpace(dialog.Memo) ? null : dialog.Memo.Trim();
+
+            var generation = await generationService.CreateGenerationAsync(projectPath, displayName, memo).ConfigureAwait(true);
+            logger.Info($"Generation saved. projectPath={projectPath}, generationId={generation.GenerationId}");
+            MessageBox.Show(
+                $"世代を保存しました。\n{generation.DisplayName}",
+                "世代管理",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    public async Task ShowGenerationListAsync()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            MessageBox.Show("世代一覧を表示するプロジェクトを選択してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(project.FullPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var window = new ProjectGenerationListWindow(projectPath, logger)
+        {
+            Owner = GetActiveWindow(),
+        };
+        window.ShowDialog();
+        await Task.CompletedTask;
     }
 
     private async Task RemoveAsync()
@@ -637,5 +708,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
 
         return true;
+    }
+
+    private static Window? GetActiveWindow()
+    {
+        return System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
     }
 }

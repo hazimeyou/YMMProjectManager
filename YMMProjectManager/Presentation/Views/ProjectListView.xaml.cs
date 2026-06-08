@@ -3,6 +3,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using YMMProjectManager.Domain;
+using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.ViewModels;
 
 namespace YMMProjectManager.Presentation.Views;
@@ -71,6 +73,50 @@ public partial class ProjectListView : UserControl
         await vm.AddProjectsAsync(ymmpFiles);
     }
 
+    private void OnProjectListPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBox listBox)
+        {
+            return;
+        }
+
+        var dependencyObject = e.OriginalSource as DependencyObject;
+        if (dependencyObject is null)
+        {
+            return;
+        }
+
+        var item = FindAncestor<ListBoxItem>(dependencyObject);
+        if (item is not null)
+        {
+            item.IsSelected = true;
+            item.Focus();
+            return;
+        }
+
+        listBox.SelectedItem = null;
+    }
+
+    private async void OnSaveGenerationMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ProjectListViewModel vm)
+        {
+            return;
+        }
+
+        await vm.SaveGenerationAsync();
+    }
+
+    private async void OnShowGenerationListMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ProjectListViewModel vm)
+        {
+            return;
+        }
+
+        await vm.ShowGenerationListAsync();
+    }
+
     private void OnProjectListMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not ListBox listBox)
@@ -115,8 +161,20 @@ public partial class ProjectListView : UserControl
         return false;
     }
 
-    private void Button_Click(object sender, RoutedEventArgs e)
+    private static T? FindAncestor<T>(DependencyObject child)
+        where T : DependencyObject
     {
+        var current = child;
+        while (current is not null)
+        {
+            if (current is T typed)
+            {
+                return typed;
+            }
 
+            current = VisualTreeHelper.GetParent(current);
+        }
+
+        return null;
     }
 }

@@ -76,7 +76,14 @@
                 <ListBox
                     ItemsSource="{Binding Projects}"
                     SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                    MouseDoubleClick="OnProjectListMouseDoubleClick">
+                    MouseDoubleClick="OnProjectListMouseDoubleClick"
+                    PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
+                    <ListBox.ContextMenu>
+                        <ContextMenu>
+                            <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
+                            <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
+                        </ContextMenu>
+                    </ListBox.ContextMenu>
                     <ListBox.ItemTemplate>
                         <DataTemplate>
                             <Grid Margin="0,2">
