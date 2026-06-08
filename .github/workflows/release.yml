@@ -23,14 +23,27 @@ jobs:
       - name: Set Version
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $version = "${{ github.ref_name }}".TrimStart('v')
           echo "VERSION=$version" >> $env:GITHUB_ENV
 
-      - name: Build
-        run: dotnet build .\YMMProjectManager.sln -c Release -p:VersionPrefix=$env:VERSION
+      - name: Fetch YMM4 Build Libraries
+        shell: pwsh
+        run: |
+          ./scripts/fetch-ymm4-libs.ps1 -OutputDir "libs/YMM4"
 
-      - name: Publish
-        run: dotnet publish .\YMMProjectManagerLauncher\YMMProjectManagerLauncher.csproj -c Release -r win-x64 --self-contained true -p:VersionPrefix=$env:VERSION -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o publish
+      - name: Build
+        run: dotnet build .\YMMProjectManager.sln -c Release -p:Version=$env:VERSION -p:YMM4_PATH="${{ github.workspace }}\libs\YMM4"
+
+      - name: Prepare Publish Folder
+        run: |
+          if (Test-Path publish) { Remove-Item publish -Recurse -Force }
+          New-Item -ItemType Directory -Path publish
+
+      - name: Copy LICENSE
+        run: Copy-Item "LICENSE" "publish\LICENSE"
+
+      - name: Copy README
+        run: Copy-Item "README.md" "publish\readme.txt"
 
       - name: Collect Plugin Files
         shell: pwsh
@@ -38,7 +51,7 @@ jobs:
           $pluginBin = "YMMProjectManager\bin\Release\net10.0-windows"
           $requiredFiles = @(
             "YMMProjectManager.dll",
-            "YMMProjectManager.deps.json"
+            "YMMProjectManager.deps.json",
           )
 
           foreach ($file in $requiredFiles) {
@@ -53,13 +66,6 @@ jobs:
           if (Test-Path $pdb) {
             Copy-Item $pdb "publish\YMMProjectManager.pdb" -Force
           }
-
-
-      - name: Copy LICENSE
-        run: Copy-Item ".github\assets\LICENSE.txt" "publish\LICENSE.txt"
-
-      - name: Copy README
-        run: Copy-Item ".github\assets\readme.txt" "publish\readme.txt"
 
       - name: Prepare Package Folder
         run: |
