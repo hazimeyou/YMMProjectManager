@@ -1,9 +1,11 @@
 using System.IO;
 using System.Linq;
 using System.Text.Json;
+using YMMProjectManager.Application.Diagnostics;
 using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Diagnostics;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Thumbnails;
 
@@ -51,6 +53,8 @@ internal static class Program
         await TestFastThumbnailOptionsDefaultsAsync();
         await TestFastThumbnailFrameSamplingAsync();
         await TestFastThumbnailResultSerializationAsync();
+        await TestPreviewBitmapDiagnosticsResultSerializationAsync();
+        await TestPreviewBitmapDiagnosticsNoDispatcherAsync();
         await TestSeekAdapterReflectionFailureAsync();
         await TestPreviewCaptureFallbackAsync();
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
@@ -300,6 +304,44 @@ internal static class Program
         AssertEx.Equal(64, restoredValue.CapturedCount, "Captured count should round-trip.");
         AssertEx.Equal(64, diagnostics.SampleCount, "Diagnostics sample count should round-trip.");
         return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewBitmapDiagnosticsResultSerializationAsync()
+    {
+        var result = new PreviewBitmapDiagnosticsResult
+        {
+            PreviewViewModelFound = true,
+            GetBitmapMethodFound = true,
+            CaptureSucceeded = true,
+            PreviewViewModelTypeName = "Example.PreviewViewModel",
+            GetBitmapReturnTypeName = "System.Windows.Media.Imaging.BitmapSource",
+            Width = 1920,
+            Height = 1080,
+            SavedFilePath = @"C:\Temp\YMMProjectManager\PreviewDiagnostics\preview-test.png",
+            FailureReason = null,
+            Duration = TimeSpan.FromMilliseconds(456),
+        };
+
+        var json = JsonSerializer.Serialize(result);
+        var restored = JsonSerializer.Deserialize<PreviewBitmapDiagnosticsResult>(json);
+        var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
+
+        AssertEx.True(restoredValue.PreviewViewModelFound, "PreviewViewModelFound should round-trip.");
+        AssertEx.True(restoredValue.GetBitmapMethodFound, "GetBitmapMethodFound should round-trip.");
+        AssertEx.True(restoredValue.CaptureSucceeded, "CaptureSucceeded should round-trip.");
+        AssertEx.Equal(1920, restoredValue.Width, "Width should round-trip.");
+        AssertEx.Equal(1080, restoredValue.Height, "Height should round-trip.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestPreviewBitmapDiagnosticsNoDispatcherAsync()
+    {
+        var logger = new FileLogger(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"), "logs", "test.log"));
+        var service = new PreviewBitmapDiagnostics(logger);
+        var result = await service.RunAsync(CancellationToken.None);
+
+        AssertEx.True(!result.CaptureSucceeded, "Diagnostics should fail gracefully without a WPF dispatcher.");
+        AssertEx.True(!string.IsNullOrWhiteSpace(result.FailureReason), "Diagnostics failure should include a reason.");
     }
 
     private static async Task TestSeekAdapterReflectionFailureAsync()
