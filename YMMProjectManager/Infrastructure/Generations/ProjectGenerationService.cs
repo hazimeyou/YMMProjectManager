@@ -42,8 +42,6 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         var generationId = idFactory.Create(createdAt);
         var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
         var generationFilePath = storage.GetGenerationFilePath(projectId, generationId);
-        var fileInfo = new FileInfo(normalizedProjectPath);
-        var sha256 = await Task.Run(() => hashService.ComputeFileSha256(normalizedProjectPath), cancellationToken).ConfigureAwait(false);
 
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
         var manifest = manifestLoad.Manifest;
@@ -58,6 +56,8 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         {
             Directory.CreateDirectory(generationDirectory);
             await storage.CopyProjectSnapshotAsync(normalizedProjectPath, generationFilePath, cancellationToken).ConfigureAwait(false);
+            var copiedFileInfo = new FileInfo(generationFilePath);
+            var sha256 = await Task.Run(() => hashService.ComputeFileSha256(generationFilePath), cancellationToken).ConfigureAwait(false);
 
             var metadata = new ProjectGenerationManifestItem
             {
@@ -66,7 +66,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? FormatDefaultGenerationName(createdAt) : displayName.Trim(),
                 Memo = string.IsNullOrWhiteSpace(memo) ? null : memo.Trim(),
                 SourceProjectPath = normalizedProjectPath,
-                FileSize = fileInfo.Length,
+                FileSize = copiedFileInfo.Length,
                 Sha256 = sha256,
                 CreatedByVersion = GetCreatedByVersion(),
             };

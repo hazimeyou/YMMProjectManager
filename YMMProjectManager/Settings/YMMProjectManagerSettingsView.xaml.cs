@@ -53,8 +53,9 @@ public partial class YMMProjectManagerSettingsView : UserControl
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        settings.SetSearchFolders(folders);
-        SummaryText.Text = "保存しました。";
+        SummaryText.Text = settings.SetSearchFolders(folders)
+            ? "保存しました。"
+            : "保存に失敗しました。";
     }
 
     private void OnReloadClick(object sender, RoutedEventArgs e)

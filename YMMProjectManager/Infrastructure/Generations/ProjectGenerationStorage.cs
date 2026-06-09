@@ -179,7 +179,6 @@ public sealed class ProjectGenerationStorage
                 return;
             }
 
-            File.Delete(targetPath);
             File.Move(sourceTempPath, targetPath, overwrite: true);
             return;
         }

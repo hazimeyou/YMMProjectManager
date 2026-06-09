@@ -58,6 +58,8 @@ internal static class Program
         await TestSeekAdapterReflectionFailureAsync();
         await TestPreviewCaptureFallbackAsync();
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
+        await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
+        await TestProjectGenerationStorageReplaceAsync(workRoot);
     }
 
     private static async Task TestZeroGenerationsAsync(string workRoot)
@@ -400,6 +402,40 @@ internal static class Program
         {
             Environment.SetEnvironmentVariable("YMM4DirPath", original);
         }
+    }
+
+    private static Task TestProjectEntryThumbnailCacheDirectoryNotificationAsync()
+    {
+        var entry = new ProjectEntry();
+        var notifications = new List<string>();
+
+        entry.PropertyChanged += (_, e) => notifications.Add(e.PropertyName ?? string.Empty);
+
+        entry.ThumbnailCacheDirectory = @"C:\Temp\cache-a";
+        entry.ThumbnailCacheDirectory = @"C:\Temp\cache-b";
+
+        AssertEx.Equal(2, notifications.Count, "Thumbnail cache directory changes should notify twice.");
+        AssertEx.Equal(nameof(ProjectEntry.ThumbnailCacheDirectory), notifications[0], "Thumbnail cache directory should notify its own property name.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestProjectGenerationStorageReplaceAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestProjectGenerationStorageReplaceAsync));
+        var storage = new ProjectGenerationStorage(Path.Combine(root, "store"));
+        var targetDirectory = Path.Combine(root, "target");
+        Directory.CreateDirectory(targetDirectory);
+
+        var targetPath = Path.Combine(targetDirectory, "project.ymmp");
+        await File.WriteAllTextAsync(targetPath, "old");
+
+        var sourceTempPath = Path.Combine(root, "source.tmp");
+        await File.WriteAllTextAsync(sourceTempPath, "new");
+
+        await storage.ReplaceFileAtomicallyAsync(sourceTempPath, targetPath, null);
+
+        AssertEx.Equal("new", await File.ReadAllTextAsync(targetPath), "Atomic replace should overwrite the target content.");
+        AssertEx.True(!File.Exists(sourceTempPath), "Atomic replace should consume the source temp file.");
     }
 
     private static ProjectGenerationService CreateService(string root)

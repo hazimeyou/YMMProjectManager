@@ -735,6 +735,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 "cache",
                 "filmstrip",
                 hash);
+            entry.ThumbnailCacheDirectory = null;
             entry.ThumbnailCacheDirectory = cacheDirectory;
 
             var thumbPath = Path.Combine(cacheDirectory, "000.png");

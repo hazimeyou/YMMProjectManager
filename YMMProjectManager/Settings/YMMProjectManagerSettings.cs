@@ -49,10 +49,10 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
 
     public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
 
-    public void SetSearchFolders(IEnumerable<string> folders)
+    public bool SetSearchFolders(IEnumerable<string> folders)
     {
         SearchFolders = NormalizeFolders(folders);
-        SaveToPluginDirectory();
+        return SaveToPluginDirectory();
     }
 
     public void Reload()
@@ -93,7 +93,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         }
     }
 
-    private void SaveToPluginDirectory()
+    private bool SaveToPluginDirectory()
     {
         string? tempPath = null;
         try
@@ -124,9 +124,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             tempPath = path + ".tmp";
             File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(tempPath, path, overwrite: true);
+            return true;
         }
         catch
         {
+            return false;
         }
         finally
         {
