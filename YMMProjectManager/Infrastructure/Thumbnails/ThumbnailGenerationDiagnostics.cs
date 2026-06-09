@@ -22,6 +22,22 @@ public sealed record ThumbnailGenerationDiagnostics
 
     public TimeSpan AverageCaptureDuration { get; init; }
 
+    public int? SeekRequestedFrame { get; init; }
+
+    public int? SeekBeforeFrame { get; init; }
+
+    public int? SeekAfterFrame { get; init; }
+
+    public int? SeekDelta { get; init; }
+
+    public bool? SeekSuccess { get; init; }
+
+    public string? SeekMethodUsed { get; init; }
+
+    public string? SeekFailureReason { get; init; }
+
+    public double? SeekDurationMs { get; init; }
+
     public TimeSpan TotalDuration { get; init; }
 
     public string? FallbackReason { get; init; }

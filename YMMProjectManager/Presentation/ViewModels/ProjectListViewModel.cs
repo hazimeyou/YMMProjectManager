@@ -87,6 +87,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand OpenCommand { get; }
     public ICommand GenerateThumbnailsFastCommand { get; }
     public ICommand RunPreviewBitmapDiagnosticsCommand { get; }
+    public ICommand CaptureCurrentPreviewCommand { get; }
     public ICommand ShowTimelineContextStatusCommand { get; }
     public ICommand GoToFrameCommand { get; }
     public ICommand CopyPreviewCommand { get; }
@@ -113,6 +114,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
         RunPreviewBitmapDiagnosticsCommand = new AsyncRelayCommand(RunPreviewBitmapDiagnosticsAsync, () => !IsBusy);
+        CaptureCurrentPreviewCommand = new AsyncRelayCommand(CaptureCurrentPreviewAsync, () => !IsBusy);
         ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
@@ -322,14 +324,60 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var result = await diagnostics.RunAsync(CancellationToken.None).ConfigureAwait(true);
 
             logger.Info(
-                $"Preview bitmap diagnostics end. found={result.PreviewViewModelFound}, getBitmap={result.GetBitmapMethodFound}, success={result.CaptureSucceeded}, path={result.SavedFilePath ?? "none"}");
+                $"Preview bitmap diagnostics end. discovery={result.DiscoverySucceeded}, previewView={result.PreviewViewFound}, previewViewModel={result.PreviewViewModelFound}, scenePreviewViewModel={result.ScenePreviewViewModelFound}, getBitmapCandidate={result.GetBitmapMethodFound}, falseCapture={result.FalseCaptureSucceeded}, trueCapture={result.TrueCaptureSucceeded}, preferred={result.NextRecommendedCall}, capture={result.CaptureSucceeded}, save={result.BitmapSaveSucceeded}, signatureCategory={result.GetBitmapSignatureCategory}, width={result.BitmapWidth}, height={result.BitmapHeight}, pixelFormat={result.BitmapPixelFormat}, windows={result.WindowCount}, controls={result.VisualTreeElementCount}, candidates={result.PreviewCandidateCount}, methods={result.PreviewMethodCount}, signatures={result.MethodSignatureCount}");
 
-            var message = result.CaptureSucceeded
-                ? $"Preview bitmap diagnostics completed.\nSaved: {result.SavedFilePath}"
-                : $"Preview bitmap diagnostics failed.\nReason: {result.FailureReason}\nResult: {Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics", "diagnostic-result.json")}";
+            var message = result.DiscoverySucceeded
+                ? $"Preview bitmap diagnostics completed.\nWindows: {result.WindowCount}\nControls: {result.VisualTreeElementCount}\nCandidates: {result.PreviewCandidateCount}\nMethods: {result.PreviewMethodCount}\nSignatures: {result.MethodSignatureCount}\nCategory: {result.GetBitmapSignatureCategory}\nFalse: {result.FalseCaptureSucceeded}\nTrue: {result.TrueCaptureSucceeded}\nPreferred: {result.NextRecommendedCall}\nResult: {Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics", "diagnostic-result.json")}"
+                : $"Preview bitmap diagnostics found no target.\nReason: {result.FailureReason}\nResult: {Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics", "diagnostic-result.json")}";
 
-            MessageBox.Show(message, "Preview Bitmap Diagnostics", MessageBoxButton.OK, result.CaptureSucceeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
+            MessageBox.Show(message, "Preview Bitmap Diagnostics", MessageBoxButton.OK, result.DiscoverySucceeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }).ConfigureAwait(true);
+    }
+
+    public async Task CaptureCurrentPreviewAsync()
+    {
+        await ExecuteWithBusyAsync("CurrentPreviewCapture", async () =>
+        {
+            var captureService = new CurrentPreviewCaptureService(logger);
+            var result = await captureService.CaptureAsync(CancellationToken.None).ConfigureAwait(true);
+
+            var message = result.Success
+                ? $"現在プレビューを保存しました。\nSize: {result.BitmapWidth}x{result.BitmapHeight}\nPixelFormat: {result.BitmapPixelFormat}\nPNG: {result.SavedPath}\nJSON: {result.DiagnosticsPath}"
+                : $"現在プレビュー取得に失敗しました。\nReason: {result.FailureReason}\nJSON: {result.DiagnosticsPath}";
+
+            MessageBox.Show(
+                message,
+                "現在プレビュー取得",
+                MessageBoxButton.OK,
+                result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }).ConfigureAwait(true);
+    }
+
+    internal async Task<ThumbnailFastGenerationBenchmarkResult?> RunThumbnailFastGenerationBenchmarkAsync(
+        ThumbnailFastGenerationBenchmarkOptions? options = null)
+    {
+        ThumbnailFastGenerationBenchmarkResult? result = null;
+
+        await ExecuteWithBusyAsync("ThumbnailFastGenerationBenchmark", async () =>
+        {
+            var timeline = TimelineContextService.Timeline;
+            var project = SelectedProject;
+            if (timeline is null || project is null)
+            {
+                logger.Info("Thumbnail benchmark skipped. timeline or selected project unavailable.");
+                return;
+            }
+
+            var benchmarkRunner = new ThumbnailFastGenerationBenchmarkRunner(logger);
+            result = await benchmarkRunner
+                .RunAsync(project.FullPath, timeline, options, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            logger.Info(
+                $"Thumbnail benchmark completed. runs={result.Summary.RunCount}, captured={result.Runs.Sum(x => x.CapturedFrameCount)}, failed={result.Runs.Sum(x => x.FailedFrameCount)}, totalMs={result.Summary.TotalDurationMs:F1}, output={result.SummaryFilePath}");
+        }).ConfigureAwait(true);
+
+        return result;
     }
 
     private async Task RemoveAsync()

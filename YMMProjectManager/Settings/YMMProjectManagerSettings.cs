@@ -49,10 +49,17 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
 
     public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
 
-    public bool SetSearchFolders(IEnumerable<string> folders)
+    public (bool Success, string? ErrorMessage) SetSearchFolders(IEnumerable<string> folders)
     {
+        var previousSearchFolders = SearchFolders.ToList();
         SearchFolders = NormalizeFolders(folders);
-        return SaveToPluginDirectory();
+        var result = SaveToPluginDirectory();
+        if (!result.Success)
+        {
+            SearchFolders = previousSearchFolders;
+        }
+
+        return result;
     }
 
     public void Reload()
@@ -93,7 +100,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         }
     }
 
-    private bool SaveToPluginDirectory()
+    private (bool Success, string? ErrorMessage) SaveToPluginDirectory()
     {
         string? tempPath = null;
         try
@@ -124,11 +131,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             tempPath = path + ".tmp";
             File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(tempPath, path, overwrite: true);
-            return true;
+            return (true, null);
         }
-        catch
+        catch (Exception ex)
         {
-            return false;
+            return (false, $"設定ファイルの保存に失敗しました: {ex.Message}");
         }
         finally
         {
