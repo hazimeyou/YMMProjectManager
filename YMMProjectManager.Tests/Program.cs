@@ -44,6 +44,13 @@ internal static class Program
 
     private static async Task RunAllAsync(string workRoot)
     {
+        var filter = Environment.GetEnvironmentVariable("YMM_TEST_FILTER");
+        if (!string.IsNullOrWhiteSpace(filter))
+        {
+            await RunFilteredAsync(workRoot, filter);
+            return;
+        }
+
         await TestZeroGenerationsAsync(workRoot);
         await TestCreateAndListAsync(workRoot);
         await TestMultipleGenerationsAsync(workRoot);
@@ -77,6 +84,7 @@ internal static class Program
         await TestSeekAdapterUsesCommandBindingFallbackAsync();
         await TestSeekResultSerializationAsync();
         await TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync();
+        await TestSeekProbeWriterAsync(workRoot);
         await TestPreviewCaptureFallbackAsync();
         await TestCurrentPreviewCaptureResultSerializationAsync();
         await TestCurrentPreviewCapturePreviewViewModelFallbackAsync(workRoot);
@@ -84,6 +92,48 @@ internal static class Program
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
+    }
+
+    private static async Task RunFilteredAsync(string workRoot, string filter)
+    {
+        foreach (var testName in filter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            switch (testName)
+            {
+                case nameof(TestSeekAdapterReflectionFailureAsync):
+                    await TestSeekAdapterReflectionFailureAsync();
+                    break;
+                case nameof(TestSeekAdapterUsesAbsoluteTargetFrameAsync):
+                    await TestSeekAdapterUsesAbsoluteTargetFrameAsync();
+                    break;
+                case nameof(TestSeekAdapterDetectsSetterExceptionAsync):
+                    await TestSeekAdapterDetectsSetterExceptionAsync();
+                    break;
+                case nameof(TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync):
+                    await TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync();
+                    break;
+                case nameof(TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync):
+                    await TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync();
+                    break;
+                case nameof(TestSeekAdapterUsesCommandBindingFallbackAsync):
+                    await TestSeekAdapterUsesCommandBindingFallbackAsync();
+                    break;
+                case nameof(TestSeekResultSerializationAsync):
+                    await TestSeekResultSerializationAsync();
+                    break;
+                case nameof(TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync):
+                    await TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync();
+                    break;
+                case nameof(TestSeekProbeWriterAsync):
+                    await TestSeekProbeWriterAsync(workRoot);
+                    break;
+                case nameof(TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync):
+                    await TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync(workRoot);
+                    break;
+                default:
+                    throw new InvalidOperationException($"Unknown YMM_TEST_FILTER test: {testName}");
+            }
+        }
     }
 
     private static async Task TestZeroGenerationsAsync(string workRoot)
@@ -757,14 +807,16 @@ internal static class Program
 
     private static async Task TestSeekAdapterUsesAbsoluteTargetFrameAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
             var timeline = new FakeTimeline(length: 100) { CurrentFrame = 10 };
-            return adapter.SeekAsync(timeline, 5, CancellationToken.None).GetAwaiter().GetResult();
+            return await adapter.SeekAsync(timeline, 5, CancellationToken.None);
         });
 
-        AssertEx.True(result.Success, "Absolute CurrentFrame seek should succeed.");
+        AssertEx.True(
+            result.Success,
+            $"Absolute CurrentFrame seek should succeed. success={result.Success}, before={result.BeforeFrame}, after={result.AfterFrame}, method={result.MethodUsed}, reason={result.FailureReason ?? "none"}");
         AssertEx.Equal(5, result.RequestedFrame, "RequestedFrame should be recorded.");
         AssertEx.Equal(10, result.BeforeFrame, "BeforeFrame should reflect the current frame before seek.");
         AssertEx.Equal(5, result.AfterFrame, "AfterFrame should equal the absolute target frame.");
@@ -774,10 +826,10 @@ internal static class Program
 
     private static async Task TestSeekAdapterDetectsSetterExceptionAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
-            return adapter.SeekAsync(new ThrowingTimeline(), 20, CancellationToken.None).GetAwaiter().GetResult();
+            return await adapter.SeekAsync(new ThrowingTimeline(), 20, CancellationToken.None);
         });
 
         AssertEx.True(!result.Success, "Seek should fail when CurrentFrame setter throws.");
@@ -787,10 +839,10 @@ internal static class Program
 
     private static async Task TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
-            return adapter.SeekAsync(new NonMovingTimeline(initialFrame: 7), 20, CancellationToken.None).GetAwaiter().GetResult();
+            return await adapter.SeekAsync(new NonMovingTimeline(initialFrame: 7), 20, CancellationToken.None);
         });
 
         AssertEx.True(!result.Success, "Seek should fail when afterFrame remains outside tolerance.");
@@ -801,7 +853,7 @@ internal static class Program
 
     private static async Task TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
             var timeline = new FakeTimeline(length: 100) { CurrentFrame = 3 };
@@ -817,7 +869,7 @@ internal static class Program
             try
             {
                 window.Show();
-                return adapter.SeekAsync(null, 12, CancellationToken.None).GetAwaiter().GetResult();
+                return await adapter.SeekAsync(null, 12, CancellationToken.None);
             }
             finally
             {
@@ -831,7 +883,7 @@ internal static class Program
 
     private static async Task TestSeekAdapterUsesCommandBindingFallbackAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
             var timeline = new CommandOnlyTimeline(initialFrame: 10);
@@ -863,7 +915,7 @@ internal static class Program
             try
             {
                 window.Show();
-                return adapter.SeekAsync(null, 25, CancellationToken.None).GetAwaiter().GetResult();
+                return await adapter.SeekAsync(null, 25, CancellationToken.None);
             }
             finally
             {
@@ -904,9 +956,32 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    private static async Task TestSeekProbeWriterAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestSeekProbeWriterAsync));
+        var outputDirectory = Path.Combine(root, "seek-probe");
+        string path = string.Empty;
+
+        await WpfTestHost.RunAsync(async () =>
+        {
+            var adapter = new YmmTimelineSeekAdapter();
+            var timeline = new FakeTimeline(length: 120) { CurrentFrame = 4 };
+            path = await adapter.WriteSeekProbeAsync(timeline, 20, outputDirectory, CancellationToken.None);
+            return true;
+        });
+
+        AssertEx.True(File.Exists(path), "Seek probe JSON should be created.");
+        var json = await File.ReadAllTextAsync(path);
+        var result = JsonSerializer.Deserialize<SeekResult>(json) ?? throw new InvalidOperationException("Seek probe JSON should deserialize.");
+        AssertEx.True(result.Success, "Seek probe should record a successful seek.");
+        AssertEx.Equal(20, result.RequestedFrame, "Seek probe should record RequestedFrame.");
+        AssertEx.Equal(4, result.BeforeFrame, "Seek probe should record BeforeFrame.");
+        AssertEx.Equal(20, result.AfterFrame, "Seek probe should record AfterFrame.");
+    }
+
     private static async Task TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync()
     {
-        var result = await WpfTestHost.RunAsync(() =>
+        var result = await WpfTestHost.RunAsync(async () =>
         {
             var adapter = new YmmTimelineSeekAdapter();
             var timeline = new CommandOnlyTimeline(initialFrame: 2);
@@ -922,7 +997,7 @@ internal static class Program
             try
             {
                 window.Show();
-                return adapter.SeekAsync(null, 8, CancellationToken.None).GetAwaiter().GetResult();
+                return await adapter.SeekAsync(null, 8, CancellationToken.None);
             }
             finally
             {
@@ -1179,16 +1254,18 @@ internal static class Program
 
     private sealed class CommandOnlyTimeline
     {
+        private int currentFrame;
+
         public CommandOnlyTimeline(int initialFrame)
         {
-            CurrentFrame = initialFrame;
+            currentFrame = initialFrame;
         }
 
-        public int CurrentFrame { get; private set; }
+        public int CurrentFrame => currentFrame;
 
         public void MoveBy(int delta)
         {
-            CurrentFrame += delta;
+            currentFrame += delta;
         }
     }
 
@@ -1266,16 +1343,16 @@ internal static class Program
         private static Dispatcher? dispatcher;
         private static Application? application;
 
-        public static Task<T> RunAsync<T>(Func<T> action)
+        public static Task<T> RunAsync<T>(Func<Task<T>> action)
         {
             EnsureStarted();
 
             var taskCompletionSource = new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
-            dispatcher!.BeginInvoke(new Action(() =>
+            dispatcher!.BeginInvoke(new Action(async () =>
             {
                 try
                 {
-                    taskCompletionSource.SetResult(action());
+                    taskCompletionSource.SetResult(await action());
                 }
                 catch (Exception ex)
                 {

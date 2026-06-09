@@ -38,6 +38,11 @@
                     Margin="0,0,8,0"
                     Command="{Binding RunPreviewBitmapDiagnosticsCommand}" />
                 <Button
+                    Content="シーク確認"
+                    MinWidth="120"
+                    Margin="0,0,8,0"
+                    Command="{Binding RunSeekProbeCommand}" />
+                <Button
                     Content="現在プレビュー取得"
                     MinWidth="160"
                     Margin="0,0,8,0"

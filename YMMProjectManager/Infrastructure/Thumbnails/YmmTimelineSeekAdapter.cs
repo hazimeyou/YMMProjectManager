@@ -9,7 +9,6 @@ using System.Windows.Media;
 using System.Windows.Threading;
 
 using YMMProjectManager.Application.Thumbnails;
-using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Thumbnails;
 
@@ -77,7 +76,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
     {
         var result = await SeekAsync(timeline, targetFrame, cancellationToken).ConfigureAwait(true);
         Directory.CreateDirectory(outputDirectory);
-        var path = Path.Combine(outputDirectory, $"seek-probe-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        var path = Path.Combine(outputDirectory, $"seek-probe-{DateTime.Now:yyyyMMdd-HHmmss-fff}-frame-{targetFrame:D6}.json");
         var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, cancellationToken).ConfigureAwait(false);
         return path;
@@ -278,8 +277,9 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         var notes = new List<string>();
 
         Enqueue(queue, explicitTimeline, "SeekAsync.timeline", 0, null);
-        Enqueue(queue, TimelineContextService.Timeline, "TimelineContextService.Timeline", 0, null);
-        Enqueue(queue, TimelineContextService.Info, "TimelineContextService.Info", 0, null);
+        var (timelineContextTimeline, timelineContextInfo) = TryGetTimelineContextCandidates();
+        Enqueue(queue, timelineContextTimeline, "TimelineContextService.Timeline", 0, null);
+        Enqueue(queue, timelineContextInfo, "TimelineContextService.Info", 0, null);
 
         foreach (Window window in app.Windows)
         {
@@ -565,8 +565,11 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
         catch (Exception ex)
         {
-            exceptionType = ex.GetType().FullName;
-            failureReason = ex.Message;
+            var effectiveException = ex is TargetInvocationException { InnerException: Exception innerException }
+                ? innerException
+                : ex;
+            exceptionType = effectiveException.GetType().FullName ?? effectiveException.GetType().Name;
+            failureReason = effectiveException.Message;
             return false;
         }
     }
@@ -596,8 +599,11 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
         catch (Exception ex)
         {
-            exceptionType = ex.GetType().FullName;
-            failureReason = ex.Message;
+            var effectiveException = ex is TargetInvocationException { InnerException: Exception innerException }
+                ? innerException
+                : ex;
+            exceptionType = effectiveException.GetType().FullName ?? effectiveException.GetType().Name;
+            failureReason = effectiveException.Message;
             return false;
         }
     }
@@ -738,6 +744,26 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
 
         return true;
+    }
+
+    private static (object? Timeline, object? Info) TryGetTimelineContextCandidates()
+    {
+        try
+        {
+            var timelineContextType = Type.GetType("YMMProjectManager.Infrastructure.TimelineContextService, YMMProjectManager", throwOnError: false);
+            if (timelineContextType is null)
+            {
+                return (null, null);
+            }
+
+            var timeline = timelineContextType.GetProperty("Timeline", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            var info = timelineContextType.GetProperty("Info", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            return (timeline, info);
+        }
+        catch
+        {
+            return (null, null);
+        }
     }
 
     private sealed record DiscoveryNode(object? Value, string Path, int Depth, Window? OwnerWindow)
