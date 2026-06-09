@@ -23,6 +23,7 @@ public sealed class YmmpBundleService
         CancellationToken token,
         IProgress<double>? progress = null)
     {
+        var tempOutputPath = GetTemporaryOutputPath(outputYmmpxPath);
         try
         {
             token.ThrowIfCancellationRequested();
@@ -39,56 +40,53 @@ public sealed class YmmpBundleService
                 Directory.CreateDirectory(outputDirectory);
             }
 
-            if (File.Exists(outputYmmpxPath))
-            {
-                File.Delete(outputYmmpxPath);
-            }
-
             var manifest = new BundleManifest
             {
                 ProjectFileName = Path.GetFileName(ymmpPath),
             };
 
-            await using var zipStream = new FileStream(outputYmmpxPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            using var archive = new ZipArchive(zipStream, ZipArchiveMode.Create);
-
-            var projectEntry = archive.CreateEntry(ProjectEntryName, CompressionLevel.Optimal);
-            await using (var projectEntryStream = projectEntry.Open())
-            await using (var writer = new StreamWriter(projectEntryStream))
+            await using (var zipStream = new FileStream(tempOutputPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            using (var archive = new ZipArchive(zipStream, ZipArchiveMode.Create))
             {
-                await writer.WriteAsync(projectText).ConfigureAwait(false);
-            }
-
-            for (var i = 0; i < existingPaths.Count; i++)
-            {
-                token.ThrowIfCancellationRequested();
-                var sourcePath = existingPaths[i];
-                var fileName = Path.GetFileName(sourcePath);
-                var bundlePath = $"files/{i:D6}_{fileName}";
-                var entry = archive.CreateEntry(bundlePath, CompressionLevel.Optimal);
-                await using (var entryStream = entry.Open())
-                await using (var sourceStream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                var projectEntry = archive.CreateEntry(ProjectEntryName, CompressionLevel.Optimal);
+                await using (var projectEntryStream = projectEntry.Open())
+                await using (var writer = new StreamWriter(projectEntryStream))
                 {
-                    await sourceStream.CopyToAsync(entryStream, token).ConfigureAwait(false);
+                    await writer.WriteAsync(projectText).ConfigureAwait(false);
                 }
 
-                manifest.Files.Add(new BundleFileEntry
+                for (var i = 0; i < existingPaths.Count; i++)
                 {
-                    OriginalPath = sourcePath,
-                    BundlePath = bundlePath,
-                });
+                    token.ThrowIfCancellationRequested();
+                    var sourcePath = existingPaths[i];
+                    var fileName = Path.GetFileName(sourcePath);
+                    var bundlePath = $"files/{i:D6}_{fileName}";
+                    var entry = archive.CreateEntry(bundlePath, CompressionLevel.Optimal);
+                    await using (var entryStream = entry.Open())
+                    await using (var sourceStream = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                    {
+                        await sourceStream.CopyToAsync(entryStream, token).ConfigureAwait(false);
+                    }
 
-                progress?.Report((i + 1d) / Math.Max(existingPaths.Count, 1));
+                    manifest.Files.Add(new BundleFileEntry
+                    {
+                        OriginalPath = sourcePath,
+                        BundlePath = bundlePath,
+                    });
+
+                    progress?.Report((i + 1d) / Math.Max(existingPaths.Count, 1));
+                }
+
+                var manifestEntry = archive.CreateEntry(ManifestEntryName, CompressionLevel.Optimal);
+                await using (var manifestStream = manifestEntry.Open())
+                await using (var writer = new StreamWriter(manifestStream))
+                {
+                    var manifestText = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
+                    await writer.WriteAsync(manifestText).ConfigureAwait(false);
+                }
             }
 
-            var manifestEntry = archive.CreateEntry(ManifestEntryName, CompressionLevel.Optimal);
-            await using (var manifestStream = manifestEntry.Open())
-            await using (var writer = new StreamWriter(manifestStream))
-            {
-                var manifestText = JsonSerializer.Serialize(manifest, new JsonSerializerOptions { WriteIndented = true });
-                await writer.WriteAsync(manifestText).ConfigureAwait(false);
-            }
-
+            CommitTemporaryOutput(tempOutputPath, outputYmmpxPath);
             logger.Info($"Bundle.Create completed. ymmp={ymmpPath}, output={outputYmmpxPath}, files={existingPaths.Count}");
             logger.Flush();
             return (true, null, outputYmmpxPath);
@@ -103,7 +101,11 @@ public sealed class YmmpBundleService
         {
             logger.Error(ex, $"Bundle.Create failed. ymmp={ymmpPath}, output={outputYmmpxPath}");
             logger.Flush();
-            return (false, "同梱ファイルの作成に失敗しました。ログを確認してください。", null);
+            return (false, $"同梱ファイルの作成に失敗しました。{ex.Message}", null);
+        }
+        finally
+        {
+            DeleteFileIfExists(tempOutputPath);
         }
     }
 
@@ -210,7 +212,7 @@ public sealed class YmmpBundleService
         {
             logger.Error(ex, $"Bundle.Extract failed. ymmpx={ymmpxPath}, output={outputDirectory}");
             logger.Flush();
-            return (false, "同梱ファイルの展開に失敗しました。ログを確認してください。", null);
+            return (false, $"同梱ファイルの展開に失敗しました。{ex.Message}", null);
         }
     }
 
@@ -292,6 +294,38 @@ public sealed class YmmpBundleService
         return path.EndsWith(Path.DirectorySeparatorChar) || path.EndsWith(Path.AltDirectorySeparatorChar)
             ? path
             : path + Path.DirectorySeparatorChar;
+    }
+
+    private static string GetTemporaryOutputPath(string outputPath)
+    {
+        var directory = Path.GetDirectoryName(outputPath) ?? AppContext.BaseDirectory;
+        var fileName = Path.GetFileName(outputPath);
+        return Path.Combine(directory, $".{fileName}.{Guid.NewGuid():N}.tmp");
+    }
+
+    private static void CommitTemporaryOutput(string tempOutputPath, string outputPath)
+    {
+        if (File.Exists(outputPath))
+        {
+            File.Replace(tempOutputPath, outputPath, null, ignoreMetadataErrors: true);
+            return;
+        }
+
+        File.Move(tempOutputPath, outputPath);
+    }
+
+    private static void DeleteFileIfExists(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+            }
+        }
+        catch
+        {
+        }
     }
 
     private sealed class BundleManifest

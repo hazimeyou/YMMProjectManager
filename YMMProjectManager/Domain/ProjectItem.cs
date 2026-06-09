@@ -178,12 +178,24 @@ public sealed class ProjectFolder : INotifyPropertyChanged
 public sealed class ProjectEntry : INotifyPropertyChanged
 {
     private ImageSource? thumbnailSource;
+    private string? thumbnailCacheDirectory;
 
     public string FullPath { get; set; } = string.Empty;
     public string? DisplayName { get; set; }
     public bool Pinned { get; set; }
     public DateTimeOffset? LastAccess { get; set; }
-    public string? ThumbnailCacheDirectory { get; set; }
+    public string? ThumbnailCacheDirectory
+    {
+        get => thumbnailCacheDirectory;
+        set
+        {
+            if (!string.Equals(thumbnailCacheDirectory, value, StringComparison.Ordinal))
+            {
+                thumbnailCacheDirectory = value;
+                OnPropertyChanged();
+            }
+        }
+    }
     public Guid? FolderId { get; set; }
     public ObservableCollection<LinkedYmmpFile> LinkedYmmpFiles { get; } = [];
 

@@ -16,12 +16,5 @@
 *.ymme
 /YMMProjectManagerLauncher/bin
 /YMMProjectManagerLauncher/obj
-<<<<<<< HEAD
 /YMMProjectManager.Tests/bin
 /YMMProjectManager.Tests/obj
-=======
-/diagnostics
-/logs/benchmarks
-/YMMProjectManager.Benchmarks/bin/Debug/net10.0-windows
-/YMMProjectManager.Benchmarks/obj/Debug/net10.0-windows
->>>>>>> ac57be5d6e07073d9c9865481776e3d596a7608f

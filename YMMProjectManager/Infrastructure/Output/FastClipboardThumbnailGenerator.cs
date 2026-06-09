@@ -191,8 +191,9 @@ public sealed class FastClipboardThumbnailGenerator
         logger.Info($"{operationName}: end. slotsTotal={sampleFrames.Length}, rendered={rendered}, reused={reused}, failed={failed}, timeoutCount={timeoutCount}, totalMs={totalSw.ElapsedMilliseconds}");
         logger.Flush();
 
+        var success = failed == 0;
         return new FastClipboardGenerationResult(
-            true,
+            success,
             string.Empty,
             rendered,
             reused,

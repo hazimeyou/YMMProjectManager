@@ -37,10 +37,29 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         return SearchFolders.ToArray();
     }
 
-    public void SetSearchFolders(IEnumerable<string> folders)
+    public bool ExperimentalFastThumbnailGenerationEnabled { get; set; }
+
+    public int ExperimentalFastThumbnailSampleCount { get; set; } = 64;
+
+    public int ExperimentalFastThumbnailSeekSettleDelayMilliseconds { get; set; } = 50;
+
+    public int ExperimentalFastThumbnailMaxRetryCount { get; set; } = 3;
+
+    public bool ExperimentalFastThumbnailAllowClipboardFallback { get; set; }
+
+    public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
+
+    public (bool Success, string? ErrorMessage) SetSearchFolders(IEnumerable<string> folders)
     {
+        var previousSearchFolders = SearchFolders.ToList();
         SearchFolders = NormalizeFolders(folders);
-        SaveToPluginDirectory();
+        var result = SaveToPluginDirectory();
+        if (!result.Success)
+        {
+            SearchFolders = previousSearchFolders;
+        }
+
+        return result;
     }
 
     public void Reload()
@@ -62,14 +81,26 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             var json = File.ReadAllText(path, Encoding.UTF8);
             var data = JsonSerializer.Deserialize<PersistedSettings>(json);
             SearchFolders = NormalizeFolders(data?.SearchFolders ?? []);
+            ExperimentalFastThumbnailGenerationEnabled = data?.ExperimentalFastThumbnailGenerationEnabled ?? false;
+            ExperimentalFastThumbnailSampleCount = data?.ExperimentalFastThumbnailSampleCount ?? 64;
+            ExperimentalFastThumbnailSeekSettleDelayMilliseconds = data?.ExperimentalFastThumbnailSeekSettleDelayMilliseconds ?? 50;
+            ExperimentalFastThumbnailMaxRetryCount = data?.ExperimentalFastThumbnailMaxRetryCount ?? 3;
+            ExperimentalFastThumbnailAllowClipboardFallback = data?.ExperimentalFastThumbnailAllowClipboardFallback ?? false;
+            ExperimentalFastThumbnailAllowScreenCaptureFallback = data?.ExperimentalFastThumbnailAllowScreenCaptureFallback ?? false;
         }
         catch
         {
             SearchFolders = [];
+            ExperimentalFastThumbnailGenerationEnabled = false;
+            ExperimentalFastThumbnailSampleCount = 64;
+            ExperimentalFastThumbnailSeekSettleDelayMilliseconds = 50;
+            ExperimentalFastThumbnailMaxRetryCount = 3;
+            ExperimentalFastThumbnailAllowClipboardFallback = false;
+            ExperimentalFastThumbnailAllowScreenCaptureFallback = false;
         }
     }
 
-    private void SaveToPluginDirectory()
+    private (bool Success, string? ErrorMessage) SaveToPluginDirectory()
     {
         string? tempPath = null;
         try
@@ -84,6 +115,12 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             var data = new PersistedSettings
             {
                 SearchFolders = SearchFolders,
+                ExperimentalFastThumbnailGenerationEnabled = ExperimentalFastThumbnailGenerationEnabled,
+                ExperimentalFastThumbnailSampleCount = ExperimentalFastThumbnailSampleCount,
+                ExperimentalFastThumbnailSeekSettleDelayMilliseconds = ExperimentalFastThumbnailSeekSettleDelayMilliseconds,
+                ExperimentalFastThumbnailMaxRetryCount = ExperimentalFastThumbnailMaxRetryCount,
+                ExperimentalFastThumbnailAllowClipboardFallback = ExperimentalFastThumbnailAllowClipboardFallback,
+                ExperimentalFastThumbnailAllowScreenCaptureFallback = ExperimentalFastThumbnailAllowScreenCaptureFallback,
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
@@ -94,9 +131,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             tempPath = path + ".tmp";
             File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
             File.Move(tempPath, path, overwrite: true);
+            return (true, null);
         }
-        catch
+        catch (Exception ex)
         {
+            return (false, $"設定ファイルの保存に失敗しました: {ex.Message}");
         }
         finally
         {
@@ -136,12 +175,24 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
 
     private static string GetSettingsFilePath()
     {
-        var assemblyDirectory = Path.GetDirectoryName(typeof(ToolPluginEntry).Assembly.Location) ?? AppContext.BaseDirectory;
+        var assemblyDirectory = Path.GetDirectoryName(typeof(YMMProjectManagerSettings).Assembly.Location) ?? AppContext.BaseDirectory;
         return Path.Combine(assemblyDirectory, SettingsDirectoryName, SettingsFileName);
     }
 
     private sealed class PersistedSettings
     {
         public List<string>? SearchFolders { get; set; }
+
+        public bool ExperimentalFastThumbnailGenerationEnabled { get; set; }
+
+        public int ExperimentalFastThumbnailSampleCount { get; set; } = 64;
+
+        public int ExperimentalFastThumbnailSeekSettleDelayMilliseconds { get; set; } = 50;
+
+        public int ExperimentalFastThumbnailMaxRetryCount { get; set; } = 3;
+
+        public bool ExperimentalFastThumbnailAllowClipboardFallback { get; set; }
+
+        public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
     }
 }

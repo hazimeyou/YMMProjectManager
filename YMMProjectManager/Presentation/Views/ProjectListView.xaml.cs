@@ -127,6 +127,16 @@ public partial class ProjectListView : UserControl
         await vm.ShowGenerationDiagnosticsAsync();
     }
 
+    private async void OnPreviewBitmapDiagnosticsMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ProjectListViewModel vm)
+        {
+            return;
+        }
+
+        await vm.RunPreviewBitmapDiagnosticsAsync();
+    }
+
     private void OnProjectListMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not ListBox listBox)

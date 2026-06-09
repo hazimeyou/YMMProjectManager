@@ -6,14 +6,19 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using YMMProjectManager.Application;
+using YMMProjectManager.Application.Diagnostics;
+using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
+using YMMProjectManager.Infrastructure.Diagnostics;
 using YMMProjectManager.Infrastructure.Output;
+using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
+using YMMProjectManager.Settings;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
 
@@ -81,8 +86,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand GenerateThumbnailsFastCommand { get; }
+    public ICommand RunPreviewBitmapDiagnosticsCommand { get; }
+    public ICommand CaptureCurrentPreviewCommand { get; }
     public ICommand ShowTimelineContextStatusCommand { get; }
     public ICommand GoToFrameCommand { get; }
+    public ICommand RunSeekProbeCommand { get; }
     public ICommand CopyPreviewCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
     public ICommand PackageSelectedProjectCommand { get; }
@@ -106,8 +114,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
+        RunPreviewBitmapDiagnosticsCommand = new AsyncRelayCommand(RunPreviewBitmapDiagnosticsAsync, () => !IsBusy);
+        CaptureCurrentPreviewCommand = new AsyncRelayCommand(CaptureCurrentPreviewAsync, () => !IsBusy);
         ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
         GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
+        RunSeekProbeCommand = new AsyncRelayCommand(RunSeekProbeAsync, () => !IsBusy);
         CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
@@ -305,6 +316,70 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         };
         window.ShowDialog();
         await Task.CompletedTask;
+    }
+
+    public async Task RunPreviewBitmapDiagnosticsAsync()
+    {
+        await ExecuteWithBusyAsync("PreviewBitmapDiagnostics", async () =>
+        {
+            var diagnostics = new PreviewBitmapDiagnostics(logger);
+            var result = await diagnostics.RunAsync(CancellationToken.None).ConfigureAwait(true);
+
+            logger.Info(
+                $"Preview bitmap diagnostics end. discovery={result.DiscoverySucceeded}, previewView={result.PreviewViewFound}, previewViewModel={result.PreviewViewModelFound}, scenePreviewViewModel={result.ScenePreviewViewModelFound}, getBitmapCandidate={result.GetBitmapMethodFound}, falseCapture={result.FalseCaptureSucceeded}, trueCapture={result.TrueCaptureSucceeded}, preferred={result.NextRecommendedCall}, capture={result.CaptureSucceeded}, save={result.BitmapSaveSucceeded}, signatureCategory={result.GetBitmapSignatureCategory}, width={result.BitmapWidth}, height={result.BitmapHeight}, pixelFormat={result.BitmapPixelFormat}, windows={result.WindowCount}, controls={result.VisualTreeElementCount}, candidates={result.PreviewCandidateCount}, methods={result.PreviewMethodCount}, signatures={result.MethodSignatureCount}");
+
+            var message = result.DiscoverySucceeded
+                ? $"Preview bitmap diagnostics completed.\nWindows: {result.WindowCount}\nControls: {result.VisualTreeElementCount}\nCandidates: {result.PreviewCandidateCount}\nMethods: {result.PreviewMethodCount}\nSignatures: {result.MethodSignatureCount}\nCategory: {result.GetBitmapSignatureCategory}\nFalse: {result.FalseCaptureSucceeded}\nTrue: {result.TrueCaptureSucceeded}\nPreferred: {result.NextRecommendedCall}\nResult: {Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics", "diagnostic-result.json")}"
+                : $"Preview bitmap diagnostics found no target.\nReason: {result.FailureReason}\nResult: {Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics", "diagnostic-result.json")}";
+
+            MessageBox.Show(message, "Preview Bitmap Diagnostics", MessageBoxButton.OK, result.DiscoverySucceeded ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }).ConfigureAwait(true);
+    }
+
+    public async Task CaptureCurrentPreviewAsync()
+    {
+        await ExecuteWithBusyAsync("CurrentPreviewCapture", async () =>
+        {
+            var captureService = new CurrentPreviewCaptureService(logger);
+            var result = await captureService.CaptureAsync(CancellationToken.None).ConfigureAwait(true);
+
+            var message = result.Success
+                ? $"現在プレビューを保存しました。\nSize: {result.BitmapWidth}x{result.BitmapHeight}\nPixelFormat: {result.BitmapPixelFormat}\nPNG: {result.SavedPath}\nJSON: {result.DiagnosticsPath}"
+                : $"現在プレビュー取得に失敗しました。\nReason: {result.FailureReason}\nJSON: {result.DiagnosticsPath}";
+
+            MessageBox.Show(
+                message,
+                "現在プレビュー取得",
+                MessageBoxButton.OK,
+                result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+        }).ConfigureAwait(true);
+    }
+
+    internal async Task<ThumbnailFastGenerationBenchmarkResult?> RunThumbnailFastGenerationBenchmarkAsync(
+        ThumbnailFastGenerationBenchmarkOptions? options = null)
+    {
+        ThumbnailFastGenerationBenchmarkResult? result = null;
+
+        await ExecuteWithBusyAsync("ThumbnailFastGenerationBenchmark", async () =>
+        {
+            var timeline = TimelineContextService.Timeline;
+            var project = SelectedProject;
+            if (timeline is null || project is null)
+            {
+                logger.Info("Thumbnail benchmark skipped. timeline or selected project unavailable.");
+                return;
+            }
+
+            var benchmarkRunner = new ThumbnailFastGenerationBenchmarkRunner(logger);
+            result = await benchmarkRunner
+                .RunAsync(project.FullPath, timeline, options, CancellationToken.None)
+                .ConfigureAwait(true);
+
+            logger.Info(
+                $"Thumbnail benchmark completed. runs={result.Summary.RunCount}, captured={result.Runs.Sum(x => x.CapturedFrameCount)}, failed={result.Runs.Sum(x => x.FailedFrameCount)}, totalMs={result.Summary.TotalDurationMs:F1}, output={result.SummaryFilePath}");
+        }).ConfigureAwait(true);
+
+        return result;
     }
 
     private async Task RemoveAsync()
@@ -540,6 +615,36 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 return;
             }
 
+            var settings = YMMProjectManagerSettings.Current;
+            if (settings.ExperimentalFastThumbnailGenerationEnabled)
+            {
+                var experimentalOptions = new FastThumbnailGenerationOptions
+                {
+                    Enabled = true,
+                    SampleCount = settings.ExperimentalFastThumbnailSampleCount,
+                    SeekSettleDelayMilliseconds = settings.ExperimentalFastThumbnailSeekSettleDelayMilliseconds,
+                    MaxRetryCount = settings.ExperimentalFastThumbnailMaxRetryCount,
+                    AllowClipboardFallback = settings.ExperimentalFastThumbnailAllowClipboardFallback,
+                    AllowScreenCaptureFallback = settings.ExperimentalFastThumbnailAllowScreenCaptureFallback,
+                };
+
+                var experimentalService = new FastThumbnailGenerationService(logger, experimentalOptions);
+                var experimentalResult = await experimentalService
+                    .GenerateAsync(SelectedProject.FullPath, timeline, CancellationToken.None)
+                    .ConfigureAwait(true);
+
+                logger.Info(
+                    $"Experimental fast thumbnail result. success={experimentalResult.Success}, captured={experimentalResult.CapturedCount}, requested={experimentalResult.RequestedSampleCount}, fallback={experimentalResult.FallbackReason ?? "none"}");
+
+                if (experimentalResult.Success)
+                {
+                    UpdateThumbnailMetadata(SelectedProject);
+                    return;
+                }
+
+                logger.Info($"Experimental fast thumbnail falling back to existing generator. reason={experimentalResult.FallbackReason ?? "unknown"}");
+            }
+
             var result = await fastThumbnailGenerator
                 .GenerateAsync(SelectedProject.FullPath, timeline, CancellationToken.None)
                 .ConfigureAwait(true);
@@ -583,6 +688,60 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
 
             await fastThumbnailGenerator.GoToFrameAsync(timeline, frameIndex, CancellationToken.None).ConfigureAwait(true);
+        }).ConfigureAwait(true);
+    }
+
+    private async Task RunSeekProbeAsync()
+    {
+        await ExecuteWithBusyAsync("SeekProbe", async () =>
+        {
+            var timeline = TimelineContextService.Timeline;
+            if (timeline is null)
+            {
+                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "seek-probe");
+            Directory.CreateDirectory(outputDirectory);
+
+            var probeFrames = CreateSeekProbeFrames(timeline);
+            var seekAdapter = new YmmTimelineSeekAdapter();
+            var resultPaths = new List<string>(probeFrames.Count);
+            var failedCount = 0;
+
+            foreach (var frame in probeFrames)
+            {
+                try
+                {
+                    var path = await seekAdapter.WriteSeekProbeAsync(timeline, frame, outputDirectory, CancellationToken.None).ConfigureAwait(true);
+                    resultPaths.Add(path);
+
+                    var json = await File.ReadAllTextAsync(path).ConfigureAwait(true);
+                    var result = System.Text.Json.JsonSerializer.Deserialize<SeekResult>(json);
+                    if (result is not null && !result.Success)
+                    {
+                        failedCount++;
+                    }
+
+                    logger.Info($"Seek probe saved. frame={frame}, path={path}");
+                }
+                catch (Exception ex)
+                {
+                    failedCount++;
+                    logger.Error(ex, $"Seek probe failed unexpectedly. frame={frame}");
+                }
+            }
+
+            var message = resultPaths.Count == 0
+                ? $"Seek probe produced no result files.\nOutput: {outputDirectory}"
+                : $"Seek probe completed.\nFrames: {string.Join(", ", probeFrames)}\nSaved: {resultPaths.Count}\nFailed: {failedCount}\nOutput: {outputDirectory}";
+
+            MessageBox.Show(
+                message,
+                "シーク確認",
+                MessageBoxButton.OK,
+                failedCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
         }).ConfigureAwait(true);
     }
 
@@ -680,6 +839,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 "cache",
                 "filmstrip",
                 hash);
+            entry.ThumbnailCacheDirectory = null;
             entry.ThumbnailCacheDirectory = cacheDirectory;
 
             var thumbPath = Path.Combine(cacheDirectory, "000.png");
@@ -735,5 +895,61 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private static Window? GetActiveWindow()
     {
         return System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);
+    }
+
+    private static List<int> CreateSeekProbeFrames(object timeline)
+    {
+        var frames = new List<int> { 0, 10, 100, 500, 1000 };
+        var lastNearFrame = TryGetTimelineLastNearFrame(timeline);
+        if (lastNearFrame is int candidate && candidate >= 0 && !frames.Contains(candidate))
+        {
+            frames.Add(candidate);
+        }
+
+        return frames;
+    }
+
+    private static int? TryGetTimelineLastNearFrame(object timeline)
+    {
+        var lengthProperty = timeline.GetType().GetProperty("Length");
+        var lengthValue = lengthProperty?.GetValue(timeline);
+        if (!TryConvertFrameLikeValue(lengthValue, out var lengthFrames))
+        {
+            return null;
+        }
+
+        return Math.Max(0, lengthFrames - 1);
+    }
+
+    private static bool TryConvertFrameLikeValue(object? value, out int frame)
+    {
+        frame = 0;
+        if (value is int intValue)
+        {
+            frame = intValue;
+            return true;
+        }
+
+        if (value is long longValue)
+        {
+            frame = longValue > int.MaxValue ? int.MaxValue : (int)longValue;
+            return true;
+        }
+
+        var frameProperty = value?.GetType().GetProperty("Frame");
+        var frameValue = frameProperty?.GetValue(value);
+        if (frameValue is int nestedInt)
+        {
+            frame = nestedInt;
+            return true;
+        }
+
+        if (frameValue is long nestedLong)
+        {
+            frame = nestedLong > int.MaxValue ? int.MaxValue : (int)nestedLong;
+            return true;
+        }
+
+        return false;
     }
 }

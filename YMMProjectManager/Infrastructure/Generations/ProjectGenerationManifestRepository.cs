@@ -45,6 +45,7 @@ public sealed class ProjectGenerationManifestRepository
         catch (Exception ex)
         {
             logger.Error(ex, $"Failed to save generation manifest. projectId={projectId}");
+            throw;
         }
     }
 
