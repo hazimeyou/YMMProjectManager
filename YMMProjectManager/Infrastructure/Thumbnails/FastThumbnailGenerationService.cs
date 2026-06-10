@@ -15,7 +15,6 @@ public sealed class FastThumbnailGenerationService : IFastThumbnailGenerationSer
     private readonly FastThumbnailGenerationOptions options;
     private readonly YmmTimelineSeekAdapter seekAdapter;
     private readonly YmmPreviewBitmapCaptureAdapter previewCaptureAdapter;
-    private readonly YmmPreviewDiscoveryService discoveryService;
     private readonly ThumbnailSequenceFrameRenderer renderer = new();
 
     public FastThumbnailGenerationService(
@@ -28,7 +27,6 @@ public sealed class FastThumbnailGenerationService : IFastThumbnailGenerationSer
         this.options = options ?? new FastThumbnailGenerationOptions();
         this.seekAdapter = seekAdapter ?? new YmmTimelineSeekAdapter();
         this.previewCaptureAdapter = previewCaptureAdapter ?? new YmmPreviewBitmapCaptureAdapter();
-        discoveryService = new YmmPreviewDiscoveryService(logger);
     }
 
     public async Task<ExperimentalFastThumbnailGenerationResult> GenerateAsync(string ymmpPath, object? timeline, CancellationToken cancellationToken)
@@ -77,37 +75,6 @@ public sealed class FastThumbnailGenerationService : IFastThumbnailGenerationSer
             "filmstrip",
             hash);
         Directory.CreateDirectory(cacheDirectory);
-        var fallbackReason = string.Empty;
-
-        var discovery = await discoveryService.DiscoverAsync(cancellationToken).ConfigureAwait(true);
-        diagnostics = diagnostics with
-        {
-            PreviewViewModelFound = discovery.PreviewViewModelFound,
-            GetBitmapFound = discovery.GetBitmapMethodFound,
-            Warnings = warnings,
-        };
-
-        if (previewCaptureAdapter is YmmPreviewBitmapCaptureAdapter concreteAdapter && discovery.DiscoverySucceeded)
-        {
-            concreteAdapter.CacheDiscovery(discovery);
-        }
-
-        if (!discovery.DiscoverySucceeded)
-        {
-            totalSw.Stop();
-            fallbackReason = discovery.FailureReason ?? discovery.OverallFailureReason ?? "preview discovery failed";
-            warnings.Add(fallbackReason);
-            diagnostics = diagnostics with
-            {
-                TotalDuration = totalSw.Elapsed,
-                FallbackReason = fallbackReason,
-                Warnings = warnings,
-            };
-
-            logger.Info(
-                $"Fast preview generation end. success=False, captured=0, failed=0, retries=0, avgSeekMs=0.0, avgCaptureMs=0.0, totalMs={diagnostics.TotalDuration.TotalMilliseconds:F1}, fallback={fallbackReason}");
-            return CreateResult(false, 0, 0, fallbackReason, warnings, diagnostics, totalSw.Elapsed);
-        }
 
         var lengthFrames = Math.Max(1, GetTimelineLengthFrames(timeline));
         var sampleFrames = FastThumbnailFrameSampler.CreateSampleFrames(options.SampleCount, 0, lengthFrames - 1);
@@ -118,6 +85,7 @@ public sealed class FastThumbnailGenerationService : IFastThumbnailGenerationSer
         var retryCount = 0;
         var previewViewModelFound = false;
         var getBitmapFound = false;
+        var fallbackReason = string.Empty;
 
         logger.Info($"Fast preview generation start. ymmp={ymmpPath}, sampleCount={sampleFrames.Length}, lengthFrames={lengthFrames}, cacheDirectory={cacheDirectory}");
 
@@ -135,17 +103,6 @@ public sealed class FastThumbnailGenerationService : IFastThumbnailGenerationSer
 
                 var seekResult = await seekAdapter.SeekAsync(timeline, frame, cancellationToken).ConfigureAwait(true);
                 seekDurations.Add(seekResult.Duration);
-                diagnostics = diagnostics with
-                {
-                    SeekRequestedFrame = seekResult.RequestedFrame,
-                    SeekBeforeFrame = seekResult.BeforeFrame,
-                    SeekAfterFrame = seekResult.AfterFrame,
-                    SeekDelta = seekResult.FrameDelta,
-                    SeekSuccess = seekResult.Success,
-                    SeekMethodUsed = seekResult.MethodUsed,
-                    SeekFailureReason = seekResult.FailureReason,
-                    SeekDurationMs = seekResult.DurationMs,
-                };
                 if (!seekResult.Success)
                 {
                     warnings.Add($"frame {i}: seek failed: {seekResult.Reason ?? "unknown"}");

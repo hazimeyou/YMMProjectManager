@@ -1,57 +1,26 @@
-using System.IO;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Interop;
 using System.Windows.Media.Imaging;
-using YMMProjectManager.Application.Thumbnails;
-using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Thumbnails;
 
-public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
+public sealed class YmmPreviewBitmapCaptureAdapter
 {
-    private readonly YmmPreviewDiscoveryService discoveryService;
-    private YmmPreviewDiscoveryResult? cachedDiscovery;
-
-    public YmmPreviewBitmapCaptureAdapter(FileLogger? logger = null, YmmPreviewDiscoveryService? discoveryService = null)
-    {
-        this.discoveryService = discoveryService ?? new YmmPreviewDiscoveryService(logger ?? new FileLogger(Path.Combine(Path.GetTempPath(), "YMMProjectManager", "logs", "preview-capture.log")));
-    }
-
-    public void CacheDiscovery(YmmPreviewDiscoveryResult discovery)
-    {
-        if (discovery.DiscoverySucceeded)
-        {
-            cachedDiscovery = discovery;
-        }
-    }
-
     public async Task<PreviewCaptureResult> TryCaptureAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
-        var discovery = cachedDiscovery;
-        if (discovery is null || !discovery.DiscoverySucceeded || discovery.TargetMethod is null || discovery.TargetInstance is null)
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null)
         {
-            discovery = await discoveryService.DiscoverAsync(cancellationToken).ConfigureAwait(true);
-            if (discovery.DiscoverySucceeded)
-            {
-                cachedDiscovery = discovery;
-            }
-        }
-
-        if (!discovery.DiscoverySucceeded || discovery.TargetMethod is null || discovery.TargetInstance is null)
-        {
-            return PreviewCaptureResult.Failed(
-                discovery.FailureReason ?? "PreviewViewModel not found",
-                previewViewModelFound: discovery.PreviewViewModelFound,
-                getBitmapFound: discovery.GetBitmapMethodFound,
-                returnType: discovery.GetBitmapReturnTypeName,
-                warnings: BuildWarnings(discovery));
+            return PreviewCaptureResult.Failed("dispatcher unavailable");
         }
 
         try
         {
-            return await InvokeOnUiThreadAsync(discovery, cancellationToken).ConfigureAwait(true);
+            return await dispatcher.InvokeAsync(CaptureOnUiThread, System.Windows.Threading.DispatcherPriority.Background, cancellationToken).Task.ConfigureAwait(true);
         }
         catch (OperationCanceledException)
         {
@@ -59,32 +28,28 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         }
         catch (Exception ex)
         {
-            return PreviewCaptureResult.Failed(
-                ex.Message,
-                previewViewModelFound: discovery.PreviewViewModelFound,
-                getBitmapFound: discovery.GetBitmapMethodFound,
-                returnType: discovery.GetBitmapReturnTypeName,
-                warnings: BuildWarnings(discovery));
+            return PreviewCaptureResult.Failed(ex.Message);
         }
     }
 
-    private async Task<PreviewCaptureResult> InvokeOnUiThreadAsync(YmmPreviewDiscoveryResult discovery, CancellationToken cancellationToken)
+    private static PreviewCaptureResult CaptureOnUiThread()
     {
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is null)
+        var previewViewModel = FindPreviewViewModel(out var viewModelType);
+        if (previewViewModel is null || viewModelType is null)
         {
-            return PreviewCaptureResult.Failed("dispatcher unavailable", previewViewModelFound: discovery.PreviewViewModelFound, getBitmapFound: discovery.GetBitmapMethodFound, returnType: discovery.GetBitmapReturnTypeName);
+            return PreviewCaptureResult.Failed("PreviewViewModel not found");
         }
 
-        return await dispatcher.InvokeAsync(() => CaptureOnUiThread(discovery), System.Windows.Threading.DispatcherPriority.Background, cancellationToken).Task.ConfigureAwait(true);
-    }
+        var method = viewModelType.GetMethod("GetBitmap", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+        if (method is null)
+        {
+            return PreviewCaptureResult.Failed("GetBitmap not found", previewViewModelFound: true, getBitmapFound: false);
+        }
 
-    private static PreviewCaptureResult CaptureOnUiThread(YmmPreviewDiscoveryResult discovery)
-    {
-        var bitmap = discovery.TargetMethod!.Invoke(discovery.TargetInstance, discovery.TargetArguments);
+        var bitmap = method.Invoke(previewViewModel, null);
         if (bitmap is null)
         {
-            return PreviewCaptureResult.Failed("GetBitmap returned null", previewViewModelFound: true, getBitmapFound: true, returnType: discovery.TargetMethod.ReturnType.FullName, warnings: BuildWarnings(discovery));
+            return PreviewCaptureResult.Failed("GetBitmap returned null", previewViewModelFound: true, getBitmapFound: true);
         }
 
         var converted = ConvertToBitmapSource(bitmap, out var conversionWarning);
@@ -94,12 +59,65 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
                 $"Unsupported bitmap type: {bitmap.GetType().FullName}",
                 previewViewModelFound: true,
                 getBitmapFound: true,
-                returnType: discovery.TargetMethod.ReturnType.FullName,
-                warnings: BuildWarnings(discovery, conversionWarning));
+                returnType: bitmap.GetType().FullName,
+                warnings: string.IsNullOrWhiteSpace(conversionWarning) ? [] : [conversionWarning!]);
         }
 
-        var warnings = BuildWarnings(discovery, conversionWarning);
-        return PreviewCaptureResult.Succeeded(converted, discovery.PreviewViewModelTypeName ?? discovery.TargetType?.FullName ?? "PreviewViewModel", warnings);
+        var warnings = new List<string>();
+        if (!string.IsNullOrWhiteSpace(conversionWarning))
+        {
+            warnings.Add(conversionWarning);
+        }
+
+        return PreviewCaptureResult.Succeeded(converted, previewViewModel.GetType().FullName ?? viewModelType.FullName ?? "PreviewViewModel", warnings);
+    }
+
+    private static object? FindPreviewViewModel(out Type? previewViewModelType)
+    {
+        previewViewModelType = null;
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            Type[] types;
+            try
+            {
+                types = assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                types = ex.Types.Where(type => type is not null).Cast<Type>().ToArray();
+            }
+
+            foreach (var type in types)
+            {
+                if (!string.Equals(type.Name, "PreviewViewModel", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var instance = TryGetStaticValue(type, "Current")
+                    ?? TryGetStaticValue(type, "Instance")
+                    ?? TryGetStaticValue(type, "Default");
+                if (instance is not null)
+                {
+                    previewViewModelType = type;
+                    return instance;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static object? TryGetStaticValue(Type type, string memberName)
+    {
+        var property = type.GetProperty(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        if (property is not null)
+        {
+            return property.GetValue(null);
+        }
+
+        var field = type.GetField(memberName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static);
+        return field?.GetValue(null);
     }
 
     private static BitmapSource? ConvertToBitmapSource(object bitmap, out string? warning)
@@ -116,15 +134,34 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
             return clone;
         }
 
-        if (bitmap is System.Drawing.Bitmap drawingBitmap)
+        var bitmapType = bitmap.GetType();
+        if (string.Equals(bitmapType.FullName, "System.Drawing.Bitmap", StringComparison.Ordinal))
         {
-            warning = "GetBitmap returned System.Drawing.Bitmap.";
-            using var memory = new MemoryStream();
-            drawingBitmap.Save(memory, System.Drawing.Imaging.ImageFormat.Bmp);
-            memory.Position = 0;
-            var decoder = BitmapDecoder.Create(memory, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
-            var frame = decoder.Frames[0];
-            var source = BitmapFrame.Create(frame);
+            return ConvertDrawingBitmapToBitmapSource(bitmap);
+        }
+
+        var getHbitmap = bitmapType.GetMethod("GetHbitmap", BindingFlags.Public | BindingFlags.Instance);
+        if (getHbitmap is not null && getHbitmap.ReturnType == typeof(IntPtr))
+        {
+            warning = "GetBitmap returned HBITMAP-compatible object.";
+            return ConvertDrawingBitmapToBitmapSource(bitmap);
+        }
+
+        return null;
+    }
+
+    private static BitmapSource ConvertDrawingBitmapToBitmapSource(object bitmap)
+    {
+        var getHbitmap = bitmap.GetType().GetMethod("GetHbitmap", BindingFlags.Public | BindingFlags.Instance);
+        if (getHbitmap is null)
+        {
+            throw new InvalidOperationException("GetHbitmap not found.");
+        }
+
+        var hBitmap = (IntPtr)getHbitmap.Invoke(bitmap, null)!;
+        try
+        {
+            var source = Imaging.CreateBitmapSourceFromHBitmap(hBitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
             if (!source.IsFrozen && source.CanFreeze)
             {
                 source.Freeze();
@@ -132,25 +169,14 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
 
             return source;
         }
-
-        return null;
+        finally
+        {
+            DeleteObject(hBitmap);
+        }
     }
 
-    private static IReadOnlyList<string> BuildWarnings(YmmPreviewDiscoveryResult discovery, string? extraWarning = null)
-    {
-        var warnings = new List<string>();
-        if (!string.IsNullOrWhiteSpace(extraWarning))
-        {
-            warnings.Add(extraWarning!);
-        }
-
-        if (!string.IsNullOrWhiteSpace(discovery.GetBitmapSignatureCategory))
-        {
-            warnings.Add($"Discovery category={discovery.GetBitmapSignatureCategory}");
-        }
-
-        return warnings;
-    }
+    [DllImport("gdi32.dll")]
+    private static extern bool DeleteObject(IntPtr hObject);
 }
 
 public sealed record PreviewCaptureResult(
