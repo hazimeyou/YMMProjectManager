@@ -32,11 +32,6 @@
                     MinWidth="180"
                     Margin="0,0,8,0"
                     Command="{Binding GenerateThumbnailsFastCommand}" />
-                <Button
-                    Content="Preview Bitmap Diagnostics"
-                    MinWidth="220"
-                    Margin="0,0,8,0"
-                    Command="{Binding RunPreviewBitmapDiagnosticsCommand}" />
             </StackPanel>
 
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
@@ -52,7 +47,6 @@
                         <MenuItem Header="荳紋ｻ｣繧剃ｿ晏ｭ・" Click="OnSaveGenerationMenuClick" />
                         <MenuItem Header="荳紋ｻ｣荳隕ｧ" Click="OnShowGenerationListMenuClick" />
                         <MenuItem Header="荳紋ｻ｣險ｺ譁ｭ" Click="OnShowGenerationDiagnosticsMenuClick" />
-                        <MenuItem Header="Preview Bitmap Diagnostics" Click="OnPreviewBitmapDiagnosticsMenuClick" />
                     </ContextMenu>
                 </ListBox.ContextMenu>
                 <ListBox.ItemTemplate>

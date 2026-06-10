@@ -37,18 +37,6 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         return SearchFolders.ToArray();
     }
 
-    public bool ExperimentalFastThumbnailGenerationEnabled { get; set; }
-
-    public int ExperimentalFastThumbnailSampleCount { get; set; } = 64;
-
-    public int ExperimentalFastThumbnailSeekSettleDelayMilliseconds { get; set; } = 50;
-
-    public int ExperimentalFastThumbnailMaxRetryCount { get; set; } = 3;
-
-    public bool ExperimentalFastThumbnailAllowClipboardFallback { get; set; }
-
-    public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
-
     public bool SetSearchFolders(IEnumerable<string> folders)
     {
         SearchFolders = NormalizeFolders(folders);
@@ -74,22 +62,10 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             var json = File.ReadAllText(path, Encoding.UTF8);
             var data = JsonSerializer.Deserialize<PersistedSettings>(json);
             SearchFolders = NormalizeFolders(data?.SearchFolders ?? []);
-            ExperimentalFastThumbnailGenerationEnabled = data?.ExperimentalFastThumbnailGenerationEnabled ?? false;
-            ExperimentalFastThumbnailSampleCount = data?.ExperimentalFastThumbnailSampleCount ?? 64;
-            ExperimentalFastThumbnailSeekSettleDelayMilliseconds = data?.ExperimentalFastThumbnailSeekSettleDelayMilliseconds ?? 50;
-            ExperimentalFastThumbnailMaxRetryCount = data?.ExperimentalFastThumbnailMaxRetryCount ?? 3;
-            ExperimentalFastThumbnailAllowClipboardFallback = data?.ExperimentalFastThumbnailAllowClipboardFallback ?? false;
-            ExperimentalFastThumbnailAllowScreenCaptureFallback = data?.ExperimentalFastThumbnailAllowScreenCaptureFallback ?? false;
         }
         catch
         {
             SearchFolders = [];
-            ExperimentalFastThumbnailGenerationEnabled = false;
-            ExperimentalFastThumbnailSampleCount = 64;
-            ExperimentalFastThumbnailSeekSettleDelayMilliseconds = 50;
-            ExperimentalFastThumbnailMaxRetryCount = 3;
-            ExperimentalFastThumbnailAllowClipboardFallback = false;
-            ExperimentalFastThumbnailAllowScreenCaptureFallback = false;
         }
     }
 
@@ -108,12 +84,6 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             var data = new PersistedSettings
             {
                 SearchFolders = SearchFolders,
-                ExperimentalFastThumbnailGenerationEnabled = ExperimentalFastThumbnailGenerationEnabled,
-                ExperimentalFastThumbnailSampleCount = ExperimentalFastThumbnailSampleCount,
-                ExperimentalFastThumbnailSeekSettleDelayMilliseconds = ExperimentalFastThumbnailSeekSettleDelayMilliseconds,
-                ExperimentalFastThumbnailMaxRetryCount = ExperimentalFastThumbnailMaxRetryCount,
-                ExperimentalFastThumbnailAllowClipboardFallback = ExperimentalFastThumbnailAllowClipboardFallback,
-                ExperimentalFastThumbnailAllowScreenCaptureFallback = ExperimentalFastThumbnailAllowScreenCaptureFallback,
             };
 
             var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
@@ -175,17 +145,5 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
     private sealed class PersistedSettings
     {
         public List<string>? SearchFolders { get; set; }
-
-        public bool ExperimentalFastThumbnailGenerationEnabled { get; set; }
-
-        public int ExperimentalFastThumbnailSampleCount { get; set; } = 64;
-
-        public int ExperimentalFastThumbnailSeekSettleDelayMilliseconds { get; set; } = 50;
-
-        public int ExperimentalFastThumbnailMaxRetryCount { get; set; } = 3;
-
-        public bool ExperimentalFastThumbnailAllowClipboardFallback { get; set; }
-
-        public bool ExperimentalFastThumbnailAllowScreenCaptureFallback { get; set; }
     }
 }

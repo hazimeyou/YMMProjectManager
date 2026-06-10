@@ -1,13 +1,9 @@
 using System.IO;
 using System.Linq;
 using System.Text.Json;
-using YMMProjectManager.Application.Diagnostics;
-using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Diagnostics;
 using YMMProjectManager.Infrastructure.Generations;
-using YMMProjectManager.Infrastructure.Thumbnails;
 
 internal static class Program
 {
@@ -50,13 +46,6 @@ internal static class Program
         await TestMissingGenerationAsync(workRoot);
         await TestLockedFileRestoreFailureAsync(workRoot);
         await TestDiagnosticsAsync(workRoot);
-        await TestFastThumbnailOptionsDefaultsAsync();
-        await TestFastThumbnailFrameSamplingAsync();
-        await TestFastThumbnailResultSerializationAsync();
-        await TestPreviewBitmapDiagnosticsResultSerializationAsync();
-        await TestPreviewBitmapDiagnosticsNoDispatcherAsync();
-        await TestSeekAdapterReflectionFailureAsync();
-        await TestPreviewCaptureFallbackAsync();
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
@@ -241,127 +230,6 @@ internal static class Program
         AssertEx.True(!string.IsNullOrWhiteSpace(diagnostics.ProjectId), "ProjectId should be populated.");
         AssertEx.True(diagnostics.StorageSize > 0, "StorageSize should be populated.");
         AssertEx.True(diagnostics.LatestGeneration is not null, "LatestGeneration should be populated.");
-    }
-
-    private static Task TestFastThumbnailOptionsDefaultsAsync()
-    {
-        var options = new FastThumbnailGenerationOptions();
-
-        AssertEx.True(!options.Enabled, "Fast thumbnail mode should be disabled by default.");
-        AssertEx.Equal(64, options.SampleCount, "Default sample count should be 64.");
-        AssertEx.Equal(50, options.SeekSettleDelayMilliseconds, "Default seek settle delay should be 50ms.");
-        AssertEx.Equal(3, options.MaxRetryCount, "Default retry count should be 3.");
-        AssertEx.True(!options.AllowClipboardFallback, "Clipboard fallback should be disabled by default.");
-        AssertEx.True(!options.AllowScreenCaptureFallback, "Screen capture fallback should be disabled by default.");
-        return Task.CompletedTask;
-    }
-
-    private static Task TestFastThumbnailFrameSamplingAsync()
-    {
-        var frames = FastThumbnailFrameSampler.CreateSampleFrames(64, 0, 63);
-
-        AssertEx.Equal(64, frames.Length, "Sample count should be preserved.");
-        AssertEx.Equal(0, frames[0], "First sample should be the first frame.");
-        AssertEx.Equal(63, frames[^1], "Last sample should be the last frame.");
-        AssertEx.True(frames.Zip(frames.Skip(1)).All(pair => pair.First <= pair.Second), "Samples should be monotonic.");
-        return Task.CompletedTask;
-    }
-
-    private static Task TestFastThumbnailResultSerializationAsync()
-    {
-        var result = new FastThumbnailGenerationResult
-        {
-            Success = true,
-            RequestedSampleCount = 64,
-            CapturedCount = 64,
-            Duration = TimeSpan.FromMilliseconds(1234),
-            FallbackReason = null,
-            Warnings = ["alpha", "beta"],
-            Diagnostics = new ThumbnailGenerationDiagnostics
-            {
-                FastThumbnailEnabled = true,
-                TimelineFound = true,
-                PreviewViewModelFound = true,
-                GetBitmapFound = true,
-                SampleCount = 64,
-                CapturedCount = 64,
-                FailedFrameCount = 0,
-                RetryCount = 0,
-                AverageSeekDuration = TimeSpan.FromMilliseconds(20),
-                AverageCaptureDuration = TimeSpan.FromMilliseconds(30),
-                TotalDuration = TimeSpan.FromMilliseconds(1234),
-                FallbackReason = null,
-                Warnings = ["alpha", "beta"],
-            },
-        };
-
-        var json = JsonSerializer.Serialize(result);
-        var restored = JsonSerializer.Deserialize<FastThumbnailGenerationResult>(json);
-
-        var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
-        var diagnostics = restoredValue.Diagnostics ?? throw new InvalidOperationException("Diagnostics should deserialize.");
-
-        AssertEx.True(restoredValue.Success, "Success should round-trip.");
-        AssertEx.Equal(64, restoredValue.RequestedSampleCount, "Requested sample count should round-trip.");
-        AssertEx.Equal(64, restoredValue.CapturedCount, "Captured count should round-trip.");
-        AssertEx.Equal(64, diagnostics.SampleCount, "Diagnostics sample count should round-trip.");
-        return Task.CompletedTask;
-    }
-
-    private static Task TestPreviewBitmapDiagnosticsResultSerializationAsync()
-    {
-        var result = new PreviewBitmapDiagnosticsResult
-        {
-            PreviewViewModelFound = true,
-            GetBitmapMethodFound = true,
-            CaptureSucceeded = true,
-            PreviewViewModelTypeName = "Example.PreviewViewModel",
-            GetBitmapReturnTypeName = "System.Windows.Media.Imaging.BitmapSource",
-            Width = 1920,
-            Height = 1080,
-            SavedFilePath = @"C:\Temp\YMMProjectManager\PreviewDiagnostics\preview-test.png",
-            FailureReason = null,
-            Duration = TimeSpan.FromMilliseconds(456),
-        };
-
-        var json = JsonSerializer.Serialize(result);
-        var restored = JsonSerializer.Deserialize<PreviewBitmapDiagnosticsResult>(json);
-        var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
-
-        AssertEx.True(restoredValue.PreviewViewModelFound, "PreviewViewModelFound should round-trip.");
-        AssertEx.True(restoredValue.GetBitmapMethodFound, "GetBitmapMethodFound should round-trip.");
-        AssertEx.True(restoredValue.CaptureSucceeded, "CaptureSucceeded should round-trip.");
-        AssertEx.Equal(1920, restoredValue.Width, "Width should round-trip.");
-        AssertEx.Equal(1080, restoredValue.Height, "Height should round-trip.");
-        return Task.CompletedTask;
-    }
-
-    private static async Task TestPreviewBitmapDiagnosticsNoDispatcherAsync()
-    {
-        var logger = new FileLogger(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"), "logs", "test.log"));
-        var service = new PreviewBitmapDiagnostics(logger);
-        var result = await service.RunAsync(CancellationToken.None);
-
-        AssertEx.True(!result.CaptureSucceeded, "Diagnostics should fail gracefully without a WPF dispatcher.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(result.FailureReason), "Diagnostics failure should include a reason.");
-    }
-
-    private static async Task TestSeekAdapterReflectionFailureAsync()
-    {
-        var adapter = new YmmTimelineSeekAdapter();
-        var result = await adapter.SeekAsync(new object(), 10, CancellationToken.None);
-
-        AssertEx.True(!result.Success, "Seek should fail gracefully for unsupported objects.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(result.Reason), "Seek failure should include a reason.");
-    }
-
-    private static async Task TestPreviewCaptureFallbackAsync()
-    {
-        var adapter = new YmmPreviewBitmapCaptureAdapter();
-        var result = await adapter.TryCaptureAsync(CancellationToken.None);
-
-        AssertEx.True(!result.Success, "Preview capture should fail gracefully when no preview VM is available.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(result.FailureReason), "Preview capture failure should include a reason.");
     }
 
     private static async Task TestLegacyProjectStoreCompatibilityAsync(string workRoot)
