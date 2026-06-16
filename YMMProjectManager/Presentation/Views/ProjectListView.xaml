@@ -15,23 +15,35 @@
 
     <Grid Margin="8">
         <DockPanel>
+            <!-- Primary actions: project management plus the stable thumbnail path. -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
-                <Button Content="霑ｽ蜉" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
-                <Button Content="蜑企勁" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
-                <Button Content="髢九￥" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
-            </StackPanel>
-
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
+                <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
+                <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
                 <Button
-                    Content="髢九＞縺ｦ縺・ｋPF繧貞・繝ｪ繝ｳ繧ｯ"
-                    MinWidth="180"
+                    Content="関連付けの再リンク"
+                    MinWidth="160"
                     Margin="0,0,8,0"
                     Command="{Binding OpenRelinkWindowCommand}" />
                 <Button
-                    Content="繧ｵ繝繝阪う繝ｫ逕滓・"
+                    Content="高速サムネイル生成"
                     MinWidth="180"
                     Margin="0,0,8,0"
                     Command="{Binding GenerateThumbnailsFastCommand}" />
+            </StackPanel>
+
+            <!-- The second row keeps the manual message box and preview capture entry points. -->
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <Button
+                    Content="メッセージボックス"
+                    MinWidth="160"
+                    Margin="0,0,8,0"
+                    Command="{Binding ShowMessageBoxCommand}" />
+                <Button
+                    Content="現在プレビュー取得"
+                    MinWidth="160"
+                    Margin="0,0,8,0"
+                    Command="{Binding CaptureCurrentPreviewCommand}" />
             </StackPanel>
 
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
@@ -44,9 +56,10 @@
                 PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
                 <ListBox.ContextMenu>
                     <ContextMenu>
-                        <MenuItem Header="荳紋ｻ｣繧剃ｿ晏ｭ・" Click="OnSaveGenerationMenuClick" />
-                        <MenuItem Header="荳紋ｻ｣荳隕ｧ" Click="OnShowGenerationListMenuClick" />
-                        <MenuItem Header="荳紋ｻ｣險ｺ譁ｭ" Click="OnShowGenerationDiagnosticsMenuClick" />
+                        <!-- Context menu only exposes generation review actions, not seek probes. -->
+                        <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
+                        <MenuItem Header="世代一覧を表示" Click="OnShowGenerationListMenuClick" />
+                        <MenuItem Header="世代診断を表示" Click="OnShowGenerationDiagnosticsMenuClick" />
                     </ContextMenu>
                 </ListBox.ContextMenu>
                 <ListBox.ItemTemplate>

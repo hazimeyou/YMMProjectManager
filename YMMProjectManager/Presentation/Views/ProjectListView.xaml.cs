@@ -4,7 +4,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using YMMProjectManager.Domain;
-using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.ViewModels;
 
 namespace YMMProjectManager.Presentation.Views;
@@ -29,6 +28,7 @@ public partial class ProjectListView : UserControl
             return;
         }
 
+        // Initialize once so the repository load is not repeated when the control is reactivated.
         initialized = true;
         if (DataContext is ProjectListViewModel vm)
         {
@@ -152,6 +152,7 @@ public partial class ProjectListView : UserControl
 
     private static bool IsFromListBoxItem(DependencyObject source, ListBox listBox)
     {
+        // Walk up the tree to ensure double-click only triggers when the click originated from a project row.
         var current = source;
         while (current is not null)
         {

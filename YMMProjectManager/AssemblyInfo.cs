@@ -1,5 +1,7 @@
 using System.Windows;
+using System.Runtime.CompilerServices;
 
+// Allow the test project to inspect internal probe helpers without widening the public API.
 [assembly: ThemeInfo(
     ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
                                                 //(used if a resource is not found in the page,
@@ -8,3 +10,5 @@ using System.Windows;
                                                 //(used if a resource is not found in the page,
                                                 // app, or any theme specific resource dictionaries)
 )]
+
+[assembly: InternalsVisibleTo("YMMProjectManager.Tests")]

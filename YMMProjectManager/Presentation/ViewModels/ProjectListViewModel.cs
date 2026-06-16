@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -24,12 +23,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
     private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
+    private readonly CurrentPreviewCaptureService currentPreviewCaptureService;
+    private readonly TimelineDurationProbeService timelineDurationProbeService;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpBundleService bundleService;
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
-    private string frameIndexText = "0";
     private string bundleStatus = string.Empty;
     private double bundleProgress;
 
@@ -59,12 +59,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
     }
 
-    public string FrameIndexText
-    {
-        get => frameIndexText;
-        set => SetProperty(ref frameIndexText, value);
-    }
-
     public string BundleStatus
     {
         get => bundleStatus;
@@ -81,9 +75,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand GenerateThumbnailsFastCommand { get; }
-    public ICommand ShowTimelineContextStatusCommand { get; }
-    public ICommand GoToFrameCommand { get; }
-    public ICommand CopyPreviewCommand { get; }
+    public ICommand CaptureCurrentPreviewCommand { get; }
+    public ICommand ShowMessageBoxCommand { get; }
+    public ICommand WriteTimelineDurationProbeCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
@@ -96,9 +90,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     internal ProjectListViewModel(FileLogger logger, IProjectRepository? repository)
     {
+        // This view model keeps only the stable thumbnail path and the two probe entry points that remain in scope.
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
+        currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
+        timelineDurationProbeService = new TimelineDurationProbeService(logger);
         generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpBundleService(logger);
 
@@ -106,9 +103,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
-        ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
-        GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
-        CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
+        CaptureCurrentPreviewCommand = new AsyncRelayCommand(CaptureCurrentPreviewAsync, () => !IsBusy);
+        ShowMessageBoxCommand = new AsyncRelayCommand(ShowMessageBoxAsync, () => !IsBusy);
+        WriteTimelineDurationProbeCommand = new AsyncRelayCommand(WriteTimelineDurationProbeAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
@@ -531,6 +528,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             return;
         }
 
+        // This command intentionally stays on the proven thumbnail path and does not call any seek probe.
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
             var timeline = TimelineContextService.Timeline;
@@ -554,54 +552,61 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }).ConfigureAwait(true);
     }
 
-    private Task ShowTimelineContextStatusAsync()
+    private async Task CaptureCurrentPreviewAsync()
     {
-        var timeline = TimelineContextService.Timeline;
+        // Capture the currently visible preview frame without changing playback position.
+        await ExecuteWithBusyAsync("CurrentPreviewCapture", async () =>
+        {
+            var result = await currentPreviewCaptureService.CaptureCurrentPreviewAsync(CancellationToken.None).ConfigureAwait(true);
+            if (!result.Success)
+            {
+                MessageBox.Show(
+                    result.FailureReason ?? "Current preview capture failed.",
+                    "YMM Project Manager",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
+                return;
+            }
+
+            MessageBox.Show(
+                $"Saved preview capture to:\n{result.SavedPath}",
+                "YMM Project Manager",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    private Task ShowMessageBoxAsync()
+    {
         MessageBox.Show(
-            $"Timeline null: {timeline is null}\nCurrentFrame: {(timeline?.CurrentFrame.ToString() ?? "N/A")}",
+            "シーク操作は本線から外しました。\n現在はプレビュー取得とサムネイル生成のみを使ってください。",
             "YMM Project Manager",
             MessageBoxButton.OK,
             MessageBoxImage.Information);
         return Task.CompletedTask;
     }
 
-    private async Task GoToFrameAsync()
+    private async Task WriteTimelineDurationProbeAsync()
     {
-        await ExecuteWithBusyAsync("GoToFrame", async () =>
+        // Emit the last-frame probe for manual verification; the probe itself stays read-only.
+        await ExecuteWithBusyAsync("TimelineDurationProbe", async () =>
         {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
+            var result = await timelineDurationProbeService.WriteTimelineDurationProbeAsync(CancellationToken.None).ConfigureAwait(true);
+            if (!result.Success)
             {
-                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(
+                    result.FailureReason ?? "Timeline duration probe failed.",
+                    "YMM Project Manager",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
-            if (!int.TryParse(FrameIndexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var frameIndex) || frameIndex < 0)
-            {
-                MessageBox.Show("FrameIndex must be a non-negative integer.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            await fastThumbnailGenerator.GoToFrameAsync(timeline, frameIndex, CancellationToken.None).ConfigureAwait(true);
-        }).ConfigureAwait(true);
-    }
-
-    private async Task CopyPreviewAsync()
-    {
-        await ExecuteWithBusyAsync("CopyPreview", async () =>
-        {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
-            {
-                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var result = await fastThumbnailGenerator.CopyPreviewAsync(CancellationToken.None).ConfigureAwait(true);
-            if (result is null)
-            {
-                MessageBox.Show("CopyPreview failed. clipboard empty", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            MessageBox.Show(
+                $"Saved timeline duration probe JSON.\nLastFrame={result.LastFrame}\nMethod={result.MethodUsed}",
+                "YMM Project Manager",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }
 
