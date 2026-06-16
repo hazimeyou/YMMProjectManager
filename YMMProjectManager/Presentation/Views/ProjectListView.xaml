@@ -44,6 +44,11 @@
                     MinWidth="160"
                     Margin="0,0,8,0"
                     Command="{Binding CaptureCurrentPreviewCommand}" />
+                <Button
+                    Content="シーク"
+                    MinWidth="160"
+                    Margin="0,0,8,0"
+                    Command="{Binding SeekCommand}" />
             </StackPanel>
 
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />

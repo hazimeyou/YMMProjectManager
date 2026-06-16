@@ -15,6 +15,7 @@ using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
+using YMMProjectManager;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -82,6 +83,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
     public ICommand ExtractBundleCommand { get; }
+    public ICommand SeekCommand { get; }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -110,8 +112,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
+        SeekCommand = new AsyncRelayCommand(() => SeekCommandExecute(), () => !IsBusy);
     }
-
+    public async Task SeekCommandExecute()
+    {
+        var timeLineSeek = new TimeLineSeek();
+    }
     public void SetTimelineToolInfo(TimelineToolInfo info)
     {
         TimelineContextService.Info = info;
