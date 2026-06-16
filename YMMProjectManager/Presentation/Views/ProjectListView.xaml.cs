@@ -28,7 +28,7 @@ public partial class ProjectListView : UserControl
             return;
         }
 
-        // Initialize once so the repository load is not repeated when the control is reactivated.
+        // 再アクティブ化時にリポジトリ読み込みを繰り返さないよう、初回だけ初期化する。
         initialized = true;
         if (DataContext is ProjectListViewModel vm)
         {
@@ -152,7 +152,7 @@ public partial class ProjectListView : UserControl
 
     private static bool IsFromListBoxItem(DependencyObject source, ListBox listBox)
     {
-        // Walk up the tree to ensure double-click only triggers when the click originated from a project row.
+        // クリック元がプロジェクト行のときだけダブルクリックを有効にするため、ツリーを上へたどる。
         var current = source;
         while (current is not null)
         {

@@ -19,7 +19,7 @@ public sealed class TimelineDurationProbeService
     {
         var started = DateTimeOffset.Now;
         var sw = Stopwatch.StartNew();
-        // Store probe output outside the repo so repeated manual checks do not dirty the working tree.
+        // 繰り返しの手動確認で作業ツリーが汚れないよう、プローブ出力はリポジトリ外に置く。
         var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "timeline-duration-probe");
         Directory.CreateDirectory(outputDirectory);
         var stamp = started.ToString("yyyyMMdd-HHmmss");
@@ -84,7 +84,7 @@ public sealed class TimelineDurationProbeService
         lastFrame = 0;
         methodUsed = "Failed";
 
-        // Prefer explicit frame-count properties first; they are the least ambiguous when present.
+        // 明示的なフレーム数プロパティを最優先する。存在するなら最も曖昧さが少ない。
         foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount", "EndFrame" })
         {
             candidates.Add($"Timeline.{propertyName}");
@@ -125,7 +125,7 @@ public sealed class TimelineDurationProbeService
     private static bool TryResolveFromVideoInfo(object timeline, out int lastFrame)
     {
         lastFrame = 0;
-        // VideoInfo is the fallback when Timeline itself does not expose a direct frame count.
+        // Timeline 自体に直接のフレーム数がなければ、VideoInfo をフォールバックに使う。
         var videoInfo = timeline.GetType().GetProperty("VideoInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(timeline);
         if (videoInfo is null)
         {
@@ -164,7 +164,7 @@ public sealed class TimelineDurationProbeService
     private static bool TryResolveFromItems(object timeline, out int lastFrame)
     {
         lastFrame = 0;
-        // Item ranges are the last fallback: compute the maximum end frame from every timeline item.
+        // Item の範囲は最後のフォールバック。全 Item から最大終了フレームを計算する。
         var items = timeline.GetType().GetProperty("Items", BindingFlags.Public | BindingFlags.Instance)?.GetValue(timeline) as System.Collections.IEnumerable;
         if (items is null)
         {
@@ -316,7 +316,7 @@ public sealed class TimelineDurationProbeService
         }
         catch
         {
-            // fallback below
+            // 以下を最終フォールバックとして使う。
         }
 
         return 60.0;

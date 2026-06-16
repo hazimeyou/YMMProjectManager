@@ -35,7 +35,7 @@ public sealed class YmmPreviewDiscoveryService
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         foreach (Window window in app.Windows)
         {
-            // Start from each top-level window, then walk both visual and logical links until PreviewViewModel is found.
+            // 各トップレベルのウィンドウから開始し、PreviewViewModel が見つかるまで可視階層と論理階層の両方をたどる。
             Traverse(window, visited, result);
             if (result.PreviewViewModel is not null)
             {
@@ -79,7 +79,7 @@ public sealed class YmmPreviewDiscoveryService
 
         result.VisualTreeElementCount++;
 
-        // Type-name matching keeps this resilient when the concrete view type moves across assemblies.
+        // 具体的なビュー型が別アセンブリへ移動しても追えるよう、型名ベースで判定する。
         var typeName = current.GetType().Name;
         if (!result.PreviewViewFound && typeName.Contains("PreviewView", StringComparison.OrdinalIgnoreCase))
         {
@@ -95,7 +95,7 @@ public sealed class YmmPreviewDiscoveryService
 
         if (current is FrameworkElement fe && fe.DataContext is not null)
         {
-            // DataContext is the cheapest route to the preview view model when the visual tree already exposes the view.
+            // 可視階層上にビューがある場合は、DataContext が最短で PreviewViewModel に辿り着ける。
             if (!result.PreviewViewModelFound && fe.DataContext.GetType().Name.Contains("PreviewViewModel", StringComparison.OrdinalIgnoreCase))
             {
                 result.PreviewViewModel = fe.DataContext;
@@ -118,7 +118,7 @@ public sealed class YmmPreviewDiscoveryService
 
         if (current is DependencyObject dep && CanUseVisualTree(dep))
         {
-            // Only Visual/Visual3D can participate in VisualTreeHelper traversal.
+            // VisualTreeHelper を使えるのは Visual / Visual3D だけ。
             var childCount = VisualTreeHelper.GetChildrenCount(dep);
             for (var i = 0; i < childCount; i++)
             {
@@ -160,7 +160,7 @@ public sealed class YmmPreviewDiscoveryService
 
     internal static bool CanUseVisualTree(DependencyObject dependencyObject)
     {
-        // AvalonDock layout objects are not visuals, so they must be filtered out before VisualTreeHelper calls.
+        // AvalonDock のレイアウト系は Visual ではないため、VisualTreeHelper 呼び出し前に除外する。
         return dependencyObject is Visual or Visual3D;
     }
 }

@@ -25,7 +25,7 @@ public sealed class CurrentPreviewCaptureService
     {
         var started = DateTimeOffset.Now;
         var sw = Stopwatch.StartNew();
-        // Keep probe output isolated under %TEMP% so the investigation does not touch project state.
+        // 調査でプロジェクト状態を汚さないよう、プローブ出力は %TEMP% 配下に分離する。
         var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "current-preview-capture");
         Directory.CreateDirectory(outputDirectory);
         var stamp = started.ToString("yyyyMMdd-HHmmss");
@@ -42,7 +42,7 @@ public sealed class CurrentPreviewCaptureService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Discovery and bitmap capture both touch WPF objects, so they must run on the dispatcher thread.
+            // 発見処理とビットマップ取得は WPF オブジェクトを触るため、Dispatcher スレッドで実行する。
             var discovery = await InvokeOnUiAsync(discoveryService.Discover).ConfigureAwait(true);
             CopyDiscoveryState(result, discovery);
 
@@ -86,7 +86,7 @@ public sealed class CurrentPreviewCaptureService
 
     private static void CopyDiscoveryState(CurrentPreviewCaptureResult result, YmmPreviewDiscoveryResult discovery)
     {
-        // Persist the discovery trace into the capture result so the JSON stands alone.
+        // JSON 単体で追跡できるよう、発見時の状態もキャプチャ結果に残す。
         result.WindowCount = discovery.WindowCount;
         result.VisualTreeElementCount = discovery.VisualTreeElementCount;
         result.PreviewViewFound = discovery.PreviewViewFound;
@@ -118,7 +118,7 @@ public sealed class CurrentPreviewCaptureService
 
     private static void SaveBitmapSource(BitmapSource source, string pngPath)
     {
-        // Serialize the capture as a PNG so the preview can be checked visually without extra tooling.
+        // 追加ツールなしで目視確認できるよう、キャプチャを PNG として保存する。
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(source));
         using var stream = File.Create(pngPath);

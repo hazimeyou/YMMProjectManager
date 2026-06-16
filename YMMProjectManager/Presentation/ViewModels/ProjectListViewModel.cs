@@ -90,7 +90,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     internal ProjectListViewModel(FileLogger logger, IProjectRepository? repository)
     {
-        // This view model keeps only the stable thumbnail path and the two probe entry points that remain in scope.
+        // この ViewModel には、安定しているサムネイル経路と、残した 2 つのプローブ入口だけを持たせる。
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
         fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
@@ -528,7 +528,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             return;
         }
 
-        // This command intentionally stays on the proven thumbnail path and does not call any seek probe.
+        // このコマンドは、実績のあるサムネイル経路だけを使い、シーク系プローブは呼ばない。
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
             var timeline = TimelineContextService.Timeline;
@@ -554,7 +554,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task CaptureCurrentPreviewAsync()
     {
-        // Capture the currently visible preview frame without changing playback position.
+        // 再生位置は変えず、現在表示中のプレビューだけを取得する。
         await ExecuteWithBusyAsync("CurrentPreviewCapture", async () =>
         {
             var result = await currentPreviewCaptureService.CaptureCurrentPreviewAsync(CancellationToken.None).ConfigureAwait(true);
@@ -588,7 +588,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task WriteTimelineDurationProbeAsync()
     {
-        // Emit the last-frame probe for manual verification; the probe itself stays read-only.
+        // 手動確認用に最終フレームのプローブを出力する。プローブ自体は読み取り専用。
         await ExecuteWithBusyAsync("TimelineDurationProbe", async () =>
         {
             var result = await timelineDurationProbeService.WriteTimelineDurationProbeAsync(CancellationToken.None).ConfigureAwait(true);

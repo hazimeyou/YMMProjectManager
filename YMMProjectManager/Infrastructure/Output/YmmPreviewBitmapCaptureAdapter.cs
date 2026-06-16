@@ -18,7 +18,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter
 
     public PreviewBitmapCaptureResult Capture(object previewViewModel)
     {
-        // Prefer the strongest GetBitmap overload first, then fall back only if invocation fails.
+        // まず最も有力な GetBitmap オーバーロードを優先し、失敗した場合だけ後続へ回す。
         if (!TrySelectGetBitmapMethod(previewViewModel, out var method, out var parameterTypes, out var nextRecommendedCall) || method is null)
         {
             return new PreviewBitmapCaptureResult
@@ -97,7 +97,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter
             return false;
         }
 
-        // Boolean overload is the known good path from the device probe, so score it highest.
+        // bool オーバーロードは実機プローブで成功済みのため、最優先で選ぶ。
         var ordered = methods
             .OrderByDescending(ScoreMethod)
             .ThenBy(x => x.GetParameters().Length)
@@ -116,7 +116,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter
         height = 0;
         pixelFormat = string.Empty;
 
-        // Normalize both WPF and System.Drawing outputs into a BitmapSource so the caller can always encode PNG.
+        // WPF と System.Drawing の両方を BitmapSource に揃え、呼び出し側で確実に PNG 化できるようにする。
         if (value is BitmapSource source)
         {
             bitmap = source;

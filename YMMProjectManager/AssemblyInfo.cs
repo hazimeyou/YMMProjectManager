@@ -1,14 +1,12 @@
 using System.Windows;
 using System.Runtime.CompilerServices;
 
-// Allow the test project to inspect internal probe helpers without widening the public API.
+// テストプロジェクトが internal のプローブ補助を参照できるようにしつつ、公開 API は増やさない。
 [assembly: ThemeInfo(
-    ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
-                                                //(used if a resource is not found in the page,
-                                                // or application resource dictionaries)
-    ResourceDictionaryLocation.SourceAssembly   //where the generic resource dictionary is located
-                                                //(used if a resource is not found in the page,
-                                                // app, or any theme specific resource dictionaries)
+    ResourceDictionaryLocation.None,            // テーマ固有の ResourceDictionary の配置先
+                                                // (ページまたはアプリケーションの ResourceDictionary に見つからない場合に使われる)
+    ResourceDictionaryLocation.SourceAssembly   // 汎用 ResourceDictionary の配置先
+                                                // (ページ、アプリ、または任意のテーマ固有 ResourceDictionary に見つからない場合に使われる)
 )]
 
 [assembly: InternalsVisibleTo("YMMProjectManager.Tests")]

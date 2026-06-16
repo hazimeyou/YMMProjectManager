@@ -15,7 +15,7 @@
 
     <Grid Margin="8">
         <DockPanel>
-            <!-- Primary actions: project management plus the stable thumbnail path. -->
+            <!-- 主要操作: プロジェクト管理と、安定しているサムネイル経路だけを置く。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
                 <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
@@ -32,7 +32,7 @@
                     Command="{Binding GenerateThumbnailsFastCommand}" />
             </StackPanel>
 
-            <!-- The second row keeps the manual message box and preview capture entry points. -->
+            <!-- 2 行目には、手動のメッセージボックスとプレビュー取得の入口だけを残す。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
                     Content="メッセージボックス"
@@ -56,7 +56,7 @@
                 PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
                 <ListBox.ContextMenu>
                     <ContextMenu>
-                        <!-- Context menu only exposes generation review actions, not seek probes. -->
+                        <!-- コンテキストメニューには、シーク系ではなく世代確認系だけを出す。 -->
                         <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
                         <MenuItem Header="世代一覧を表示" Click="OnShowGenerationListMenuClick" />
                         <MenuItem Header="世代診断を表示" Click="OnShowGenerationDiagnosticsMenuClick" />
