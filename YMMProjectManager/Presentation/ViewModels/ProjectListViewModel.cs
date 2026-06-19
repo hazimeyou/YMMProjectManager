@@ -114,9 +114,31 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
         SeekCommand = new AsyncRelayCommand(() => SeekCommandExecute(), () => !IsBusy);
     }
-    public async Task SeekCommandExecute()
+    public Task SeekCommandExecute()
     {
-        var timeLineSeek = new TimeLineSeek();
+        var seek = new TimeLineSeek(TimelineContextService.Info!);
+        MessageBox.Show("60");
+        seek.SeekByFrames(60);   // +60F
+        MessageBox.Show("-30");
+        seek.SeekByFrames(-30);  // -30F
+        MessageBox.Show("絶対1200");
+        seek.SeekToFrame(1200);  // 絶対フレーム
+        return SeekCommandExecute(60);
+    }
+
+    public Task SeekCommandExecute(int frameDelta)
+    {
+        var info = TimelineContextService.Info;
+        if (info?.Timeline is null)
+        {
+
+            return Task.CompletedTask;
+        }
+
+        var timeLineSeek = new TimeLineSeek(info);
+        timeLineSeek.SeekByFrames(frameDelta);
+
+        return Task.CompletedTask;
     }
     public void SetTimelineToolInfo(TimelineToolInfo info)
     {
