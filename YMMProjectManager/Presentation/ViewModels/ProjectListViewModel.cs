@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -23,8 +23,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 {
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
-    private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
     private readonly CurrentPreviewCaptureService currentPreviewCaptureService;
+    private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly TimelineDurationProbeService timelineDurationProbeService;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpBundleService bundleService;
@@ -95,8 +95,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         // この ViewModel には、安定しているサムネイル経路と、残した 2 つのプローブ入口だけを持たせる。
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
-        fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
         currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
+        seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         timelineDurationProbeService = new TimelineDurationProbeService(logger);
         generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpBundleService(logger);
@@ -556,23 +556,26 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             return;
         }
 
-        // このコマンドは、実績のあるサムネイル経路だけを使い、シーク系プローブは呼ばない。
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
+            var info = TimelineContextService.Info;
+            if (info?.Timeline is null)
             {
                 MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var result = await fastThumbnailGenerator
-                .GenerateAsync(SelectedProject.FullPath, timeline, CancellationToken.None)
+            var result = await seekPreviewThumbnailGenerator
+                .GenerateAsync(SelectedProject.FullPath, info, CancellationToken.None)
                 .ConfigureAwait(true);
 
             if (!result.Success)
             {
-                MessageBox.Show("サムネイル生成に失敗しました。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+                MessageBox.Show(
+                    result.Reason,
+                    "YMM Project Manager",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 

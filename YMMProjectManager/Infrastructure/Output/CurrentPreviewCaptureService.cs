@@ -84,6 +84,25 @@ public sealed class CurrentPreviewCaptureService
         }
     }
 
+    public async Task<PreviewBitmapCaptureResult> CaptureCurrentPreviewBitmapAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var discovery = await InvokeOnUiAsync(discoveryService.Discover).ConfigureAwait(true);
+        if (discovery.PreviewViewModel is null)
+        {
+            return new PreviewBitmapCaptureResult
+            {
+                FailureReason = discovery.FailureReason ?? "PreviewViewModel not found.",
+                GetBitmapMethodFound = discovery.GetBitmapMethodFound,
+                GetBitmapParameterTypes = discovery.GetBitmapParameterTypes,
+                NextRecommendedCall = discovery.NextRecommendedCall,
+            };
+        }
+
+        return await InvokeOnUiAsync(() => captureAdapter.Capture(discovery.PreviewViewModel)).ConfigureAwait(true);
+    }
+
     private static void CopyDiscoveryState(CurrentPreviewCaptureResult result, YmmPreviewDiscoveryResult discovery)
     {
         // JSON 単体で追跡できるよう、発見時の状態もキャプチャ結果に残す。

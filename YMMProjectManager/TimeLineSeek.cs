@@ -65,7 +65,8 @@ public sealed class TimeLineSeek
             if (timeline is null)
                 return;
 
-            timeline.CurrentFrame = targetFrame;
+            var currentFrame = Math.Max(0, timeline.CurrentFrame);
+            SeekByFrames(targetFrame - currentFrame);
         }
 
         if (System.Windows.Application.Current?.Dispatcher is { } dispatcher)
