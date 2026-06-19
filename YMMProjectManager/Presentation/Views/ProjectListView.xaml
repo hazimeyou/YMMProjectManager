@@ -20,16 +20,34 @@
                 <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
                 <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
                 <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
+            </StackPanel>
+
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
-                    Content="関連付けの再リンク"
-                    MinWidth="160"
+                    Content="開いているPFを再リンク"
+                    MinWidth="180"
                     Margin="0,0,8,0"
                     Command="{Binding OpenRelinkWindowCommand}" />
                 <Button
-                    Content="高速サムネイル生成"
+                    Content="サムネイル生成"
                     MinWidth="180"
                     Margin="0,0,8,0"
                     Command="{Binding GenerateThumbnailsFastCommand}" />
+                <Button
+                    Content="Preview Bitmap Diagnostics"
+                    MinWidth="220"
+                    Margin="0,0,8,0"
+                    Command="{Binding RunPreviewBitmapDiagnosticsCommand}" />
+                <Button
+                    Content="シーク確認"
+                    MinWidth="120"
+                    Margin="0,0,8,0"
+                    Command="{Binding RunSeekProbeCommand}" />
+                <Button
+                    Content="現在プレビュー取得"
+                    MinWidth="160"
+                    Margin="0,0,8,0"
+                    Command="{Binding CaptureCurrentPreviewCommand}" />
             </StackPanel>
 
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
@@ -42,10 +60,10 @@
                 PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
                 <ListBox.ContextMenu>
                     <ContextMenu>
-                        <!-- コンテキストメニューには、シーク系ではなく世代確認系だけを出す。 -->
                         <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
-                        <MenuItem Header="世代一覧を表示" Click="OnShowGenerationListMenuClick" />
-                        <MenuItem Header="世代診断を表示" Click="OnShowGenerationDiagnosticsMenuClick" />
+                        <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
+                        <MenuItem Header="世代診断" Click="OnShowGenerationDiagnosticsMenuClick" />
+                        <MenuItem Header="Preview Bitmap Diagnostics" Click="OnPreviewBitmapDiagnosticsMenuClick" />
                     </ContextMenu>
                 </ListBox.ContextMenu>
                 <ListBox.ItemTemplate>
