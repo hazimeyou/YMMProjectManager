@@ -28,6 +28,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly TimelineDurationProbeService timelineDurationProbeService;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpBundleService bundleService;
+    private List<ProjectFolder> folders = [];
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
@@ -116,13 +117,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     }
     public Task SeekCommandExecute()
     {
-        var seek = new TimeLineSeek(TimelineContextService.Info!);
-        MessageBox.Show("60");
-        seek.SeekByFrames(60);   // +60F
-        MessageBox.Show("-30");
-        seek.SeekByFrames(-30);  // -30F
-        MessageBox.Show("絶対1200");
-        seek.SeekToFrame(1200);  // 絶対フレーム
         return SeekCommandExecute(60);
     }
 
@@ -165,6 +159,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             {
                 Projects.Add(item);
             }
+
+            folders = store.Folders.ToList();
 
             isInitialized = true;
             logger.Info($"Load end. count={Projects.Count}");
@@ -646,6 +642,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await repository.SaveAsync(new ProjectStore
         {
             Projects = Projects.ToList(),
+            Folders = folders.ToList(),
         }).ConfigureAwait(true);
     }
 
