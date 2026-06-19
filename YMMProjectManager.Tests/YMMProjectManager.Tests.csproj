@@ -8,10 +8,26 @@
     <LangVersion>latest</LangVersion>
     <UseWPF>false</UseWPF>
     <UseWindowsForms>false</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <YMM4Path Condition="'$(YMM4_PATH)' != ''">$(YMM4_PATH)</YMM4Path>
+    <YMM4Path Condition="'$(YMM4Path)' == '' and '$(YMM4DirPath)' != ''">$(YMM4DirPath)</YMM4Path>
+    <YMM4Path Condition="'$(YMM4Path)' == ''">..\libs\YMM4</YMM4Path>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\YMMProjectManager\YMMProjectManager.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="Exists('$(YMM4Path)\YukkuriMovieMaker.Plugin.dll')">
+    <Reference Include="YukkuriMovieMaker.Plugin" HintPath="$(YMM4Path)\YukkuriMovieMaker.Plugin.dll" Private="true" />
+    <Reference Include="YukkuriMovieMaker.Controls" HintPath="$(YMM4Path)\YukkuriMovieMaker.Controls.dll" Private="true" />
+    <Reference Include="YukkuriMovieMaker" HintPath="$(YMM4Path)\YukkuriMovieMaker.dll" Private="true" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('$(YMM4Path)\YukkuriMovieMaker.Plugin.dll')">
+    <Reference Include="YukkuriMovieMaker.Plugin" HintPath="..\libs\YukkuriMovieMaker.Plugin.dll" Private="true" />
+    <Reference Include="YukkuriMovieMaker.Controls" HintPath="..\libs\YukkuriMovieMaker.Controls.dll" Private="true" />
+    <Reference Include="YukkuriMovieMaker" HintPath="..\libs\YukkuriMovieMaker.dll" Private="true" />
   </ItemGroup>
 
 </Project>

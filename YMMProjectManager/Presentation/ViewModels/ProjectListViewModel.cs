@@ -1,6 +1,5 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Diagnostics;
-using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
@@ -23,13 +22,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 {
     private readonly FileLogger logger;
     private readonly IProjectRepository repository;
-    private readonly FastClipboardThumbnailGenerator fastThumbnailGenerator;
+    private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpBundleService bundleService;
+    private List<ProjectFolder> folders = [];
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
-    private string frameIndexText = "0";
     private string bundleStatus = string.Empty;
     private double bundleProgress;
 
@@ -57,12 +56,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 CommandManager.InvalidateRequerySuggested();
             }
         }
-    }
-
-    public string FrameIndexText
-    {
-        get => frameIndexText;
-        set => SetProperty(ref frameIndexText, value);
     }
 
     public string BundleStatus
@@ -97,9 +90,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     internal ProjectListViewModel(FileLogger logger, IProjectRepository? repository)
     {
+        // この ViewModel には、安定しているサムネイル経路だけを持たせる。
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
-        fastThumbnailGenerator = new FastClipboardThumbnailGenerator(logger);
+        var currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
+        seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpBundleService(logger);
 
@@ -142,6 +137,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             {
                 Projects.Add(item);
             }
+
+            folders = store.Folders.ToList();
 
             isInitialized = true;
             logger.Info($"Load end. count={Projects.Count}");
@@ -528,59 +525,32 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task GenerateThumbnailsFastAsync()
     {
-        if (SelectedProject is null)
+        var project = SelectedProject;
+        if (project is null)
         {
             return;
         }
 
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
+            var info = TimelineContextService.Info;
+            if (info?.Timeline is null)
             {
                 MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var result = await fastThumbnailGenerator
-                .GenerateAsync(SelectedProject.FullPath, timeline, CancellationToken.None)
+            var result = await seekPreviewThumbnailGenerator
+                .GenerateAsync(project.FullPath, info, CancellationToken.None)
                 .ConfigureAwait(true);
 
             if (!result.Success)
             {
-                MessageBox.Show("サムネイル生成に失敗しました。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
-            }
-
-            UpdateThumbnailMetadata(SelectedProject);
-        }).ConfigureAwait(true);
-    }
-
-    private Task ShowTimelineContextStatusAsync()
-    {
-        var timeline = TimelineContextService.Timeline;
-        MessageBox.Show(
-            $"Timeline null: {timeline is null}\nCurrentFrame: {(timeline?.CurrentFrame.ToString() ?? "N/A")}",
-            "YMM Project Manager",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-        return Task.CompletedTask;
-    }
-
-    private async Task GoToFrameAsync()
-    {
-        await ExecuteWithBusyAsync("GoToFrame", async () =>
-        {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
-            {
-                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            if (!int.TryParse(FrameIndexText, NumberStyles.Integer, CultureInfo.InvariantCulture, out var frameIndex) || frameIndex < 0)
-            {
-                MessageBox.Show("FrameIndex must be a non-negative integer.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
+                MessageBox.Show(
+                    result.Reason,
+                    "YMM Project Manager",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Warning);
                 return;
             }
 
@@ -666,6 +636,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await repository.SaveAsync(new ProjectStore
         {
             Projects = Projects.ToList(),
+            Folders = folders.ToList(),
         }).ConfigureAwait(true);
     }
 

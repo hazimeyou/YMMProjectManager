@@ -276,7 +276,8 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             }
 
             var backupPath = storage.ResolveRestoreBackupPath(projectId, normalizedProjectPath);
-            tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, storage.GetGenerationDirectory(projectId, generationId), cancellationToken).ConfigureAwait(false);
+            var targetDirectory = Path.GetDirectoryName(normalizedProjectPath) ?? AppContext.BaseDirectory;
+            tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, targetDirectory, cancellationToken).ConfigureAwait(false);
             await storage.ReplaceFileAtomicallyAsync(tempPath, normalizedProjectPath, backupPath, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, backupPath={backupPath}");

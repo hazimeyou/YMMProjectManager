@@ -4,7 +4,6 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using YMMProjectManager.Domain;
-using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.ViewModels;
 
 namespace YMMProjectManager.Presentation.Views;
@@ -29,6 +28,7 @@ public partial class ProjectListView : UserControl
             return;
         }
 
+        // 再アクティブ化時にリポジトリ読み込みを繰り返さないよう、初回だけ初期化する。
         initialized = true;
         if (DataContext is ProjectListViewModel vm)
         {
@@ -152,6 +152,7 @@ public partial class ProjectListView : UserControl
 
     private static bool IsFromListBoxItem(DependencyObject source, ListBox listBox)
     {
+        // クリック元がプロジェクト行のときだけダブルクリックを有効にするため、ツリーを上へたどる。
         var current = source;
         while (current is not null)
         {

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
@@ -92,6 +93,12 @@ internal static class Program
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
+        await TestProjectListViewModelPreservesFoldersOnSaveAsync(workRoot);
+        await TestThumbnailImageLoaderInvalidationAsync(workRoot);
+        await TestPreviewGetBitmapPriorityAsync();
+        await TestPreviewCaptureResultSerializationAsync();
+        await TestPreviewDiscoveryVisualTreeGuardAsync();
+        await TestTimelineDurationProbeResultSerializationAsync();
     }
 
     private static async Task RunFilteredAsync(string workRoot, string filter)
@@ -1187,6 +1194,136 @@ internal static class Program
         AssertEx.True(!File.Exists(sourceTempPath), "Atomic replace should consume the source temp file.");
     }
 
+    private static async Task TestProjectListViewModelPreservesFoldersOnSaveAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestProjectListViewModelPreservesFoldersOnSaveAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        var repository = new FakeProjectRepository(new ProjectStore
+        {
+            Folders =
+            [
+                new ProjectFolder
+                {
+                    Id = Guid.NewGuid(),
+                    Name = "Favorites",
+                    DisplayOrder = 1,
+                }
+            ],
+        });
+
+        var ctor = typeof(ProjectListViewModel).GetConstructor(
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            types: [typeof(FileLogger), typeof(IProjectRepository)],
+            modifiers: null);
+
+        AssertEx.True(ctor is not null, "View model constructor should be discoverable for tests.");
+        var vm = (ProjectListViewModel)ctor!.Invoke([logger, repository]);
+
+        await vm.InitializeAsync();
+        await vm.AddProjectsAsync([projectPath]);
+
+        AssertEx.True(repository.LastSavedStore is not null, "Repository should receive a saved store.");
+        AssertEx.Equal(1, repository.LastSavedStore!.Folders.Count, "Loaded folders should survive view-model save.");
+        AssertEx.Equal("Favorites", repository.LastSavedStore.Folders[0].Name, "Folder name should round-trip.");
+        AssertEx.Equal(1, repository.LastSavedStore.Projects.Count, "Project addition should still be saved.");
+    }
+
+    private static async Task TestThumbnailImageLoaderInvalidationAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestThumbnailImageLoaderInvalidationAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        var thumbnailPath = Path.Combine(root, "thumb.png");
+
+        var missing = await ThumbnailImageLoader.LoadAsync(thumbnailPath, logger);
+        AssertEx.True(missing is null, "Missing thumbnail should return null.");
+
+        ThumbnailSequenceFrameRenderer.SaveBlankPng(thumbnailPath);
+
+        var loaded = await ThumbnailImageLoader.LoadAsync(thumbnailPath, logger);
+        AssertEx.True(loaded is not null, "Thumbnail loader should retry after a file appears.");
+    }
+
+    private static Task TestPreviewGetBitmapPriorityAsync()
+    {
+        var fake = new FakePreviewViewModel();
+        var found = YMMProjectManager.Infrastructure.Output.YmmPreviewBitmapCaptureAdapter.TrySelectGetBitmapMethod(
+            fake,
+            out var method,
+            out var parameterTypes,
+            out var nextRecommendedCall);
+
+        AssertEx.True(found, "GetBitmap overload should be discovered.");
+        AssertEx.True(method is not null, "GetBitmap method should be selected.");
+        AssertEx.Equal("GetBitmap", method!.Name, "Selected method name should be GetBitmap.");
+        AssertEx.Equal("System.Boolean", parameterTypes[0], "Boolean overload should be preferred.");
+        AssertEx.Equal("GetBitmap(true)", nextRecommendedCall, "Recommended call should prefer true.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewCaptureResultSerializationAsync()
+    {
+        var result = new YMMProjectManager.Infrastructure.Output.CurrentPreviewCaptureResult
+        {
+            Timestamp = new DateTimeOffset(2026, 6, 10, 12, 34, 56, TimeSpan.FromHours(9)),
+            Success = true,
+            FailureReason = null,
+            WindowCount = 2,
+            VisualTreeElementCount = 11,
+            PreviewViewFound = true,
+            PreviewViewModelFound = true,
+            GetBitmapMethodFound = true,
+            GetBitmapParameterTypes = ["System.Boolean"],
+            NextRecommendedCall = "GetBitmap(true)",
+            CaptureSucceeded = true,
+            BitmapWidth = 1280,
+            BitmapHeight = 720,
+            BitmapPixelFormat = "Bgra32",
+            SavedPath = @"C:\Temp\preview.png",
+            DurationMs = 42,
+        };
+
+        var json = JsonSerializer.Serialize(result);
+        var roundTrip = JsonSerializer.Deserialize<YMMProjectManager.Infrastructure.Output.CurrentPreviewCaptureResult>(json);
+
+        AssertEx.True(roundTrip is not null, "Preview capture result should deserialize.");
+        AssertEx.True(roundTrip!.Success, "Preview capture result should preserve success.");
+        AssertEx.Equal("GetBitmap(true)", roundTrip.NextRecommendedCall, "Preview capture result should preserve recommended call.");
+        AssertEx.Equal(1280, roundTrip.BitmapWidth, "Preview capture result should preserve width.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestPreviewDiscoveryVisualTreeGuardAsync()
+    {
+        var nonVisual = new System.Windows.Media.TranslateTransform();
+        AssertEx.True(!YMMProjectManager.Infrastructure.Output.YmmPreviewDiscoveryService.CanUseVisualTree(nonVisual), "Non-visual dependency objects should not enter VisualTreeHelper traversal.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestTimelineDurationProbeResultSerializationAsync()
+    {
+        var result = new YMMProjectManager.Infrastructure.Output.TimelineDurationProbeResult
+        {
+            Success = true,
+            CurrentFrame = 123,
+            LastFrame = 456,
+            MethodUsed = "Timeline.Length",
+            FailureReason = null,
+            CandidateProperties = ["Timeline.Length"],
+            DurationMs = 21,
+        };
+
+        var json = JsonSerializer.Serialize(result);
+        var roundTrip = JsonSerializer.Deserialize<YMMProjectManager.Infrastructure.Output.TimelineDurationProbeResult>(json);
+
+        AssertEx.True(roundTrip is not null, "Timeline duration result should deserialize.");
+        AssertEx.True(roundTrip!.Success, "Timeline duration result should preserve success.");
+        AssertEx.Equal(456, roundTrip.LastFrame, "Timeline duration result should preserve last frame.");
+        AssertEx.Equal("Timeline.Length", roundTrip.MethodUsed, "Timeline duration result should preserve method.");
+        return Task.CompletedTask;
+    }
+
     private static ProjectGenerationService CreateService(string root)
     {
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
@@ -1454,4 +1591,43 @@ internal static class Program
             }
         }
     }
+
+    private sealed class FakePreviewViewModel
+    {
+        public object GetBitmap(bool useHighQuality) => new { HighQuality = useHighQuality };
+
+        public object GetBitmap() => new { HighQuality = false };
+    }
+
+    private sealed class FakeProjectRepository : IProjectRepository
+    {
+        private readonly ProjectStore initialStore;
+
+        public FakeProjectRepository(ProjectStore initialStore)
+        {
+            this.initialStore = initialStore;
+        }
+
+        public ProjectStore? LastSavedStore { get; private set; }
+
+        public Task<ProjectStore> LoadAsync(CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(new ProjectStore
+            {
+                Projects = initialStore.Projects.ToList(),
+                Folders = initialStore.Folders.ToList(),
+            });
+        }
+
+        public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default)
+        {
+            LastSavedStore = new ProjectStore
+            {
+                Projects = store.Projects.ToList(),
+                Folders = store.Folders.ToList(),
+            };
+            return Task.CompletedTask;
+        }
+    }
+
 }

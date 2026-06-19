@@ -15,6 +15,7 @@
 
     <Grid Margin="8">
         <DockPanel>
+            <!-- 主要操作: プロジェクト管理と、安定しているサムネイル経路だけを置く。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
                 <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
