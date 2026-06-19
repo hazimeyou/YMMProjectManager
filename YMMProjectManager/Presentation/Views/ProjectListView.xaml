@@ -32,25 +32,6 @@
                     Command="{Binding GenerateThumbnailsFastCommand}" />
             </StackPanel>
 
-            <!-- 2 行目には、手動のメッセージボックスとプレビュー取得の入口だけを残す。 -->
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
-                <Button
-                    Content="メッセージボックス"
-                    MinWidth="160"
-                    Margin="0,0,8,0"
-                    Command="{Binding ShowMessageBoxCommand}" />
-                <Button
-                    Content="現在プレビュー取得"
-                    MinWidth="160"
-                    Margin="0,0,8,0"
-                    Command="{Binding CaptureCurrentPreviewCommand}" />
-                <Button
-                    Content="シーク"
-                    MinWidth="160"
-                    Margin="0,0,8,0"
-                    Command="{Binding SeekCommand}" />
-            </StackPanel>
-
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
             <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
 
