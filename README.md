@@ -12,9 +12,9 @@ YukkuriMovieMaker 用の補助ツールです。
 
 # インストール方法
 
-1. GitHub の Release ページから `.ymme` ファイルをダウンロードします
-2. ダウンロードした `.ymme` を起動します
-3. YukkuriMovieMaker の「ツール」タブから本ツールを実行します
+1. GitHub の Release ページから `YMMProjectManager.ymme` ファイルをダウンロードします
+2. ダウンロードした `YMMProjectManager.ymme` を起動します
+3. YukkuriMovieMaker の「ツール」タブからプロジェクトマネージャーを実行します
 
 ---
 
@@ -36,7 +36,7 @@ YukkuriMovieMaker 用の補助ツールです。
 
 世代管理は Git を使わず、`%AppData%\YMMProjectManager\Generations\` にローカル保存します。
 
-保存対象は `.ymmp` 本体のみです。画像、動画、音声、フォント、素材フォルダ、Git 履歴は保存しません。
+保存対象は `.ymmp` 本体のみです。画像、動画、音声、フォント、素材フォルダは保存しません。
 
 復元時は既定で元ファイルへ戻し、復元前バックアップを作成します。
 
@@ -86,6 +86,6 @@ YukkuriMovieMaker 用の補助ツールです。
 
 ---
 
-# ライセンス
+## ライセンス
 
-本ソフトウェアは MIT License のもとで公開されています。
+本リポジトリのライセンスは [LICENSE](LICENSE) を参照してください。
