@@ -167,6 +167,8 @@ public sealed class YmmPreviewDiscoveryService
 
 public sealed class YmmPreviewDiscoveryResult
 {
+    public bool DiscoverySucceeded { get; set; }
+    public string? FailureStage { get; set; }
     public object? PreviewView { get; set; }
     public object? PreviewViewModel { get; set; }
     public int WindowCount { get; set; }

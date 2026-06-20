@@ -5,11 +5,13 @@ using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
 using YMMProjectManager.Application;
+using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
+using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Presentation.Commands;
 using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
@@ -74,10 +76,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
     public ICommand GenerateThumbnailsFastCommand { get; }
-    public ICommand ShowTimelineContextStatusCommand { get; }
-    public ICommand GoToFrameCommand { get; }
     public ICommand RunSeekProbeCommand { get; }
-    public ICommand CopyPreviewCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
@@ -102,10 +101,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
-        ShowTimelineContextStatusCommand = new AsyncRelayCommand(ShowTimelineContextStatusAsync, () => !IsBusy);
-        GoToFrameCommand = new AsyncRelayCommand(GoToFrameAsync, () => !IsBusy);
         RunSeekProbeCommand = new AsyncRelayCommand(RunSeekProbeAsync, () => !IsBusy);
-        CopyPreviewCommand = new AsyncRelayCommand(CopyPreviewAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
@@ -554,7 +550,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 return;
             }
 
-            await fastThumbnailGenerator.GoToFrameAsync(timeline, frameIndex, CancellationToken.None).ConfigureAwait(true);
+            UpdateThumbnailMetadata(project);
         }).ConfigureAwait(true);
     }
 
@@ -609,25 +605,6 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 "シーク確認",
                 MessageBoxButton.OK,
                 failedCount == 0 ? MessageBoxImage.Information : MessageBoxImage.Warning);
-        }).ConfigureAwait(true);
-    }
-
-    private async Task CopyPreviewAsync()
-    {
-        await ExecuteWithBusyAsync("CopyPreview", async () =>
-        {
-            var timeline = TimelineContextService.Timeline;
-            if (timeline is null)
-            {
-                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            var result = await fastThumbnailGenerator.CopyPreviewAsync(CancellationToken.None).ConfigureAwait(true);
-            if (result is null)
-            {
-                MessageBox.Show("CopyPreview failed. clipboard empty", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
         }).ConfigureAwait(true);
     }
 

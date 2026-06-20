@@ -1,19 +1,51 @@
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
-public sealed class YmmPreviewBitmapCaptureAdapter
+public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
 {
     private readonly FileLogger logger;
+
+    public YmmPreviewBitmapCaptureAdapter()
+        : this(new FileLogger(Path.Combine(Path.GetTempPath(), "YMMProjectManager", "logs", "preview-capture.log")))
+    {
+    }
 
     public YmmPreviewBitmapCaptureAdapter(FileLogger logger)
     {
         this.logger = logger;
+    }
+
+    public Task<YMMProjectManager.Application.Thumbnails.PreviewCaptureResult> TryCaptureAsync(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is null)
+        {
+            return Task.FromResult(YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Failed("WPF dispatcher is unavailable."));
+        }
+
+        return dispatcher.InvokeAsync(() =>
+        {
+            var discovery = new YmmPreviewDiscoveryService(logger).Discover();
+            if (discovery.PreviewViewModel is null)
+            {
+                return YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Failed(discovery.FailureReason ?? "PreviewViewModel not found.");
+            }
+
+            var capture = Capture(discovery.PreviewViewModel);
+            return capture.Success && capture.Bitmap is not null
+                ? YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Succeeded(capture.Bitmap, capture.Bitmap.GetType().FullName ?? capture.Bitmap.GetType().Name)
+                : YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Failed(capture.FailureReason ?? "Preview bitmap capture failed.");
+        }).Task;
     }
 
     public PreviewBitmapCaptureResult Capture(object previewViewModel)

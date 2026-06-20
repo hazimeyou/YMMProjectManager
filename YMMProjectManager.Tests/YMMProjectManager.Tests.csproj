@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <UseWPF>false</UseWPF>
+    <UseWPF>true</UseWPF>
     <UseWindowsForms>false</UseWindowsForms>
     <PlatformTarget>x64</PlatformTarget>
     <YMM4Path Condition="'$(YMM4_PATH)' != ''">$(YMM4_PATH)</YMM4Path>
