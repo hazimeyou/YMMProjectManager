@@ -6,6 +6,9 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// YMM 本体のボタンを UI Automation で探し、サムネイルコピーやフレーム移動を呼び出します。
+/// </summary>
 public sealed class UiaThumbnailCopyInvoker
 {
     private const string CopyButtonLabel = "\u30B5\u30E0\u30CD\u30A4\u30EB\u753B\u50CF\u3092\u30AF\u30EA\u30C3\u30D7\u30DC\u30FC\u30C9\u306B\u51FA\u529B";
@@ -109,6 +112,7 @@ public sealed class UiaThumbnailCopyInvoker
             return false;
         }
 
+        // InvokePattern が使えない環境向けに、実クリック fallback も用意している。
         _ = TryBringHostToForeground(button);
         var point = ResolveClickPoint(button);
         if (point is null)
@@ -137,6 +141,7 @@ public sealed class UiaThumbnailCopyInvoker
         {
             if (cachedElement is not null)
             {
+                // UIA 要素は再描画で古くなるため、有効かつ画面内の間だけ再利用する。
                 if (cachedElementKind != kind)
                 {
                     cachedElement = null;
@@ -233,6 +238,7 @@ public sealed class UiaThumbnailCopyInvoker
 
             var hasRect = rect.Width > 0 && rect.Height > 0;
             var hasInvoke = c.TryGetCurrentPattern(InvokePattern.Pattern, out _);
+            // 複数候補が見つかるため、押せる・見えている・矩形がある要素を優先する。
             var score = 0;
             if (enabled) score += 4;
             if (!offscreen) score += 4;
@@ -277,6 +283,7 @@ public sealed class UiaThumbnailCopyInvoker
             return false;
         }
 
+        // プラグインと同一プロセス内の YMM メインウィンドウだけを対象にする。
         var processId = Process.GetCurrentProcess().Id;
         var topLevelCondition = new AndCondition(
             new PropertyCondition(AutomationElement.ProcessIdProperty, processId),
@@ -307,6 +314,7 @@ public sealed class UiaThumbnailCopyInvoker
     {
         try
         {
+            // UIA がクリック可能点を返せる場合はそれを最優先にする。
             if (element.TryGetClickablePoint(out var clickable))
             {
                 return clickable;
@@ -321,6 +329,7 @@ public sealed class UiaThumbnailCopyInvoker
             var rect = element.Current.BoundingRectangle;
             if (rect.Width > 0 && rect.Height > 0)
             {
+                // クリック可能点が取れない場合は矩形中央で代替する。
                 return new Point(rect.Left + (rect.Width / 2.0), rect.Top + (rect.Height / 2.0));
             }
         }
@@ -377,6 +386,7 @@ public sealed class UiaThumbnailCopyInvoker
         }
         finally
         {
+            // ユーザーのマウス位置を極力乱さないよう、クリック後に元へ戻す。
             _ = SetCursorPos(oldPos.X, oldPos.Y);
         }
     }

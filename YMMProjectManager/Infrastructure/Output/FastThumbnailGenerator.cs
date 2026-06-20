@@ -7,6 +7,9 @@ using YukkuriMovieMaker.Player.Video;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// YMM の TimelineVideoSource を直接描画して、フィルムストリップ用のサムネイル PNG 群を生成します。
+/// </summary>
 public sealed class FastThumbnailGenerator
 {
     private const int ThumbnailCount = 64;
@@ -50,6 +53,7 @@ public sealed class FastThumbnailGenerator
 
         LogDiag($"Fast thumbnail generation start. ymmp={ymmpPath}, hash={hash}, fps={fps}, durationFrames={durationFrames}, samples={sampleFrames.Length}");
 
+        // 既存キャッシュは再利用し、未生成スロットだけを描画することで再表示を軽くする。
         var renderedCount = 0;
         var reusedCount = 0;
         LogDiag("Fast: entering loop");
@@ -74,6 +78,7 @@ public sealed class FastThumbnailGenerator
 
             var frame = sampleFrames[i];
             LogDiag($"Fast: slot {i} start (frame={frame})");
+            // TimelineVideoSource は時間指定なので、フレーム番号を FPS 基準の時刻へ変換する。
             var time = new YukkuriMovieMaker.Player.Video.FrameTime(frame, fps).Time;
 
             LogDiag($"Fast: slot {i} set CurrentFrame before");
@@ -123,6 +128,7 @@ public sealed class FastThumbnailGenerator
 
     private void SaveScaledThumbnail(BitmapSource bitmap, string outputPath)
     {
+        // 後段の renderer は BGRA32 前提なので、入力形式をここで揃える。
         var source = bitmap.Format == System.Windows.Media.PixelFormats.Bgra32
             ? bitmap
             : new FormatConvertedBitmap(bitmap, System.Windows.Media.PixelFormats.Bgra32, null, 0);
@@ -134,6 +140,7 @@ public sealed class FastThumbnailGenerator
 
     private static int[] CreateSampleFrames(int totalFrames)
     {
+        // 64 枚でプロジェクト全体を均等に代表させ、スクラブ時の位置感を保つ。
         var frames = new int[ThumbnailCount];
         var maxFrame = Math.Max(0, totalFrames - 1);
         for (var i = 0; i < ThumbnailCount; i++)

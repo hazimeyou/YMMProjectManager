@@ -1,5 +1,8 @@
 namespace YMMProjectManager.Application.Diagnostics;
 
+/// <summary>
+/// プレビュー画面の探索、GetBitmap 呼び出し、画像保存までの診断結果です。
+/// </summary>
 public sealed class PreviewBitmapDiagnosticsResult
 {
     public bool DiscoverySucceeded { get; set; }
@@ -63,6 +66,9 @@ public sealed class PreviewBitmapDiagnosticsResult
     public TimeSpan Duration { get; set; }
 }
 
+/// <summary>
+/// PreviewViewModel から見つかった GetBitmap 系メソッドの署名情報です。
+/// </summary>
 public sealed class PreviewBitmapMethodSignatureInfo
 {
     public string MethodName { get; set; } = string.Empty;
@@ -77,6 +83,9 @@ public sealed class PreviewBitmapMethodSignatureInfo
     public List<string> InvocationCandidates { get; set; } = [];
 }
 
+/// <summary>
+/// GetBitmap メソッドの個々の引数情報です。
+/// </summary>
 public sealed class PreviewBitmapMethodSignatureParameterInfo
 {
     public string? Name { get; set; }
@@ -85,6 +94,9 @@ public sealed class PreviewBitmapMethodSignatureParameterInfo
     public object? DefaultValue { get; set; }
 }
 
+/// <summary>
+/// GetBitmap を 1 回呼び出した結果と、保存できた画像のメタデータです。
+/// </summary>
 public sealed class PreviewBitmapCaptureResult
 {
     public bool InvocationSucceeded { get; set; }
@@ -104,6 +116,9 @@ public sealed class PreviewBitmapCaptureResult
     public string? FailureKind { get; set; }
 }
 
+/// <summary>
+/// GetBitmap(false) と GetBitmap(true) の試行結果を比較するための情報です。
+/// </summary>
 public sealed class PreviewBitmapComparisonResult
 {
     public bool FalseSucceeded { get; set; }

@@ -12,6 +12,9 @@ using YukkuriMovieMaker.Project;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// タイムラインを代表フレームへシークし、現在のプレビュー画像を保存するサムネイル生成器です。
+/// </summary>
 public sealed class SeekPreviewThumbnailGenerator
 {
     private const int ThumbnailCount = 64;
@@ -53,6 +56,7 @@ public sealed class SeekPreviewThumbnailGenerator
         var totalFrames = Math.Max(1, lastFrame + 1);
         var sampleFrames = CreateSampleFrames(totalFrames);
 
+        // キャッシュはプロジェクトファイルのパスと更新時刻に紐づける。
         var cacheDirectory = Path.Combine(
             AppDirectories.UserDirectory,
             "plugin",
@@ -76,6 +80,7 @@ public sealed class SeekPreviewThumbnailGenerator
             logger.Info($"Seek preview thumbnail slot={i} start frame={frame}");
             logger.Flush();
 
+            // シーク直後はプレビュー描画が追いつかないため、Dispatcher と短い待機で安定させる。
             seek.SeekToFrame(frame);
             await YieldDispatcherAsync().ConfigureAwait(true);
             await Task.Delay(PreviewSettleDelayMs, cancellationToken).ConfigureAwait(true);
@@ -117,6 +122,7 @@ public sealed class SeekPreviewThumbnailGenerator
         BitmapSource source = bitmap;
         if (source.Format != PixelFormats.Bgra32)
         {
+            // renderer の入力フォーマットに合わせ、保存前に BGRA32 へ変換する。
             var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
             if (!converted.IsFrozen && converted.CanFreeze)
             {
@@ -148,6 +154,7 @@ public sealed class SeekPreviewThumbnailGenerator
         lastFrame = 0;
         failureReason = "No usable timeline length candidate was found.";
 
+        // YMM 側のバージョン差分を吸収するため、複数の長さ候補プロパティを見る。
         foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount", "EndFrame" })
         {
             if (!TryReadIntLikeProperty(timeline, propertyName, out var value))

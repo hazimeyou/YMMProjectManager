@@ -1,5 +1,8 @@
 namespace YMMProjectManager.Application.Thumbnails;
 
+/// <summary>
+/// タイムラインのシーク実行結果と検証に必要な前後フレーム情報です。
+/// </summary>
 public sealed record SeekResult
 {
     public bool Success { get; init; }
@@ -26,6 +29,9 @@ public sealed record SeekResult
 
     public double DurationMs => Duration.TotalMilliseconds;
 
+    /// <summary>
+    /// シーク成功時に、要求フレームと実際の前後フレームを記録します。
+    /// </summary>
     public static SeekResult Succeeded(int requestedFrame, int beforeFrame, int afterFrame, string methodUsed, int tolerance)
         => new()
         {
@@ -41,9 +47,15 @@ public sealed record SeekResult
             Tolerance = tolerance,
         };
 
+    /// <summary>
+    /// 互換用の簡易成功ファクトリです。
+    /// </summary>
     public static SeekResult Succeeded(int beforeFrame, int afterFrame)
         => Succeeded(afterFrame, beforeFrame, afterFrame, "CurrentFrameProperty", 0);
 
+    /// <summary>
+    /// シーク失敗時に、原因と観測できたフレーム情報を保持します。
+    /// </summary>
     public static SeekResult Failed(
         int requestedFrame,
         string reason,
@@ -67,6 +79,9 @@ public sealed record SeekResult
             Tolerance = tolerance,
         };
 
+    /// <summary>
+    /// 呼び出し元が要求フレームを持たない場合の簡易失敗ファクトリです。
+    /// </summary>
     public static SeekResult Failed(string reason, int beforeFrame = 0, int afterFrame = 0, TimeSpan? duration = null)
         => Failed(afterFrame, reason, beforeFrame, afterFrame, duration: duration);
 }

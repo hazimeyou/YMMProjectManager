@@ -1,5 +1,8 @@
 namespace YMMProjectManager.Application.Thumbnails;
 
+/// <summary>
+/// 高速サムネイル生成の通常実行で使う設定値です。
+/// </summary>
 public sealed class FastThumbnailOptions
 {
     public bool IsEnabled { get; set; } = true;
@@ -10,6 +13,9 @@ public sealed class FastThumbnailOptions
     public string PreferredGetBitmapCall { get; set; } = "GetBitmap(true)";
 }
 
+/// <summary>
+/// 旧設定名との互換性を保つための高速サムネイル生成オプションです。
+/// </summary>
 public sealed class FastThumbnailGenerationOptions
 {
     public bool Enabled { get; set; }
@@ -20,8 +26,14 @@ public sealed class FastThumbnailGenerationOptions
     public bool AllowScreenCaptureFallback { get; set; }
 }
 
+/// <summary>
+/// プロジェクト全体から均等にサンプルフレームを選ぶためのヘルパーです。
+/// </summary>
 public static class FastThumbnailFrameSampler
 {
+    /// <summary>
+    /// 先頭と末尾を含めて、指定数のフレームを単調増加になるように作成します。
+    /// </summary>
     public static int[] CreateSampleFrames(int sampleCount, int firstFrame, int lastFrame)
     {
         if (sampleCount <= 0)
@@ -34,6 +46,7 @@ public static class FastThumbnailFrameSampler
             return [Math.Max(0, firstFrame)];
         }
 
+        // Round を使うことで短い範囲でも先頭・末尾を保ちながら均等に散らす。
         var start = Math.Max(0, firstFrame);
         var end = Math.Max(start, lastFrame);
         var frames = new int[sampleCount];
@@ -46,6 +59,9 @@ public static class FastThumbnailFrameSampler
     }
 }
 
+/// <summary>
+/// 高速サムネイル生成で観測した探索・取得・フォールバック情報です。
+/// </summary>
 public sealed class ThumbnailGenerationDiagnostics
 {
     public bool FastThumbnailEnabled { get; set; }
@@ -63,6 +79,9 @@ public sealed class ThumbnailGenerationDiagnostics
     public List<string> Warnings { get; set; } = [];
 }
 
+/// <summary>
+/// 高速サムネイル生成 1 回分の結果です。
+/// </summary>
 public sealed class FastThumbnailGenerationResult
 {
     public bool Success { get; set; }
@@ -74,6 +93,9 @@ public sealed class FastThumbnailGenerationResult
     public ThumbnailGenerationDiagnostics? Diagnostics { get; set; }
 }
 
+/// <summary>
+/// 高速生成ベンチマークで試すサンプル数と待機時間の組み合わせです。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkOptions
 {
     public List<int> SampleCounts { get; set; } = [16, 32, 64, 128, 256];
@@ -84,6 +106,9 @@ public sealed class ThumbnailFastGenerationBenchmarkOptions
     public string PreferredGetBitmapCall { get; set; } = "GetBitmap(true)";
 }
 
+/// <summary>
+/// サンプル数とシーク安定待ち時間の 1 組み合わせ分の計測結果です。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkRunResult
 {
     public string ProjectPath { get; set; } = string.Empty;
@@ -122,6 +147,9 @@ public sealed class ThumbnailFastGenerationBenchmarkRunResult
     public List<string> Warnings { get; set; } = [];
 }
 
+/// <summary>
+/// ベンチマーク全体を集計した成功数・時間・メモリ情報です。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkSummary
 {
     public int RunCount { get; set; }
@@ -137,6 +165,9 @@ public sealed class ThumbnailFastGenerationBenchmarkSummary
     public long PostGcMemoryDeltaBytes { get; set; }
 }
 
+/// <summary>
+/// 従来方式と高速方式の比較結果です。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkComparison
 {
     public bool LegacyMeasured { get; set; }
@@ -147,6 +178,9 @@ public sealed class ThumbnailFastGenerationBenchmarkComparison
     public double? SpeedupRatio { get; set; }
     public string? Reason { get; set; }
 
+    /// <summary>
+    /// 従来方式が高速方式の何倍時間を要したかを計算します。
+    /// </summary>
     public static double? CalculateSpeedupRatio(double? legacyTotalDurationMs, double? fastTotalDurationMs)
     {
         if (legacyTotalDurationMs is null || fastTotalDurationMs is null || fastTotalDurationMs <= 0)
@@ -158,6 +192,9 @@ public sealed class ThumbnailFastGenerationBenchmarkComparison
     }
 }
 
+/// <summary>
+/// ベンチマークの詳細結果と出力ファイル一覧です。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkResult
 {
     public string ProjectPath { get; set; } = string.Empty;
@@ -172,6 +209,9 @@ public sealed class ThumbnailFastGenerationBenchmarkResult
     public List<string> GeneratedFiles { get; set; } = [];
 }
 
+/// <summary>
+/// UI やログで見やすいように詳細結果から必要な値だけを集約したレポートです。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkSummaryReport
 {
     public string ProjectPath { get; set; } = string.Empty;

@@ -7,6 +7,9 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// 現在表示中の YMM プレビューを PNG と診断 JSON として保存します。
+/// </summary>
 public sealed class CurrentPreviewCaptureService
 {
     private readonly FileLogger logger;
@@ -24,6 +27,9 @@ public sealed class CurrentPreviewCaptureService
         outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "current-preview-capture");
     }
 
+    /// <summary>
+    /// テストや診断用途で、探索処理と取得処理を差し替えられるコンストラクタです。
+    /// </summary>
     public CurrentPreviewCaptureService(
         FileLogger logger,
         IPreviewBitmapCaptureAdapter captureAdapter,
@@ -43,6 +49,7 @@ public sealed class CurrentPreviewCaptureService
     {
         var started = DateTimeOffset.Now;
         var sw = Stopwatch.StartNew();
+        // キャプチャ画像と JSON を同じタイムスタンプにし、ログから対応を追いやすくする。
         Directory.CreateDirectory(outputDirectory);
         var stamp = started.ToString("yyyyMMdd-HHmmss");
         var pngPath = Path.Combine(outputDirectory, $"current-preview-{stamp}.png");
@@ -59,6 +66,7 @@ public sealed class CurrentPreviewCaptureService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            // 実行環境では WPF UI スレッドで探索し、テストでは注入された探索結果を使う。
             var discovery = discoverAsync is not null
                 ? await discoverAsync(cancellationToken).ConfigureAwait(true)
                 : await InvokeOnUiAsync(discoveryService!.Discover).ConfigureAwait(true);
@@ -70,6 +78,7 @@ public sealed class CurrentPreviewCaptureService
                 return await FinalizeAsync(result, jsonPath, sw).ConfigureAwait(true);
             }
 
+            // 通常は YMM の PreviewViewModel を直接叩き、テスト時は抽象化された取得アダプタを使う。
             var capture = captureAdapter is not null
                 ? await InvokeOnUiAsync(() => captureAdapter.Capture(discovery.PreviewViewModel)).ConfigureAwait(true)
                 : await CaptureWithInjectedAdapterAsync(cancellationToken).ConfigureAwait(true);
@@ -125,6 +134,9 @@ public sealed class CurrentPreviewCaptureService
         return await InvokeOnUiAsync(() => captureAdapter!.Capture(discovery.PreviewViewModel)).ConfigureAwait(true);
     }
 
+    /// <summary>
+    /// IPreviewBitmapCaptureAdapter の結果を既存の出力 DTO に変換します。
+    /// </summary>
     private async Task<PreviewBitmapCaptureResult> CaptureWithInjectedAdapterAsync(CancellationToken cancellationToken)
     {
         var capture = await injectedCaptureAdapter!.TryCaptureAsync(cancellationToken).ConfigureAwait(true);
@@ -160,6 +172,7 @@ public sealed class CurrentPreviewCaptureService
 
         try
         {
+            // 成否に関係なく診断 JSON を残すことで、ユーザー環境での原因追跡を優先する。
             var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(jsonPath, json).ConfigureAwait(true);
         }
@@ -186,6 +199,7 @@ public sealed class CurrentPreviewCaptureService
         var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
+            // テストやホスト外実行では Dispatcher がないため、その場で安全に実行する。
             return Task.FromResult(action());
         }
 
@@ -193,6 +207,9 @@ public sealed class CurrentPreviewCaptureService
     }
 }
 
+/// <summary>
+/// 現在プレビューのキャプチャ結果と診断 JSON の保存先です。
+/// </summary>
 public sealed class CurrentPreviewCaptureResult
 {
     public DateTimeOffset Timestamp { get; set; }

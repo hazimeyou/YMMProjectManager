@@ -7,6 +7,9 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// 開いている WPF ウィンドウから YMM の PreviewViewModel を探索します。
+/// </summary>
 public sealed class YmmPreviewDiscoveryService
 {
     private readonly FileLogger logger;
@@ -35,7 +38,7 @@ public sealed class YmmPreviewDiscoveryService
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         foreach (Window window in app.Windows)
         {
-            // 各トップレベルのウィンドウから開始し、PreviewViewModel が見つかるまで可視階層と論理階層の両方をたどる。
+            // 各トップレベルウィンドウから、VisualTree と DataContext の両方をたどる。
             Traverse(window, visited, result);
             if (result.PreviewViewModel is not null)
             {
@@ -79,7 +82,7 @@ public sealed class YmmPreviewDiscoveryService
 
         result.VisualTreeElementCount++;
 
-        // 具体的なビュー型が別アセンブリへ移動しても追えるよう、型名ベースで判定する。
+        // 具体型が別アセンブリへ移動しても追えるよう、型名ベースで候補を判定する。
         var typeName = current.GetType().Name;
         if (!result.PreviewViewFound && typeName.Contains("PreviewView", StringComparison.OrdinalIgnoreCase))
         {
@@ -95,7 +98,7 @@ public sealed class YmmPreviewDiscoveryService
 
         if (current is FrameworkElement fe && fe.DataContext is not null)
         {
-            // 可視階層上にビューがある場合は、DataContext が最短で PreviewViewModel に辿り着ける。
+            // 画面要素より DataContext の方が PreviewViewModel に近いことが多い。
             if (!result.PreviewViewModelFound && fe.DataContext.GetType().Name.Contains("PreviewViewModel", StringComparison.OrdinalIgnoreCase))
             {
                 result.PreviewViewModel = fe.DataContext;
@@ -118,7 +121,7 @@ public sealed class YmmPreviewDiscoveryService
 
         if (current is DependencyObject dep && CanUseVisualTree(dep))
         {
-            // VisualTreeHelper を使えるのは Visual / Visual3D だけ。
+            // VisualTreeHelper が扱える型だけを対象にして、AvalonDock 系の例外を避ける。
             var childCount = VisualTreeHelper.GetChildrenCount(dep);
             for (var i = 0; i < childCount; i++)
             {
@@ -160,11 +163,14 @@ public sealed class YmmPreviewDiscoveryService
 
     internal static bool CanUseVisualTree(DependencyObject dependencyObject)
     {
-        // AvalonDock のレイアウト系は Visual ではないため、VisualTreeHelper 呼び出し前に除外する。
+        // VisualTreeHelper 呼び出し前に除外し、ホスト UI 固有のツリー構造で落ちないようにする。
         return dependencyObject is Visual or Visual3D;
     }
 }
 
+/// <summary>
+/// プレビュー探索で見つかった View/ViewModel と GetBitmap 候補の情報です。
+/// </summary>
 public sealed class YmmPreviewDiscoveryResult
 {
     public bool DiscoverySucceeded { get; set; }

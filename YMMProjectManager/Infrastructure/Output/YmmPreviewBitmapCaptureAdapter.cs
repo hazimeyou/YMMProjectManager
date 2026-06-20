@@ -1,6 +1,6 @@
+using System.IO;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -9,6 +9,9 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// YMM の PreviewViewModel から GetBitmap を呼び出し、WPF で保存可能なビットマップへ変換します。
+/// </summary>
 public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
 {
     private readonly FileLogger logger;
@@ -30,6 +33,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
+            // ホスト外では UI オブジェクトに触れず、呼び出し側で扱える失敗結果にする。
             return Task.FromResult(YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Failed("WPF dispatcher is unavailable."));
         }
 
@@ -50,7 +54,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
 
     public PreviewBitmapCaptureResult Capture(object previewViewModel)
     {
-        // まず最も有力な GetBitmap オーバーロードを優先し、失敗した場合だけ後続へ回す。
+        // まず最も成功しやすい GetBitmap オーバーロードを選び、失敗時は後続候補へ回す。
         if (!TrySelectGetBitmapMethod(previewViewModel, out var method, out var parameterTypes, out var nextRecommendedCall) || method is null)
         {
             return new PreviewBitmapCaptureResult
@@ -129,7 +133,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
             return false;
         }
 
-        // bool オーバーロードは実機プローブで成功済みのため、最優先で選ぶ。
+        // 実機で成功例の多い bool オーバーロードを優先し、次に引数なしを試す。
         var ordered = methods
             .OrderByDescending(ScoreMethod)
             .ThenBy(x => x.GetParameters().Length)
@@ -148,7 +152,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         height = 0;
         pixelFormat = string.Empty;
 
-        // WPF と System.Drawing の両方を BitmapSource に揃え、呼び出し側で確実に PNG 化できるようにする。
+        // WPF と System.Drawing のどちらが返っても、保存処理では BitmapSource に揃える。
         if (value is BitmapSource source)
         {
             bitmap = source;
@@ -248,6 +252,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
 
         try
         {
+            // System.Drawing.Bitmap は GDI ハンドル経由で WPF BitmapSource へ変換する。
             var handle = hBitmap is IntPtr ptr ? ptr : new IntPtr(Convert.ToInt64(hBitmap));
             source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHBitmap(
                 handle,
@@ -263,6 +268,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         }
         finally
         {
+            // GetHbitmap で取得した GDI オブジェクトは必ず解放する。
             if (hBitmap is IntPtr handle)
             {
                 DeleteObject(handle);
@@ -278,6 +284,9 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
     private static extern bool DeleteObject(IntPtr hObject);
 }
 
+/// <summary>
+/// PreviewViewModel からのビットマップ取得結果です。
+/// </summary>
 public sealed class PreviewBitmapCaptureResult
 {
     public bool Success { get; set; }

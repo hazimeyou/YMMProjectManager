@@ -7,6 +7,9 @@ using System.Windows.Media.Imaging;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// サムネイル PNG を WPF で表示可能な ImageSource として非同期読み込みします。
+/// </summary>
 public static class ThumbnailImageLoader
 {
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.OrdinalIgnoreCase);
@@ -24,9 +27,11 @@ public static class ThumbnailImageLoader
         var lastWriteUtc = File.GetLastWriteTimeUtc(fullPath);
         if (Cache.TryGetValue(fullPath, out var cached) && cached.LastWriteUtc == lastWriteUtc)
         {
+            // 更新時刻が同じならデコード済み ImageSource を再利用する。
             return cached.Loader.Value;
         }
 
+        // 同じファイルへの同時読み込みは Lazy<Task> で 1 回にまとめる。
         var entry = new CacheEntry(lastWriteUtc, new Lazy<Task<ImageSource?>>(() => LoadCoreAsync(fullPath, logger)));
         Cache[fullPath] = entry;
         return entry.Loader.Value;
@@ -46,6 +51,7 @@ public static class ThumbnailImageLoader
                 using var stream = File.OpenRead(path);
                 var image = new BitmapImage();
                 image.BeginInit();
+                // OnLoad にしてストリームを閉じても UI 表示できるようにする。
                 image.CacheOption = BitmapCacheOption.OnLoad;
                 image.CreateOptions = BitmapCreateOptions.PreservePixelFormat;
                 image.StreamSource = stream;

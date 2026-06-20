@@ -7,6 +7,9 @@ using YMMProjectManager.Application.Thumbnails;
 
 namespace YMMProjectManager.Infrastructure.Thumbnails;
 
+/// <summary>
+/// タイムラインシークとプレビュー取得を組み合わせて、高速サムネイル生成の計測結果を出力します。
+/// </summary>
 public sealed class ThumbnailFastGenerationBenchmarkRunner
 {
     private readonly FileLogger logger;
@@ -40,6 +43,7 @@ public sealed class ThumbnailFastGenerationBenchmarkRunner
             BenchmarkDirectory = root,
         };
 
+        // すべての設定組み合わせを同じ出力ルートへ保存し、後から比較しやすくする。
         var initialMemory = GC.GetTotalMemory(false);
         foreach (var sampleCount in options.SampleCounts)
         {
@@ -53,6 +57,7 @@ public sealed class ThumbnailFastGenerationBenchmarkRunner
         }
 
         var finalMemory = GC.GetTotalMemory(false);
+        // 実行直後と GC 後の両方を残し、短時間の一時割り当ても確認できるようにする。
         GC.Collect();
         var postGcMemory = GC.GetTotalMemory(true);
 
@@ -113,6 +118,7 @@ public sealed class ThumbnailFastGenerationBenchmarkRunner
         int? height = null;
         string? pixelFormat = null;
 
+        // 実プロジェクト長を直接知らない呼び出しでも計測できるよう、サンプル数分の仮フレームを使う。
         var frames = FastThumbnailFrameSampler.CreateSampleFrames(sampleCount, 0, Math.Max(0, sampleCount - 1));
         for (var i = 0; i < frames.Length; i++)
         {
@@ -152,6 +158,7 @@ public sealed class ThumbnailFastGenerationBenchmarkRunner
 
             if (options.PersistAllFrames || saved == 0)
             {
+                // 全保存しない場合も 1 枚は残し、生成物の視覚確認を可能にする。
                 var saveSw = Stopwatch.StartNew();
                 SavePng(capture.Bitmap, Path.Combine(outputDirectory, $"{i:000}.png"));
                 saveSw.Stop();

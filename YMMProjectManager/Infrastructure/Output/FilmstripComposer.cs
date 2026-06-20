@@ -5,6 +5,9 @@ using System.Windows.Media.Imaging;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// 複数フレームの中央列を 64x36 の 1 枚画像へ並べるフィルムストリップ合成器です。
+/// </summary>
 public sealed class FilmstripComposer
 {
     public const int OutputWidth = 64;
@@ -30,7 +33,7 @@ public sealed class FilmstripComposer
             return;
         }
 
-        // Fast path: pick center X from source frame and scale Y to 36.
+        // 各フレームから中央列だけを抜き出し、横方向の時間変化として並べる。
         var sourceX = frameWidth / 2;
         for (var y = 0; y < OutputHeight; y++)
         {
@@ -49,6 +52,7 @@ public sealed class FilmstripComposer
 
     public void FillMissingColumns()
     {
+        // 取得に失敗した列は直前列で埋め、スクラブ画像の透明な穴を避ける。
         for (var x = 1; x < OutputWidth; x++)
         {
             var hasAnyPixel = false;
@@ -81,6 +85,7 @@ public sealed class FilmstripComposer
 
     public void SavePng(string path)
     {
+        // outputPixels は BGRA32 前提で保持しているため、そのまま PNG エンコードする。
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(dir))
         {

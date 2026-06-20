@@ -5,6 +5,9 @@ using System.Windows.Media.Imaging;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// 任意サイズの BGRA32 フレームを、一覧表示用の 64x36 PNG へ縮小保存します。
+/// </summary>
 public sealed class ThumbnailSequenceFrameRenderer
 {
     public const int ThumbnailWidth = 64;
@@ -37,6 +40,7 @@ public sealed class ThumbnailSequenceFrameRenderer
             return;
         }
 
+        // アスペクト比を維持し、余白は透明のまま中央配置する。
         var scale = Math.Min(
             ThumbnailWidth / (double)frameWidth,
             ThumbnailHeight / (double)frameHeight);
@@ -47,6 +51,7 @@ public sealed class ThumbnailSequenceFrameRenderer
 
         for (var y = 0; y < scaledHeight; y++)
         {
+            // 最近傍で十分な小サイズなので、軽量さを優先して補間処理は持たない。
             var srcY = scaledHeight == 1
                 ? 0
                 : (int)Math.Round(y * (frameHeight - 1d) / (scaledHeight - 1d));

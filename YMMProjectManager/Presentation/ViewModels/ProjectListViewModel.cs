@@ -529,6 +529,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
+            // 高速サムネイル生成は、YMM 側で開いているタイムライン情報を前提にする。
             var info = TimelineContextService.Info;
             if (info?.Timeline is null)
             {
@@ -550,6 +551,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 return;
             }
 
+            // 生成後はキャッシュパスを再通知し、一覧のスクラブサムネイルを更新する。
             UpdateThumbnailMetadata(project);
         }).ConfigureAwait(true);
     }
@@ -568,6 +570,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "seek-probe");
             Directory.CreateDirectory(outputDirectory);
 
+            // 代表フレームを複数試し、YMM のタイムライン操作が安定しているかを確認する。
             var probeFrames = CreateSeekProbeFrames(timeline);
             var seekAdapter = new YmmTimelineSeekAdapter();
             var resultPaths = new List<string>(probeFrames.Count);
@@ -669,6 +672,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         try
         {
+            // キャッシュキーはプロジェクトパス由来なので、移動や別名保存時も再計算する。
             var hash = FilmstripCacheKeyFactory.TryCreateHash(entry.FullPath);
             if (string.IsNullOrWhiteSpace(hash))
             {

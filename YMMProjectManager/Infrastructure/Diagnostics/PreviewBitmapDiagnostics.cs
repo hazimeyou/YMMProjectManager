@@ -6,6 +6,9 @@ using YMMProjectManager.Application.Diagnostics;
 
 namespace YMMProjectManager.Infrastructure.Diagnostics;
 
+/// <summary>
+/// YMM のプレビュー表示からビットマップ取得可否を調べる診断サービスです。
+/// </summary>
 public sealed class PreviewBitmapDiagnostics
 {
     private readonly FileLogger logger;
@@ -29,6 +32,7 @@ public sealed class PreviewBitmapDiagnostics
             var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
             if (dispatcher is null)
             {
+                // WPF ホスト外のテスト実行では UI オブジェクトへ触れず、安全な失敗結果を返す。
                 result.FailureReason = "WPF dispatcher is unavailable.";
                 return await FinalizeAsync(result, sw, cancellationToken).ConfigureAwait(false);
             }
@@ -58,6 +62,7 @@ public sealed class PreviewBitmapDiagnostics
 
         try
         {
+            // 失敗結果も履歴として残し、環境依存の再現調査に使えるようにする。
             var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics");
             Directory.CreateDirectory(outputDirectory);
             var path = Path.Combine(outputDirectory, $"preview-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");

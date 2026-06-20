@@ -12,6 +12,9 @@ using YMMProjectManager.Application.Thumbnails;
 
 namespace YMMProjectManager.Infrastructure.Thumbnails;
 
+/// <summary>
+/// YMM のタイムラインらしきオブジェクトを探索し、指定フレームへ移動します。
+/// </summary>
 public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 {
     private const int FrameTolerance = 1;
@@ -34,6 +37,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        // YMM の UI オブジェクトを触るため、シーク処理は必ず WPF Dispatcher 上で実行する。
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
@@ -94,12 +98,14 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
                 tolerance: FrameTolerance);
         }
 
+        // まず最も単純で副作用が少ない CurrentFrame プロパティ経由を試す。
         var directResult = TrySeekViaCurrentFrame(discovery.Timeline, targetFrame);
         if (directResult.Success)
         {
             return directResult;
         }
 
+        // CurrentFrame が読み取り専用の場合は、YMM のコマンドバインディング経由で移動を試す。
         var fallbackResult = TrySeekViaCommandBindings(discovery, targetFrame);
         if (fallbackResult.Success)
         {
@@ -117,6 +123,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
     private static SeekResult TrySeekViaCurrentFrame(object timeline, int targetFrame)
     {
+        // setter 実行後に再読込し、実際に要求フレームへ到達したかを検証する。
         if (!TryReadCurrentFrame(timeline, out var beforeFrame, out var beforeReason, out var beforeExceptionType))
         {
             return SeekResult.Failed(
@@ -179,6 +186,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
                 tolerance: FrameTolerance);
         }
 
+        // CommandBinding は Window 側に登録されることが多いため、探索結果に近い Window を優先する。
         var windows = EnumerateCandidateWindows(discovery).ToArray();
         if (windows.Length == 0)
         {
@@ -276,6 +284,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var notes = new List<string>();
 
+        // 明示引数、YMM のタイムラインコンテキスト、開いている Window の順に幅優先で探索する。
         Enqueue(queue, explicitTimeline, "SeekAsync.timeline", 0, null);
         var (timelineContextTimeline, timelineContextInfo) = TryGetTimelineContextCandidates();
         Enqueue(queue, timelineContextTimeline, "TimelineContextService.Timeline", 0, null);
@@ -298,6 +307,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             nodesVisited++;
             if (HasCurrentFrameProperty(node.Value))
             {
+                // CurrentFrame を持つオブジェクトをタイムライン候補として扱う。
                 var source = $"{node.Path} ({node.Value.GetType().FullName})";
                 return new TimelineDiscoveryResult(node.Value, node.OwnerWindow, $"timeline discovered from {source}. nodes={nodesVisited}");
             }
@@ -438,6 +448,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             yield break;
         }
 
+        // よく使うプロパティを先に見て、深いオブジェクトグラフを無駄に広げない。
         var properties = nodeValue.GetType()
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.CanRead && property.GetIndexParameters().Length == 0)

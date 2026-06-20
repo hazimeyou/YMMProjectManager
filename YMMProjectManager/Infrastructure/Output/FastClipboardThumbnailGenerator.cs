@@ -13,6 +13,9 @@ using YukkuriMovieMaker.Project;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+/// <summary>
+/// YMM のプレビューコピー機能を UI Automation 経由で呼び出し、クリップボード画像からサムネイルを生成します。
+/// </summary>
 public sealed class FastClipboardThumbnailGenerator
 {
     private const int ThumbnailCount = 64;
@@ -37,6 +40,7 @@ public sealed class FastClipboardThumbnailGenerator
     {
         cancellationToken.ThrowIfCancellationRequested();
         var frame = Math.Max(0, frameIndex);
+        // Timeline は UI スレッド所有のため、CurrentFrame の更新は Dispatcher 経由にする。
         await InvokeOnUiAsync(() => SetTimelineCurrentFrame(timeline, frame)).ConfigureAwait(true);
         await YieldDispatcherAsync(DispatcherPriority.Render).ConfigureAwait(true);
         logger.Info($"GoToFrame set={frame}");
@@ -110,6 +114,7 @@ public sealed class FastClipboardThumbnailGenerator
         logger.Info($"{operationName}: start. ymmp={ymmpPath}, hash={hash}, lengthFrames={lengthFrames}, samples={sampleFrames.Length}");
         logger.Flush();
 
+        // 本生成前に 1 回コピーできるか確認し、UIA/Clipboard が使えない環境を早期に検出する。
         var testFrame = GetTimelineCurrentFrame(timeline);
         var singleShot = await CaptureSlotAsync(timeline, testFrame, -1, null, cancellationToken).ConfigureAwait(true);
         if (singleShot is null)
@@ -144,6 +149,7 @@ public sealed class FastClipboardThumbnailGenerator
                     continue;
                 }
 
+                // 前回ハッシュと比較し、プレビューが古い画像のまま返るケースを検出する。
                 var capture = await CaptureSlotAsync(timeline, frame, i, prevHash, cancellationToken).ConfigureAwait(true);
                 if (capture?.Image is null)
                 {
@@ -214,6 +220,7 @@ public sealed class FastClipboardThumbnailGenerator
     {
         for (var attempt = 1; attempt <= MaxAttempts; attempt++)
         {
+            // YMM 側の描画更新が遅れることがあるため、同じスロットを数回まで再試行する。
             var copied = await SeekCopyAndPollAsync(timeline, targetFrame, cancellationToken).ConfigureAwait(true);
             if (copied is null)
             {
@@ -250,6 +257,7 @@ public sealed class FastClipboardThumbnailGenerator
         await GoToFrameAsync(timeline, frame, cancellationToken).ConfigureAwait(true);
         await Task.Delay(SeekDelayMs, cancellationToken).ConfigureAwait(true);
 
+        // プレビュー更新を促すため、隣接フレームへ小さく動かしてから対象フレームへ戻す。
         var nudged = false;
         string? lastNudgeReason = null;
         for (var retry = 1; retry <= NudgeRetryMax; retry++)
@@ -274,6 +282,7 @@ public sealed class FastClipboardThumbnailGenerator
 
         if (!nudged && IsNotFoundOrDisabled(lastNudgeReason))
         {
+            // フレーム単位の UIA 操作が使えない場合は、次編集点コマンドを代替として試す。
             var fallback = await TryNudgeByNextEditPointAsync(timeline, frame, cancellationToken).ConfigureAwait(true);
             if (!fallback.Success)
             {
@@ -420,6 +429,7 @@ public sealed class FastClipboardThumbnailGenerator
 
     private async Task<BitmapSource?> PollClipboardImageAsync(CancellationToken cancellationToken)
     {
+        // コピー直後は Clipboard 反映が非同期なので、短い間隔で画像到着を待つ。
         for (var poll = 1; poll <= PollMaxCount; poll++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -471,6 +481,7 @@ public sealed class FastClipboardThumbnailGenerator
         BitmapSource source = bitmap;
         if (source.Format != PixelFormats.Bgra32)
         {
+            // renderer の入力形式へ合わせてからバックグラウンド保存に渡す。
             var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
             if (!converted.IsFrozen && converted.CanFreeze)
             {
@@ -487,6 +498,7 @@ public sealed class FastClipboardThumbnailGenerator
 
     private static int[] CreateSampleFrames(int totalFrames)
     {
+        // タイムライン全体を 64 スロットへ均等に割り当てる。
         var frames = new int[ThumbnailCount];
         var max = Math.Max(0, totalFrames - 1);
         for (var i = 0; i < ThumbnailCount; i++)

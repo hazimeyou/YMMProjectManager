@@ -15,12 +15,14 @@
 
     <Grid Margin="8">
         <DockPanel>
+            <!-- 基本操作: プロジェクト一覧の追加・削除・起動を行う。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button Content="追加" Width="72" Margin="0,0,8,0" Command="{Binding AddCommand}" />
                 <Button Content="削除" Width="72" Margin="0,0,8,0" Command="{Binding RemoveCommand}" />
                 <Button Content="開く" Width="72" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
             </StackPanel>
 
+            <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
                     Content="開いているPFを再リンク"

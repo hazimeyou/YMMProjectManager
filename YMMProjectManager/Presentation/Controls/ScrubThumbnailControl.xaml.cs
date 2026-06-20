@@ -9,6 +9,9 @@ using YMMProjectManager.Infrastructure.Output;
 
 namespace YMMProjectManager.Presentation.Controls;
 
+/// <summary>
+/// マウス位置に応じて 64 枚のサムネイルを切り替える一覧用プレビューコントロールです。
+/// </summary>
 public partial class ScrubThumbnailControl : UserControl
 {
     private const int ThumbCount = 64;
@@ -45,6 +48,7 @@ public partial class ScrubThumbnailControl : UserControl
     {
         var width = ActualWidth <= 0 ? 64d : ActualWidth;
         var point = e.GetPosition(this);
+        // 横位置を 0..63 のスロット番号へ変換し、タイムラインをなぞる感覚で表示する。
         var ratio = point.X / width;
         var idx = Clamp((int)Math.Floor(ratio * ThumbCount), 0, ThumbCount - 1);
         if (idx == currentIndex)
@@ -68,6 +72,7 @@ public partial class ScrubThumbnailControl : UserControl
     private async Task SetIndexAsync(int index)
     {
         currentIndex = index;
+        // 古い非同期ロード完了が後から UI を上書きしないよう、世代番号で破棄する。
         var version = ++loadVersion;
         var source = await LoadBestSourceAsync(index);
         if (version != loadVersion)
@@ -109,6 +114,7 @@ public partial class ScrubThumbnailControl : UserControl
                 return null;
             }
 
+            // 指定スロットが未生成でも、先頭画像があれば最低限のプレビューを表示する。
             var fallback = Path.Combine(CacheDirectory, "000.png");
             return await ThumbnailImageLoader.LoadAsync(fallback, Logger).ConfigureAwait(true);
         }
