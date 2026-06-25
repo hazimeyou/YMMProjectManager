@@ -25,6 +25,21 @@
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
+                    Content="選択したプロジェクトを同梱"
+                    MinWidth="139"
+                    Margin="0,0,8,0"
+                    Command="{Binding PackageSelectedProjectCommand}" />
+                <Button
+                    Content="現在のプロジェクトを同梱"
+                    MinWidth="139"
+                    Margin="0,0,8,0"
+                    Command="{Binding PackageOpenedProjectCommand}" />
+                <Button
+                    Content="ymmpx展開"
+                    MinWidth="110"
+                    Margin="0,0,8,0"
+                    Command="{Binding ExtractBundleCommand}" />
+                <Button
                     Content="再リンク"
                     MinWidth="90"
                     Margin="0,0,8,0"

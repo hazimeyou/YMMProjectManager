@@ -95,6 +95,7 @@ internal static class Program
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
+        await YmmpxBundleTests.RunAsync(workRoot);
     }
 
     private static async Task RunFilteredAsync(string workRoot, string filter)
