@@ -62,6 +62,8 @@ YukkuriMovieMaker 用の補助ツールです。
 
 ## ymmpx 同梱・展開
 
+v0.4.0 で `ymmpx` 同梱・展開に対応しました。
+
 プロジェクト一覧の上部にある `同梱` / `開いているPFを同梱` / `ymmpx展開` から操作できます。
 
 ### 同梱の作り方
@@ -86,6 +88,13 @@ YukkuriMovieMaker 用の補助ツールです。
 * `YMMProjectManager` と `YMMResourcePackager` は同じ `.ymmpx` 仕様を使います
 * `YmmpxLib` が見つからない場合は、同梱・展開は実行できません
 * `YmmpxLib.dll` はリポジトリに同梱していません
+* `.ymmpx` のダブルクリック展開や Windows 関連付けは、現時点では対象外です
+
+### 既知の制限
+
+* 実際の同梱・展開には、YMM4 環境内で `YmmpxLibPlugin` が解決できる必要があります
+* 壊れた `.ymmpx` や不正な `.ymmp` は、短い日本語メッセージとログでエラーを通知します
+* 高度な除外設定 UI や独立した unpacker は、`YMMResourcePackager` 側の機能をそのままは持ち込みません
 
 ---
 
