@@ -8,6 +8,9 @@ internal static class YmmpxBundleTests
 {
     public static async Task RunAsync(string workRoot)
     {
+        await TestInstallGuideMessageAsync(workRoot);
+        await TestLegacyFolderDetectionAsync(workRoot);
+        await TestInstallerDownloadAndLaunchAsync(workRoot);
         await TestResolverSearchPathsAsync(workRoot);
         await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
 
@@ -16,6 +19,61 @@ internal static class YmmpxBundleTests
         {
             await TestPackageAndExtractWithYmmpxLibAsync(workRoot, ymmpxLibPath);
         }
+    }
+
+    private static Task TestInstallGuideMessageAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallGuideMessageAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "guide.log"));
+        var guide = new YmmpxLibInstallGuide(logger);
+        var message = guide.BuildMissingPluginMessage(
+            [Path.Combine(root, "user", "plugin", "YmmpxLibPlugin", "YmmpxLib.dll")],
+            []);
+
+        AssertTrue(message.Contains("YmmpxLibPlugin が見つかりません"), "guide should mention missing plugin");
+        AssertTrue(message.Contains("user"), "guide should include install path");
+        AssertTrue(message.Contains(YmmpxLibInstallGuide.YmmpxLibPluginLatestDownloadUrl), "guide should include download url");
+        AssertTrue(message.Contains("再起動"), "guide should mention YMM restart");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestLegacyFolderDetectionAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestLegacyFolderDetectionAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "legacy.log"));
+        var guide = new YmmpxLibInstallGuide(logger);
+        var legacyA = Path.Combine(root, "user", "plugin", "YMMProjectManager", "YmmpxLib");
+        var legacyB = Path.Combine(root, "user", "plugin", "YmmpxLib");
+        Directory.CreateDirectory(legacyA);
+        Directory.CreateDirectory(legacyB);
+
+        var detected = guide.FindLegacyFolders(root);
+
+        AssertTrue(detected.Contains(Path.GetFullPath(legacyA), StringComparer.OrdinalIgnoreCase), "legacy YMMProjectManager/YmmpxLib should be detected");
+        AssertTrue(detected.Contains(Path.GetFullPath(legacyB), StringComparer.OrdinalIgnoreCase), "legacy YmmpxLib should be detected");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestInstallerDownloadAndLaunchAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallerDownloadAndLaunchAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "installer.log"));
+        var launchedPaths = new List<string>();
+        var guide = new YmmpxLibInstallGuide(
+            logger,
+            launcher: startInfo => launchedPaths.Add(startInfo.FileName),
+            downloader: async (_, path, _) =>
+            {
+                await File.WriteAllTextAsync(path, "dummy ymme").ConfigureAwait(false);
+            });
+
+        var result = await guide.DownloadAndLaunchInstallerAsync();
+
+        AssertTrue(result.Success, result.ErrorMessage ?? "installer flow should succeed");
+        AssertTrue(!string.IsNullOrWhiteSpace(result.DownloadPath), "download path should be returned");
+        AssertTrue(File.Exists(result.DownloadPath!), "downloaded ymme should exist");
+        AssertTrue(launchedPaths.Count == 1, "installer should be launched once");
+        AssertTrue(string.Equals(launchedPaths[0], result.DownloadPath, StringComparison.OrdinalIgnoreCase), "launched path should match downloaded ymme");
     }
 
     private static Task TestResolverSearchPathsAsync(string workRoot)

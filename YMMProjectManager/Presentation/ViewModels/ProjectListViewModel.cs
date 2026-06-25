@@ -27,6 +27,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpxLibBundleService bundleService;
+    private readonly YmmpxLibInstallGuide ymmpxLibInstallGuide;
     private List<ProjectFolder> folders = [];
     private ProjectEntry? selectedProject;
     private bool isBusy;
@@ -96,6 +97,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpxLibBundleService(logger);
+        ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -139,6 +141,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             isInitialized = true;
             logger.Info($"Load end. count={Projects.Count}");
             PrepareThumbnailMetadata(Projects.ToList());
+            UpdateYmmpxAvailabilityStatus();
         }).ConfigureAwait(true);
     }
 
@@ -406,6 +409,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task PackageProjectAsync(string sourcePath)
     {
+        if (!await EnsureYmmpxLibAvailableAsync(interactive: true).ConfigureAwait(true))
+        {
+            return;
+        }
+
         if (!TryGetOpenableProjectPath(sourcePath, out var ymmpPath, out var reason))
         {
             MessageBox.Show(reason, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -437,6 +445,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 .ConfigureAwait(true);
             if (!result.Success)
             {
+                if (IsYmmpxLibMissing(result.ErrorMessage))
+                {
+                    await ShowYmmpxLibInstallGuideAsync().ConfigureAwait(true);
+                    return;
+                }
+
                 BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った同梱に失敗しました。";
                 MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
@@ -450,6 +464,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task ExtractBundleAsync()
     {
+        if (!await EnsureYmmpxLibAvailableAsync(interactive: true).ConfigureAwait(true))
+        {
+            return;
+        }
+
         var bundleDialog = new OpenFileDialog
         {
             Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
@@ -481,6 +500,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 .ConfigureAwait(true);
             if (!result.Success)
             {
+                if (IsYmmpxLibMissing(result.ErrorMessage))
+                {
+                    await ShowYmmpxLibInstallGuideAsync().ConfigureAwait(true);
+                    return;
+                }
+
                 BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った展開に失敗しました。";
                 MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
@@ -548,6 +573,90 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
 
         window.ShowDialog();
+    }
+
+    private void UpdateYmmpxAvailabilityStatus()
+    {
+        if (bundleService.TryEnsureAvailable(out _))
+        {
+            if (BundleStatus.Contains("YmmpxLibPlugin が未導入です。", StringComparison.Ordinal))
+            {
+                BundleStatus = string.Empty;
+            }
+
+            return;
+        }
+
+        logger.Info($"YmmpxLibPlugin 未導入を検出しました。探索パス={string.Join(" | ", bundleService.SearchedPaths)}");
+        logger.Flush();
+        BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
+    }
+
+    private async Task<bool> EnsureYmmpxLibAvailableAsync(bool interactive)
+    {
+        if (bundleService.TryEnsureAvailable(out _))
+        {
+            return true;
+        }
+
+        logger.Info($"YmmpxLibPlugin 未導入を検出しました。探索パス={string.Join(" | ", bundleService.SearchedPaths)}");
+        logger.Flush();
+        BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
+        if (interactive)
+        {
+            await ShowYmmpxLibInstallGuideAsync().ConfigureAwait(true);
+        }
+
+        return false;
+    }
+
+    private async Task ShowYmmpxLibInstallGuideAsync()
+    {
+        var legacyPaths = ymmpxLibInstallGuide.FindLegacyFolders(AppContext.BaseDirectory);
+        var message = ymmpxLibInstallGuide.BuildMissingPluginMessage(bundleService.SearchedPaths, legacyPaths);
+
+        logger.Info("YmmpxLibPlugin の導入案内を表示しました。");
+        logger.Flush();
+
+        var answer = MessageBox.Show(
+            message,
+            "ymmpx",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Information,
+            MessageBoxResult.Yes);
+
+        if (answer is not MessageBoxResult.Yes)
+        {
+            logger.Info("YmmpxLibPlugin の導入案内でユーザーがキャンセルを選びました。");
+            logger.Flush();
+            return;
+        }
+
+        logger.Info("YmmpxLibPlugin の導入案内でユーザーがダウンロードを選びました。");
+        logger.Flush();
+
+        var installResult = await ymmpxLibInstallGuide.DownloadAndLaunchInstallerAsync().ConfigureAwait(true);
+        if (!installResult.Success)
+        {
+            MessageBox.Show(
+                installResult.ErrorMessage ?? "YmmpxLibPlugin のダウンロードまたは起動に失敗しました。ログを確認してください。",
+                "ymmpx",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        MessageBox.Show(
+            "YmmpxLibPlugin のインストーラーを起動しました。\nインストール後に YMM4 を再起動してください。",
+            "ymmpx",
+            MessageBoxButton.OK,
+            MessageBoxImage.Information);
+    }
+
+    private static bool IsYmmpxLibMissing(string? errorMessage)
+    {
+        return !string.IsNullOrWhiteSpace(errorMessage) &&
+               errorMessage.Contains("YmmpxLib が見つかりません", StringComparison.Ordinal);
     }
 
     private async Task GenerateThumbnailsFastAsync()
