@@ -8,6 +8,8 @@ internal static class YmmpxBundleTests
 {
     public static async Task RunAsync(string workRoot)
     {
+        await TestInstallGuideMessageAsync(workRoot);
+        await TestLegacyFolderDetectionAsync(workRoot);
         await TestResolverSearchPathsAsync(workRoot);
         await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
 
@@ -16,6 +18,39 @@ internal static class YmmpxBundleTests
         {
             await TestPackageAndExtractWithYmmpxLibAsync(workRoot, ymmpxLibPath);
         }
+    }
+
+    private static Task TestInstallGuideMessageAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallGuideMessageAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "guide.log"));
+        var guide = new YmmpxLibInstallGuide(logger);
+        var message = guide.BuildMissingPluginMessage(
+            [Path.Combine(root, "user", "plugin", "YmmpxLibPlugin", "YmmpxLib.dll")],
+            []);
+
+        AssertTrue(message.Contains("YmmpxLibPlugin が見つかりません"), "guide should mention missing plugin");
+        AssertTrue(message.Contains("user"), "guide should include install path");
+        AssertTrue(message.Contains(YmmpxLibInstallGuide.YmmpxLibPluginLatestDownloadUrl), "guide should include download url");
+        AssertTrue(message.Contains("再起動"), "guide should mention YMM restart");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestLegacyFolderDetectionAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestLegacyFolderDetectionAsync));
+        var logger = new FileLogger(Path.Combine(root, "logs", "legacy.log"));
+        var guide = new YmmpxLibInstallGuide(logger);
+        var legacyA = Path.Combine(root, "user", "plugin", "YMMProjectManager", "YmmpxLib");
+        var legacyB = Path.Combine(root, "user", "plugin", "YmmpxLib");
+        Directory.CreateDirectory(legacyA);
+        Directory.CreateDirectory(legacyB);
+
+        var detected = guide.FindLegacyFolders(root);
+
+        AssertTrue(detected.Contains(Path.GetFullPath(legacyA), StringComparer.OrdinalIgnoreCase), "legacy YMMProjectManager/YmmpxLib should be detected");
+        AssertTrue(detected.Contains(Path.GetFullPath(legacyB), StringComparer.OrdinalIgnoreCase), "legacy YmmpxLib should be detected");
+        return Task.CompletedTask;
     }
 
     private static Task TestResolverSearchPathsAsync(string workRoot)

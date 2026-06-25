@@ -88,6 +88,9 @@ v0.4.0 で `ymmpx` 同梱・展開に対応しました。
 * `YMMProjectManager` と `YMMResourcePackager` は同じ `.ymmpx` 仕様を使います
 * `YmmpxLib` が見つからない場合は、同梱・展開は実行できません
 * `YmmpxLib.dll` はリポジトリに同梱していません
+* `YmmpxLibPlugin` は `https://github.com/hazimeyou/YmmpxLib/releases/latest/download/YmmpxLibPlugin.ymme` から導入できます
+* `YmmpxLibPlugin` の導入後は YMM4 の再起動が必要です
+* 未導入時は YMMProjectManager 上で導入案内が表示されます
 * `.ymmpx` のダブルクリック展開や Windows 関連付けは、現時点では対象外です
 
 ### 既知の制限
