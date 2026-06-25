@@ -26,7 +26,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly IProjectRepository repository;
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly IProjectGenerationService generationService;
-    private readonly YmmpBundleService bundleService;
+    private readonly YmmpxLibBundleService bundleService;
     private List<ProjectFolder> folders = [];
     private ProjectEntry? selectedProject;
     private bool isBusy;
@@ -95,7 +95,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
-        bundleService = new YmmpBundleService(logger);
+        bundleService = new YmmpxLibBundleService(logger);
 
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
@@ -397,7 +397,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var currentProjectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
         if (string.IsNullOrWhiteSpace(currentProjectPath))
         {
-            MessageBox.Show("開いているPFが見つかりませんでした。", "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("現在 YMM で開いているプロジェクトを取得できませんでした。", "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -408,7 +408,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         if (!TryGetOpenableProjectPath(sourcePath, out var ymmpPath, out var reason))
         {
-            MessageBox.Show(reason, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show(reason, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -416,9 +416,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var dialog = new SaveFileDialog
         {
             Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
-            Title = "同梱ファイルの保存先を選択",
+            Title = "ymmpx の保存先を選択",
             FileName = Path.GetFileName(defaultOutput),
             InitialDirectory = Path.GetDirectoryName(defaultOutput),
+            OverwritePrompt = true,
         };
         if (dialog.ShowDialog() != true)
         {
@@ -427,23 +428,23 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         await ExecuteWithBusyAsync("PackageProject", async () =>
         {
-            BundleStatus = "同梱ファイルを作成中...";
+            BundleStatus = "ymmpx を作成中...";
             BundleProgress = 0;
 
             var progress = new Progress<double>(value => BundleProgress = value * 100d);
-            var (success, errorMessage, outputPath) = await bundleService
-                .CreateBundleAsync(ymmpPath, dialog.FileName, CancellationToken.None, progress)
+            var result = await bundleService
+                .CreatePackageAsync(ymmpPath, dialog.FileName, CancellationToken.None, progress)
                 .ConfigureAwait(true);
-            if (!success)
+            if (!result.Success)
             {
-                BundleStatus = errorMessage ?? "同梱ファイル作成に失敗しました。";
-                MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+                BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った同梱に失敗しました。";
+                MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             BundleProgress = 100;
-            BundleStatus = $"作成完了: {outputPath}";
-            MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Information);
+            BundleStatus = $"作成完了: {result.OutputPath}\n検出: {result.DetectedMaterialCount} 件 / 同梱: {result.PackagedMaterialCount} 件 / 不足: {result.MissingMaterialCount} 件";
+            MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }
 
@@ -452,7 +453,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var bundleDialog = new OpenFileDialog
         {
             Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
-            Title = "展開する同梱ファイルを選択",
+            Title = "展開する ymmpx を選択",
             CheckFileExists = true,
         };
         if (bundleDialog.ShowDialog() != true)
@@ -462,7 +463,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         var outputDialog = new OpenFolderDialog
         {
-            Title = "展開先フォルダを選択",
+            Title = "展開先フォルダーを選択",
         };
         if (outputDialog.ShowDialog() != true || string.IsNullOrWhiteSpace(outputDialog.FolderName))
         {
@@ -471,41 +472,71 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         await ExecuteWithBusyAsync("ExtractBundle", async () =>
         {
-            BundleStatus = "同梱ファイルを展開中...";
+            BundleStatus = "ymmpx を展開中...";
             BundleProgress = 0;
 
             var progress = new Progress<double>(value => BundleProgress = value * 100d);
-            var (success, errorMessage, restoredYmmpPath) = await bundleService
-                .ExtractBundleAsync(bundleDialog.FileName, outputDialog.FolderName, CancellationToken.None, progress)
+            var result = await bundleService
+                .ExtractPackageAsync(bundleDialog.FileName, outputDialog.FolderName, CancellationToken.None, progress)
                 .ConfigureAwait(true);
-            if (!success)
+            if (!result.Success)
             {
-                BundleStatus = errorMessage ?? "同梱ファイル展開に失敗しました。";
-                MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Warning);
+                BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った展開に失敗しました。";
+                MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
 
             BundleProgress = 100;
-            BundleStatus = $"展開完了: {restoredYmmpPath}";
-            if (!string.IsNullOrWhiteSpace(restoredYmmpPath) && File.Exists(restoredYmmpPath))
+            BundleStatus = $"展開完了: {result.RestoredProjectPath}\n置換した FilePath: {result.ReplacedPathCount} 件";
+            if (!string.IsNullOrWhiteSpace(result.RestoredProjectPath) && File.Exists(result.RestoredProjectPath))
             {
+                await RegisterExtractedProjectAsync(result.RestoredProjectPath).ConfigureAwait(true);
+
                 try
                 {
                     Process.Start(new ProcessStartInfo
                     {
-                        FileName = restoredYmmpPath,
+                        FileName = result.RestoredProjectPath,
                         UseShellExecute = true,
                     });
-                    BundleStatus = $"展開して起動しました: {restoredYmmpPath}";
+                    BundleStatus = $"展開して起動しました: {result.RestoredProjectPath}";
                 }
                 catch (Exception ex)
                 {
-                    logger.Error(ex, $"ExtractBundle auto-open failed. path={restoredYmmpPath}");
+                    logger.Error(ex, $"展開後の自動起動に失敗しました。path={result.RestoredProjectPath}");
                 }
             }
 
-            MessageBox.Show(BundleStatus, "同梱展開", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
+    }
+
+    private async Task RegisterExtractedProjectAsync(string restoredYmmpPath)
+    {
+        try
+        {
+            var fullPath = Path.GetFullPath(restoredYmmpPath);
+            if (Projects.Any(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                return;
+            }
+
+            var entry = new ProjectEntry
+            {
+                FullPath = fullPath,
+                DisplayName = Path.GetFileNameWithoutExtension(fullPath),
+            };
+
+            Projects.Add(entry);
+            SelectedProject = entry;
+            PrepareThumbnailMetadata([entry]);
+            await SaveAsync().ConfigureAwait(true);
+            logger.Info($"展開後のプロジェクトを一覧に登録しました。path={fullPath}");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, $"展開後のプロジェクト登録に失敗しました。path={restoredYmmpPath}");
+        }
     }
 
     private void OpenRelinkWindowDialog(RelinkMainWindow window)
@@ -628,22 +659,22 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
 
         IsBusy = true;
-        logger.Info($"{operationName} start.");
+        logger.Info($"{operationName}開始。");
         logger.Flush();
         try
         {
             await action().ConfigureAwait(true);
-            logger.Info($"{operationName} end.");
+            logger.Info($"{operationName}完了。");
             logger.Flush();
         }
         catch (OperationCanceledException)
         {
-            logger.Info($"{operationName} canceled.");
+            logger.Info($"{operationName}キャンセル。");
             logger.Flush();
         }
         catch (Exception ex)
         {
-            logger.Error(ex, $"{operationName} failed.");
+            logger.Error(ex, $"{operationName}失敗。");
             logger.Flush();
             MessageBox.Show("処理中にエラーが発生しました。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
