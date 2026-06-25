@@ -34,11 +34,15 @@ public sealed class CheckpointStorage
     public string GetYmmpPath(string projectPath, string checkpointId) => Path.Combine(GetCheckpointDirectory(projectPath, checkpointId), "project.ymmp");
     public string GetYmmpxPath(string projectPath, string checkpointId) => Path.Combine(GetCheckpointDirectory(projectPath, checkpointId), "project.ymmpx");
     public string GetThumbnailsDirectory(string projectPath, string checkpointId) => Path.Combine(GetCheckpointDirectory(projectPath, checkpointId), "thumbnails");
+    public string GetDeletedDirectory(string projectPath) => Path.Combine(GetProjectDirectory(projectPath), "deleted");
+    public string GetDeletedCheckpointDirectory(string projectPath, string checkpointId)
+        => Path.Combine(GetDeletedDirectory(projectPath), $"{checkpointId}_{DateTimeOffset.Now:yyyyMMdd-HHmmss}");
 
     public void EnsureProjectLayout(string projectPath)
     {
         Directory.CreateDirectory(GetProjectDirectory(projectPath));
         Directory.CreateDirectory(GetCheckpointsDirectory(projectPath));
+        Directory.CreateDirectory(GetDeletedDirectory(projectPath));
     }
 
     public async Task WriteManifestAsync(string projectPath, CheckpointManifest manifest, CancellationToken cancellationToken = default)
@@ -76,6 +80,47 @@ public sealed class CheckpointStorage
 
     public string CreateCheckpointId(DateTimeOffset createdAt)
         => createdAt.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
+
+    public CheckpointPaths ResolveCheckpointPaths(string projectPath, string checkpointId)
+    {
+        return new CheckpointPaths
+        {
+            ProjectDirectory = GetProjectDirectory(projectPath),
+            ManifestPath = GetManifestPath(projectPath),
+            CheckpointDirectory = GetCheckpointDirectory(projectPath, checkpointId),
+            MetadataPath = GetMetadataPath(projectPath, checkpointId),
+            YmmpPath = GetYmmpPath(projectPath, checkpointId),
+            YmmpxPath = GetYmmpxPath(projectPath, checkpointId),
+            ThumbnailsDirectory = GetThumbnailsDirectory(projectPath, checkpointId),
+        };
+    }
+
+    public Task DeleteCheckpointDirectoryAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default)
+    {
+        var checkpointDirectory = GetCheckpointDirectory(projectPath, checkpointId);
+        var deletedDirectory = GetDeletedCheckpointDirectory(projectPath, checkpointId);
+        var deletedParent = Path.GetDirectoryName(deletedDirectory);
+        if (!string.IsNullOrWhiteSpace(deletedParent))
+        {
+            Directory.CreateDirectory(deletedParent);
+        }
+
+        return Task.Run(() =>
+        {
+            if (!Directory.Exists(checkpointDirectory))
+            {
+                return;
+            }
+
+            if (Directory.Exists(deletedDirectory))
+            {
+                Directory.Delete(deletedDirectory, recursive: true);
+            }
+
+            Directory.Move(checkpointDirectory, deletedDirectory);
+            Directory.Delete(deletedDirectory, recursive: true);
+        }, cancellationToken);
+    }
 
     private static async Task WriteJsonAsync<T>(string path, T value, CancellationToken cancellationToken)
     {
@@ -121,4 +166,15 @@ public sealed class CheckpointStorage
         await using var stream = File.OpenRead(path);
         return await JsonSerializer.DeserializeAsync<T>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
     }
+}
+
+public sealed class CheckpointPaths
+{
+    public string ProjectDirectory { get; set; } = string.Empty;
+    public string ManifestPath { get; set; } = string.Empty;
+    public string CheckpointDirectory { get; set; } = string.Empty;
+    public string MetadataPath { get; set; } = string.Empty;
+    public string YmmpPath { get; set; } = string.Empty;
+    public string YmmpxPath { get; set; } = string.Empty;
+    public string ThumbnailsDirectory { get; set; } = string.Empty;
 }

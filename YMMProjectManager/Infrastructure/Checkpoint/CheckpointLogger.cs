@@ -28,4 +28,19 @@ public sealed class CheckpointLogger
 
     public void RestoreFailed(Exception ex, string projectPath, string checkpointId)
         => logger.Error(ex, $"CheckpointRestoreFailed projectPath={projectPath}, checkpointId={checkpointId}");
+
+    public void DeleteStarted(string projectPath, string checkpointId)
+        => logger.Info($"CheckpointDeleteStarted projectPath={projectPath}, checkpointId={checkpointId}");
+
+    public void DeleteSucceeded(string projectPath, string checkpointId, string checkpointDirectory)
+        => logger.Info($"CheckpointDeleteSucceeded projectPath={projectPath}, checkpointId={checkpointId}, checkpointDirectory={checkpointDirectory}");
+
+    public void DeleteFailed(Exception ex, string projectPath, string checkpointId)
+        => logger.Error(ex, $"CheckpointDeleteFailed projectPath={projectPath}, checkpointId={checkpointId}");
+
+    public void DiagnoseStarted(string projectPath, string checkpointId)
+        => logger.Info($"CheckpointDiagnoseStarted projectPath={projectPath}, checkpointId={checkpointId}");
+
+    public void DiagnoseResult(string projectPath, string checkpointId, int okCount, int warningCount, int errorCount)
+        => logger.Info($"CheckpointDiagnoseCompleted projectPath={projectPath}, checkpointId={checkpointId}, ok={okCount}, warning={warningCount}, error={errorCount}");
 }

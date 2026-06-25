@@ -104,6 +104,39 @@ public sealed class CheckpointRestoreResult
     public string? RestoredYmmpxPath { get; set; }
 }
 
+public sealed class CheckpointDeleteResult
+{
+    public bool Success { get; set; }
+    public string? ErrorMessage { get; set; }
+    public string CheckpointId { get; set; } = string.Empty;
+    public string CheckpointName { get; set; } = string.Empty;
+    public string CheckpointDirectory { get; set; } = string.Empty;
+}
+
+public enum CheckpointDiagnosticSeverity
+{
+    Ok,
+    Warning,
+    Error,
+}
+
+public sealed class CheckpointDiagnosticItem
+{
+    public CheckpointDiagnosticSeverity Severity { get; set; }
+    public string Title { get; set; } = string.Empty;
+    public string Message { get; set; } = string.Empty;
+}
+
+public sealed class CheckpointDiagnosticResult
+{
+    public string ProjectPath { get; set; } = string.Empty;
+    public string CheckpointId { get; set; } = string.Empty;
+    public string CheckpointName { get; set; } = string.Empty;
+    public string CheckpointDirectory { get; set; } = string.Empty;
+    public bool CanRestore { get; set; }
+    public List<CheckpointDiagnosticItem> Items { get; set; } = [];
+}
+
 public sealed class CheckpointThumbnailPlan
 {
     public required int[] Frames { get; init; }

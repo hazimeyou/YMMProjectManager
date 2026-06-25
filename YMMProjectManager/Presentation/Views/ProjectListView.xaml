@@ -63,6 +63,7 @@
                 <ListBox.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="チェックポイントを作成" Click="OnCreateCheckpointMenuClick" />
+                        <MenuItem Header="現在開いているPFからチェックポイント作成" Click="OnCreateCheckpointFromOpenedProjectMenuClick" />
                         <MenuItem Header="チェックポイント一覧" Click="OnShowCheckpointListMenuClick" />
                         <Separator />
                         <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />

@@ -99,6 +99,11 @@ internal static class Program
         await TestCheckpointThumbnailPlannerEvenSplitAsync();
         await TestCheckpointThumbnailPlannerCustomSecondsAsync();
         await TestCheckpointStorageManifestRoundTripAsync(workRoot);
+        await TestCheckpointDeleteAsync(workRoot);
+        await TestCheckpointDeleteDoesNotRemoveOriginalProjectAsync(workRoot);
+        await TestCheckpointDiagnoseManifestMissingAsync(workRoot);
+        await TestCheckpointDiagnoseYmmpxMissingAsync(workRoot);
+        await TestCheckpointDiagnoseGitMissingWarningAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);
     }
 
@@ -1258,11 +1263,187 @@ internal static class Program
         AssertEx.Equal("checkpoint", loaded.Checkpoints[0].Name, "Checkpoint manifest name should round-trip.");
     }
 
+    private static async Task TestCheckpointDeleteAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointDeleteAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var storage = new CheckpointStorage(Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints"));
+        storage.EnsureProjectLayout(projectPath);
+
+        var manifest = new CheckpointManifest
+        {
+            ProjectId = storage.GetProjectId(projectPath),
+            ProjectPath = projectPath,
+            ProjectFileName = "project.ymmp",
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+        };
+        var checkpointId = "20260626-120000";
+        var checkpointDirectory = storage.GetCheckpointDirectory(projectPath, checkpointId);
+        Directory.CreateDirectory(storage.GetThumbnailsDirectory(projectPath, checkpointId));
+        await File.WriteAllTextAsync(storage.GetYmmpPath(projectPath, checkpointId), "ymmp");
+        await File.WriteAllTextAsync(storage.GetYmmpxPath(projectPath, checkpointId), "ymmpx");
+        await File.WriteAllTextAsync(Path.Combine(storage.GetThumbnailsDirectory(projectPath, checkpointId), "000.png"), "png");
+
+        manifest.Checkpoints.Add(new CheckpointManifestItem
+        {
+            CheckpointId = checkpointId,
+            Name = "delete target",
+            CreatedAt = DateTimeOffset.Now,
+            YmmpPath = "project.ymmp",
+            YmmpxPath = "project.ymmpx",
+            RepresentativeThumbnailPath = Path.Combine("thumbnails", "000.png"),
+            ThumbnailPaths = [Path.Combine("thumbnails", "000.png")],
+            ThumbnailMode = "均等分割(64件)",
+            YmmpSha256 = "abc",
+        });
+
+        await storage.WriteManifestAsync(projectPath, manifest);
+        await storage.WriteMetadataAsync(projectPath, checkpointId, manifest.Checkpoints[0]);
+
+        var service = CreateCheckpointService(root);
+        var result = await service.DeleteAsync(projectPath, checkpointId);
+
+        AssertEx.True(result.Success, result.ErrorMessage ?? "Checkpoint delete should succeed.");
+        AssertEx.True(!Directory.Exists(checkpointDirectory), "Checkpoint directory should be removed.");
+        var loadedManifest = await storage.ReadManifestAsync(projectPath);
+        AssertEx.True(loadedManifest is not null, "Manifest should remain after deletion.");
+        AssertEx.Equal(0, loadedManifest!.Checkpoints.Count, "Deleted checkpoint should be removed from manifest.");
+    }
+
+    private static async Task TestCheckpointDeleteDoesNotRemoveOriginalProjectAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointDeleteDoesNotRemoveOriginalProjectAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "original");
+        var storage = new CheckpointStorage(Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints"));
+        storage.EnsureProjectLayout(projectPath);
+
+        var checkpointId = "20260626-120001";
+        Directory.CreateDirectory(storage.GetCheckpointDirectory(projectPath, checkpointId));
+        await File.WriteAllTextAsync(storage.GetYmmpPath(projectPath, checkpointId), "ymmp");
+        await File.WriteAllTextAsync(storage.GetYmmpxPath(projectPath, checkpointId), "ymmpx");
+
+        var item = new CheckpointManifestItem
+        {
+            CheckpointId = checkpointId,
+            Name = "safe delete",
+            CreatedAt = DateTimeOffset.Now,
+            YmmpSha256 = "abc",
+            ThumbnailMode = "均等分割(64件)",
+        };
+        await storage.WriteMetadataAsync(projectPath, checkpointId, item);
+        await storage.WriteManifestAsync(projectPath, new CheckpointManifest
+        {
+            ProjectId = storage.GetProjectId(projectPath),
+            ProjectPath = projectPath,
+            ProjectFileName = "project.ymmp",
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+            Checkpoints = [item],
+        });
+
+        var service = CreateCheckpointService(root);
+        await service.DeleteAsync(projectPath, checkpointId);
+
+        AssertEx.True(File.Exists(projectPath), "Deleting checkpoint must not remove original project.");
+        AssertEx.Equal("original", await File.ReadAllTextAsync(projectPath), "Original project content should remain.");
+    }
+
+    private static async Task TestCheckpointDiagnoseManifestMissingAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointDiagnoseManifestMissingAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var service = CreateCheckpointService(root);
+
+        var result = await service.DiagnoseAsync(projectPath, "missing");
+
+        AssertEx.True(result.Items.Any(x => x.Title == "manifest" && x.Severity == CheckpointDiagnosticSeverity.Error), "Missing manifest should be reported as error.");
+    }
+
+    private static async Task TestCheckpointDiagnoseYmmpxMissingAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointDiagnoseYmmpxMissingAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var storage = new CheckpointStorage(Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints"));
+        storage.EnsureProjectLayout(projectPath);
+        var checkpointId = "20260626-120002";
+        Directory.CreateDirectory(storage.GetCheckpointDirectory(projectPath, checkpointId));
+        await File.WriteAllTextAsync(storage.GetYmmpPath(projectPath, checkpointId), "ymmp");
+
+        var item = new CheckpointManifestItem
+        {
+            CheckpointId = checkpointId,
+            Name = "missing ymmpx",
+            CreatedAt = DateTimeOffset.Now,
+            YmmpSha256 = "abc",
+            ThumbnailMode = "均等分割(64件)",
+        };
+        await storage.WriteMetadataAsync(projectPath, checkpointId, item);
+        await storage.WriteManifestAsync(projectPath, new CheckpointManifest
+        {
+            ProjectId = storage.GetProjectId(projectPath),
+            ProjectPath = projectPath,
+            ProjectFileName = "project.ymmp",
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+            Checkpoints = [item],
+        });
+
+        var service = CreateCheckpointService(root);
+        var result = await service.DiagnoseAsync(projectPath, checkpointId);
+
+        AssertEx.True(result.Items.Any(x => x.Title == "ymmpx" && x.Severity == CheckpointDiagnosticSeverity.Error), "Missing ymmpx should be reported as error.");
+    }
+
+    private static async Task TestCheckpointDiagnoseGitMissingWarningAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointDiagnoseGitMissingWarningAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var storage = new CheckpointStorage(Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints"));
+        storage.EnsureProjectLayout(projectPath);
+        var checkpointId = "20260626-120003";
+        Directory.CreateDirectory(storage.GetCheckpointDirectory(projectPath, checkpointId));
+        await File.WriteAllTextAsync(storage.GetYmmpPath(projectPath, checkpointId), "ymmp");
+        await File.WriteAllTextAsync(storage.GetYmmpxPath(projectPath, checkpointId), "ymmpx");
+
+        var item = new CheckpointManifestItem
+        {
+            CheckpointId = checkpointId,
+            Name = "missing git",
+            CreatedAt = DateTimeOffset.Now,
+            YmmpSha256 = "abc",
+            ThumbnailMode = "均等分割(64件)",
+        };
+        await storage.WriteMetadataAsync(projectPath, checkpointId, item);
+        await storage.WriteManifestAsync(projectPath, new CheckpointManifest
+        {
+            ProjectId = storage.GetProjectId(projectPath),
+            ProjectPath = projectPath,
+            ProjectFileName = "project.ymmp",
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+            Checkpoints = [item],
+        });
+
+        var service = CreateCheckpointService(root);
+        var result = await service.DiagnoseAsync(projectPath, checkpointId);
+
+        AssertEx.True(result.Items.Any(x => x.Title == "git-commit" && x.Severity == CheckpointDiagnosticSeverity.Warning), "Missing git commit should be warning.");
+        AssertEx.True(result.Items.Any(x => x.Title == "git-branch" && x.Severity == CheckpointDiagnosticSeverity.Warning), "Missing git branch should be warning.");
+    }
+
     private static ProjectGenerationService CreateService(string root)
     {
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
         var storageRoot = Path.Combine(root, "AppData", "YMMProjectManager", "Generations");
         return new ProjectGenerationService(logger, storageRoot);
+    }
+
+    private static CheckpointService CreateCheckpointService(string root)
+    {
+        var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        var storageRoot = Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints");
+        return new CheckpointService(logger, storageRoot);
     }
 
     private static string CreateRoot(string workRoot, string testName)

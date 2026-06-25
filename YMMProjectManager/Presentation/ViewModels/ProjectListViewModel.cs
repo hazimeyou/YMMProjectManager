@@ -328,7 +328,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         if (string.IsNullOrWhiteSpace(currentProjectPath) ||
             !string.Equals(Path.GetFullPath(currentProjectPath), projectPath, StringComparison.OrdinalIgnoreCase))
         {
-            MessageBox.Show("サムネイル生成のため、対象プロジェクトを YMM で開いてから実行してください。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("選択中プロジェクトと、YMMで現在開いているプロジェクトが一致していません。\n一致しない場合は「現在開いているPFからチェックポイント作成」を使ってください。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
 
@@ -354,6 +354,47 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 TimelineInfo = TimelineContextService.Info,
             }).ConfigureAwait(true);
 
+            MessageBox.Show($"チェックポイントを作成しました。\n{record.Name}", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    public async Task CreateCheckpointFromOpenedProjectAsync()
+    {
+        var currentProjectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
+        if (string.IsNullOrWhiteSpace(currentProjectPath))
+        {
+            MessageBox.Show("現在 YMM で開いているプロジェクトを取得できませんでした。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(currentProjectPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new CheckpointCreateWindow
+        {
+            Owner = GetActiveWindow(),
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("CheckpointCreateFromOpenedProject", async () =>
+        {
+            var record = await checkpointService.CreateAsync(new CheckpointCreateRequest
+            {
+                ProjectPath = projectPath,
+                Name = dialog.CheckpointName,
+                Description = dialog.Description,
+                Comment = dialog.Comment,
+                ThumbnailSettings = dialog.BuildSettings(),
+                TimelineInfo = TimelineContextService.Info,
+            }).ConfigureAwait(true);
+
+            TrySelectProject(projectPath);
             MessageBox.Show($"チェックポイントを作成しました。\n{record.Name}", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Information);
         }).ConfigureAwait(true);
     }
@@ -919,6 +960,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             entry.ThumbnailSource = null;
             logger.Error($"UpdateThumbnailMetadata failed: {entry.FullPath}", ex);
         }
+    }
+
+    private void TrySelectProject(string projectPath)
+    {
+        var fullPath = Path.GetFullPath(projectPath);
+        SelectedProject = Projects.FirstOrDefault(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool TryGetOpenableProjectPath(string sourcePath, out string fullPath, out string reason)

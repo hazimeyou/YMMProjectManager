@@ -46,7 +46,7 @@ public partial class CheckpointListWindow : Window, INotifyPropertyChanged
         }
     }
 
-    private async void OnLoaded(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void OnLoaded(object? sender, RoutedEventArgs e) => await RefreshAsync();
     private async void OnRefreshClick(object sender, RoutedEventArgs e) => await RefreshAsync();
 
     private async void OnDetailClick(object sender, RoutedEventArgs e)
@@ -57,6 +57,21 @@ public partial class CheckpointListWindow : Window, INotifyPropertyChanged
         }
 
         var window = new CheckpointDetailWindow(projectPath, SelectedCheckpoint.CheckpointId, logger)
+        {
+            Owner = this,
+        };
+        window.ShowDialog();
+        await RefreshAsync();
+    }
+
+    private async void OnDiagnoseClick(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCheckpoint is null)
+        {
+            return;
+        }
+
+        var window = new CheckpointDiagnosticsWindow(projectPath, SelectedCheckpoint.CheckpointId, logger)
         {
             Owner = this,
         };
@@ -79,6 +94,30 @@ public partial class CheckpointListWindow : Window, INotifyPropertyChanged
         await RefreshAsync();
     }
 
+    private async void OnDeleteClick(object sender, RoutedEventArgs e)
+    {
+        if (SelectedCheckpoint is null)
+        {
+            return;
+        }
+
+        var message = $"次のチェックポイントを削除します。\n\n名前: {SelectedCheckpoint.Name}\n作成日時: {SelectedCheckpoint.CreatedAtText}\n保存先: {SelectedCheckpoint.CheckpointDirectory}\n\n元プロジェクトは削除しません。";
+        var answer = MessageBox.Show(message, "チェックポイント削除確認", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
+        var result = await checkpointService.DeleteAsync(projectPath, SelectedCheckpoint.CheckpointId);
+        MessageBox.Show(
+            result.Success ? "チェックポイントを削除しました。" : result.ErrorMessage ?? "チェックポイントの削除に失敗しました。",
+            "チェックポイント",
+            MessageBoxButton.OK,
+            result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+
+        await RefreshAsync();
+    }
+
     private void OnOpenStorageClick(object sender, RoutedEventArgs e)
     {
         var path = checkpointService.GetProjectDirectory(projectPath);
@@ -92,7 +131,7 @@ public partial class CheckpointListWindow : Window, INotifyPropertyChanged
         Checkpoints.Clear();
         foreach (var record in records)
         {
-            Checkpoints.Add(await CheckpointListRow.FromRecordAsync(record));
+            Checkpoints.Add(await CheckpointListRow.FromRecordAsync(record, logger));
         }
 
         SelectedCheckpoint = Checkpoints.FirstOrDefault();
@@ -108,28 +147,31 @@ public partial class CheckpointListWindow : Window, INotifyPropertyChanged
         public string? GitBranch { get; set; }
         public string ThumbnailMode { get; set; } = string.Empty;
         public ImageSource? RepresentativeThumbnail { get; set; }
+        public bool HasRepresentativeThumbnail => RepresentativeThumbnail is not null;
+        public Visibility HasRepresentativeThumbnailVisibility => HasRepresentativeThumbnail ? Visibility.Visible : Visibility.Collapsed;
+        public Visibility MissingRepresentativeThumbnailVisibility => HasRepresentativeThumbnail ? Visibility.Collapsed : Visibility.Visible;
+        public string StatusText { get; set; } = string.Empty;
+        public string CheckpointDirectory { get; set; } = string.Empty;
 
-        public static async Task<CheckpointListRow> FromRecordAsync(CheckpointRecord record)
+        public static async Task<CheckpointListRow> FromRecordAsync(CheckpointRecord record, FileLogger logger)
         {
+            var thumbnail = string.IsNullOrWhiteSpace(record.RepresentativeThumbnailPath)
+                ? null
+                : await ThumbnailImageLoader.LoadAsync(record.RepresentativeThumbnailPath, logger);
+
             return new CheckpointListRow
             {
                 CheckpointId = record.CheckpointId,
                 CreatedAtText = record.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss"),
                 Name = record.Name,
-                Description = record.Description,
-                GitCommit = record.GitCommit,
-                GitBranch = record.GitBranch,
+                Description = string.IsNullOrWhiteSpace(record.Description) ? "-" : record.Description,
+                GitCommit = string.IsNullOrWhiteSpace(record.GitCommit) ? "-" : record.GitCommit,
+                GitBranch = string.IsNullOrWhiteSpace(record.GitBranch) ? "-" : record.GitBranch,
                 ThumbnailMode = record.ThumbnailMode,
-                RepresentativeThumbnail = string.IsNullOrWhiteSpace(record.RepresentativeThumbnailPath)
-                    ? null
-                    : await ThumbnailImageLoader.LoadAsync(record.RepresentativeThumbnailPath, CreateLogger()),
+                RepresentativeThumbnail = thumbnail,
+                StatusText = record.IsValid ? "利用可" : "要確認",
+                CheckpointDirectory = record.CheckpointDirectory,
             };
-        }
-
-        private static FileLogger CreateLogger()
-        {
-            var assemblyDir = Path.GetDirectoryName(typeof(CheckpointListWindow).Assembly.Location) ?? AppContext.BaseDirectory;
-            return new FileLogger(Path.Combine(assemblyDir, "logs", "YMMProjectManager.log"));
         }
     }
 }

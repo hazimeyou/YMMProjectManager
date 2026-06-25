@@ -8,4 +8,6 @@ public interface ICheckpointService
     Task<IReadOnlyList<CheckpointRecord>> GetCheckpointsAsync(string projectPath, CancellationToken cancellationToken = default);
     Task<CheckpointRecord?> GetCheckpointAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default);
     Task<CheckpointRestoreResult> RestoreAsync(CheckpointRestoreRequest request, CancellationToken cancellationToken = default);
+    Task<CheckpointDeleteResult> DeleteAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default);
+    Task<CheckpointDiagnosticResult> DiagnoseAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default);
 }

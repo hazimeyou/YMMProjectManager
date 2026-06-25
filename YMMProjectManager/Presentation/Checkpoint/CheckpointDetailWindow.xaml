@@ -3,19 +3,20 @@
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="チェックポイント詳細"
-    Width="1100"
-    Height="760"
+    Width="1120"
+    Height="780"
     WindowStartupLocation="CenterOwner"
     ShowInTaskbar="False">
     <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="2*" />
             <ColumnDefinition Width="3*" />
         </Grid.ColumnDefinitions>
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" />
-            <RowDefinition Height="*" />
-        </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Grid.ColumnSpan="2" Margin="0,0,0,12">
             <TextBlock FontSize="20" FontWeight="SemiBold" Text="{Binding CheckpointName}" />
@@ -24,13 +25,17 @@
 
         <ScrollViewer Grid.Row="1" Grid.Column="0" VerticalScrollBarVisibility="Auto" Margin="0,0,12,0">
             <StackPanel>
-                <TextBlock FontWeight="SemiBold" Text="ymmp / ymmpx 情報" />
+                <TextBlock FontWeight="SemiBold" Text="保存内容" />
                 <TextBlock Margin="0,8,0,0" Text="{Binding YmmpPath}" TextWrapping="Wrap" />
                 <TextBlock Margin="0,4,0,0" Text="{Binding YmmpxPath}" TextWrapping="Wrap" />
-                <TextBlock Margin="0,12,0,0" Text="{Binding CommentText}" TextWrapping="Wrap" />
-                <TextBlock Margin="0,12,0,0" FontWeight="SemiBold" Text="拡大表示" />
-                <Border Margin="0,8,0,0" BorderBrush="#CCCCCC" BorderThickness="1" MinHeight="200">
-                    <Image Source="{Binding SelectedThumbnail}" Stretch="Uniform" />
+                <TextBlock Margin="0,4,0,0" Text="{Binding CommentText}" TextWrapping="Wrap" />
+                <TextBlock Margin="0,12,0,0" Foreground="#666666" Text="右側でサムネイルを選択すると、下に拡大表示します。" TextWrapping="Wrap" />
+                <TextBlock Margin="0,12,0,0" FontWeight="SemiBold" Text="選択中サムネイル" />
+                <Border Margin="0,8,0,0" BorderBrush="#CCCCCC" BorderThickness="1" MinHeight="220" Background="#F4F4F4">
+                    <Grid>
+                        <Image Source="{Binding SelectedThumbnail}" Stretch="Uniform" Visibility="{Binding HasSelectedThumbnailVisibility}" />
+                        <TextBlock Text="サムネイルがありません" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#666666" Visibility="{Binding MissingSelectedThumbnailVisibility}" />
+                    </Grid>
                 </Border>
             </StackPanel>
         </ScrollViewer>
@@ -39,13 +44,22 @@
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal" Margin="0,4">
-                        <Border Width="144" Height="81" BorderBrush="#CCCCCC" BorderThickness="1">
-                            <Image Source="{Binding Image}" Stretch="UniformToFill" />
+                        <Border Width="144" Height="81" BorderBrush="#CCCCCC" BorderThickness="1" Background="#F4F4F4">
+                            <Grid>
+                                <Image Source="{Binding Image}" Stretch="UniformToFill" Visibility="{Binding HasImageVisibility}" />
+                                <TextBlock Text="なし" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="#666666" Visibility="{Binding MissingImageVisibility}" />
+                            </Grid>
                         </Border>
-                        <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Text="{Binding Path}" TextWrapping="Wrap" />
+                        <TextBlock Margin="12,0,0,0" VerticalAlignment="Center" Text="{Binding DisplayText}" TextWrapping="Wrap" />
                     </StackPanel>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
+
+        <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Width="96" Margin="0,0,8,0" Content="診断" Click="OnDiagnoseClick" />
+            <Button Width="96" Margin="0,0,8,0" Content="削除" Click="OnDeleteClick" />
+            <Button Width="96" Content="閉じる" Click="OnCloseClick" />
+        </StackPanel>
     </Grid>
 </Window>

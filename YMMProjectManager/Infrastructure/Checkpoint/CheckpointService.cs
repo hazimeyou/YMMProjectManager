@@ -151,6 +151,101 @@ public sealed class CheckpointService : ICheckpointService
         }
     }
 
+    public async Task<CheckpointDeleteResult> DeleteAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = Path.GetFullPath(projectPath);
+        checkpointLogger.DeleteStarted(normalizedPath, checkpointId);
+
+        try
+        {
+            var record = await GetCheckpointAsync(normalizedPath, checkpointId, cancellationToken).ConfigureAwait(false);
+            if (record is null)
+            {
+                return new CheckpointDeleteResult
+                {
+                    Success = false,
+                    ErrorMessage = "削除対象のチェックポイントが見つかりません。",
+                    CheckpointId = checkpointId,
+                };
+            }
+
+            var manifest = await storage.ReadManifestAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
+            if (manifest is null)
+            {
+                return new CheckpointDeleteResult
+                {
+                    Success = false,
+                    ErrorMessage = "manifest が見つかりません。",
+                    CheckpointId = checkpointId,
+                    CheckpointName = record.Name,
+                    CheckpointDirectory = record.CheckpointDirectory,
+                };
+            }
+
+            manifest.Checkpoints.RemoveAll(x => string.Equals(x.CheckpointId, checkpointId, StringComparison.OrdinalIgnoreCase));
+            manifest.UpdatedAt = DateTimeOffset.Now;
+            await storage.WriteManifestAsync(normalizedPath, manifest, cancellationToken).ConfigureAwait(false);
+            await storage.DeleteCheckpointDirectoryAsync(normalizedPath, checkpointId, cancellationToken).ConfigureAwait(false);
+
+            checkpointLogger.DeleteSucceeded(normalizedPath, checkpointId, record.CheckpointDirectory);
+            return new CheckpointDeleteResult
+            {
+                Success = true,
+                CheckpointId = checkpointId,
+                CheckpointName = record.Name,
+                CheckpointDirectory = record.CheckpointDirectory,
+            };
+        }
+        catch (Exception ex)
+        {
+            checkpointLogger.DeleteFailed(ex, normalizedPath, checkpointId);
+            return new CheckpointDeleteResult
+            {
+                Success = false,
+                ErrorMessage = ex.Message,
+                CheckpointId = checkpointId,
+            };
+        }
+    }
+
+    public async Task<CheckpointDiagnosticResult> DiagnoseAsync(string projectPath, string checkpointId, CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = Path.GetFullPath(projectPath);
+        checkpointLogger.DiagnoseStarted(normalizedPath, checkpointId);
+
+        var manifestExists = File.Exists(storage.GetManifestPath(normalizedPath));
+        CheckpointManifest? manifest = null;
+        var manifestLoaded = false;
+        try
+        {
+            manifest = await storage.ReadManifestAsync(normalizedPath, cancellationToken).ConfigureAwait(false);
+            manifestLoaded = manifest is not null;
+        }
+        catch
+        {
+            manifestLoaded = false;
+        }
+
+        var record = await GetCheckpointAsync(normalizedPath, checkpointId, cancellationToken).ConfigureAwait(false);
+        var items = metadataService.Validate(record, manifestExists, manifestLoaded);
+        checkpointLogger.DiagnoseResult(
+            normalizedPath,
+            checkpointId,
+            items.Count(x => x.Severity == CheckpointDiagnosticSeverity.Ok),
+            items.Count(x => x.Severity == CheckpointDiagnosticSeverity.Warning),
+            items.Count(x => x.Severity == CheckpointDiagnosticSeverity.Error));
+
+        return new CheckpointDiagnosticResult
+        {
+            ProjectPath = normalizedPath,
+            CheckpointId = checkpointId,
+            CheckpointName = record?.Name ?? checkpointId,
+            CheckpointDirectory = record?.CheckpointDirectory ?? storage.GetCheckpointDirectory(normalizedPath, checkpointId),
+            CanRestore = items.All(x => x.Severity != CheckpointDiagnosticSeverity.Error),
+            Items = items,
+        };
+    }
+
     private CheckpointRecord ToRecord(string projectPath, CheckpointManifestItem item)
     {
         var checkpointDirectory = storage.GetCheckpointDirectory(projectPath, item.CheckpointId);

@@ -15,7 +15,7 @@ public partial class CheckpointRestoreWindow : Window, INotifyPropertyChanged
     private readonly string checkpointId;
     private readonly CheckpointService checkpointService;
     private string outputDirectory = string.Empty;
-    private string statusMessage = string.Empty;
+    private string statusMessage = "復元先フォルダーを確認してから実行してください。";
 
     public CheckpointRestoreWindow(string projectPath, string checkpointId, FileLogger logger)
     {
@@ -56,6 +56,23 @@ public partial class CheckpointRestoreWindow : Window, INotifyPropertyChanged
 
     private async void OnRestoreClick(object sender, RoutedEventArgs e)
     {
+        if (string.IsNullOrWhiteSpace(OutputDirectory))
+        {
+            MessageBox.Show("復元先フォルダーを指定してください。", "チェックポイント復元", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var answer = MessageBox.Show(
+            $"次のフォルダーへ復元します。\n\n{OutputDirectory}\n\n既存プロジェクトへは上書きしません。",
+            "復元確認",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Question,
+            MessageBoxResult.OK);
+        if (answer != MessageBoxResult.OK)
+        {
+            return;
+        }
+
         var result = await checkpointService.RestoreAsync(new CheckpointRestoreRequest
         {
             ProjectPath = projectPath,
