@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Net.Http;
 using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
@@ -11,11 +12,16 @@ public sealed class YmmpxLibInstallGuide
 
     private readonly FileLogger logger;
     private readonly Action<ProcessStartInfo>? launcher;
+    private readonly Func<string, string, CancellationToken, Task>? downloader;
 
-    public YmmpxLibInstallGuide(FileLogger logger, Action<ProcessStartInfo>? launcher = null)
+    public YmmpxLibInstallGuide(
+        FileLogger logger,
+        Action<ProcessStartInfo>? launcher = null,
+        Func<string, string, CancellationToken, Task>? downloader = null)
     {
         this.logger = logger;
         this.launcher = launcher;
+        this.downloader = downloader;
     }
 
     public string GetPassiveStatusMessage()
@@ -64,7 +70,7 @@ public sealed class YmmpxLibInstallGuide
         }
 
         builder.AppendLine();
-        builder.Append("ダウンロードページを開きますか？");
+        builder.Append("YmmpxLibPlugin をダウンロードして起動しますか？");
         return builder.ToString();
     }
 
@@ -88,14 +94,41 @@ public sealed class YmmpxLibInstallGuide
             .ToArray();
     }
 
-    public bool TryOpenDownloadPage()
+    public async Task<YmmpxLibInstallResult> DownloadAndLaunchInstallerAsync(CancellationToken cancellationToken = default)
     {
+        var downloadPath = GetInstallerDownloadPath();
         try
         {
-            logger.Info($"YmmpxLibPlugin のダウンロードページを開きます。url={YmmpxLibPluginLatestDownloadUrl}");
+            logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
+            logger.Info($"YmmpxLibPlugin のダウンロード先は {downloadPath} です。");
+            logger.Flush();
+
+            var downloadDirectory = Path.GetDirectoryName(downloadPath);
+            if (!string.IsNullOrWhiteSpace(downloadDirectory))
+            {
+                Directory.CreateDirectory(downloadDirectory);
+            }
+
+            if (File.Exists(downloadPath))
+            {
+                File.Delete(downloadPath);
+            }
+
+            if (downloader is not null)
+            {
+                await downloader(YmmpxLibPluginLatestDownloadUrl, downloadPath, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                await DownloadFileAsync(YmmpxLibPluginLatestDownloadUrl, downloadPath, cancellationToken).ConfigureAwait(false);
+            }
+
+            logger.Info($"YmmpxLibPlugin のダウンロードに成功しました。path={downloadPath}");
+            logger.Flush();
+
             var startInfo = new ProcessStartInfo
             {
-                FileName = YmmpxLibPluginLatestDownloadUrl,
+                FileName = downloadPath,
                 UseShellExecute = true,
             };
             if (launcher is not null)
@@ -107,16 +140,43 @@ public sealed class YmmpxLibInstallGuide
                 Process.Start(startInfo);
             }
 
-            logger.Info("YmmpxLibPlugin のダウンロードページを開きました。");
+            logger.Info($"YmmpxLibPlugin の .ymme 起動に成功しました。path={downloadPath}");
             logger.Flush();
-            return true;
+            return new YmmpxLibInstallResult
+            {
+                Success = true,
+                DownloadPath = downloadPath,
+            };
         }
         catch (Exception ex)
         {
-            logger.Error(ex, $"YmmpxLibPlugin のダウンロードページを開けませんでした。url={YmmpxLibPluginLatestDownloadUrl}");
+            logger.Error(ex, $"YmmpxLibPlugin のダウンロードまたは .ymme 起動に失敗しました。url={YmmpxLibPluginLatestDownloadUrl}, path={downloadPath}");
             logger.Flush();
-            return false;
+            return new YmmpxLibInstallResult
+            {
+                Success = false,
+                DownloadPath = downloadPath,
+                ErrorMessage = "YmmpxLibPlugin のダウンロードまたは起動に失敗しました。",
+            };
         }
+    }
+
+    public string GetInstallerDownloadPath()
+    {
+        var baseDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "YmmpxLibPlugin");
+        var fileName = "YmmpxLibPlugin.ymme";
+        return Path.Combine(baseDirectory, fileName);
+    }
+
+    private static async Task DownloadFileAsync(string url, string path, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient();
+        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        await using var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
     }
 
     private static void AddIfExists(ICollection<string> results, string path)
@@ -160,4 +220,13 @@ public sealed class YmmpxLibInstallGuide
             return null;
         }
     }
+}
+
+public sealed class YmmpxLibInstallResult
+{
+    public bool Success { get; init; }
+
+    public string? DownloadPath { get; init; }
+
+    public string? ErrorMessage { get; init; }
 }
