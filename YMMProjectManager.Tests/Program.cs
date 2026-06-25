@@ -10,6 +10,7 @@ using YMMProjectManager.Application.Diagnostics;
 using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Checkpoint;
 using YMMProjectManager.Infrastructure.Diagnostics;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Thumbnails;
@@ -95,6 +96,9 @@ internal static class Program
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
+        await TestCheckpointThumbnailPlannerEvenSplitAsync();
+        await TestCheckpointThumbnailPlannerCustomSecondsAsync();
+        await TestCheckpointStorageManifestRoundTripAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);
     }
 
@@ -1189,6 +1193,69 @@ internal static class Program
 
         AssertEx.Equal("new", await File.ReadAllTextAsync(targetPath), "Atomic replace should overwrite the target content.");
         AssertEx.True(!File.Exists(sourceTempPath), "Atomic replace should consume the source temp file.");
+    }
+
+    private static Task TestCheckpointThumbnailPlannerEvenSplitAsync()
+    {
+        var planner = new ThumbnailIntervalPlanner();
+        var plan = planner.CreatePlan(new CheckpointThumbnailSettings
+        {
+            Mode = CheckpointThumbnailMode.EvenSplit,
+            SampleCount = 4,
+        }, 100, 30);
+
+        AssertEx.Equal(4, plan.Frames.Length, "Even split should preserve requested count when enough frames exist.");
+        AssertEx.Equal(0, plan.Frames[0], "Even split should start from first frame.");
+        AssertEx.Equal(99, plan.Frames[^1], "Even split should include last frame.");
+        return Task.CompletedTask;
+    }
+
+    private static Task TestCheckpointThumbnailPlannerCustomSecondsAsync()
+    {
+        var planner = new ThumbnailIntervalPlanner();
+        var plan = planner.CreatePlan(new CheckpointThumbnailSettings
+        {
+            Mode = CheckpointThumbnailMode.CustomSeconds,
+            CustomValue = 5,
+        }, 301, 30);
+
+        AssertEx.Equal(0, plan.Frames[0], "Custom seconds should start from first frame.");
+        AssertEx.Equal(150, plan.Frames[1], "Custom seconds should convert seconds to frame interval.");
+        AssertEx.Equal(300, plan.Frames[^1], "Custom seconds should include last frame.");
+        return Task.CompletedTask;
+    }
+
+    private static async Task TestCheckpointStorageManifestRoundTripAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestCheckpointStorageManifestRoundTripAsync));
+        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        var storage = new CheckpointStorage(Path.Combine(root, "AppData", "YMMProjectManager", "Checkpoints"));
+        var manifest = new CheckpointManifest
+        {
+            ProjectId = storage.GetProjectId(projectPath),
+            ProjectPath = projectPath,
+            ProjectFileName = "project.ymmp",
+            CreatedAt = DateTimeOffset.Now,
+            UpdatedAt = DateTimeOffset.Now,
+            Checkpoints =
+            [
+                new CheckpointManifestItem
+                {
+                    CheckpointId = "20260626-120000",
+                    Name = "checkpoint",
+                    CreatedAt = DateTimeOffset.Now,
+                    YmmpSha256 = "abc",
+                    ThumbnailMode = "均等分割(64件)",
+                },
+            ],
+        };
+
+        await storage.WriteManifestAsync(projectPath, manifest);
+        var loaded = await storage.ReadManifestAsync(projectPath);
+
+        AssertEx.True(loaded is not null, "Checkpoint manifest should round-trip.");
+        AssertEx.Equal(1, loaded!.Checkpoints.Count, "Checkpoint manifest items should round-trip.");
+        AssertEx.Equal("checkpoint", loaded.Checkpoints[0].Name, "Checkpoint manifest name should round-trip.");
     }
 
     private static ProjectGenerationService CreateService(string root)

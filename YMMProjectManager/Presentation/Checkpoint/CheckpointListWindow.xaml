@@ -1,0 +1,49 @@
+<Window
+    x:Class="YMMProjectManager.Presentation.Checkpoint.CheckpointListWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    Title="チェックポイント一覧"
+    Width="1200"
+    Height="720"
+    WindowStartupLocation="CenterOwner"
+    ShowInTaskbar="False">
+    <DockPanel Margin="16">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,12">
+            <TextBlock FontWeight="SemiBold" Text="{Binding ProjectDisplayText}" />
+            <TextBlock Margin="0,4,0,0" Foreground="#666666" Text="{Binding StoragePathText}" TextWrapping="Wrap" />
+        </StackPanel>
+
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+            <Button Width="96" Margin="0,0,8,0" Content="更新" Click="OnRefreshClick" />
+            <Button Width="96" Margin="0,0,8,0" Content="詳細" Click="OnDetailClick" />
+            <Button Width="96" Margin="0,0,8,0" Content="復元" Click="OnRestoreClick" />
+            <Button Width="128" Content="保存先を開く" Click="OnOpenStorageClick" />
+        </StackPanel>
+
+        <DataGrid
+            ItemsSource="{Binding Checkpoints}"
+            SelectedItem="{Binding SelectedCheckpoint, Mode=TwoWay}"
+            AutoGenerateColumns="False"
+            IsReadOnly="True"
+            CanUserAddRows="False"
+            SelectionMode="Single">
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Header="代表" Width="90">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Border Width="72" Height="40" BorderBrush="#CCCCCC" BorderThickness="1">
+                                <Image Source="{Binding RepresentativeThumbnail}" Stretch="UniformToFill" />
+                            </Border>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="作成日時" Binding="{Binding CreatedAtText}" Width="160" />
+                <DataGridTextColumn Header="名前" Binding="{Binding Name}" Width="180" />
+                <DataGridTextColumn Header="説明" Binding="{Binding Description}" Width="220" />
+                <DataGridTextColumn Header="Git Commit" Binding="{Binding GitCommit}" Width="220" />
+                <DataGridTextColumn Header="Git Branch" Binding="{Binding GitBranch}" Width="140" />
+                <DataGridTextColumn Header="生成方式" Binding="{Binding ThumbnailMode}" Width="160" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>

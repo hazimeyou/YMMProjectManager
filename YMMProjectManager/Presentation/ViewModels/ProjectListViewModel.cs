@@ -8,11 +8,13 @@ using YMMProjectManager.Application;
 using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Checkpoint;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Presentation.Commands;
+using YMMProjectManager.Presentation.Checkpoint;
 using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
@@ -26,6 +28,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private readonly IProjectRepository repository;
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly IProjectGenerationService generationService;
+    private readonly ICheckpointService checkpointService;
     private readonly YmmpxLibBundleService bundleService;
     private readonly YmmpxLibInstallGuide ymmpxLibInstallGuide;
     private List<ProjectFolder> folders = [];
@@ -96,6 +99,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
+        checkpointService = new CheckpointService(logger);
         bundleService = new YmmpxLibBundleService(logger);
         ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
@@ -298,6 +302,78 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
 
         var window = new ProjectGenerationDiagnosticsWindow(projectPath, logger)
+        {
+            Owner = GetActiveWindow(),
+        };
+        window.ShowDialog();
+        await Task.CompletedTask;
+    }
+
+    public async Task CreateCheckpointAsync()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            MessageBox.Show("チェックポイントを作成するプロジェクトを選択してください。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(project.FullPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var currentProjectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
+        if (string.IsNullOrWhiteSpace(currentProjectPath) ||
+            !string.Equals(Path.GetFullPath(currentProjectPath), projectPath, StringComparison.OrdinalIgnoreCase))
+        {
+            MessageBox.Show("サムネイル生成のため、対象プロジェクトを YMM で開いてから実行してください。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var dialog = new CheckpointCreateWindow
+        {
+            Owner = GetActiveWindow(),
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        await ExecuteWithBusyAsync("CheckpointCreate", async () =>
+        {
+            var record = await checkpointService.CreateAsync(new CheckpointCreateRequest
+            {
+                ProjectPath = projectPath,
+                Name = dialog.CheckpointName,
+                Description = dialog.Description,
+                Comment = dialog.Comment,
+                ThumbnailSettings = dialog.BuildSettings(),
+                TimelineInfo = TimelineContextService.Info,
+            }).ConfigureAwait(true);
+
+            MessageBox.Show($"チェックポイントを作成しました。\n{record.Name}", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Information);
+        }).ConfigureAwait(true);
+    }
+
+    public async Task ShowCheckpointListAsync()
+    {
+        var project = SelectedProject;
+        if (project is null)
+        {
+            MessageBox.Show("チェックポイント一覧を表示するプロジェクトを選択してください。", "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!TryGetOpenableProjectPath(project.FullPath, out var projectPath, out var reason))
+        {
+            MessageBox.Show(reason, "チェックポイント", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        var window = new CheckpointListWindow(projectPath, logger)
         {
             Owner = GetActiveWindow(),
         };

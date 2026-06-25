@@ -62,6 +62,9 @@
                 PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
                 <ListBox.ContextMenu>
                     <ContextMenu>
+                        <MenuItem Header="チェックポイントを作成" Click="OnCreateCheckpointMenuClick" />
+                        <MenuItem Header="チェックポイント一覧" Click="OnShowCheckpointListMenuClick" />
+                        <Separator />
                         <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
                         <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
                         <MenuItem Header="世代診断" Click="OnShowGenerationDiagnosticsMenuClick" />

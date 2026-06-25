@@ -107,6 +107,26 @@ public partial class ProjectListView : UserControl
         await vm.SaveGenerationAsync();
     }
 
+    private async void OnCreateCheckpointMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ProjectListViewModel vm)
+        {
+            return;
+        }
+
+        await vm.CreateCheckpointAsync();
+    }
+
+    private async void OnShowCheckpointListMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not ProjectListViewModel vm)
+        {
+            return;
+        }
+
+        await vm.ShowCheckpointListAsync();
+    }
+
     private async void OnShowGenerationListMenuClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not ProjectListViewModel vm)
