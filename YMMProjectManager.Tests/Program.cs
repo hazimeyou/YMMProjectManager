@@ -93,6 +93,7 @@ internal static class Program
         await TestCurrentPreviewCapturePreviewViewModelFallbackAsync(workRoot);
         await TestCurrentPreviewCaptureGetBitmapFallbackAsync(workRoot);
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
+        await ProjectListSaveTests.RunAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);

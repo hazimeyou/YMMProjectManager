@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -15,19 +15,31 @@ public sealed class JsonProjectRepository : IProjectRepository
 {
     private const string PluginDirectoryName = "YMMProjectManager";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly SemaphoreSlim SaveGate = new(1, 1);
     private readonly string jsonPath;
+    private readonly Func<Stream, byte[], CancellationToken, Task> writeTemporaryFile;
+    private readonly Action? beforeReplace;
     private readonly FileLogger logger;
 
-    public JsonProjectRepository(FileLogger logger){ this.logger = logger; jsonPath = ResolvePath(); }
+    public JsonProjectRepository(FileLogger logger) : this(logger, ResolvePath()) { }
+
+    // Internal hooks make failures at the file boundary deterministic in isolated tests.
+    internal JsonProjectRepository(FileLogger logger, string path,
+        Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null)
+    {
+        this.logger = logger;
+        jsonPath = path;
+        this.writeTemporaryFile = writeTemporaryFile ?? ((stream, bytes, token) => stream.WriteAsync(bytes, token).AsTask());
+        this.beforeReplace = beforeReplace;
+    }
 
     public async Task<ProjectStore> LoadAsync(CancellationToken cancellationToken = default)
     {
         try
         {
-            if (!File.Exists(jsonPath)) return new ProjectStore();
             await using var stream = File.OpenRead(jsonPath);
             var dto = await JsonSerializer.DeserializeAsync<ProjectListFileDto>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            if (dto is null) return new ProjectStore();
+            if (dto is null) throw new InvalidDataException("Project list is null.");
             var store = new ProjectStore();
             foreach (var f in dto.Folders ?? [])
             {
@@ -51,14 +63,21 @@ public sealed class JsonProjectRepository : IProjectRepository
             }
             return store;
         }
-        catch (Exception ex) { logger.Error("Failed to load projects.json", ex); return new ProjectStore(); }
+        catch (FileNotFoundException) { return new ProjectStore(); }
+        catch (DirectoryNotFoundException) { return new ProjectStore(); }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex) { logger.Error("Failed to load projects.json", ex); throw; }
     }
 
     public async Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default)
     {
+        string? tempPath = null;
+        var stage = "waiting";
+        await SaveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+            cancellationToken.ThrowIfCancellationRequested();
+            stage = "serialize";
             var dto = new ProjectListFileDto
             {
                 Folders = store.Folders.Select(x => new ProjectFolderDto { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt }).ToList(),
@@ -68,10 +87,47 @@ public sealed class JsonProjectRepository : IProjectRepository
                     LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
                 }).ToList(),
             };
-            await using var stream = File.Create(jsonPath);
-            await JsonSerializer.SerializeAsync(stream, dto, JsonOptions, cancellationToken).ConfigureAwait(false);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, JsonOptions);
+            cancellationToken.ThrowIfCancellationRequested();
+            var directory = Path.GetDirectoryName(jsonPath)!;
+            Directory.CreateDirectory(directory);
+            var candidatePath = Path.Combine(directory, $"{Path.GetFileName(jsonPath)}.tmp-{Guid.NewGuid():N}");
+            stage = "write temporary file";
+            await using (var stream = new FileStream(candidatePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                tempPath = candidatePath;
+                await writeTemporaryFile(stream, bytes, cancellationToken).ConfigureAwait(false);
+                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            stage = "replace";
+            beforeReplace?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(jsonPath))
+                File.Replace(tempPath, jsonPath, null);
+            else
+                File.Move(tempPath, jsonPath);
+            tempPath = null;
         }
-        catch (Exception ex) { logger.Error("Failed to save projects.json", ex); }
+        catch (OperationCanceledException)
+        {
+            logger.Info($"Project list save canceled. stage={stage}");
+            throw;
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, $"Project list save failed. stage={stage}");
+            throw;
+        }
+        finally
+        {
+            if (tempPath is not null)
+            {
+                try { File.Delete(tempPath); }
+                catch (Exception ex) { logger.Error(ex, "Failed to remove project list temporary file."); }
+            }
+            SaveGate.Release();
+        }
     }
 
     private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); return Path.Combine(appData, "YMMProjectManager", "plugin", PluginDirectoryName, "data", "projects.json"); }

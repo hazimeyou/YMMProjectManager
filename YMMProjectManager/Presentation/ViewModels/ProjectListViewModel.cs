@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
@@ -99,7 +99,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         bundleService = new YmmpxLibBundleService(logger);
         ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
-        AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => !IsBusy);
+        AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
@@ -107,7 +107,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
-        ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
+        ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => isInitialized && !IsBusy);
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)
@@ -139,6 +139,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             folders = store.Folders.ToList();
 
             isInitialized = true;
+            CommandManager.InvalidateRequerySuggested();
             logger.Info($"Load end. count={Projects.Count}");
             PrepareThumbnailMetadata(Projects.ToList());
             UpdateYmmpxAvailabilityStatus();
@@ -149,6 +150,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         await ExecuteWithBusyAsync("Add batch", async () =>
         {
+            if (!isInitialized) throw new InvalidOperationException("プロジェクト一覧が読み込まれていません。");
             var paths = explicitPaths?.ToArray();
             if (paths is null)
             {
@@ -561,6 +563,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         catch (Exception ex)
         {
             logger.Error(ex, $"展開後のプロジェクト登録に失敗しました。path={restoredYmmpPath}");
+            throw;
         }
     }
 
@@ -753,6 +756,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task SaveAsync()
     {
+        if (!isInitialized)
+        {
+            throw new InvalidOperationException("プロジェクト一覧を読み込めなかったため保存できません。");
+        }
+
         await repository.SaveAsync(new ProjectStore
         {
             Projects = Projects.ToList(),
@@ -785,7 +793,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             logger.Error(ex, $"{operationName}失敗。");
             logger.Flush();
-            MessageBox.Show("処理中にエラーが発生しました。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("処理中にエラーが発生しました。一覧に変更がある場合、保存されていない可能性があります。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {
