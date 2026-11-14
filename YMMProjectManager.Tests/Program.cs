@@ -94,6 +94,7 @@ internal static class Program
         await TestCurrentPreviewCaptureGetBitmapFallbackAsync(workRoot);
         await TestLegacyProjectStoreCompatibilityAsync(workRoot);
         await ProjectListSaveTests.RunAsync(workRoot);
+        await ProjectListRecoveryTests.RunAsync(workRoot);
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);
@@ -1341,7 +1342,7 @@ internal static class Program
             => Task.FromResult(PreviewCaptureResult.Failed(reason));
     }
 
-    private static class WpfTestHost
+    internal static class WpfTestHost
     {
         private static readonly object SyncRoot = new();
         private static Thread? thread;

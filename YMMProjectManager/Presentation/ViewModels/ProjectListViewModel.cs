@@ -32,6 +32,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
+    private bool hasUnsavedProjectList;
     private string bundleStatus = string.Empty;
     private double bundleProgress;
 
@@ -73,6 +74,17 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         set => SetProperty(ref bundleProgress, value);
     }
 
+    public bool HasUnsavedProjectList
+    {
+        get => hasUnsavedProjectList;
+        private set
+        {
+            if (SetProperty(ref hasUnsavedProjectList, value))
+                CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
+    public ICommand RetryProjectListSaveCommand { get; }
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -99,6 +111,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         bundleService = new YmmpxLibBundleService(logger);
         ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
+        RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList);
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
@@ -754,6 +767,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }).ConfigureAwait(true);
     }
 
+    public async Task RetryProjectListSaveAsync()
+    {
+        if (!HasUnsavedProjectList) return;
+        await ExecuteWithBusyAsync("Retry project list save", SaveAsync).ConfigureAwait(true);
+    }
+
     private async Task SaveAsync()
     {
         if (!isInitialized)
@@ -761,11 +780,20 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             throw new InvalidOperationException("プロジェクト一覧を読み込めなかったため保存できません。");
         }
 
-        await repository.SaveAsync(new ProjectStore
+        try
         {
-            Projects = Projects.ToList(),
-            Folders = folders.ToList(),
-        }).ConfigureAwait(true);
+            await repository.SaveAsync(new ProjectStore
+            {
+                Projects = Projects.ToList(),
+                Folders = folders.ToList(),
+            }).ConfigureAwait(true);
+            HasUnsavedProjectList = false;
+        }
+        catch
+        {
+            HasUnsavedProjectList = true;
+            throw;
+        }
     }
 
     private async Task ExecuteWithBusyAsync(string operationName, Func<Task> action)
@@ -793,7 +821,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             logger.Error(ex, $"{operationName}失敗。");
             logger.Flush();
-            MessageBox.Show("処理中にエラーが発生しました。一覧に変更がある場合、保存されていない可能性があります。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+            MessageBox.Show("処理中にエラーが発生しました。一覧に未保存の変更がある場合は「一覧の保存を再試行」を使ってください。ログを確認してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         finally
         {

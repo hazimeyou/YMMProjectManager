@@ -22,6 +22,22 @@
                 <Button Content="開く" Width="90" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
             </StackPanel>
 
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <TextBlock Text="一覧に未保存の変更があります。" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasUnsavedProjectList}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Button Content="一覧の保存を再試行" Command="{Binding RetryProjectListSaveCommand}" />
+            </StackPanel>
+
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
