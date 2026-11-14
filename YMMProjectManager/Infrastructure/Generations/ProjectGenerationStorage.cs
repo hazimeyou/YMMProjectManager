@@ -83,14 +83,48 @@ public sealed class ProjectGenerationStorage
 
     public async Task<ProjectGenerationManifest?> ReadManifestAsync(string projectId, CancellationToken cancellationToken = default)
     {
-        var path = GetManifestPath(projectId);
-        if (!File.Exists(path))
+        try
         {
-            return null;
-        }
+            await using var stream = File.OpenRead(GetManifestPath(projectId));
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("SchemaVersion", out var schema) || !schema.TryGetInt32(out var version))
+                throw new InvalidDataException("世代 manifest のスキーマが不正です。");
+            if (version != ProjectGenerationManifest.CurrentSchemaVersion)
+                throw new NotSupportedException($"未対応の世代 manifest スキーマです: {version}");
 
-        await using var stream = File.OpenRead(path);
-        return await JsonSerializer.DeserializeAsync<ProjectGenerationManifest>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+            foreach (var name in new[] { "ProjectId", "ProjectPath", "ProjectFileName", "CreatedAt", "UpdatedAt", "Generations" })
+                if (!root.TryGetProperty(name, out _)) throw new InvalidDataException($"世代 manifest に必須項目がありません: {name}");
+            var entries = root.GetProperty("Generations");
+            if (entries.ValueKind != JsonValueKind.Array) throw new InvalidDataException("世代一覧が不正です。");
+            foreach (var item in entries.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.Object) throw new InvalidDataException("世代情報が不正です。");
+                foreach (var name in new[] { "GenerationId", "CreatedAt", "DisplayName", "SourceProjectPath", "FileSize", "Sha256", "CreatedByVersion" })
+                    if (!item.TryGetProperty(name, out _)) throw new InvalidDataException($"世代情報に必須項目がありません: {name}");
+            }
+            var manifest = root.Deserialize<ProjectGenerationManifest>(JsonOptions)
+                ?? throw new InvalidDataException("世代 manifest が空です。");
+            if (!string.Equals(manifest.ProjectId, projectId, StringComparison.OrdinalIgnoreCase) ||
+                string.IsNullOrWhiteSpace(manifest.ProjectPath) || string.IsNullOrWhiteSpace(manifest.ProjectFileName) ||
+                manifest.Generations is null || manifest.Generations.Any(x => x is null || string.IsNullOrWhiteSpace(x.GenerationId) ||
+                    x.DisplayName is null || x.SourceProjectPath is null || x.Sha256 is null || x.CreatedByVersion is null))
+                throw new InvalidDataException("世代 manifest の必須値が不正です。");
+            return manifest;
+        }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    public bool HasExistingGenerations(string projectId)
+    {
+        foreach (var directory in new[] { GetGenerationsDirectory(projectId), GetDeletedDirectory(projectId) })
+        {
+            try { if (Directory.EnumerateFileSystemEntries(directory).Any()) return true; }
+            catch (DirectoryNotFoundException) { }
+        }
+        return false;
     }
 
     public async Task WriteMetadataAsync(string projectId, string generationId, ProjectGenerationManifestItem metadata, CancellationToken cancellationToken = default)

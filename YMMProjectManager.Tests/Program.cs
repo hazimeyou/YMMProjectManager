@@ -58,6 +58,7 @@ internal static class Program
         await TestCreateAndListAsync(workRoot);
         await TestMultipleGenerationsAsync(workRoot);
         await TestManifestCorruptionAsync(workRoot);
+        await GenerationManifestProtectionTests.RunAsync(workRoot);
         await TestMetadataCorruptionAsync(workRoot);
         await TestRestoreAsync(workRoot);
         await TestDeleteAsync(workRoot);
@@ -193,10 +194,13 @@ internal static class Program
         var manifestPath = Path.Combine(service.GetProjectDirectory(projectPath), "manifest.json");
         File.WriteAllText(manifestPath, "{ broken json");
 
-        var generations = await service.GetGenerationsAsync(projectPath);
+        try
+        {
+            await service.GetGenerationsAsync(projectPath);
+            throw new InvalidOperationException("Corrupted manifest must not appear as an empty list.");
+        }
+        catch (InvalidDataException) { }
         var diagnostics = await service.GetDiagnosticsAsync(projectPath);
-
-        AssertEx.Equal(0, generations.Count, "Corrupted manifest should fall back to empty list.");
         AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Corrupted, "Corrupted manifest should be reported.");
     }
 

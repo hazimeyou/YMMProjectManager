@@ -36,15 +36,14 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     {
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
-        storage.EnsureProjectLayout(projectId);
-
         var createdAt = DateTimeOffset.Now;
         var generationId = idFactory.Create(createdAt);
         var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
         var generationFilePath = storage.GetGenerationFilePath(projectId, generationId);
 
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
-        var manifest = manifestLoad.Manifest;
+        var manifest = RequireManifest(manifestLoad);
+        storage.EnsureProjectLayout(projectId);
         if (manifest.Generations.Count == 0)
         {
             manifest.CreatedAt = createdAt;
@@ -79,7 +78,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             manifest.UpdatedAt = createdAt;
             manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
             manifest.Generations.Add(metadata);
-            await manifestRepository.SaveAsync(projectId, manifest, cancellationToken).ConfigureAwait(false);
+            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad.Status, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationCreateCompleted projectPath={normalizedProjectPath}, generationId={generationId}, fileSize={metadata.FileSize}");
             return new ProjectGenerationRecord
@@ -119,7 +118,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
-        var manifest = manifestLoad.Manifest;
+        var manifest = RequireManifest(manifestLoad);
         var results = new List<ProjectGenerationRecord>();
 
         foreach (var item in manifest.Generations.OrderByDescending(x => x.CreatedAt))
@@ -209,7 +208,9 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
-        var generations = await GetGenerationsAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        var generations = manifestLoad.Manifest is null
+            ? Array.Empty<ProjectGenerationRecord>()
+            : await GetGenerationsAsync(projectPath, cancellationToken).ConfigureAwait(false);
         var latest = generations.OrderByDescending(x => x.CreatedAt).FirstOrDefault(x => x.IsValid) ?? generations.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
 
         var diagnostics = new ProjectGenerationDiagnostics
@@ -314,9 +315,12 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         var deletedDirectory = storage.GetDeletedGenerationDirectory(projectId, generationId);
 
         logger.Info($"GenerationDeleteStarted projectPath={normalizedProjectPath}, generationId={generationId}");
+        var moved = false;
 
         try
         {
+            var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
+            var manifest = RequireManifest(manifestLoad);
             if (!Directory.Exists(generationDirectory))
             {
                 return (false, "世代フォルダが見つかりません。");
@@ -324,15 +328,15 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
             if (Directory.Exists(deletedDirectory))
             {
-                Directory.Delete(deletedDirectory, recursive: true);
+                return (false, "削除先が既に存在します。既存データを保護するため処理を中止しました。 ");
             }
 
             await storage.MoveDirectoryAsync(generationDirectory, deletedDirectory, cancellationToken).ConfigureAwait(false);
+            moved = true;
 
-            var manifest = (await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false)).Manifest;
             manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
             manifest.UpdatedAt = DateTimeOffset.Now;
-            await manifestRepository.SaveAsync(projectId, manifest, cancellationToken).ConfigureAwait(false);
+            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad.Status, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationDeleteCompleted projectPath={normalizedProjectPath}, generationId={generationId}, deletedPath={deletedDirectory}");
             return (true, null);
@@ -342,7 +346,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             logger.Error(ex, $"GenerationDeleteFailed projectPath={normalizedProjectPath}, generationId={generationId}");
             try
             {
-                if (Directory.Exists(deletedDirectory) && !Directory.Exists(generationDirectory))
+                if (moved && Directory.Exists(deletedDirectory) && !Directory.Exists(generationDirectory))
                 {
                     Directory.Move(deletedDirectory, generationDirectory);
                 }
@@ -353,6 +357,12 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
             return (false, ex.Message);
         }
+    }
+
+    private static ProjectGenerationManifest RequireManifest(ProjectGenerationManifestLoadResult result)
+    {
+        return result.Manifest ?? throw new InvalidDataException(
+            $"世代 manifest を読み込めません。既存データを保護するため処理を中止しました。状態: {result.Status}");
     }
 
     private static ProjectGenerationRecord BuildGenerationRecord(ProjectGenerationManifestItem metadata, string generationDirectory)

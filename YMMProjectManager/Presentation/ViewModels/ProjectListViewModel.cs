@@ -817,6 +817,12 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             logger.Info($"{operationName}キャンセル。");
             logger.Flush();
         }
+        catch (InvalidDataException ex) when (operationName == "GenerationSave")
+        {
+            logger.Error(ex, "世代 manifest の読み込みに失敗しました。");
+            logger.Flush();
+            MessageBox.Show("世代情報を読み込めません。既存データを保護するため保存を中止しました。ログを確認してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
         catch (Exception ex)
         {
             logger.Error(ex, $"{operationName}失敗。");
