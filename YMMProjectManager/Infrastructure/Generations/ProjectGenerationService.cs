@@ -20,11 +20,14 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     private readonly ProjectGenerationManifestRepository manifestRepository;
 
     public ProjectGenerationService(FileLogger logger, string? storageRootDirectory = null)
+        : this(logger, new ProjectGenerationStorage(storageRootDirectory)) { }
+
+    internal ProjectGenerationService(FileLogger logger, ProjectGenerationStorage storage)
     {
         this.logger = logger;
         hashService = new ProjectGenerationHashService();
         idFactory = new ProjectGenerationIdFactory();
-        storage = new ProjectGenerationStorage(storageRootDirectory);
+        this.storage = storage;
         manifestRepository = new ProjectGenerationManifestRepository(storage, logger);
     }
 
@@ -78,7 +81,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             manifest.UpdatedAt = createdAt;
             manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
             manifest.Generations.Add(metadata);
-            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad.Status, cancellationToken).ConfigureAwait(false);
+            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationCreateCompleted projectPath={normalizedProjectPath}, generationId={generationId}, fileSize={metadata.FileSize}");
             return new ProjectGenerationRecord
@@ -336,7 +339,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
             manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
             manifest.UpdatedAt = DateTimeOffset.Now;
-            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad.Status, cancellationToken).ConfigureAwait(false);
+            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationDeleteCompleted projectPath={normalizedProjectPath}, generationId={generationId}, deletedPath={deletedDirectory}");
             return (true, null);

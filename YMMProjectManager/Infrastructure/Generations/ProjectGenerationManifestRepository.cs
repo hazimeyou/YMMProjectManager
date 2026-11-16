@@ -19,11 +19,11 @@ public sealed class ProjectGenerationManifestRepository
     {
         try
         {
-            var manifest = await storage.ReadManifestAsync(projectId, cancellationToken).ConfigureAwait(false);
+            var (manifest, hash) = await storage.ReadManifestSnapshotAsync(projectId, cancellationToken).ConfigureAwait(false);
             if (manifest is not null)
             {
                 logger.Info($"GenerationManifestLoaded projectId={projectId}, projectPath={projectPath}");
-                return new ProjectGenerationManifestLoadResult(manifest, ProjectGenerationManifestStatus.Valid);
+                return new ProjectGenerationManifestLoadResult(manifest, ProjectGenerationManifestStatus.Valid, contentHash: hash);
             }
             if (storage.HasExistingGenerations(projectId))
                 throw new InvalidDataException("manifest が見つかりませんが、既存の世代データが残っています。");
@@ -45,20 +45,19 @@ public sealed class ProjectGenerationManifestRepository
         var current = await LoadAsync(projectId, manifest.ProjectPath, cancellationToken).ConfigureAwait(false);
         if (current.Manifest is null)
             throw new InvalidDataException("世代 manifest を読み込めないため保存できません。");
-        await SaveValidatedAsync(projectId, manifest, current.Status, cancellationToken).ConfigureAwait(false);
+        await SaveValidatedAsync(projectId, manifest, current, cancellationToken).ConfigureAwait(false);
     }
 
     internal async Task SaveValidatedAsync(string projectId, ProjectGenerationManifest manifest,
-        ProjectGenerationManifestStatus initialStatus, CancellationToken cancellationToken)
+        ProjectGenerationManifestLoadResult initial, CancellationToken cancellationToken)
     {
         try
         {
-            // Check again after snapshot creation or movement; a bad manifest must never be replaced intentionally.
-            var current = await storage.ReadManifestAsync(projectId, cancellationToken).ConfigureAwait(false);
-            if (initialStatus == ProjectGenerationManifestStatus.Missing ? current is not null :
-                initialStatus != ProjectGenerationManifestStatus.Valid || current is null)
-                throw new InvalidDataException("世代 manifest の状態が変更されたため保存を中止しました。");
-            await storage.WriteManifestAsync(projectId, manifest, cancellationToken).ConfigureAwait(false);
+            if (initial.Status != ProjectGenerationManifestStatus.Valid && initial.Status != ProjectGenerationManifestStatus.Missing)
+                throw new InvalidDataException("世代 manifest を読み込めないため保存できません。");
+            if (initial.Status == ProjectGenerationManifestStatus.Valid && initial.ContentHash is null)
+                throw new InvalidDataException("世代 manifest の読み込み時のハッシュがありません。");
+            await storage.WriteManifestIfUnchangedAsync(projectId, manifest, initial.ContentHash, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex)
         {

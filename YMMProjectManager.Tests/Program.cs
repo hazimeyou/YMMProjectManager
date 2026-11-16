@@ -59,6 +59,7 @@ internal static class Program
         await TestMultipleGenerationsAsync(workRoot);
         await TestManifestCorruptionAsync(workRoot);
         await GenerationManifestProtectionTests.RunAsync(workRoot);
+        await ManifestWriteHardeningTests.RunAsync(workRoot);
         await TestMetadataCorruptionAsync(workRoot);
         await TestRestoreAsync(workRoot);
         await TestDeleteAsync(workRoot);
