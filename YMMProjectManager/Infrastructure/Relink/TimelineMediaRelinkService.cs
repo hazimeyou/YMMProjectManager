@@ -100,6 +100,8 @@ public sealed class TimelineMediaRelinkService
     {
         try
         {
+            foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
+                RelinkJsonUpdate.EnsureSupported(row);
             var updatedCount = 0;
             var targetMap = context.Targets.ToDictionary(x => x.RowIndex);
             foreach (var row in context.Rows)
@@ -137,6 +139,11 @@ public sealed class TimelineMediaRelinkService
             logger.Info($"TimelineRelink.Save completed. updated={updatedCount}");
             logger.Flush();
             return (true, null, updatedCount);
+        }
+        catch (InvalidDataException ex)
+        {
+            logger.Error(ex, "TimelineRelink.Save validation failed.");
+            return (false, ex.Message, 0);
         }
         catch (Exception ex)
         {

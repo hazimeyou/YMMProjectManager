@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
@@ -200,6 +200,8 @@ public partial class RelinkMainWindow : Window
                             MessageBoxButton.OK,
                             MessageBoxImage.Warning);
                     }
+                    SetSummaryText(saveErrorMessage ?? "タイムラインへの反映に失敗しました。");
+                    return;
                 }
                 else
                 {
