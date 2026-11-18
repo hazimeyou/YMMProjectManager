@@ -203,51 +203,17 @@ public sealed class YmmpxLibBridge
         try
         {
             token.ThrowIfCancellationRequested();
-            using var archiveStream = new FileStream(ymmpxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            ValidateArchiveForExtraction(archiveStream, token);
-            logger.Info(
-                $"YmmpxLib 展開開始。対象 ymmpx={ymmpxPath}, 展開先={outputDirectory}, 探索パス={string.Join(" | ", searchedPaths)}");
-
-            var serviceType = assembly.GetType("YmmpxLib.YmmpxPackageService")
-                ?? throw new TypeLoadException("YmmpxPackageService が見つかりません。");
-            var method = serviceType.GetMethod("GetAvailableDirectoryPath", BindingFlags.Public | BindingFlags.Static)
-                ?? throw new MissingMethodException("GetAvailableDirectoryPath が見つかりません。");
-            var unpackMethod = serviceType.GetMethod("ExtractAndRestoreProject", BindingFlags.Public | BindingFlags.Static)
-                ?? throw new MissingMethodException("ExtractAndRestoreProject が見つかりません。");
-
-            var desiredDirectory = Path.Combine(outputDirectory, Path.GetFileNameWithoutExtension(ymmpxPath));
-            var finalDirectory = method.Invoke(null, [desiredDirectory])?.ToString() ?? desiredDirectory;
-
-            var unpackResult = unpackMethod.Invoke(null, [ymmpxPath, finalDirectory]) ?? throw new InvalidOperationException("展開結果が null です。");
-            var projectFilePath = GetStringProperty(unpackResult, "ProjectFilePath")
-                ?? throw new InvalidOperationException("ProjectFilePath が取得できません。");
-            var replacedPathCount = GetIntProperty(unpackResult, "ReplacedPathCount");
-            var linkMap = GetDictionaryProperty(unpackResult, "LinkMap");
-
-            if (progress is not null)
+            await Task.Run(() =>
             {
-                progress.Report(1d);
-            }
-
-            logger.Info(
-                $"YmmpxLib 展開成功。対象 ymmpx={ymmpxPath}, 展開先={finalDirectory}, 復元 ymmp={projectFilePath}, 置換 FilePath={replacedPathCount}, 解決={resolvedAssemblyPath}");
-            logger.Flush();
-
+                using var archiveStream = new FileStream(ymmpxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                ValidateArchiveForExtraction(archiveStream, token);
+            }, token).ConfigureAwait(false);
+            // The external extractor has not yet established an exclusively owned output
+            // directory or bounded cleanup. Validate first, then fail closed.
             return new YmmpxExtractResult
             {
-                Success = true,
-                RestoredProjectPath = projectFilePath,
-                OutputDirectory = finalDirectory,
-                ReplacedPathCount = replacedPathCount,
-                ExtractedResourceCount = linkMap.Count,
-                Links = linkMap.Select(item => new YmmpxPackageLink
-                {
-                    OriginalPath = item.Key,
-                    ResolvedPath = item.Value,
-                    BundlePath = string.Empty,
-                    Exists = true,
-                    Status = "restored",
-                }).ToArray(),
+                Success = false,
+                ErrorMessage = "展開先の保護を検証中のため、ymmpx の展開は利用できません。",
             };
         }
         catch (OperationCanceledException)

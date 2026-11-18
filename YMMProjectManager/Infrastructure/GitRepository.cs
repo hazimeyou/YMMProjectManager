@@ -75,8 +75,12 @@ public sealed class GitRepository
         var name = branch.StandardOutput.Trim();
         if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
+        var commit = await RunAsync(["rev-parse", "--verify", "refs/heads/" + name + "^{commit}"], token).ConfigureAwait(false);
+        var objectId = commit.StandardOutput.Trim();
+        if (!commit.Success || (objectId.Length != 40 && objectId.Length != 64) || !objectId.All(Uri.IsHexDigit))
+            return new GitResult(1, "", "Could not determine the branch commit.");
         BeforeRemoteExecution?.Invoke();
-        return SanitizeRemote(await RunAsync(["-c", "push.followTags=false", "push", "--no-follow-tags", "--", url!, "HEAD:refs/heads/" + name], token).ConfigureAwait(false));
+        return SanitizeRemote(await RunAsync(["-c", "push.followTags=false", "push", "--no-follow-tags", "--", url!, objectId + ":refs/heads/" + name], token).ConfigureAwait(false));
     }
 
     public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>

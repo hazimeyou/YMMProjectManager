@@ -31,6 +31,7 @@ internal static class GitRemoteTests
             Check((await one.StageAsync(["one.txt"])).Success && (await one.CommitAsync("first")).Success, "initial commit");
             await Command(root, "init", "--bare", bare); await Command(source, "remote", "add", "origin", bare);
             var branch = await Command(source, "symbolic-ref", "--short", "HEAD");
+            var expectedCommit = await Command(source, "rev-parse", "HEAD");
             await Command(root, "--git-dir", bare, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             var decoy = Path.Combine(root, "decoy.git");
             await Command(root, "init", "--bare", decoy);
@@ -40,9 +41,15 @@ internal static class GitRemoteTests
                 foreach (var arg in new[] { "remote", "set-url", "origin", decoy }) start.ArgumentList.Add(arg);
                 using var process = Process.Start(start)!; process.WaitForExit();
                 Check(process.ExitCode == 0, "change remote fixture");
+                var switchHead = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
+                foreach (var arg in new[] { "symbolic-ref", "HEAD", "refs/heads/concurrent-unborn" }) switchHead.ArgumentList.Add(arg);
+                using var headProcess = Process.Start(switchHead)!; headProcess.WaitForExit();
+                Check(headProcess.ExitCode == 0, "change HEAD fixture");
             };
             Check((await one.PushAsync()).Success, "initial push");
             one.BeforeRemoteExecution = null;
+            Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == expectedCommit, "push used changed HEAD");
+            await Command(source, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push followed changed origin");
             await Command(source, "remote", "set-url", "origin", bare);
             Check((await GitRepository.CloneAsync(bare, clone)).Success, "clone"); var two = new GitRepository(clone);

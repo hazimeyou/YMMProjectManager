@@ -43,6 +43,10 @@ internal static class YmmpxArchiveValidationTests
         var before = YmmpxLib.YmmpxPackageService.ExtractionCalls;
         var result = await bridge.ExtractPackageAsync(path, root, CancellationToken.None);
         if (result.Success || YmmpxLib.YmmpxPackageService.ExtractionCalls != before) throw new Exception("unsafe archive reached extractor");
+        using (var bytes = Archive("project.ymmp")) await File.WriteAllBytesAsync(path, bytes.ToArray());
+        var safeResult = await bridge.ExtractPackageAsync(path, root, CancellationToken.None);
+        if (safeResult.Success || !safeResult.ErrorMessage!.Contains("利用できません") || YmmpxLib.YmmpxPackageService.ExtractionCalls != before)
+            throw new Exception("unverified extractor was called for valid archive");
         Console.WriteLine("YMMPX archive safety preflight checks passed.");
     }
 }
