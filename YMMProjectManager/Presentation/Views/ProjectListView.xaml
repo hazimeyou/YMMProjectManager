@@ -118,6 +118,7 @@
                 <TextBox Width="150" Height="48" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Text="{Binding AssetPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="素材検査" Command="{Binding InspectAssetCommand}" Margin="0,0,4,0" />
                 <Button Content="メタデータ保存" Command="{Binding ExportAssetMetadataCommand}" />
+                <Button Content="新しい版を保存" Command="{Binding UpdateAssetMetadataCommand}" Margin="4,0,0,0" />
                 <Button Content="メタデータ照合" Command="{Binding VerifyAssetMetadataCommand}" Margin="4,0,0,0" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">

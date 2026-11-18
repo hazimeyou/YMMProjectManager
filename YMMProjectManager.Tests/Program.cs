@@ -126,6 +126,7 @@ internal static class Program
         await RunGroupAsync("GitRemoteTests.RunAsync", () => GitRemoteTests.RunAsync(workRoot));
         await RunGroupAsync("OfflineControlsTests.RunAsync", () => OfflineControlsTests.RunAsync(workRoot));
         await RunGroupAsync("AssetInventoryTests.RunAsync", () => AssetInventoryTests.RunAsync(workRoot));
+        await RunGroupAsync("AssetManifestTests.RunAsync", () => AssetManifestTests.RunAsync(workRoot));
     }
 
     private static async Task RunGroupAsync(string name, Func<Task> run)

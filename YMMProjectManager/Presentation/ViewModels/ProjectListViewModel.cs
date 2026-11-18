@@ -127,6 +127,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand FindAssetCandidatesCommand { get; }
     public ICommand InspectAssetCommand { get; }
     public ICommand ExportAssetMetadataCommand { get; }
+    public ICommand UpdateAssetMetadataCommand { get; }
     public ICommand VerifyAssetMetadataCommand { get; }
     public ICommand CancelToolCommand { get; }
     public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
@@ -184,6 +185,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
+        UpdateAssetMetadataCommand = new AsyncRelayCommand(() => SaveAssetMetadataAsync(true), () => !IsBusy && SelectedProject is not null);
         VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
     }
@@ -311,12 +313,21 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         });
     }
 
-    private async Task ExportAssetMetadataAsync()
+    private Task ExportAssetMetadataAsync() => SaveAssetMetadataAsync(false);
+
+    private async Task SaveAssetMetadataAsync(bool update)
     {
         var selected = SelectedProject;
         var assets = inspectedAssets;
         if (selected is null || assets is null) { AssetStatus = "先に素材を検査してください。"; return; }
-        var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新規保存", OverwritePrompt = false };
+        string? parentPath = null;
+        if (update)
+        {
+            var existing = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "更新元の素材メタデータを選択", CheckFileExists = true };
+            if (existing.ShowDialog() != true) return;
+            parentPath = existing.FileName;
+        }
+        var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新しいファイルに保存", OverwritePrompt = false };
         if (dialog.ShowDialog() != true) return;
         await ExecuteToolAsync("Asset metadata export", async token =>
         {
@@ -324,9 +335,27 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             foreach (var asset in assets)
                 if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = $"素材が変更されたか見つかりません: {asset.RelativePath}"; return; }
+            var verifiedAtUtc = DateTimeOffset.UtcNow;
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            await AssetInventory.ExportAsync(dialog.FileName, assets, token);
-            AssetStatus = "素材メタデータを新規保存しました。";
+            var parent = parentPath is null ? null : await AssetManifestStore.LoadAsync(parentPath, token);
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
+            if (parent is not null && MessageBox.Show($"更新元のプロジェクト名: {parent.ProjectFileName}\n選択中: {selected.FullPath}\n同名でも別プロジェクトの可能性があります。同一プロジェクトの版として作成しますか？", "素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            var changes = parent is null ? [] : AssetManifestStore.FindChangedPaths(parent, assets);
+            if (changes.Count > 0)
+            {
+                if (changes.Count > 10) { AssetStatus = "変更が10件を超えています。すべてを確認できるよう、10件以下に分けて更新してください。"; return; }
+                var details = changes.Take(10).Select(path =>
+                {
+                    var normalized = Path.GetFullPath(path, Path.GetTempPath());
+                    var oldAsset = parent!.Assets.First(item => string.Equals(Path.GetFullPath(item.RelativePath, Path.GetTempPath()), normalized, StringComparison.OrdinalIgnoreCase));
+                    var newAsset = assets.First(item => string.Equals(Path.GetFullPath(item.RelativePath, Path.GetTempPath()), normalized, StringComparison.OrdinalIgnoreCase));
+                    return $"{path}\n以前: {oldAsset.Size} bytes / {oldAsset.Sha256}\n今回: {newAsset.Size} bytes / {newAsset.Sha256}";
+                });
+                if (MessageBox.Show($"サイズまたは SHA-256 が以前と異なります:\n{string.Join("\n", details)}\n変更 {changes.Count} 件を新しい版に記録しますか？", "素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            }
+            var manifest = AssetManifestStore.Create(selected.FullPath, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0);
+            await AssetManifestStore.SaveNewAsync(dialog.FileName, manifest, token);
+            AssetStatus = "素材メタデータを新しいファイルに保存しました。元のメタデータは変更していません。";
         });
     }
 
@@ -339,12 +368,24 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await ExecuteToolAsync("Asset metadata verification", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
-            var assets = await AssetInventory.LoadAsync(dialog.FileName, token);
+            IReadOnlyList<AssetMetadata> assets;
+            try
+            {
+                var manifest = await AssetManifestStore.LoadAsync(dialog.FileName, token);
+                if (!string.Equals(manifest.ProjectFileName, Path.GetFileName(selected.FullPath), StringComparison.OrdinalIgnoreCase))
+                { AssetStatus = "メタデータのプロジェクト名が一致しません。"; return; }
+                assets = manifest.Assets;
+            }
+            catch (JsonException)
+            {
+                // R2 exported a bare array; retain read compatibility without rewriting it.
+                assets = await AssetInventory.LoadAsync(dialog.FileName, token);
+            }
             var results = new List<string>();
             foreach (var asset in assets)
                 results.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset, token)}");
             if (!ReferenceEquals(selected, SelectedProject)) return;
-            AssetStatus = results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results);
+            AssetStatus = (results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results)) + "\n同名の別プロジェクトは自動識別できません。";
         });
     }
 

@@ -75,7 +75,7 @@ public static class AssetInventory
         return assets;
     }
 
-    private static void ValidateMetadata(AssetMetadata asset)
+    internal static void ValidateMetadata(AssetMetadata asset)
     {
         if (asset is null || string.IsNullOrWhiteSpace(asset.RelativePath) || Path.IsPathRooted(asset.RelativePath) ||
             asset.RelativePath.Split('/', '\\').Any(part => part == "..") || asset.Size < 0 ||
