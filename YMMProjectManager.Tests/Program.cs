@@ -22,12 +22,23 @@ internal static class Program
 {
     private static int groupsPassed;
     private static int groupsFailed;
+    private static int conditionalSkipped;
+
+    internal static void ReportConditionalSkip(string name)
+    {
+        conditionalSkipped++;
+        Console.WriteLine($"SKIP conditional case: {name}");
+    }
 
     public static async Task Main()
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
+        var previousGitGlobal = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
+        var previousGitSystem = Environment.GetEnvironmentVariable("GIT_CONFIG_NOSYSTEM");
+        Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", Path.Combine(workRoot, "empty-git-config"));
+        Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
 
         try
         {
@@ -36,8 +47,10 @@ internal static class Program
         }
         finally
         {
+            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", previousGitGlobal);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", previousGitSystem);
             Console.WriteLine($"Test groups executed: total={groupsPassed + groupsFailed}, passed={groupsPassed}, failed={groupsFailed}, duration={timer.Elapsed}");
-            Console.WriteLine("Counts are top-level groups; nested cases and conditional skips are not counted.");
+            Console.WriteLine($"Explicit conditional skips: {conditionalSkipped}. Counts are top-level groups; other nested cases and skips are not counted.");
             try
             {
                 if (Directory.Exists(workRoot))

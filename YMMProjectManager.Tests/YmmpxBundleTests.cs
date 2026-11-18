@@ -21,7 +21,7 @@ internal static class YmmpxBundleTests
         }
         else
         {
-            Console.WriteLine("SKIP conditional case: real YmmpxLib unavailable");
+            Program.ReportConditionalSkip("real YmmpxLib unavailable");
         }
     }
 

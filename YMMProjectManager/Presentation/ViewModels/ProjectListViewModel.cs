@@ -218,8 +218,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await ExecuteWithBusyAsync("Asset candidates", async () =>
         {
             var json = await File.ReadAllTextAsync(selected.FullPath);
-            using var document = JsonDocument.Parse(json);
-            var paths = PackagingDetector.FindFilePaths(json);
+            var paths = await Task.Run(() =>
+            {
+                using var document = JsonDocument.Parse(json);
+                return PackagingDetector.FindFilePaths(json);
+            });
             if (!ReferenceEquals(selected, SelectedProject)) return;
             AssetStatus = paths.Count == 0 ? "FilePath 候補はありません。" : "FilePath 候補（素材とは限りません）:\n" + string.Join("\n", paths);
         });
@@ -316,7 +319,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
             if (ReferenceEquals(selected, SelectedProject))
-                GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({result.Failure})。パス、認証、通信、リポジトリ状態を確認してください。";
+                GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({(result.Failure == GitFailure.None ? GitFailure.Unknown : result.Failure)})。パス、認証、通信、リポジトリ状態を確認してください。";
         });
     }
 
