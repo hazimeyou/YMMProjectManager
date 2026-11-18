@@ -4,7 +4,7 @@ using YMMProjectManager.Infrastructure.Packaging;
 
 internal static class YmmpxArchiveValidationTests
 {
-    public static Task RunAsync(string workRoot)
+    public static async Task RunAsync(string workRoot)
     {
         static MemoryStream Archive(params string[] names)
         {
@@ -36,7 +36,13 @@ internal static class YmmpxArchiveValidationTests
             try { YmmpxLibBridge.ValidateArchiveForExtraction(archive, cancelled.Token); throw new Exception("cancellation ignored"); }
             catch (OperationCanceledException) { }
         }
+        var root = Path.Combine(workRoot, "ymmpx-archive-preflight"); Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "unsafe.ymmpx");
+        using (var bytes = Archive("../outside.txt")) await File.WriteAllBytesAsync(path, bytes.ToArray());
+        var bridge = new YmmpxLibBridge(new YMMProjectManager.Infrastructure.FileLogger(Path.Combine(root, "test.log")), typeof(YmmpxLib.YmmpxPackageService).Assembly);
+        var before = YmmpxLib.YmmpxPackageService.ExtractionCalls;
+        var result = await bridge.ExtractPackageAsync(path, root, CancellationToken.None);
+        if (result.Success || YmmpxLib.YmmpxPackageService.ExtractionCalls != before) throw new Exception("unsafe archive reached extractor");
         Console.WriteLine("YMMPX archive safety preflight checks passed.");
-        return Task.CompletedTask;
     }
 }

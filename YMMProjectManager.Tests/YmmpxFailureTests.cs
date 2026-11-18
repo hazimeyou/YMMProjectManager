@@ -60,6 +60,13 @@ namespace YmmpxLib
     {
         public static string Mode { get; set; } = "failure";
         public static string? ExternalPath { get; set; }
+        public static int ExtractionCalls { get; private set; }
+        public static string GetAvailableDirectoryPath(string path) => path;
+        public static object ExtractAndRestoreProject(string path, string destination)
+        {
+            ExtractionCalls++;
+            throw new InvalidOperationException("synthetic extraction must not be called for unsafe archives");
+        }
         public static async Task<object> CreatePackageAsync(string project, string output, HashSet<string> ignored, YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token)
         {
             if (Mode == "failure")
