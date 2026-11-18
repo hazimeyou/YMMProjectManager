@@ -69,7 +69,7 @@ internal static class Program
         var filter = Environment.GetEnvironmentVariable("YMM_TEST_FILTER");
         if (!string.IsNullOrWhiteSpace(filter))
         {
-            await RunFilteredAsync(workRoot, filter);
+            await RunGroupAsync("filtered: " + filter, () => RunFilteredAsync(workRoot, filter));
             return;
         }
 
@@ -141,6 +141,9 @@ internal static class Program
         {
             switch (testName)
             {
+                case "RealYmmpxR5":
+                    await RealYmmpxR5Tests.RunAsync(workRoot);
+                    break;
                 case nameof(TestSeekAdapterReflectionFailureAsync):
                     await TestSeekAdapterReflectionFailureAsync();
                     break;
