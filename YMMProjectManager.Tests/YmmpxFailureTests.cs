@@ -20,6 +20,9 @@ internal static class YmmpxFailureTests
         YmmpxLib.YmmpxPackageService.Mode = "invalid";
         var invalid = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (invalid.Success || File.Exists(newPath)) throw new Exception("invalid archive was published");
+        YmmpxLib.YmmpxPackageService.Mode = "unsafe";
+        var unsafeArchive = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
+        if (unsafeArchive.Success || File.Exists(newPath)) throw new Exception("unsafe archive was published");
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -81,7 +84,7 @@ namespace YmmpxLib
             }
             using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
-            using (var writer = new StreamWriter(archive.CreateEntry("synthetic.txt").Open()))
+            using (var writer = new StreamWriter(archive.CreateEntry(Mode == "unsafe" ? "../escape.txt" : "synthetic.txt").Open()))
                 await writer.WriteAsync("synthetic package");
             if (ExternalPath is not null) await File.WriteAllTextAsync(ExternalPath, "external edit", token);
             return new { OutputPath = output, ResourceCount = 1 };

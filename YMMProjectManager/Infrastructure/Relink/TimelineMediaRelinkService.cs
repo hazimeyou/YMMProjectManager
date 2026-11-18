@@ -104,6 +104,13 @@ public sealed class TimelineMediaRelinkService
                 RelinkJsonUpdate.EnsureSupported(row);
             var updatedCount = 0;
             var targetMap = context.Targets.ToDictionary(x => x.RowIndex);
+            foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
+            {
+                if (!targetMap.TryGetValue(row.RowIndex, out var target) ||
+                    !TimelineItemFilePathAccessor.TryGetFilePath(target.Item, out var currentPath) ||
+                    !string.Equals(currentPath, row.OriginalPath, StringComparison.OrdinalIgnoreCase))
+                    return (false, "タイムラインの素材パスが変更されました。再読み込みしてください。", 0);
+            }
             foreach (var row in context.Rows)
             {
                 if (row.Status != RelinkStatus.Updated || string.IsNullOrWhiteSpace(row.SelectedCandidate))

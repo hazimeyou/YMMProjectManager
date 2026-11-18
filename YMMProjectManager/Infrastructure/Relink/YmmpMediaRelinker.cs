@@ -519,6 +519,57 @@ public sealed class RelinkSaveService
         this.beforeCommit = beforeCommit;
     }
 
+    public async Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token)
+    {
+        string? temporary = null;
+        try
+        {
+            token.ThrowIfCancellationRequested();
+            var rows = context.Rows.Where(row => row.Status == RelinkStatus.Updated).ToArray();
+            if (rows.Length == 0) return (false, "更新対象はありません。");
+            if (context.OriginalBytes is null || rows.Any(row => string.IsNullOrWhiteSpace(row.SelectedCandidate)))
+                return (false, "再リンク対象を確認できません。");
+            var source = Path.GetFullPath(context.YmmpPath);
+            var output = Path.GetFullPath(destination);
+            if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.OrdinalIgnoreCase))
+                return (false, "相対素材パスを保護するため、元のプロジェクトと同じフォルダーに別名保存してください。");
+            if (File.Exists(output) || Directory.Exists(output)) return (false, "既存ファイルは上書きできません。別名を選択してください。");
+            var expected = SHA256.HashData(context.OriginalBytes);
+            var current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
+            if (!expected.SequenceEqual(SHA256.HashData(current)))
+                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            var updated = RelinkJsonUpdate.Apply(context.OriginalBytes, rows);
+            using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
+            var candidate = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileName(output) + ".tmp-" + Guid.NewGuid().ToString("N"));
+            await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                temporary = candidate;
+                await write(stream, updated, token).ConfigureAwait(false);
+                await stream.FlushAsync(token).ConfigureAwait(false);
+                flush(stream);
+            }
+            beforeCommit?.Invoke();
+            token.ThrowIfCancellationRequested();
+            current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
+            if (!expected.SequenceEqual(SHA256.HashData(current)))
+                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            File.Move(temporary, output);
+            temporary = null;
+            return (true, null);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (InvalidDataException ex) { return (false, ex.Message); }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Relink save-as failed.");
+            return (false, "別名保存に失敗しました。出力先とログを確認してください。");
+        }
+        finally
+        {
+            if (temporary is not null) { try { File.Delete(temporary); } catch (Exception ex) { logger.Error(ex, "Relink save-as cleanup failed."); } }
+        }
+    }
+
     public async Task<(bool Success, string? ErrorMessage, string? BackupPath)> SaveAsync(RelinkDocumentContext context, CancellationToken token)
     {
         string? temp = null, backup = null;

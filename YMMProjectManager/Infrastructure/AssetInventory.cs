@@ -92,8 +92,9 @@ public static class AssetInventory
         var full = Path.GetFullPath(relativePath, root);
         if (!full.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Asset path escapes the project directory.", nameof(relativePath));
-        if ((File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
-            throw new IOException("Project root cannot be a reparse point.");
+        for (var ancestor = new DirectoryInfo(root); ancestor is not null; ancestor = ancestor.Parent)
+            if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Project path cannot traverse a reparse point.");
         var current = root;
         foreach (var segment in Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {

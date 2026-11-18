@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Windows;
+using Microsoft.Win32;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Relink;
 using YMMProjectManager.Settings;
@@ -185,31 +186,6 @@ public partial class RelinkMainWindow : Window
             ApplyUpdates(targetRows, execution.Updates);
             SyncRows();
 
-            if (IsRuntimeTimelineMode && timelineContext is not null)
-            {
-                var (saveSuccess, saveErrorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
-                if (!saveSuccess)
-                {
-                    logger.Info($"Relink.Search auto-save failed. mode=runtime-timeline, reason={saveErrorMessage}");
-                    logger.Flush();
-                    if (CanShowUiFeedback())
-                    {
-                        MessageBox.Show(
-                            saveErrorMessage ?? "タイムラインへの反映に失敗しました。ログを確認してください。",
-                            "素材再リンク",
-                            MessageBoxButton.OK,
-                            MessageBoxImage.Warning);
-                    }
-                    SetSummaryText(saveErrorMessage ?? "タイムラインへの反映に失敗しました。");
-                    return;
-                }
-                else
-                {
-                    logger.Info($"Relink.Search auto-save end. mode=runtime-timeline, updated={updatedCount}");
-                    logger.Flush();
-                }
-            }
-
             if (IsRuntimeTimelineMode && suppressUiAfterClose && timelineContext is not null)
             {
                 return;
@@ -264,27 +240,23 @@ public partial class RelinkMainWindow : Window
 
             if (timelineContext is not null)
             {
-                var (success, errorMessage, updatedCount) = timelineMediaRelinkService.Save(timelineContext);
-                if (!success)
-                {
-                    logger.Info($"Relink.Save failed. mode=runtime-timeline, reason={errorMessage}");
-                    logger.Flush();
-                    if (CanShowUiFeedback())
-                    {
-                        MessageBox.Show(errorMessage ?? "保存に失敗しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    }
-                    return;
-                }
-
-                SetSummaryText(updatedCount == 0
-                    ? "更新対象はありません。"
-                    : $"保存完了（タイムライン反映: {updatedCount}件）");
-                logger.Info($"Relink.Save end. mode=runtime-timeline, updated={updatedCount}");
-                logger.Flush();
+                var timelineRows = RelinkCandidateVerifier.SnapshotRows(timelineContext.Rows);
+                var hashes = await RelinkCandidateVerifier.HashSelectedAsync(timelineRows, CancellationToken.None);
+                if (hashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
+                MessageBox.Show("期待ハッシュは読み込まれていないため、一致を判定できません。タイムラインへの反映は安全性を検証中のため停止しています。\n" + string.Join("\n\n", hashes), "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                SetSummaryText("候補のハッシュを表示しました。タイムラインは変更していません。");
                 return;
             }
 
-            var (fileSuccess, fileErrorMessage, backupPath) = await saveService.SaveAsync(context!, CancellationToken.None);
+            var snapshot = new RelinkDocumentContext { YmmpPath = context!.YmmpPath, OriginalJsonText = context.OriginalJsonText, OriginalBytes = context.OriginalBytes?.ToArray(), Rows = RelinkCandidateVerifier.SnapshotRows(context.Rows) };
+            var fileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None);
+            if (fileHashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
+            if (MessageBox.Show("期待ハッシュは読み込まれていないため、一致を判定できません。候補の内容を確認してください。\n" + string.Join("\n\n", fileHashes) + "\n別名で保存しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            var dialog = new SaveFileDialog { Filter = "YMM Project (*.ymmp)|*.ymmp", Title = "再リンク結果を新しいファイルに保存", OverwritePrompt = false };
+            if (dialog.ShowDialog() != true) return;
+            var checkedFileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None);
+            if (!fileHashes.SequenceEqual(checkedFileHashes)) { SetSummaryText("候補が変更されました。再確認してください。"); return; }
+            var (fileSuccess, fileErrorMessage) = await saveService.SaveAsAsync(snapshot, dialog.FileName, CancellationToken.None);
             if (!fileSuccess)
             {
                 logger.Info($"Relink.Save failed. mode=ymmp-file, ymmp={YmmpPath}, reason={fileErrorMessage}");
@@ -296,10 +268,8 @@ public partial class RelinkMainWindow : Window
                 return;
             }
 
-            SetSummaryText(backupPath is null
-                ? "更新対象はありません。"
-                : $"保存完了（バックアップ: {backupPath}）");
-            logger.Info($"Relink.Save end. mode=ymmp-file, ymmp={YmmpPath}, backup={backupPath ?? "<none>"}");
+            SetSummaryText($"別名で保存しました: {dialog.FileName}");
+            logger.Info($"Relink.SaveAs end. mode=ymmp-file, ymmp={YmmpPath}");
             logger.Flush();
         }
         catch (Exception ex)

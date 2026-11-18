@@ -124,6 +124,8 @@ public sealed class YmmpxLibBridge
                 throw new IOException("一時出力が不正です。");
             using (var archive = ZipFile.OpenRead(temporaryPath))
                 if (archive.Entries.Count == 0) throw new InvalidDataException("空のパッケージは保存できません。");
+            using (var packageStream = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                ValidateArchiveForExtraction(packageStream, token);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink

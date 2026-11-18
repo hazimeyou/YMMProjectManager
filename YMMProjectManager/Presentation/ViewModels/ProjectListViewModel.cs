@@ -275,12 +275,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
             if (TimelineContextService.Timeline is not null)
             {
-                var current = YmmProjectPathResolver.TryGetCurrentProjectPath();
-                if (string.IsNullOrWhiteSpace(current) || string.Equals(Path.GetFullPath(current), Path.GetFullPath(projectPath), StringComparison.OrdinalIgnoreCase))
-                {
-                    MessageBox.Show("開いているプロジェクトはタイムライン用の再リンクを使用してください。開いている対象を判別できない場合もファイル保存は行いません。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                    return Task.CompletedTask;
-                }
+                MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return Task.CompletedTask;
             }
             OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger));
             return Task.CompletedTask;

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Diagnostics;
 using YMMProjectManager.Infrastructure;
 
 internal static class AssetInventoryTests
@@ -27,6 +28,22 @@ internal static class AssetInventoryTests
         var cancelledOutput = Path.Combine(root, "cancelled.json");
         try { await AssetInventory.ExportAsync(cancelledOutput, [asset], cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
         Check(!File.Exists(cancelledOutput), "cancelled export left output");
+        var real = Path.Combine(root, "real"); var realProject = Path.Combine(real, "project");
+        var alias = Path.Combine(root, "alias"); Directory.CreateDirectory(realProject);
+        await File.WriteAllTextAsync(Path.Combine(realProject, "asset.txt"), "synthetic");
+        var junction = new ProcessStartInfo("cmd.exe") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        foreach (var arg in new[] { "/d", "/c", "mklink", "/J", alias, real }) junction.ArgumentList.Add(arg);
+        using (var process = Process.Start(junction)!)
+        {
+            var stdout = process.StandardOutput.ReadToEndAsync(); var stderr = process.StandardError.ReadToEndAsync();
+            await process.WaitForExitAsync(); await stdout; await stderr;
+            if (process.ExitCode != 0) Program.ReportConditionalSkip("junction fixture unavailable");
+            else
+            {
+                try { await AssetInventory.InspectAsync(Path.Combine(alias, "project"), "asset.txt"); throw new Exception("ancestor junction accepted"); }
+                catch (IOException) { }
+            }
+        }
         Console.WriteLine("Offline asset metadata checks passed.");
     }
 }
