@@ -112,6 +112,7 @@
             </StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="素材候補" Command="{Binding FindAssetCandidatesCommand}" Margin="0,0,4,0" />
+                <Button Content="選択プロジェクトを再リンク" Command="{Binding OpenSelectedProjectRelinkCommand}" Margin="0,0,4,0" />
                 <TextBlock Text="相対パス（1行に1件）" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Height="48" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Text="{Binding AssetPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="素材検査" Command="{Binding InspectAssetCommand}" Margin="0,0,4,0" />

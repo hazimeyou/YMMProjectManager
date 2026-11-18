@@ -107,6 +107,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand GenerateThumbnailsFastCommand { get; }
     public ICommand RunSeekProbeCommand { get; }
     public ICommand OpenRelinkWindowCommand { get; }
+    public ICommand OpenSelectedProjectRelinkCommand { get; }
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
     public ICommand ExtractBundleCommand { get; }
@@ -161,6 +162,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
         RunSeekProbeCommand = new AsyncRelayCommand(RunSeekProbeAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
+        OpenSelectedProjectRelinkCommand = new AsyncRelayCommand(OpenSelectedProjectRelinkAsync, () => !IsBusy && SelectedProject is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => isInitialized && !IsBusy);
@@ -254,6 +256,31 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(selected, SelectedProject)) return;
             AssetStatus = paths.Count == 0 ? "FilePath 候補はありません。" : "FilePath 候補（素材とは限りません）:\n" + string.Join("\n", paths);
+        });
+    }
+
+    private async Task OpenSelectedProjectRelinkAsync()
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Selected project relink", () =>
+        {
+            if (!TryGetOpenableProjectPath(selected.FullPath, out var projectPath, out var reason))
+            {
+                MessageBox.Show(reason, "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return Task.CompletedTask;
+            }
+            if (TimelineContextService.Timeline is not null)
+            {
+                var current = YmmProjectPathResolver.TryGetCurrentProjectPath();
+                if (string.IsNullOrWhiteSpace(current) || string.Equals(Path.GetFullPath(current), Path.GetFullPath(projectPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    MessageBox.Show("開いているプロジェクトはタイムライン用の再リンクを使用してください。開いている対象を判別できない場合もファイル保存は行いません。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return Task.CompletedTask;
+                }
+            }
+            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger));
+            return Task.CompletedTask;
         });
     }
 

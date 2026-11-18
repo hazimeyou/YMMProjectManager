@@ -20,6 +20,7 @@ internal static class OfflineControlsTests
             if (!(await git.InitializeAsync()).Success) throw new Exception("git init failed");
             var vm = new ProjectListViewModel(new FileLogger(Path.Combine(root, "test.log")), null);
             vm.SelectedProject = new ProjectEntry { FullPath = project };
+            if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
             if (vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) || vm.PushGitCommand.CanExecute(null) || vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("unfenced remote commands must remain disabled");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
@@ -41,6 +42,7 @@ internal static class OfflineControlsTests
             if (!vm.AssetStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancellation status missing");
             vm.SelectedProject = null;
             if (vm.AssetStatus != string.Empty || vm.GitStatus != string.Empty) throw new Exception("stale status after selection");
+            if (vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("relink enabled without selection");
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
         });
