@@ -48,6 +48,10 @@ internal static class GitRemoteTests
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
             Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.Divergence, "divergence classification");
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
+            await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
+            var unsafeOrigin = await one.OriginAsync();
+            Check(!unsafeOrigin.Success && !unsafeOrigin.StandardOutput.Contains("secret") && !unsafeOrigin.StandardError.Contains("secret"), "credential disclosure");
+            await Command(source, "remote", "set-url", "origin", bare);
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
             using (var cancelled = new CancellationTokenSource())

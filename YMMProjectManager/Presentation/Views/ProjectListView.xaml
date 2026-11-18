@@ -82,12 +82,20 @@
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,6,0,0">
                 <Button Content="Git 状態" MinWidth="90" Margin="0,0,8,0" Command="{Binding RefreshGitStatusCommand}" />
                 <Button Content="Git 初期化" MinWidth="90" Command="{Binding InitializeGitCommand}" />
+                <Button Content="履歴" Command="{Binding GitHistoryCommand}" Margin="4,0,0,0" />
+                <Button Content="origin" Command="{Binding GitOriginCommand}" Margin="4,0,0,0" />
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Push" Command="{Binding PushGitCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="clone URL" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="200" Text="{Binding GitRemote, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <TextBox Width="120" Text="{Binding GitCloneName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" ToolTip="新規フォルダー名" />
+                <Button Content="clone" Command="{Binding GitCloneCommand}" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <TextBlock Text="プロジェクトからの相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />

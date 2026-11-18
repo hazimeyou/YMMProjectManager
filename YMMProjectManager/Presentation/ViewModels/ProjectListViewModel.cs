@@ -41,6 +41,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string gitPath = string.Empty;
     private string gitCommitMessage = string.Empty;
     private string gitBranch = string.Empty;
+    private string gitRemote = string.Empty;
+    private string gitCloneName = string.Empty;
     private string assetPath = string.Empty;
     private string assetStatus = string.Empty;
     private string assetUrl = string.Empty;
@@ -117,6 +119,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand FetchGitCommand { get; }
     public ICommand PullGitCommand { get; }
     public ICommand PushGitCommand { get; }
+    public ICommand GitHistoryCommand { get; }
+    public ICommand GitOriginCommand { get; }
+    public ICommand GitCloneCommand { get; }
     public ICommand FindAssetCandidatesCommand { get; }
     public ICommand InspectAssetCommand { get; }
     public ICommand ExportAssetMetadataCommand { get; }
@@ -125,6 +130,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
     public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
     public string GitBranch { get => gitBranch; set => SetProperty(ref gitBranch, value); }
+    public string GitRemote { get => gitRemote; set => SetProperty(ref gitRemote, value); }
+    public string GitCloneName { get => gitCloneName; set => SetProperty(ref gitCloneName, value); }
     public string AssetPath { get => assetPath; set { if (SetProperty(ref assetPath, value)) inspectedAsset = null; } }
     public string AssetUrl { get => assetUrl; set { if (SetProperty(ref assetUrl, value)) inspectedAsset = null; } }
     public string AssetStatus { get => assetStatus; private set => SetProperty(ref assetStatus, value); }
@@ -165,10 +172,43 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => !IsBusy && SelectedProject is not null);
         PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => !IsBusy && SelectedProject is not null);
         PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => !IsBusy && SelectedProject is not null);
+        GitHistoryCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(false), () => !IsBusy && SelectedProject is not null);
+        GitOriginCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(true), () => !IsBusy && SelectedProject is not null);
+        GitCloneCommand = new AsyncRelayCommand(CloneGitAsync, () => !IsBusy);
         FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
+    }
+
+    private async Task ShowGitDetailsAsync(bool remote)
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Git", async () =>
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
+            var git = new GitRepository(directory);
+            var result = remote ? await git.OriginAsync() : await git.HistoryAsync();
+            if (!ReferenceEquals(selected, SelectedProject)) return;
+            GitStatus = result.Success ? result.StandardOutput.Replace('\0', ' ') : "情報を取得できません。origin またはコミット履歴を確認してください。";
+        });
+    }
+
+    private async Task CloneGitAsync()
+    {
+        var remote = GitRemote;
+        var name = GitCloneName;
+        if (string.IsNullOrWhiteSpace(remote) || string.IsNullOrWhiteSpace(name) || name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+        { GitStatus = "HTTPS またはローカルの URL と、フォルダー名を入力してください。"; return; }
+        var dialog = new OpenFolderDialog { Title = "clone 先の親フォルダーを選択" };
+        if (dialog.ShowDialog() != true) return;
+        var destination = Path.Combine(dialog.FolderName, name);
+        await ExecuteWithBusyAsync("Git clone", async () =>
+        {
+            var result = await GitRepository.CloneAsync(remote, destination);
+            GitStatus = result.Success ? $"clone が完了しました: {destination}" : $"clone に失敗しました。残存フォルダー: {result.RecoveryPath ?? "なし"}";
+        });
     }
 
     private async Task FindAssetCandidatesAsync()

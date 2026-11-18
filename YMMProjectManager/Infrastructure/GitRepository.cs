@@ -24,6 +24,16 @@ public sealed class GitRepository
     public Task<GitResult> StatusAsync(CancellationToken token = default) => RunAsync(["status", "--porcelain=v1", "-z"], token);
     public Task<GitResult> HistoryAsync(CancellationToken token = default) => RunAsync(["log", "-n", "100", "--format=%H%x00%an%x00%aI%x00%s"], token);
     public Task<GitResult> BranchesAsync(CancellationToken token = default) => RunAsync(["branch", "--list", "--no-color"], token);
+    public async Task<GitResult> OriginAsync(CancellationToken token = default)
+    {
+        var result = await RunAsync(["remote", "get-url", "--all", "origin"], token).ConfigureAwait(false);
+        if (!result.Success) return new GitResult(result.ExitCode, "", "Remote origin is unavailable.");
+        var urls = result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (urls.Length != 1) return new GitResult(1, "", "Exactly one origin URL is required.");
+        try { ValidateRemote(urls[0]); }
+        catch (ArgumentException) { return new GitResult(1, "", "Remote URL is unsupported or contains credentials."); }
+        return new GitResult(0, urls[0], "");
+    }
     public Task<GitResult> StageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => RunPathsAsync(["add", "--"], paths, token);
     public Task<GitResult> UnstageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => RunPathsAsync(["restore", "--staged", "--"], paths, token);
     public Task<GitResult> CommitAsync(string message, CancellationToken token = default)
