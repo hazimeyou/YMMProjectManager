@@ -1,6 +1,7 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using Microsoft.Win32;
@@ -40,6 +41,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string gitPath = string.Empty;
     private string gitCommitMessage = string.Empty;
     private string gitBranch = string.Empty;
+    private string assetPath = string.Empty;
+    private string assetStatus = string.Empty;
+    private string assetUrl = string.Empty;
+    private AssetMetadata? inspectedAsset;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -63,6 +68,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             if (SetProperty(ref selectedProject, value))
             {
                 GitStatus = string.Empty;
+                AssetStatus = string.Empty;
+                inspectedAsset = null;
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -110,10 +117,17 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand FetchGitCommand { get; }
     public ICommand PullGitCommand { get; }
     public ICommand PushGitCommand { get; }
+    public ICommand FindAssetCandidatesCommand { get; }
+    public ICommand InspectAssetCommand { get; }
+    public ICommand ExportAssetMetadataCommand { get; }
+    public ICommand VerifyAssetMetadataCommand { get; }
     public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
     public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
     public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
     public string GitBranch { get => gitBranch; set => SetProperty(ref gitBranch, value); }
+    public string AssetPath { get => assetPath; set { if (SetProperty(ref assetPath, value)) inspectedAsset = null; } }
+    public string AssetUrl { get => assetUrl; set { if (SetProperty(ref assetUrl, value)) inspectedAsset = null; } }
+    public string AssetStatus { get => assetStatus; private set => SetProperty(ref assetStatus, value); }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -151,6 +165,77 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => !IsBusy && SelectedProject is not null);
         PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => !IsBusy && SelectedProject is not null);
         PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => !IsBusy && SelectedProject is not null);
+        FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
+        InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
+        ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
+        VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
+    }
+
+    private async Task FindAssetCandidatesAsync()
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Asset candidates", async () =>
+        {
+            var json = await File.ReadAllTextAsync(selected.FullPath);
+            using var document = JsonDocument.Parse(json);
+            var paths = PackagingDetector.FindFilePaths(json);
+            if (!ReferenceEquals(selected, SelectedProject)) return;
+            AssetStatus = paths.Count == 0 ? "FilePath 候補はありません。" : "FilePath 候補（素材とは限りません）:\n" + string.Join("\n", paths);
+        });
+    }
+
+    private async Task InspectAssetAsync()
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Asset inspection", async () =>
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
+            var requestedPath = AssetPath;
+            var requestedUrl = AssetUrl;
+            inspectedAsset = null;
+            var asset = await AssetInventory.InspectAsync(directory, requestedPath, string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl);
+            if (!ReferenceEquals(selected, SelectedProject) || AssetPath != requestedPath || AssetUrl != requestedUrl) return;
+            inspectedAsset = asset;
+            AssetStatus = $"サイズ: {asset.Size} bytes\nSHA-256: {asset.Sha256}";
+        });
+    }
+
+    private async Task ExportAssetMetadataAsync()
+    {
+        var selected = SelectedProject;
+        var asset = inspectedAsset;
+        if (selected is null || asset is null) { AssetStatus = "先に素材を検査してください。"; return; }
+        var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新規保存", OverwritePrompt = false };
+        if (dialog.ShowDialog() != true) return;
+        await ExecuteWithBusyAsync("Asset metadata export", async () =>
+        {
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
+            if (await AssetInventory.VerifyAsync(directory, asset) != AssetVerification.Valid) { AssetStatus = "素材が変更されたか見つかりません。再検査してください。"; return; }
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
+            await AssetInventory.ExportAsync(dialog.FileName, [asset]);
+            AssetStatus = "素材メタデータを新規保存しました。";
+        });
+    }
+
+    private async Task VerifyAssetMetadataAsync()
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        var dialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを選択", CheckFileExists = true };
+        if (dialog.ShowDialog() != true) return;
+        await ExecuteWithBusyAsync("Asset metadata verification", async () =>
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
+            var assets = await AssetInventory.LoadAsync(dialog.FileName);
+            var results = new List<string>();
+            foreach (var asset in assets)
+                results.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset)}");
+            if (!ReferenceEquals(selected, SelectedProject)) return;
+            AssetStatus = results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results);
+        });
     }
 
     private async Task ChangeGitAsync(string operation)

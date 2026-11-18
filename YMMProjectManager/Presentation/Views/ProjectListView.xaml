@@ -68,14 +68,17 @@
                     Margin="0,0,8,0"
                     Command="{Binding PackageOpenedProjectCommand}" />
             </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
+            <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
+            <Expander DockPanel.Dock="Top" Header="Git と素材" Margin="0,4,0,4">
+                <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="ブランチ" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="作成" Command="{Binding CreateGitBranchCommand}" Margin="0,0,4,0" />
                 <Button Content="切替" Command="{Binding SwitchGitBranchCommand}" />
             </StackPanel>
-            <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
-            <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,6,0,0">
                 <Button Content="Git 状態" MinWidth="90" Margin="0,0,8,0" Command="{Binding RefreshGitStatusCommand}" />
                 <Button Content="Git 初期化" MinWidth="90" Command="{Binding InitializeGitCommand}" />
@@ -97,6 +100,22 @@
                 <TextBox Width="150" Text="{Binding GitCommitMessage, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="コミット" Command="{Binding CommitGitCommand}" />
             </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <Button Content="素材候補" Command="{Binding FindAssetCandidatesCommand}" Margin="0,0,4,0" />
+                <TextBlock Text="相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding AssetPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="素材検査" Command="{Binding InspectAssetCommand}" Margin="0,0,4,0" />
+                <Button Content="メタデータ保存" Command="{Binding ExportAssetMetadataCommand}" />
+                <Button Content="メタデータ照合" Command="{Binding VerifyAssetMetadataCommand}" Margin="4,0,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="HTTPS URL (任意)" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="220" Text="{Binding AssetUrl, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding AssetStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Expander>
 
             <ListBox
                 ItemsSource="{Binding Projects}"
