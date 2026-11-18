@@ -203,6 +203,9 @@ public sealed class GitRepository
             start.Environment.Remove(name);
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
+        // Status refresh must not silently start a repository-configured fsmonitor process.
+        start.ArgumentList.Add("-c");
+        start.ArgumentList.Add("core.fsmonitor=false");
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);

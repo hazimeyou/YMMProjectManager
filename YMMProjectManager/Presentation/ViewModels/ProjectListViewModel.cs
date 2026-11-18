@@ -46,7 +46,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string assetPath = string.Empty;
     private string assetStatus = string.Empty;
     private string assetUrl = string.Empty;
-    private AssetMetadata? inspectedAsset;
+    private IReadOnlyList<AssetMetadata>? inspectedAssets;
     private CancellationTokenSource? toolCancellation;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
@@ -72,7 +72,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             {
                 GitStatus = string.Empty;
                 AssetStatus = string.Empty;
-                inspectedAsset = null;
+                inspectedAssets = null;
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -134,8 +134,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public string GitBranch { get => gitBranch; set => SetProperty(ref gitBranch, value); }
     public string GitRemote { get => gitRemote; set => SetProperty(ref gitRemote, value); }
     public string GitCloneName { get => gitCloneName; set => SetProperty(ref gitCloneName, value); }
-    public string AssetPath { get => assetPath; set { if (SetProperty(ref assetPath, value)) inspectedAsset = null; } }
-    public string AssetUrl { get => assetUrl; set { if (SetProperty(ref assetUrl, value)) inspectedAsset = null; } }
+    public string AssetPath { get => assetPath; set { if (SetProperty(ref assetPath, value)) inspectedAssets = null; } }
+    public string AssetUrl { get => assetUrl; set { if (SetProperty(ref assetUrl, value)) inspectedAssets = null; } }
     public string AssetStatus { get => assetStatus; private set => SetProperty(ref assetStatus, value); }
 
     public ProjectListViewModel()
@@ -266,28 +266,38 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             var requestedPath = AssetPath;
             var requestedUrl = AssetUrl;
-            inspectedAsset = null;
-            var asset = await AssetInventory.InspectAsync(directory, requestedPath, string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl, token);
+            inspectedAssets = null;
+            var paths = requestedPath.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (paths.Length == 0 || paths.Length > 1000) { AssetStatus = "素材パスを1〜1000件入力してください。"; return; }
+            if (paths.Length != 1 && !string.IsNullOrWhiteSpace(requestedUrl)) { AssetStatus = "URL は素材を1件指定したときだけ入力できます。"; return; }
+            var assets = new List<AssetMetadata>(paths.Length);
+            foreach (var path in paths)
+            {
+                try { assets.Add(await AssetInventory.InspectAsync(directory, path, string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl, token)); }
+                catch (FileNotFoundException) { AssetStatus = $"素材が見つかりません: {path}"; return; }
+                catch (DirectoryNotFoundException) { AssetStatus = $"素材が見つかりません: {path}"; return; }
+            }
             if (!ReferenceEquals(selected, SelectedProject) || AssetPath != requestedPath || AssetUrl != requestedUrl) return;
-            inspectedAsset = asset;
-            AssetStatus = $"サイズ: {asset.Size} bytes\nSHA-256: {asset.Sha256}";
+            inspectedAssets = assets;
+            AssetStatus = string.Join("\n", assets.Select(asset => $"{asset.RelativePath}: {asset.Size} bytes SHA-256: {asset.Sha256}"));
         });
     }
 
     private async Task ExportAssetMetadataAsync()
     {
         var selected = SelectedProject;
-        var asset = inspectedAsset;
-        if (selected is null || asset is null) { AssetStatus = "先に素材を検査してください。"; return; }
+        var assets = inspectedAssets;
+        if (selected is null || assets is null) { AssetStatus = "先に素材を検査してください。"; return; }
         var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新規保存", OverwritePrompt = false };
         if (dialog.ShowDialog() != true) return;
         await ExecuteToolAsync("Asset metadata export", async token =>
         {
-            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
-            if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = "素材が変更されたか見つかりません。再検査してください。"; return; }
-            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            await AssetInventory.ExportAsync(dialog.FileName, [asset], token);
+            foreach (var asset in assets)
+                if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = $"素材が変更されたか見つかりません: {asset.RelativePath}"; return; }
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
+            await AssetInventory.ExportAsync(dialog.FileName, assets, token);
             AssetStatus = "素材メタデータを新規保存しました。";
         });
     }
@@ -324,6 +334,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(requestedPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
             if (operation == "commit" && string.IsNullOrWhiteSpace(requestedMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
             if ((operation == "branch-create" || operation == "branch-switch") && string.IsNullOrWhiteSpace(requestedBranch)) { GitStatus = "ブランチ名を入力してください。"; return; }
+            if (operation is "stage" or "branch-switch")
+            {
+                var action = operation == "stage" ? "ステージ" : "ブランチ切替";
+                if (MessageBox.Show($"{action}時に、このリポジトリで設定された Git フィルターなどの外部プログラムが実行される場合があります。設定を信頼できる場合のみ続行してください。", "Git", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            }
             var git = new GitRepository(directory);
             if (operation is "commit" or "push")
             {
@@ -331,7 +346,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
                 if (!ReferenceEquals(selected, SelectedProject)) return;
                 var message = operation == "commit"
-                    ? "このリポジトリのステージ済みの変更をすべてコミットします。"
+                    ? "このリポジトリのステージ済みの変更をすべてコミットします。設定された Git hook が実行される場合があります。"
                     : "このリポジトリの現在のブランチを origin の同名ブランチに送信します。";
                 if (MessageBox.Show($"{message}\n{repositoryRoot.StandardOutput.Trim()}\n続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             }

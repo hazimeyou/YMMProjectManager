@@ -17,6 +17,14 @@ internal static class GitRepositoryTests
             foreach (var arg in new[] { "config", "--local", key, value }) start.ArgumentList.Add(arg);
             using var process = Process.Start(start)!; await process.WaitForExitAsync(); Check(process.ExitCode == 0, "git config");
         }
+        var marker = Path.Combine(root, "fsmonitor-ran");
+        var monitor = Path.Combine(root, "monitor.sh");
+        await File.WriteAllTextAsync(monitor, "#!/bin/sh\nprintf invoked > fsmonitor-ran\n");
+        var config = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "config", "--local", "core.fsmonitor", monitor.Replace('\\', '/') }) config.ArgumentList.Add(arg);
+        using (var process = Process.Start(config)!) { await process.WaitForExitAsync(); Check(process.ExitCode == 0, "fsmonitor config"); }
+        await git.StatusAsync();
+        Check(!File.Exists(marker), "untrusted fsmonitor was executed");
         await File.WriteAllTextAsync(Path.Combine(root, "one.txt"), "original");
         await File.WriteAllTextAsync(Path.Combine(root, "-special.txt"), "literal path");
         Check((await git.StageAsync(["one.txt", "-special.txt"])).Success, "stage paths");
