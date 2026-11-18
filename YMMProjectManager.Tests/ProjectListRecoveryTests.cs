@@ -77,6 +77,34 @@ internal static class ProjectListRecoveryTests
             var migrated = (await legacyRepo.LoadAsync()).Projects.Single();
             var projectAfter = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(project));
             if (migrated.ProjectId is null || migrated.ProjectId == Guid.Empty || !projectBefore.SequenceEqual(projectAfter)) throw new Exception("legacy identity migration failed or modified project");
+            var associatePath = Path.Combine(root, "associate-list.json");
+            var associateRepo = new JsonProjectRepository(logger, associatePath);
+            var associateStore = await associateRepo.LoadAsync();
+            associateStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = migrated.ProjectId });
+            associateStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project });
+            await associateRepo.SaveAsync(associateStore);
+            var associateVm = new ProjectListViewModel(logger, associateRepo); await associateVm.InitializeAsync();
+            associateVm.SelectedProject = associateVm.Projects.Last();
+            var duplicateManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: migrated.ProjectId);
+            try { await associateVm.AssociateLegacyMetadataAsync(associateVm.SelectedProject, duplicateManifest); throw new Exception("duplicate metadata association accepted"); }
+            catch (InvalidDataException) { }
+            if ((await associateRepo.LoadAsync()).Projects.Last().ProjectId is not null) throw new Exception("rejected metadata association modified list");
+            var uniqueManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            await associateVm.AssociateLegacyMetadataAsync(associateVm.SelectedProject, uniqueManifest);
+            if ((await associateRepo.LoadAsync()).Projects.Last().ProjectId != uniqueManifest.ProjectId) throw new Exception("metadata association not persisted");
+            var failedPath = Path.Combine(root, "associate-failure.json");
+            var failedSeed = new JsonProjectRepository(logger, failedPath); var failedStore = await failedSeed.LoadAsync();
+            failedStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project }); await failedSeed.SaveAsync(failedStore);
+            var failAssociation = true;
+            var failedRepo = new JsonProjectRepository(logger, failedPath, beforeReplace: () => { if (failAssociation) throw new IOException("synthetic association failure"); });
+            var failedVm = new ProjectListViewModel(logger, failedRepo); await failedVm.InitializeAsync(); failedVm.SelectedProject = failedVm.Projects.Single();
+            var failedManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            try { await failedVm.AssociateLegacyMetadataAsync(failedVm.SelectedProject, failedManifest); throw new Exception("association save failure hidden"); }
+            catch (IOException) { }
+            if (!failedVm.HasUnsavedProjectList || failedVm.SelectedProject.ProjectId != failedManifest.ProjectId || (await failedRepo.LoadAsync()).Projects.Single().ProjectId is not null)
+                throw new Exception("association failure did not preserve both states");
+            failAssociation = false; await failedVm.RetryProjectListSaveAsync();
+            if (failedVm.HasUnsavedProjectList || (await failedRepo.LoadAsync()).Projects.Single().ProjectId != failedManifest.ProjectId) throw new Exception("association retry failed");
             foreach (var content in new[] { "{invalid", "" })
             {
                 var broken = Path.Combine(root, content.Length == 0 ? "empty.json" : "broken.json");

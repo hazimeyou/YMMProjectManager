@@ -17,6 +17,16 @@ internal static class AssetManifestTests
         var initial = AssetManifestStore.Create(project, [item, second], DateTimeOffset.UtcNow);
         var path = Path.Combine(root, "manifest-1.json"); await AssetManifestStore.SaveNewAsync(path, initial);
         var loaded = await AssetManifestStore.LoadAsync(path);
+        var snapshot = await File.ReadAllBytesAsync(path);
+        var parsedSnapshot = AssetManifestStore.Parse(snapshot);
+        if (parsedSnapshot.ProjectId != initial.ProjectId || parsedSnapshot.RevisionId != initial.RevisionId) throw new Exception("metadata snapshot parsed incorrectly");
+        var withBom = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(snapshot).ToArray();
+        if (AssetManifestStore.Parse(withBom).ProjectId != initial.ProjectId) throw new Exception("UTF-8 BOM metadata rejected");
+        var bomPath = Path.Combine(root, "bom.json"); await File.WriteAllBytesAsync(bomPath, withBom);
+        if ((await AssetManifestStore.LoadAsync(bomPath)).ProjectId != initial.ProjectId) throw new Exception("UTF-8 BOM metadata load rejected");
+        await File.WriteAllTextAsync(path, JsonSerializer.Serialize(initial with { ProjectId = Guid.NewGuid() }));
+        if (AssetManifestStore.Parse(snapshot).ProjectId != initial.ProjectId) throw new Exception("captured metadata changed with file");
+        await File.WriteAllBytesAsync(path, snapshot);
         var identity = Guid.NewGuid();
         var associated = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, projectId: identity);
         if (associated.ProjectId != identity) throw new Exception("project identity not associated");

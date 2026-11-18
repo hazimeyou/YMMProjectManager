@@ -103,6 +103,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     public ICommand RetryProjectListSaveCommand { get; }
     public ICommand AssignLegacyProjectIdCommand { get; }
+    public ICommand AssociateLegacyMetadataCommand { get; }
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -160,6 +161,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList);
         AssignLegacyProjectIdCommand = new AsyncRelayCommand(AssignLegacyProjectIdAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
+        AssociateLegacyMetadataCommand = new AsyncRelayCommand(ChooseLegacyMetadataAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
@@ -1151,6 +1153,50 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             await SaveAsync().ConfigureAwait(true);
             AssetStatus = "プロジェクト ID を保存しました。既存 metadata の関連付けは別途必要です。";
         }).ConfigureAwait(true);
+    }
+
+    private async Task ChooseLegacyMetadataAsync()
+    {
+        var project = SelectedProject;
+        if (project is null || project.ProjectId is not null || HasUnsavedProjectList) return;
+        var dialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "関連付ける旧素材メタデータを選択", CheckFileExists = true };
+        if (dialog.ShowDialog() != true) return;
+        await ExecuteWithBusyAsync("Associate legacy metadata", async () =>
+        {
+            var projectPath = project.FullPath;
+            var before = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
+            var manifest = AssetManifestStore.Parse(before);
+            var afterLoad = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
+            if (!before.SequenceEqual(afterLoad)) throw new InvalidDataException("metadata が変更されました。再選択してください。");
+            if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList || project.FullPath != projectPath) return;
+            var confirm = MessageBox.Show($"一覧項目: {projectPath}\n選択 metadata: {dialog.FileName}\nmetadata の project 名: {manifest.ProjectFileName}\nproject ID: {manifest.ProjectId}\nrevision ID: {manifest.RevisionId}\n\nmetadata の場所は保存しません。今後もファイルを選択する必要があります。名前や内容だけでは同一性を確認できません。同じ論理プロジェクトとして関連付けますか？", "旧素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
+            var afterConfirm = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
+            if (!before.SequenceEqual(afterConfirm) || project.FullPath != projectPath) throw new InvalidDataException("metadata または project のパスが変更されました。再確認してください。");
+            await AssociateLegacyMetadataAsync(project, manifest).ConfigureAwait(true);
+        }).ConfigureAwait(true);
+    }
+
+    private static async Task<byte[]> ReadMetadataEvidenceAsync(string path)
+    {
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("素材 metadata が大きすぎます。");
+        var bytes = new byte[checked((int)stream.Length)];
+        await stream.ReadExactlyAsync(bytes).ConfigureAwait(false);
+        return bytes;
+    }
+
+    internal async Task AssociateLegacyMetadataAsync(ProjectEntry project, AssetManifest manifest)
+    {
+        if (!isInitialized || !ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList)
+            throw new InvalidOperationException("一覧の状態が変わりました。再確認してください。");
+        if (manifest.ProjectId == Guid.Empty || !File.Exists(project.FullPath))
+            throw new InvalidDataException("プロジェクトまたは metadata ID が不正です。");
+        if (Projects.Any(item => !ReferenceEquals(item, project) && item.ProjectId == manifest.ProjectId))
+            throw new InvalidDataException("この metadata の ID は別の一覧項目に使用されています。");
+        project.ProjectId = manifest.ProjectId;
+        await SaveAsync().ConfigureAwait(true);
+        AssetStatus = "既存の project ID を一覧に関連付けました。metadata と project ファイルは変更していません。";
     }
 
     private async Task SaveAsync()

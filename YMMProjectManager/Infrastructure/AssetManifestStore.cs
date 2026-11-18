@@ -71,8 +71,17 @@ public static class AssetManifestStore
     {
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
         if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("Asset metadata is too large.");
+        var bytes = new byte[checked((int)stream.Length)];
+        await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        return Parse(bytes);
+    }
+
+    internal static AssetManifest Parse(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length > 4 * 1024 * 1024) throw new InvalidDataException("Asset metadata is too large.");
+        if (bytes.StartsWith(new byte[] { 0xEF, 0xBB, 0xBF })) bytes = bytes[3..];
         var options = new JsonSerializerOptions { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
-        var manifest = await JsonSerializer.DeserializeAsync<AssetManifest>(stream, options, token).ConfigureAwait(false)
+        var manifest = JsonSerializer.Deserialize<AssetManifest>(bytes, options)
             ?? throw new InvalidDataException("Asset metadata is empty.");
         Validate(manifest);
         return manifest;
