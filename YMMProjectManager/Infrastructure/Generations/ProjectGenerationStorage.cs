@@ -49,7 +49,17 @@ public sealed class ProjectGenerationStorage
 
     public string GetRestoreBackupsDirectory(string projectId) => Path.Combine(GetProjectDirectory(projectId), "restore-backups");
 
-    public string GetGenerationDirectory(string projectId, string generationId) => Path.Combine(GetGenerationsDirectory(projectId), generationId);
+    internal static bool IsValidGenerationId(string? id) =>
+        !string.IsNullOrWhiteSpace(id) && id != "." && id != ".." &&
+        id.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
+        !id.Contains('/') && !id.Contains('\\') && !id.Contains(':') &&
+        !id.EndsWith('.') && !id.EndsWith(' ');
+
+    public string GetGenerationDirectory(string projectId, string generationId)
+    {
+        if (!IsValidGenerationId(generationId)) throw new InvalidDataException("Invalid generation ID.");
+        return Path.Combine(GetGenerationsDirectory(projectId), generationId);
+    }
 
     public string GetGenerationFilePath(string projectId, string generationId) => Path.Combine(GetGenerationDirectory(projectId, generationId), "project.ymmp");
 
@@ -57,6 +67,7 @@ public sealed class ProjectGenerationStorage
 
     public string GetDeletedGenerationDirectory(string projectId, string generationId)
     {
+        if (!IsValidGenerationId(generationId)) throw new InvalidDataException("Invalid generation ID.");
         var timestamp = DateTimeOffset.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture);
         return Path.Combine(GetDeletedDirectory(projectId), $"{generationId}_{timestamp}");
     }
@@ -152,7 +163,7 @@ public sealed class ProjectGenerationStorage
                 ?? throw new InvalidDataException("世代 manifest が空です。");
             if (!string.Equals(manifest.ProjectId, projectId, StringComparison.OrdinalIgnoreCase) ||
                 string.IsNullOrWhiteSpace(manifest.ProjectPath) || string.IsNullOrWhiteSpace(manifest.ProjectFileName) ||
-                manifest.Generations is null || manifest.Generations.Any(x => x is null || string.IsNullOrWhiteSpace(x.GenerationId) ||
+                manifest.Generations is null || manifest.Generations.Any(x => x is null || !IsValidGenerationId(x.GenerationId) ||
                     x.DisplayName is null || x.SourceProjectPath is null || x.Sha256 is null || x.CreatedByVersion is null))
                 throw new InvalidDataException("世代 manifest の必須値が不正です。");
             return (manifest, hash);

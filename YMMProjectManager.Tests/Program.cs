@@ -79,6 +79,7 @@ internal static class Program
         await RunGroupAsync("TestManifestCorruptionAsync", () => TestManifestCorruptionAsync(workRoot));
         await RunGroupAsync("GenerationManifestProtectionTests.RunAsync", () => GenerationManifestProtectionTests.RunAsync(workRoot));
         await RunGroupAsync("ManifestWriteHardeningTests.RunAsync", () => ManifestWriteHardeningTests.RunAsync(workRoot));
+        await RunGroupAsync("GenerationIdCollisionTests.RunAsync", () => GenerationIdCollisionTests.RunAsync(workRoot));
         await RunGroupAsync("RelinkIntegrityTests.RunAsync", () => RelinkIntegrityTests.RunAsync(workRoot));
         await RunGroupAsync("TestMetadataCorruptionAsync", () => TestMetadataCorruptionAsync(workRoot));
         await RunGroupAsync("TestRestoreAsync", () => TestRestoreAsync(workRoot));
