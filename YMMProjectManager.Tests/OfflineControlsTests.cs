@@ -18,11 +18,14 @@ internal static class OfflineControlsTests
             await File.WriteAllTextAsync(Path.Combine(root, "sample2.png"), "second");
             var git = new GitRepository(root);
             if (!(await git.InitializeAsync()).Success) throw new Exception("git init failed");
-            var vm = new ProjectListViewModel(new FileLogger(Path.Combine(root, "test.log")), null);
+            var logger = new FileLogger(Path.Combine(root, "test.log"));
+            var vm = new ProjectListViewModel(logger, new JsonProjectRepository(logger, Path.Combine(root, "project-list.json")));
+            await vm.InitializeAsync();
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
             if (vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) || vm.PushGitCommand.CanExecute(null) || vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("unfenced remote commands must remain disabled");
+            if (vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("unverified extraction must remain disabled");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
             if (!vm.GitStatus.Contains("Git:") || !vm.GitStatus.Contains("project.ymmp")) throw new Exception("Git status not displayed");

@@ -165,7 +165,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         OpenSelectedProjectRelinkCommand = new AsyncRelayCommand(OpenSelectedProjectRelinkAsync, () => !IsBusy && SelectedProject is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
-        ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => isInitialized && !IsBusy);
+        // The external extractor's destination and cleanup guarantees are not yet verified.
+        ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => false);
         RefreshGitStatusCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(false), () => !IsBusy && SelectedProject is not null);
         InitializeGitCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(true), () => !IsBusy && SelectedProject is not null);
         StageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("stage"), () => !IsBusy && SelectedProject is not null);
