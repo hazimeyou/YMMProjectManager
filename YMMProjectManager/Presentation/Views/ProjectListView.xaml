@@ -87,6 +87,7 @@
                 <Button Content="origin" Command="{Binding GitOriginCommand}" Margin="4,0,0,0" />
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+            <TextBlock Text="リモート操作は安全性を検証中です。" TextWrapping="Wrap" Margin="0,0,0,4" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}" Margin="0,0,4,0" />

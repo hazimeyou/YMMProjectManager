@@ -171,12 +171,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         CommitGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("commit"), () => !IsBusy && SelectedProject is not null);
         CreateGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-create"), () => !IsBusy && SelectedProject is not null);
         SwitchGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-switch"), () => !IsBusy && SelectedProject is not null);
-        FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => !IsBusy && SelectedProject is not null);
-        PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => !IsBusy && SelectedProject is not null);
-        PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => !IsBusy && SelectedProject is not null);
+        // Remote configuration can change between validation and execution; keep network controls disabled until fenced.
+        FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => false);
+        PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => false);
+        PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => false);
         GitHistoryCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(false), () => !IsBusy && SelectedProject is not null);
         GitOriginCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(true), () => !IsBusy && SelectedProject is not null);
-        GitCloneCommand = new AsyncRelayCommand(CloneGitAsync, () => !IsBusy);
+        GitCloneCommand = new AsyncRelayCommand(CloneGitAsync, () => false);
         FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
