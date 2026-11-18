@@ -2,7 +2,6 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Security.Cryptography;
 using System.IO.Compression;
 using YMMProjectManager.Domain.Packaging;
 
@@ -67,8 +66,8 @@ public sealed class YmmpxLibBridge
             var destination = Path.GetFullPath(outputYmmpxPath);
             if (string.Equals(destination, Path.GetFullPath(ymmpPath), StringComparison.OrdinalIgnoreCase))
                 throw new IOException("プロジェクトと同じパスには出力できません。");
-            var existed = File.Exists(destination);
-            var originalHash = existed ? HashFile(destination) : null;
+            if (File.Exists(destination) || Directory.Exists(destination))
+                return new YmmpxPackageResult { Success = false, ErrorMessage = "出力先は既に存在します。既存データを保護するため、別の名前で保存してください。" };
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
             using (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { temporaryOwned = true; }
             var scan = ScanProjectForLogging(ymmpPath);
@@ -136,15 +135,10 @@ public sealed class YmmpxLibBridge
                 Status = link.Exists ? "packaged" : "missing",
             }).ToArray();
             token.ThrowIfCancellationRequested();
-            if (existed)
+            try { File.Move(temporaryPath, destination); }
+            catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
             {
-                if (!File.Exists(destination) || !CryptographicOperations.FixedTimeEquals(originalHash!, HashFile(destination)))
-                    throw new IOException("出力先が外部で変更されました。");
-                File.Replace(temporaryPath, destination, null);
-            }
-            else
-            {
-                File.Move(temporaryPath, destination);
+                return new YmmpxPackageResult { Success = false, ErrorMessage = "出力中に同じ名前のファイルが作成されました。別の名前で保存してください。" };
             }
             temporaryOwned = false;
             packagedOutputPath = destination;
@@ -187,12 +181,6 @@ public sealed class YmmpxLibBridge
                 try { File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
         }
-    }
-
-    private static byte[] HashFile(string path)
-    {
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-        return SHA256.HashData(stream);
     }
 
     public async Task<YmmpxExtractResult> ExtractPackageAsync(

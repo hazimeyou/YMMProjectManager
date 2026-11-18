@@ -10,6 +10,7 @@ public sealed class GitRepository
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
     private readonly string directory;
+    internal Action? BeforeRemoteExecution { get; set; }
 
     public GitRepository(string directory)
     {
@@ -46,32 +47,36 @@ public sealed class GitRepository
 
     public async Task<GitResult> FetchAsync(CancellationToken token = default)
     {
-        var remote = await ValidateOriginAsync(push: false, token).ConfigureAwait(false);
-        return remote ?? SanitizeRemote(await RunAsync(["fetch", "--", "origin"], token).ConfigureAwait(false));
+        var (url, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
+        if (error is not null) return error;
+        BeforeRemoteExecution?.Invoke();
+        return SanitizeRemote(await RunAsync(["fetch", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token).ConfigureAwait(false));
     }
 
     public async Task<GitResult> PullAsync(CancellationToken token = default)
     {
-        var remote = await ValidateOriginAsync(push: false, token).ConfigureAwait(false);
-        if (remote is not null) return remote;
+        var (url, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
+        if (error is not null) return error;
         var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
         if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pulling.");
         var name = branch.StandardOutput.Trim();
         if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
-        return SanitizeRemote(await RunAsync(["pull", "--ff-only", "--", "origin", "refs/heads/" + name], token).ConfigureAwait(false));
+        BeforeRemoteExecution?.Invoke();
+        return SanitizeRemote(await RunAsync(["pull", "--ff-only", "--", url!, "refs/heads/" + name], token).ConfigureAwait(false));
     }
 
     public async Task<GitResult> PushAsync(CancellationToken token = default)
     {
-        var remote = await ValidateOriginAsync(push: true, token).ConfigureAwait(false);
-        if (remote is not null) return remote;
+        var (url, error) = await ResolveOriginAsync(push: true, token).ConfigureAwait(false);
+        if (error is not null) return error;
         var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
         if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing.");
         var name = branch.StandardOutput.Trim();
         if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
-        return SanitizeRemote(await RunAsync(["-c", "remote.origin.mirror=false", "-c", "push.followTags=false", "push", "--no-follow-tags", "--", "origin", "HEAD:refs/heads/" + name], token).ConfigureAwait(false));
+        BeforeRemoteExecution?.Invoke();
+        return SanitizeRemote(await RunAsync(["-c", "push.followTags=false", "push", "--no-follow-tags", "--", url!, "HEAD:refs/heads/" + name], token).ConfigureAwait(false));
     }
 
     public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>
@@ -119,16 +124,16 @@ public sealed class GitRepository
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
 
-    private async Task<GitResult?> ValidateOriginAsync(bool push, CancellationToken token)
+    private async Task<(string? Url, GitResult? Error)> ResolveOriginAsync(bool push, CancellationToken token)
     {
         var args = push ? new[] { "remote", "get-url", "--push", "--all", "origin" } : new[] { "remote", "get-url", "--all", "origin" };
         var result = await RunAsync(args, token).ConfigureAwait(false);
-        if (!result.Success) return new GitResult(result.ExitCode, "", "Remote origin is unavailable.");
+        if (!result.Success) return (null, new GitResult(result.ExitCode, "", "Remote origin is unavailable."));
         var urls = result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
-        if (urls.Length != 1) return new GitResult(1, "", "Exactly one origin URL is required.");
+        if (urls.Length != 1) return (null, new GitResult(1, "", "Exactly one origin URL is required."));
         try { ValidateRemote(urls[0]); }
-        catch (ArgumentException) { return new GitResult(1, "", "Remote URL is unsupported or contains credentials."); }
-        return null;
+        catch (ArgumentException) { return (null, new GitResult(1, "", "Remote URL is unsupported or contains credentials.")); }
+        return (urls[0], null);
     }
 
     private static void ValidateRemote(string remote)

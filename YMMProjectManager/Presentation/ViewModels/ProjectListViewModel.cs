@@ -711,10 +711,10 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var dialog = new SaveFileDialog
         {
             Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
-            Title = "ymmpx の保存先を選択",
+            Title = "ymmpx の新しい保存先を選択（既存ファイルは上書きできません）",
             FileName = Path.GetFileName(defaultOutput),
             InitialDirectory = Path.GetDirectoryName(defaultOutput),
-            OverwritePrompt = true,
+            OverwritePrompt = false,
         };
         if (dialog.ShowDialog() != true)
         {

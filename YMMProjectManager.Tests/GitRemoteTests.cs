@@ -32,7 +32,19 @@ internal static class GitRemoteTests
             await Command(root, "init", "--bare", bare); await Command(source, "remote", "add", "origin", bare);
             var branch = await Command(source, "symbolic-ref", "--short", "HEAD");
             await Command(root, "--git-dir", bare, "symbolic-ref", "HEAD", "refs/heads/" + branch);
+            var decoy = Path.Combine(root, "decoy.git");
+            await Command(root, "init", "--bare", decoy);
+            one.BeforeRemoteExecution = () =>
+            {
+                var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
+                foreach (var arg in new[] { "remote", "set-url", "origin", decoy }) start.ArgumentList.Add(arg);
+                using var process = Process.Start(start)!; process.WaitForExit();
+                Check(process.ExitCode == 0, "change remote fixture");
+            };
             Check((await one.PushAsync()).Success, "initial push");
+            one.BeforeRemoteExecution = null;
+            Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push followed changed origin");
+            await Command(source, "remote", "set-url", "origin", bare);
             Check((await GitRepository.CloneAsync(bare, clone)).Success, "clone"); var two = new GitRepository(clone);
             await Command(clone, "config", "user.name", "Synthetic Tester"); await Command(clone, "config", "user.email", "synthetic@example.invalid");
             await File.WriteAllTextAsync(Path.Combine(clone, "two.txt"), "two");

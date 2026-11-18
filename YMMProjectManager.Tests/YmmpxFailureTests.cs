@@ -11,40 +11,36 @@ internal static class YmmpxFailureTests
         var project = Path.Combine(root, "sample.ymmp"); var output = Path.Combine(root, "sample.ymmpx");
         await File.WriteAllTextAsync(project, "{}"); await File.WriteAllTextAsync(output, "original package");
         var bridge = new YmmpxLibBridge(new FileLogger(Path.Combine(root, "test.log")), typeof(YmmpxLib.YmmpxPackageService).Assembly);
-        var result = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
-        if (result.Success || await File.ReadAllTextAsync(output) != "original package")
-            throw new Exception("existing package was not preserved after library failure");
+        var refusal = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
+        if (refusal.Success || !refusal.ErrorMessage!.Contains("別の名前") || await File.ReadAllTextAsync(output) != "original package")
+            throw new Exception("existing package was not protected");
+        var newPath = Path.Combine(root, "new.ymmpx");
+        var result = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
+        if (result.Success || File.Exists(newPath)) throw new Exception("partial package was published");
         YmmpxLib.YmmpxPackageService.Mode = "invalid";
-        var invalid = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
-        if (invalid.Success || await File.ReadAllTextAsync(output) != "original package")
-            throw new Exception("invalid archive replaced existing package");
+        var invalid = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
+        if (invalid.Success || File.Exists(newPath)) throw new Exception("invalid archive was published");
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
-            try { await bridge.CreatePackageAsync(project, output, cancelled.Token); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
-            if (await File.ReadAllTextAsync(output) != "original package") throw new Exception("cancelled operation changed package");
+            try { await bridge.CreatePackageAsync(project, newPath, cancelled.Token); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
+            if (File.Exists(newPath)) throw new Exception("cancelled operation created package");
         }
         YmmpxLib.YmmpxPackageService.Mode = "success";
-        var saved = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
-        if (!saved.Success || saved.OutputPath != output || !IsPackage(output))
-            throw new Exception("package replacement failed");
-        var beforeLock = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(output));
+        YmmpxLib.YmmpxPackageService.ExternalPath = newPath;
+        var conflict = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
+        if (conflict.Success || await File.ReadAllTextAsync(newPath) != "external edit")
+            throw new Exception("concurrent destination overwritten");
+        YmmpxLib.YmmpxPackageService.ExternalPath = null;
+        var safePath = Path.Combine(root, "save-as.ymmpx");
+        var created = await bridge.CreatePackageAsync(project, safePath, CancellationToken.None);
+        if (!created.Success || created.OutputPath != safePath || !IsPackage(safePath)) throw new Exception("new package failed");
         using (var held = new FileStream(output, FileMode.Open, FileAccess.Read, FileShare.Read))
         {
             var locked = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
             if (locked.Success) throw new Exception("locked package replaced");
         }
-        var afterLock = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(output));
-        if (!beforeLock.SequenceEqual(afterLock))
-            throw new Exception("locked package changed");
-        YmmpxLib.YmmpxPackageService.ExternalPath = output;
-        var conflict = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
-        if (conflict.Success || await File.ReadAllTextAsync(output) != "external edit")
-            throw new Exception("external modification overwritten");
-        YmmpxLib.YmmpxPackageService.ExternalPath = null;
-        var newPath = Path.Combine(root, "new.ymmpx");
-        var created = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
-        if (!created.Success || !IsPackage(newPath)) throw new Exception("new package failed");
+        if (await File.ReadAllTextAsync(output) != "original package") throw new Exception("existing package changed");
         if (Directory.EnumerateFiles(root, ".*.tmp.ymmpx").Any()) throw new Exception("temporary package remained");
         Console.WriteLine("YMMPX synthetic partial write preserves existing package.");
     }
