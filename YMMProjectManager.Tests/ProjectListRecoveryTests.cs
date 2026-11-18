@@ -105,6 +105,18 @@ internal static class ProjectListRecoveryTests
                 throw new Exception("association failure did not preserve both states");
             failAssociation = false; await failedVm.RetryProjectListSaveAsync();
             if (failedVm.HasUnsavedProjectList || (await failedRepo.LoadAsync()).Projects.Single().ProjectId != failedManifest.ProjectId) throw new Exception("association retry failed");
+            var conflictPath = Path.Combine(root, "associate-conflict.json");
+            var conflictRepo = new JsonProjectRepository(logger, conflictPath); var conflictSeed = await conflictRepo.LoadAsync();
+            conflictSeed.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project }); await conflictRepo.SaveAsync(conflictSeed);
+            var conflictVm = new ProjectListViewModel(logger, conflictRepo); await conflictVm.InitializeAsync(); conflictVm.SelectedProject = conflictVm.Projects.Single();
+            var outsideRepo = new JsonProjectRepository(logger, conflictPath); var outside = await outsideRepo.LoadAsync();
+            outside.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = Guid.NewGuid() }); await outsideRepo.SaveAsync(outside);
+            var conflictManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            try { await conflictVm.AssociateLegacyMetadataAsync(conflictVm.SelectedProject, conflictManifest); throw new Exception("stale association accepted"); }
+            catch (YMMProjectManager.Application.ProjectListConflictException) { }
+            if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.Count != 2) throw new Exception("association conflict lost pending or external data");
+            timer.Start(); try { await conflictVm.RetryProjectListSaveAsync(); } finally { timer.Stop(); }
+            if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.Count != 2) throw new Exception("association conflict retry overwrote external data");
             foreach (var content in new[] { "{invalid", "" })
             {
                 var broken = Path.Combine(root, content.Length == 0 ? "empty.json" : "broken.json");
