@@ -93,4 +93,3 @@ public sealed record GitResult(int ExitCode, string StandardOutput, string Stand
 {
     public bool Success => ExitCode == 0;
 }
-
