@@ -34,6 +34,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
+    private ProjectListRevision? projectListRevision;
     private bool hasUnsavedProjectList;
     private string bundleStatus = string.Empty;
     private double bundleProgress;
@@ -101,6 +102,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     }
 
     public ICommand RetryProjectListSaveCommand { get; }
+    public ICommand AssignLegacyProjectIdCommand { get; }
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -157,6 +159,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
         RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList);
+        AssignLegacyProjectIdCommand = new AsyncRelayCommand(AssignLegacyProjectIdAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
@@ -501,6 +504,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             logger.Info("Load start.");
             var store = await repository.LoadAsync().ConfigureAwait(true);
+            projectListRevision = store.Revision;
 
             Projects.Clear();
             foreach (var item in store.Projects)
@@ -1134,6 +1138,21 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         await ExecuteWithBusyAsync("Retry project list save", SaveAsync).ConfigureAwait(true);
     }
 
+    private async Task AssignLegacyProjectIdAsync()
+    {
+        var project = SelectedProject;
+        if (project is null || project.ProjectId is not null || HasUnsavedProjectList) return;
+        await ExecuteWithBusyAsync("Assign project identity", async () =>
+        {
+            if (!File.Exists(project.FullPath)) { AssetStatus = "プロジェクトが見つかりません。移動先の関連付けは未対応です。"; return; }
+            if (MessageBox.Show($"次の一覧項目に新しい ID を設定しますか？\n{project.FullPath}\n既存 metadata は関連付けられません。", "プロジェクト ID", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+            if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || !File.Exists(project.FullPath)) return;
+            project.ProjectId = Guid.NewGuid();
+            await SaveAsync().ConfigureAwait(true);
+            AssetStatus = "プロジェクト ID を保存しました。既存 metadata の関連付けは別途必要です。";
+        }).ConfigureAwait(true);
+    }
+
     private async Task SaveAsync()
     {
         if (!isInitialized)
@@ -1143,11 +1162,14 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
         try
         {
-            await repository.SaveAsync(new ProjectStore
+            var store = new ProjectStore
             {
                 Projects = Projects.ToList(),
                 Folders = folders.ToList(),
-            }).ConfigureAwait(true);
+                Revision = projectListRevision,
+            };
+            await repository.SaveAsync(store).ConfigureAwait(true);
+            projectListRevision = store.Revision;
             HasUnsavedProjectList = false;
         }
         catch
@@ -1177,6 +1199,16 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             logger.Info($"{operationName}キャンセル。");
             logger.Flush();
+        }
+        catch (ProjectListConflictException ex)
+        {
+            logger.Error(ex, "Project list changed externally.");
+            MessageBox.Show("一覧が別の操作で変更されました。未保存の変更は画面に残っています。新しい一覧を確認し、変更を再適用してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (ProjectListBusyException ex)
+        {
+            logger.Error(ex, "Project list is locked by another process.");
+            MessageBox.Show("別のプロセスが一覧を保存中です。未保存の変更は画面に残っています。処理が終わってから再試行してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (InvalidDataException ex) when (operationName == "GenerationSave")
         {

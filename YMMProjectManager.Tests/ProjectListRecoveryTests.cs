@@ -21,7 +21,7 @@ internal static class ProjectListRecoveryTests
             var list = Path.Combine(root, "projects.json"); var project = Path.Combine(root, "sample.ymmp");
             await File.WriteAllTextAsync(project, "{}");
             var logger = new FileLogger(Path.Combine(root, "test.log"));
-            await new JsonProjectRepository(logger, list).SaveAsync(new());
+            var initialRepo = new JsonProjectRepository(logger, list); await initialRepo.SaveAsync(await initialRepo.LoadAsync());
             var before = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(list));
             bool fail = true; bool cancel = false; int calls = 0;
             var repo = new JsonProjectRepository(logger, list, beforeReplace: () => { calls++; if (cancel) throw new OperationCanceledException(); if (fail) throw new IOException("synthetic failure"); });
@@ -59,6 +59,24 @@ internal static class ProjectListRecoveryTests
             if (dialogs != priorDialogs || !vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 1) throw new Exception("cancellation behavior");
             cancel = false; await vm.RetryProjectListSaveAsync();
             if (vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 2) throw new Exception("cancellation retry");
+            var legacyPath = Path.Combine(root, "legacy-list.json");
+            var legacyRepo = new JsonProjectRepository(logger, legacyPath);
+            var legacyStore = await legacyRepo.LoadAsync();
+            legacyStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project });
+            await legacyRepo.SaveAsync(legacyStore);
+            var legacyVm = new ProjectListViewModel(logger, legacyRepo); await legacyVm.InitializeAsync();
+            legacyVm.SelectedProject = legacyVm.Projects.Single();
+            var projectBefore = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(project));
+            var dialogReply = 7;
+            var confirmTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(50) };
+            confirmTimer.Tick += (_, _) => EnumThreadWindows(threadId, (hwnd, _) => { var name = new StringBuilder(128); GetClassName(hwnd, name, name.Capacity); if (name.ToString() == "#32770") PostMessage(hwnd, 0x0111, (IntPtr)dialogReply, IntPtr.Zero); return true; }, IntPtr.Zero);
+            async Task Migrate() => await (Task)typeof(ProjectListViewModel).GetMethod("AssignLegacyProjectIdAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(legacyVm, null)!;
+            confirmTimer.Start(); try { await Migrate(); } finally { confirmTimer.Stop(); }
+            if ((await legacyRepo.LoadAsync()).Projects.Single().ProjectId is not null) throw new Exception("cancelled legacy migration changed identity");
+            dialogReply = 6; confirmTimer.Start(); try { await Migrate(); } finally { confirmTimer.Stop(); }
+            var migrated = (await legacyRepo.LoadAsync()).Projects.Single();
+            var projectAfter = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(project));
+            if (migrated.ProjectId is null || migrated.ProjectId == Guid.Empty || !projectBefore.SequenceEqual(projectAfter)) throw new Exception("legacy identity migration failed or modified project");
             foreach (var content in new[] { "{invalid", "" })
             {
                 var broken = Path.Combine(root, content.Length == 0 ? "empty.json" : "broken.json");
@@ -68,7 +86,7 @@ internal static class ProjectListRecoveryTests
                 var brokenAfter = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(broken));
                 if (dialogs < priorDialogs + 2 || brokenVm.AddCommand.CanExecute(null) || brokenVm.Projects.Count != 0 || !brokenHash.SequenceEqual(brokenAfter)) throw new Exception("failed load protection");
             }
-            var lockedPath = Path.Combine(root, "locked.json"); await new JsonProjectRepository(logger, lockedPath).SaveAsync(new());
+            var lockedPath = Path.Combine(root, "locked.json"); var lockedRepo = new JsonProjectRepository(logger, lockedPath); await lockedRepo.SaveAsync(await lockedRepo.LoadAsync());
             var lockedHash = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(lockedPath));
             var lockedVm = new ProjectListViewModel(logger, new JsonProjectRepository(logger, lockedPath)); priorDialogs=dialogs;
             using (var locked = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None))

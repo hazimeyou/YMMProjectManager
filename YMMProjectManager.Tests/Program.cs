@@ -30,8 +30,13 @@ internal static class Program
         Console.WriteLine($"SKIP conditional case: {name}");
     }
 
-    public static async Task Main()
+    public static async Task Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--project-list-worker")
+        {
+            await ProjectListConcurrencyTests.RunWorkerAsync(args[1], args[2]);
+            return;
+        }
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
@@ -117,6 +122,7 @@ internal static class Program
         await RunGroupAsync("TestCurrentPreviewCaptureGetBitmapFallbackAsync", () => TestCurrentPreviewCaptureGetBitmapFallbackAsync(workRoot));
         await RunGroupAsync("TestLegacyProjectStoreCompatibilityAsync", () => TestLegacyProjectStoreCompatibilityAsync(workRoot));
         await RunGroupAsync("ProjectListSaveTests.RunAsync", () => ProjectListSaveTests.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListConcurrencyTests.RunAsync", () => ProjectListConcurrencyTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListRecoveryTests.RunAsync(workRoot));
         await RunGroupAsync("TestProjectEntryThumbnailCacheDirectoryNotificationAsync", () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync());
         await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -37,10 +38,10 @@ public sealed class JsonProjectRepository : IProjectRepository
     {
         try
         {
-            await using var stream = File.OpenRead(jsonPath);
-            var dto = await JsonSerializer.DeserializeAsync<ProjectListFileDto>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
+            var content = await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false);
+            var dto = JsonSerializer.Deserialize<ProjectListFileDto>(content, JsonOptions);
             if (dto is null) throw new InvalidDataException("Project list is null.");
-            var store = new ProjectStore();
+            var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))) };
             foreach (var f in dto.Folders ?? [])
             {
                 if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
@@ -69,8 +70,8 @@ public sealed class JsonProjectRepository : IProjectRepository
             }
             return store;
         }
-        catch (FileNotFoundException) { return new ProjectStore(); }
-        catch (DirectoryNotFoundException) { return new ProjectStore(); }
+        catch (FileNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null) }; }
+        catch (DirectoryNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null) }; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.Error("Failed to load projects.json", ex); throw; }
     }
@@ -78,6 +79,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     public async Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default)
     {
         string? tempPath = null;
+        FileStream? processLock = null;
         var stage = "waiting";
         await SaveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -103,6 +105,9 @@ public sealed class JsonProjectRepository : IProjectRepository
             cancellationToken.ThrowIfCancellationRequested();
             var directory = Path.GetDirectoryName(jsonPath)!;
             Directory.CreateDirectory(directory);
+            stage = "inter-process lock";
+            try { processLock = new FileStream(jsonPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+            catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { throw new ProjectListBusyException(ex); }
             var candidatePath = Path.Combine(directory, $"{Path.GetFileName(jsonPath)}.tmp-{Guid.NewGuid():N}");
             stage = "write temporary file";
             await using (var stream = new FileStream(candidatePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
@@ -115,11 +120,19 @@ public sealed class JsonProjectRepository : IProjectRepository
             stage = "replace";
             beforeReplace?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
+            if (store.Revision is null) throw new InvalidDataException("Project list must be loaded before saving.");
+            string? currentHash;
+            try { currentHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false))); }
+            catch (FileNotFoundException) { currentHash = null; }
+            catch (DirectoryNotFoundException) { currentHash = null; }
+            if (!string.Equals(currentHash, store.Revision.Sha256, StringComparison.Ordinal))
+                throw new ProjectListConflictException();
             if (File.Exists(jsonPath))
                 File.Replace(tempPath, jsonPath, null);
             else
                 File.Move(tempPath, jsonPath);
             tempPath = null;
+            store.Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(bytes)));
         }
         catch (OperationCanceledException)
         {
@@ -138,6 +151,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 try { File.Delete(tempPath); }
                 catch (Exception ex) { logger.Error(ex, "Failed to remove project list temporary file."); }
             }
+            processLock?.Dispose();
             SaveGate.Release();
         }
     }

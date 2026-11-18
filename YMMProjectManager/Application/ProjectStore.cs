@@ -7,4 +7,7 @@ public sealed class ProjectStore
 {
     public List<ProjectEntry> Projects { get; set; } = [];
     public List<ProjectFolder> Folders { get; set; } = [];
+    public ProjectListRevision? Revision { get; set; }
 }
+
+public sealed record ProjectListRevision(string? Sha256);
