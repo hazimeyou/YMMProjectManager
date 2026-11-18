@@ -111,40 +111,8 @@ public sealed class TimelineMediaRelinkService
                     !string.Equals(currentPath, row.OriginalPath, StringComparison.OrdinalIgnoreCase))
                     return (false, "タイムラインの素材パスが変更されました。再読み込みしてください。", 0);
             }
-            foreach (var row in context.Rows)
-            {
-                if (row.Status != RelinkStatus.Updated || string.IsNullOrWhiteSpace(row.SelectedCandidate))
-                {
-                    continue;
-                }
-
-                if (!targetMap.TryGetValue(row.RowIndex, out var target))
-                {
-                    continue;
-                }
-
-                if (!TimelineItemFilePathAccessor.TryGetFilePath(target.Item, out var currentPath) || string.IsNullOrWhiteSpace(currentPath))
-                {
-                    continue;
-                }
-
-                var nextPath = row.SelectedCandidate!;
-                if (string.Equals(currentPath, nextPath, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                TimelineItemFilePathAccessor.SetFilePath(target.Item, nextPath);
-                updatedCount++;
-            }
-
-            if (updatedCount > 0)
-            {
-                context.Info.UndoRedoManager?.Record();
-            }
-
-            logger.Info($"TimelineRelink.Save completed. updated={updatedCount}");
-            logger.Flush();
+            if (context.Rows.Any(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)))
+                return (false, "タイムラインへの反映は安全性を検証中のため停止しています。", 0);
             return (true, null, updatedCount);
         }
         catch (InvalidDataException ex)
