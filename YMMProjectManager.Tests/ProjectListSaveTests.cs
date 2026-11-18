@@ -73,6 +73,24 @@ internal static class ProjectListSaveTests
         await File.WriteAllTextAsync(path, "{\"Projects\":[{\"FullPath\":\"C:\\\\Temp\\\\legacy.ymmp\",\"DisplayName\":\"legacy\",\"Pinned\":true,\"LastAccess\":\"2026-06-08T00:00:00+09:00\"}]}");
         var legacy = await Repo().LoadAsync(); await Repo().SaveAsync(legacy); var roundtrip = await Repo().LoadAsync();
         Check(roundtrip.Projects.Single().DisplayName == "legacy" && roundtrip.Projects[0].Pinned && roundtrip.Projects[0].LastAccess == legacy.Projects[0].LastAccess && roundtrip.Projects[0].LinkedYmmpFiles.Count > 0, "legacy roundtrip");
+        Check(roundtrip.Projects[0].ProjectId is null, "legacy identity must remain unresolved");
+        var id1 = Guid.NewGuid(); var id2 = Guid.NewGuid();
+        var identified = new ProjectStore { Projects = [new ProjectEntry { FullPath = Path.Combine(root, "one", "same.ymmp"), ProjectId = id1 }, new ProjectEntry { FullPath = Path.Combine(root, "two", "same.ymmp"), ProjectId = id2 }] };
+        await Repo().SaveAsync(identified);
+        var reloaded = await Repo().LoadAsync();
+        Check(reloaded.Projects.Select(p => p.ProjectId).SequenceEqual(new Guid?[] { id1, id2 }), "identity roundtrip");
+        var identityHash = Hash();
+        identified.Projects[1].ProjectId = id1;
+        await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
+        Check(Hash() == identityHash, "duplicate identity modified list");
+        identified.Projects[1].ProjectId = Guid.Empty;
+        await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
+        Check(Hash() == identityHash, "empty identity modified list");
+        identified.Projects[1].ProjectId = id2; identified.Projects[1].FullPath = "";
+        await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
+        Check(Hash() == identityHash, "identified project without path modified list");
+        await File.WriteAllTextAsync(path, $"{{\"Projects\":[{{\"FullPath\":\"one.ymmp\",\"ProjectId\":\"{id1}\"}},{{\"FullPath\":\"two.ymmp\",\"ProjectId\":\"{id1}\"}}]}}");
+        var duplicateHash = Hash(); await Expect<InvalidDataException>(() => Repo().LoadAsync()); Check(Hash() == duplicateHash, "duplicate load modified list");
         // Corrupt read must not silently become a new empty store.
         await File.WriteAllTextAsync(path, "{invalid"); var corruptHash=Hash();
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");

@@ -21,6 +21,7 @@ public partial class RelinkMainWindow : Window
     private readonly TimelineMediaRelinkService timelineMediaRelinkService;
     private readonly ObservableCollection<RelinkRow> rows = [];
     private readonly TimelineToolInfo? timelineInfo;
+    private readonly Guid? projectId;
     private RelinkDocumentContext? context;
     private TimelineRelinkContext? timelineContext;
     private DateTimeOffset lastProgressUiUpdate = DateTimeOffset.MinValue;
@@ -28,9 +29,10 @@ public partial class RelinkMainWindow : Window
     private bool isSearchRunning;
     private bool suppressUiAfterClose;
 
-    public RelinkMainWindow(string ymmpPath, FileLogger logger)
+    public RelinkMainWindow(string ymmpPath, FileLogger logger, Guid? projectId = null)
         : this(logger, null, ymmpPath)
     {
+        this.projectId = projectId;
     }
 
     public RelinkMainWindow(TimelineToolInfo timelineInfo, FileLogger logger, string? ymmpPath = null)
@@ -251,11 +253,22 @@ public partial class RelinkMainWindow : Window
             var snapshot = new RelinkDocumentContext { YmmpPath = context!.YmmpPath, OriginalJsonText = context.OriginalJsonText, OriginalBytes = context.OriginalBytes?.ToArray(), Rows = RelinkCandidateVerifier.SnapshotRows(context.Rows) };
             var fileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None);
             if (fileHashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
-            if (MessageBox.Show("期待ハッシュは読み込まれていないため、一致を判定できません。候補の内容を確認してください。\n" + string.Join("\n\n", fileHashes) + "\n別名で保存しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+            AssetManifest? expectedManifest = null;
+            if (projectId is not null && MessageBox.Show("期待ハッシュを素材メタデータから照合しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            {
+                var metadataDialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを選択", CheckFileExists = true };
+                if (metadataDialog.ShowDialog() != true) return;
+                expectedManifest = await AssetManifestStore.LoadAsync(metadataDialog.FileName);
+            }
+            var comparison = expectedManifest is null ? fileHashes : await RelinkCandidateVerifier.CompareExpectedAsync(snapshot.Rows, snapshot.YmmpPath, projectId!.Value, expectedManifest, CancellationToken.None);
+            var notice = expectedManifest is null ? "期待ハッシュは未確認です。" : "素材メタデータは更新されません。不一致や期待値なしを確認してください。";
+            if (MessageBox.Show(notice + "\n" + string.Join("\n\n", comparison) + "\n別名で保存しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var dialog = new SaveFileDialog { Filter = "YMM Project (*.ymmp)|*.ymmp", Title = "再リンク結果を新しいファイルに保存", OverwritePrompt = false };
             if (dialog.ShowDialog() != true) return;
-            var checkedFileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None);
-            if (!fileHashes.SequenceEqual(checkedFileHashes)) { SetSummaryText("候補が変更されました。再確認してください。"); return; }
+            var checkedComparison = expectedManifest is null
+                ? await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None)
+                : await RelinkCandidateVerifier.CompareExpectedAsync(snapshot.Rows, snapshot.YmmpPath, projectId!.Value, expectedManifest, CancellationToken.None);
+            if (!comparison.SequenceEqual(checkedComparison)) { SetSummaryText("候補が変更されました。再確認してください。"); return; }
             var (fileSuccess, fileErrorMessage) = await saveService.SaveAsAsync(snapshot, dialog.FileName, CancellationToken.None);
             if (!fileSuccess)
             {

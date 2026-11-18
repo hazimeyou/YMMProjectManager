@@ -278,7 +278,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return Task.CompletedTask;
             }
-            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger));
+            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId));
             return Task.CompletedTask;
         });
     }
@@ -327,6 +327,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         if (dialog.ShowDialog() != true) return;
         await ExecuteToolAsync("Asset metadata export", async token =>
         {
+            if (HasUnsavedProjectList) { AssetStatus = "プロジェクト一覧に未保存の変更があります。先に一覧を保存してください。"; return; }
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             foreach (var asset in assets)
@@ -349,9 +350,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 });
                 if (MessageBox.Show($"サイズまたは SHA-256 が以前と異なります:\n{string.Join("\n", details)}\n変更 {changes.Count} 件を新しい版に記録しますか？", "素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             }
-            var manifest = AssetManifestStore.Create(selected.FullPath, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0);
+            var manifest = AssetManifestStore.Create(selected.FullPath, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0, projectId: selected.ProjectId);
             await AssetManifestStore.SaveNewAsync(dialog.FileName, manifest, token);
-            AssetStatus = "素材メタデータを新しいファイルに保存しました。元のメタデータは変更していません。";
+            AssetStatus = selected.ProjectId is null
+                ? "素材メタデータを保存しました。旧プロジェクトとの永続 ID 関連付けは未設定です。"
+                : "素材メタデータを新しいファイルに保存しました。元のメタデータは変更していません。";
         });
     }
 
@@ -365,10 +368,14 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             IReadOnlyList<AssetMetadata> assets;
+            var associationVerified = false;
             try
             {
                 var manifest = await AssetManifestStore.LoadAsync(dialog.FileName, token);
-                if (!string.Equals(manifest.ProjectFileName, Path.GetFileName(selected.FullPath), StringComparison.OrdinalIgnoreCase))
+                if (selected.ProjectId is Guid projectId && manifest.ProjectId != projectId)
+                { AssetStatus = "メタデータのプロジェクト ID が一致しません。"; return; }
+                associationVerified = selected.ProjectId is not null;
+                if (selected.ProjectId is null && !string.Equals(manifest.ProjectFileName, Path.GetFileName(selected.FullPath), StringComparison.OrdinalIgnoreCase))
                 { AssetStatus = "メタデータのプロジェクト名が一致しません。"; return; }
                 assets = manifest.Assets;
             }
@@ -381,7 +388,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             foreach (var asset in assets)
                 results.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset, token)}");
             if (!ReferenceEquals(selected, SelectedProject)) return;
-            AssetStatus = (results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results)) + "\n同名の別プロジェクトは自動識別できません。";
+            AssetStatus = (results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results)) + (associationVerified ? $"\nプロジェクト ID 一致: {selected.ProjectId}" : "\nプロジェクトとの ID 関連付けは未確認です。");
         });
     }
 
@@ -569,6 +576,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 var entry = new ProjectEntry
                 {
                     FullPath = fullPath,
+                    ProjectId = Guid.NewGuid(),
                     DisplayName = Path.GetFileNameWithoutExtension(fullPath),
                 };
                 Projects.Add(entry);
@@ -916,6 +924,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var entry = new ProjectEntry
             {
                 FullPath = fullPath,
+                ProjectId = Guid.NewGuid(),
                 DisplayName = Path.GetFileNameWithoutExtension(fullPath),
             };
 

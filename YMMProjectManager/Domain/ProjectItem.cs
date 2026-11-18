@@ -181,6 +181,7 @@ public sealed class ProjectEntry : INotifyPropertyChanged
     private string? thumbnailCacheDirectory;
 
     public string FullPath { get; set; } = string.Empty;
+    public Guid? ProjectId { get; set; }
     public string? DisplayName { get; set; }
     public bool Pinned { get; set; }
     public DateTimeOffset? LastAccess { get; set; }

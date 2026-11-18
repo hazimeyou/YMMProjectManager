@@ -125,6 +125,7 @@
                 <TextBlock Text="HTTPS URL (任意)" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="220" Text="{Binding AssetUrl, UpdateSourceTrigger=PropertyChanged}" />
             </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedProject.ProjectId, StringFormat='Project ID: {0}', TargetNullValue='Project ID: 未設定'}" Margin="0,4,0,0" />
             <TextBlock DockPanel.Dock="Top" Text="{Binding AssetStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
                     </StackPanel>
                 </ScrollViewer>

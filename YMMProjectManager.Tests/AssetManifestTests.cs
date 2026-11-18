@@ -1,6 +1,7 @@
 using System.IO;
 using System.Text.Json;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Relink;
 
 internal static class AssetManifestTests
 {
@@ -16,6 +17,26 @@ internal static class AssetManifestTests
         var initial = AssetManifestStore.Create(project, [item, second], DateTimeOffset.UtcNow);
         var path = Path.Combine(root, "manifest-1.json"); await AssetManifestStore.SaveNewAsync(path, initial);
         var loaded = await AssetManifestStore.LoadAsync(path);
+        var identity = Guid.NewGuid();
+        var associated = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, projectId: identity);
+        if (associated.ProjectId != identity) throw new Exception("project identity not associated");
+        var renamed = AssetManifestStore.Create(Path.Combine(root, "renamed.ymmp"), [item], DateTimeOffset.UtcNow, associated, true, projectId: identity);
+        if (renamed.ProjectId != identity || renamed.ParentRevisionId != associated.RevisionId) throw new Exception("rename lost identity");
+        try { AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, associated, true, projectId: Guid.NewGuid()); throw new Exception("wrong project identity accepted"); } catch (InvalidDataException) { }
+        try { AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, projectId: Guid.Empty); throw new Exception("empty identity accepted"); } catch (InvalidDataException) { }
+        var candidate = Path.Combine(root, "candidate.txt"); await File.WriteAllTextAsync(candidate, "asset");
+        var row = new RelinkRow { OriginalPath = "asset.txt", SelectedCandidate = candidate, Status = RelinkStatus.Updated };
+        var matching = await RelinkCandidateVerifier.CompareExpectedAsync([row], project, identity, associated, CancellationToken.None);
+        if (!matching.Single().Contains("判定: 一致")) throw new Exception("expected hash match missed");
+        await File.WriteAllTextAsync(candidate, "changed");
+        var differing = await RelinkCandidateVerifier.CompareExpectedAsync([row], project, identity, associated, CancellationToken.None);
+        if (!differing.Single().Contains("判定: 不一致")) throw new Exception("expected hash mismatch missed");
+        await File.WriteAllTextAsync(candidate, "asset");
+        var reverted = await RelinkCandidateVerifier.CompareExpectedAsync([row], project, identity, associated, CancellationToken.None);
+        if (differing.SequenceEqual(reverted)) throw new Exception("candidate changed after displayed comparison without detection");
+        var unknownRow = new RelinkRow { OriginalPath = "unrecorded.txt", SelectedCandidate = candidate, Status = RelinkStatus.Updated };
+        if (!(await RelinkCandidateVerifier.CompareExpectedAsync([unknownRow], project, identity, associated, CancellationToken.None)).Single().Contains("期待ハッシュなし")) throw new Exception("missing expected hash misreported");
+        try { await RelinkCandidateVerifier.CompareExpectedAsync([row], project, Guid.NewGuid(), associated, CancellationToken.None); throw new Exception("wrong identity accepted for comparison"); } catch (InvalidDataException) { }
         if (loaded.ProjectId != initial.ProjectId || loaded.Assets.Count != 2) throw new Exception("metadata read failed");
         try { AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, loaded); throw new Exception("unconfirmed association accepted"); } catch (InvalidDataException) { }
         var next = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, loaded, confirmedProjectAssociation: true);

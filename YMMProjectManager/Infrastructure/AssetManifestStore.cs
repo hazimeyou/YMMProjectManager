@@ -16,16 +16,19 @@ public sealed record AssetManifest(
 /// <summary>Writes immutable project-associated revisions; existing metadata is never replaced.</summary>
 public static class AssetManifestStore
 {
-    public static AssetManifest Create(string projectPath, IReadOnlyList<AssetMetadata> assets, DateTimeOffset verifiedAtUtc, AssetManifest? parent = null, bool confirmedProjectAssociation = false, bool confirmedHashChanges = false)
+    public static AssetManifest Create(string projectPath, IReadOnlyList<AssetMetadata> assets, DateTimeOffset verifiedAtUtc, AssetManifest? parent = null, bool confirmedProjectAssociation = false, bool confirmedHashChanges = false, Guid? projectId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectPath);
         ArgumentNullException.ThrowIfNull(assets);
         var name = Path.GetFileName(projectPath);
         if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("Invalid project path.", nameof(projectPath));
+        if (projectId == Guid.Empty) throw new InvalidDataException("Project identity is empty.");
         if (parent is not null)
         {
             Validate(parent);
-            if (!string.Equals(parent.ProjectFileName, name, StringComparison.OrdinalIgnoreCase))
+            if (projectId is Guid id && parent.ProjectId != id)
+                throw new InvalidDataException("Metadata belongs to a different project identity.");
+            if (projectId is null && !string.Equals(parent.ProjectFileName, name, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("Metadata belongs to a different project name. Explicit reassociation is required.");
             if (!confirmedProjectAssociation)
                 throw new InvalidDataException("The project association must be confirmed explicitly.");
@@ -42,7 +45,7 @@ public static class AssetManifestStore
                 throw new InvalidDataException("Asset size or hash differs from the previous revision and requires explicit confirmation.");
             if (index < 0) merged.Add(asset); else merged[index] = asset;
         }
-        var manifest = new AssetManifest(1, parent?.ProjectId ?? Guid.NewGuid(), name, Guid.NewGuid(),
+        var manifest = new AssetManifest(1, parent?.ProjectId ?? projectId ?? Guid.NewGuid(), name, Guid.NewGuid(),
             parent?.RevisionId, parent?.VerifiedAtUtc ?? verifiedAtUtc, merged);
         Validate(manifest);
         return manifest;
