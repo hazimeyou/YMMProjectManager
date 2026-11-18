@@ -73,6 +73,7 @@
             <Expander DockPanel.Dock="Top" Header="Git と素材" Margin="0,4,0,4">
                 <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <StackPanel>
+            <Button Content="Git / 素材処理を中止" HorizontalAlignment="Left" Command="{Binding CancelToolCommand}" Margin="0,0,0,4" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="ブランチ" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />

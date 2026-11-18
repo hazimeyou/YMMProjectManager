@@ -47,6 +47,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string assetStatus = string.Empty;
     private string assetUrl = string.Empty;
     private AssetMetadata? inspectedAsset;
+    private CancellationTokenSource? toolCancellation;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -126,6 +127,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand InspectAssetCommand { get; }
     public ICommand ExportAssetMetadataCommand { get; }
     public ICommand VerifyAssetMetadataCommand { get; }
+    public ICommand CancelToolCommand { get; }
     public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
     public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
     public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
@@ -179,19 +181,44 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
+        CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
+    }
+
+    private async Task ExecuteToolAsync(string name, Func<CancellationToken, Task> action)
+    {
+        await ExecuteWithBusyAsync(name, async () =>
+        {
+            using var cancellation = new CancellationTokenSource();
+            toolCancellation = cancellation;
+            CommandManager.InvalidateRequerySuggested();
+            try { await action(cancellation.Token); }
+            catch (OperationCanceledException ex)
+            {
+                var recovery = ex.Data["CloneRecoveryPath"] as string;
+                var message = "中止しました。ディスクやリモートの状態を確認してください。";
+                if (recovery is not null) message += " 残存 clone: " + recovery;
+                if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message; else GitStatus = message;
+                throw;
+            }
+            finally { toolCancellation = null; CommandManager.InvalidateRequerySuggested(); }
+        });
     }
 
     private async Task ShowGitDetailsAsync(bool remote)
     {
         var selected = SelectedProject;
         if (selected is null) return;
-        await ExecuteWithBusyAsync("Git", async () =>
+        await ExecuteToolAsync("Git", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             var git = new GitRepository(directory);
-            var result = remote ? await git.OriginAsync() : await git.HistoryAsync();
+            var result = remote ? await git.OriginAsync(token) : await git.HistoryAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
-            GitStatus = result.Success ? result.StandardOutput.Replace('\0', ' ') : "情報を取得できません。origin またはコミット履歴を確認してください。";
+            if (!result.Success) { GitStatus = "情報を取得できません。origin またはコミット履歴を確認してください。"; return; }
+            var details = result.StandardOutput.Replace('\0', ' ');
+            var github = remote && Uri.TryCreate(details, UriKind.Absolute, out var uri) &&
+                         uri.Scheme == Uri.UriSchemeHttps && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
+            GitStatus = github ? "GitHub origin: " + details : details;
         });
     }
 
@@ -204,9 +231,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var dialog = new OpenFolderDialog { Title = "clone 先の親フォルダーを選択" };
         if (dialog.ShowDialog() != true) return;
         var destination = Path.Combine(dialog.FolderName, name);
-        await ExecuteWithBusyAsync("Git clone", async () =>
+        await ExecuteToolAsync("Git clone", async token =>
         {
-            var result = await GitRepository.CloneAsync(remote, destination);
+            var result = await GitRepository.CloneAsync(remote, destination, token);
             GitStatus = result.Success ? $"clone が完了しました: {destination}" : $"clone に失敗しました。残存フォルダー: {result.RecoveryPath ?? "なし"}";
         });
     }
@@ -215,14 +242,15 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         var selected = SelectedProject;
         if (selected is null) return;
-        await ExecuteWithBusyAsync("Asset candidates", async () =>
+        await ExecuteToolAsync("Asset candidates", async token =>
         {
-            var json = await File.ReadAllTextAsync(selected.FullPath);
+            var json = await File.ReadAllTextAsync(selected.FullPath, token);
             var paths = await Task.Run(() =>
             {
                 using var document = JsonDocument.Parse(json);
                 return PackagingDetector.FindFilePaths(json);
-            });
+            }, token);
+            token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(selected, SelectedProject)) return;
             AssetStatus = paths.Count == 0 ? "FilePath 候補はありません。" : "FilePath 候補（素材とは限りません）:\n" + string.Join("\n", paths);
         });
@@ -232,13 +260,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         var selected = SelectedProject;
         if (selected is null) return;
-        await ExecuteWithBusyAsync("Asset inspection", async () =>
+        await ExecuteToolAsync("Asset inspection", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             var requestedPath = AssetPath;
             var requestedUrl = AssetUrl;
             inspectedAsset = null;
-            var asset = await AssetInventory.InspectAsync(directory, requestedPath, string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl);
+            var asset = await AssetInventory.InspectAsync(directory, requestedPath, string.IsNullOrWhiteSpace(requestedUrl) ? null : requestedUrl, token);
             if (!ReferenceEquals(selected, SelectedProject) || AssetPath != requestedPath || AssetUrl != requestedUrl) return;
             inspectedAsset = asset;
             AssetStatus = $"サイズ: {asset.Size} bytes\nSHA-256: {asset.Sha256}";
@@ -252,13 +280,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         if (selected is null || asset is null) { AssetStatus = "先に素材を検査してください。"; return; }
         var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新規保存", OverwritePrompt = false };
         if (dialog.ShowDialog() != true) return;
-        await ExecuteWithBusyAsync("Asset metadata export", async () =>
+        await ExecuteToolAsync("Asset metadata export", async token =>
         {
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
-            if (await AssetInventory.VerifyAsync(directory, asset) != AssetVerification.Valid) { AssetStatus = "素材が変更されたか見つかりません。再検査してください。"; return; }
+            if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = "素材が変更されたか見つかりません。再検査してください。"; return; }
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(asset, inspectedAsset)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            await AssetInventory.ExportAsync(dialog.FileName, [asset]);
+            await AssetInventory.ExportAsync(dialog.FileName, [asset], token);
             AssetStatus = "素材メタデータを新規保存しました。";
         });
     }
@@ -269,13 +297,13 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         if (selected is null) return;
         var dialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを選択", CheckFileExists = true };
         if (dialog.ShowDialog() != true) return;
-        await ExecuteWithBusyAsync("Asset metadata verification", async () =>
+        await ExecuteToolAsync("Asset metadata verification", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
-            var assets = await AssetInventory.LoadAsync(dialog.FileName);
+            var assets = await AssetInventory.LoadAsync(dialog.FileName, token);
             var results = new List<string>();
             foreach (var asset in assets)
-                results.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset)}");
+                results.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset, token)}");
             if (!ReferenceEquals(selected, SelectedProject)) return;
             AssetStatus = results.Count == 0 ? "メタデータに素材がありません。" : string.Join("\n", results);
         });
@@ -288,7 +316,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         var requestedPath = GitPath;
         var requestedMessage = GitCommitMessage;
         var requestedBranch = GitBranch;
-        await ExecuteWithBusyAsync("Git", async () =>
+        await ExecuteToolAsync("Git", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
             if (directory is null || !Directory.Exists(directory)) { GitStatus = "プロジェクトのフォルダーが見つかりません。"; return; }
@@ -298,7 +326,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var git = new GitRepository(directory);
             if (operation is "commit" or "push")
             {
-                var repositoryRoot = await git.DetectAsync();
+                var repositoryRoot = await git.DetectAsync(token);
                 if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
                 if (!ReferenceEquals(selected, SelectedProject)) return;
                 var message = operation == "commit"
@@ -308,14 +336,14 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
             var result = operation switch
             {
-                "stage" => await git.StageAsync([requestedPath]),
-                "unstage" => await git.UnstageAsync([requestedPath]),
-                "commit" => await git.CommitAsync(requestedMessage),
-                "branch-create" => await git.CreateBranchAsync(requestedBranch),
-                "branch-switch" => await git.SwitchBranchAsync(requestedBranch),
-                "fetch" => await git.FetchAsync(),
-                "pull" => await git.PullAsync(),
-                "push" => await git.PushAsync(),
+                "stage" => await git.StageAsync([requestedPath], token),
+                "unstage" => await git.UnstageAsync([requestedPath], token),
+                "commit" => await git.CommitAsync(requestedMessage, token),
+                "branch-create" => await git.CreateBranchAsync(requestedBranch, token),
+                "branch-switch" => await git.SwitchBranchAsync(requestedBranch, token),
+                "fetch" => await git.FetchAsync(token),
+                "pull" => await git.PullAsync(token),
+                "push" => await git.PushAsync(token),
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
             if (ReferenceEquals(selected, SelectedProject))
@@ -327,7 +355,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         var selected = SelectedProject;
         if (selected is null) return;
-        await ExecuteWithBusyAsync("Git", async () =>
+        await ExecuteToolAsync("Git", async token =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
             if (directory is null || !Directory.Exists(directory))
@@ -336,7 +364,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 return;
             }
             var git = new GitRepository(directory);
-            var detected = await git.DetectAsync();
+            var detected = await git.DetectAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
             if (!detected.Success && initialize)
             {
@@ -346,19 +374,19 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                     return;
                 }
                 if (MessageBox.Show("このフォルダーに Git リポジトリを初期化しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
-                var recheck = await git.DetectAsync();
+                var recheck = await git.DetectAsync(token);
                 if (recheck.Success || !recheck.StandardError.Contains("not a git repository", StringComparison.OrdinalIgnoreCase))
                 {
                     GitStatus = "Git の状態が変化したため、初期化を中止しました。";
                     return;
                 }
-                var result = await git.InitializeAsync();
+                var result = await git.InitializeAsync(token);
                 if (!result.Success) { GitStatus = "Git の初期化に失敗しました。"; return; }
-                detected = await git.DetectAsync();
+                detected = await git.DetectAsync(token);
             }
             if (!detected.Success) { GitStatus = "Git リポジトリが見つかりません。"; return; }
-            var status = await git.StatusAsync();
-            var branches = await git.BranchesAsync();
+            var status = await git.StatusAsync(token);
+            var branches = await git.BranchesAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
             GitStatus = status.Success && branches.Success
                 ? $"Git: {detected.StandardOutput.Trim()}\n{branches.StandardOutput.Trim()}\n{(string.IsNullOrEmpty(status.StandardOutput) ? "変更なし" : status.StandardOutput.Replace('\0', '\n'))}"

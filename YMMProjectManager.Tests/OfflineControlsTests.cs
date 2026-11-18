@@ -27,6 +27,12 @@ internal static class OfflineControlsTests
             vm.AssetPath = "sample.png";
             await Invoke("InspectAssetAsync");
             if (!vm.AssetStatus.Contains("SHA-256:") || !vm.AssetStatus.Contains("9 bytes")) throw new Exception("asset inspection missing");
+            Func<CancellationToken, Task> pending = token => Task.Delay(Timeout.Infinite, token);
+            var cancelled = Invoke("ExecuteToolAsync", "Asset synthetic", pending);
+            if (!vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancel command unavailable");
+            vm.CancelToolCommand.Execute(null);
+            await cancelled;
+            if (!vm.AssetStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancellation status missing");
             vm.SelectedProject = null;
             if (vm.AssetStatus != string.Empty || vm.GitStatus != string.Empty) throw new Exception("stale status after selection");
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
