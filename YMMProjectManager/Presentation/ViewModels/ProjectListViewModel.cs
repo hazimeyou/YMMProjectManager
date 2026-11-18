@@ -9,6 +9,7 @@ using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
+using YMMProjectManager.Infrastructure.Git;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Infrastructure.Thumbnails;
@@ -35,6 +36,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private bool hasUnsavedProjectList;
     private string bundleStatus = string.Empty;
     private double bundleProgress;
+    private string gitStatus = string.Empty;
+    private string gitPath = string.Empty;
+    private string gitCommitMessage = string.Empty;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -57,6 +61,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             if (SetProperty(ref selectedProject, value))
             {
+                GitStatus = string.Empty;
                 CommandManager.InvalidateRequerySuggested();
             }
         }
@@ -94,6 +99,14 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand PackageSelectedProjectCommand { get; }
     public ICommand PackageOpenedProjectCommand { get; }
     public ICommand ExtractBundleCommand { get; }
+    public ICommand RefreshGitStatusCommand { get; }
+    public ICommand InitializeGitCommand { get; }
+    public ICommand StageGitPathCommand { get; }
+    public ICommand UnstageGitPathCommand { get; }
+    public ICommand CommitGitCommand { get; }
+    public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
+    public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
+    public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -121,6 +134,75 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => isInitialized && !IsBusy);
+        RefreshGitStatusCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(false), () => !IsBusy && SelectedProject is not null);
+        InitializeGitCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(true), () => !IsBusy && SelectedProject is not null);
+        StageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("stage"), () => !IsBusy && SelectedProject is not null);
+        UnstageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("unstage"), () => !IsBusy && SelectedProject is not null);
+        CommitGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("commit"), () => !IsBusy && SelectedProject is not null);
+    }
+
+    private async Task ChangeGitAsync(string operation)
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Git", async () =>
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
+            if (directory is null || !Directory.Exists(directory)) { GitStatus = "プロジェクトのフォルダーが見つかりません。"; return; }
+            if (operation != "commit" && string.IsNullOrWhiteSpace(GitPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
+            if (operation == "commit" && string.IsNullOrWhiteSpace(GitCommitMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
+            if (operation == "commit" && MessageBox.Show("現在ステージされているすべての変更をコミットします。続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            var git = new GitRepository(directory);
+            var result = operation switch
+            {
+                "stage" => await git.StageAsync([GitPath]),
+                "unstage" => await git.UnstageAsync([GitPath]),
+                "commit" => await git.CommitAsync(GitCommitMessage),
+                _ => throw new InvalidOperationException("Unknown Git operation."),
+            };
+            GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : "Git 操作に失敗しました。パス、メッセージ、リポジトリ状態を確認してください。";
+        });
+    }
+
+    private async Task ShowGitStatusAsync(bool initialize)
+    {
+        var selected = SelectedProject;
+        if (selected is null) return;
+        await ExecuteWithBusyAsync("Git", async () =>
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
+            if (directory is null || !Directory.Exists(directory))
+            {
+                GitStatus = "プロジェクトのフォルダーが見つかりません。";
+                return;
+            }
+            var git = new GitRepository(directory);
+            var detected = await git.DetectAsync();
+            if (!detected.Success && initialize)
+            {
+                if (!detected.StandardError.Contains("not a git repository", StringComparison.OrdinalIgnoreCase))
+                {
+                    GitStatus = "Git リポジトリの状態を確認できないため、初期化を中止しました。";
+                    return;
+                }
+                if (MessageBox.Show("このフォルダーに Git リポジトリを初期化しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                var recheck = await git.DetectAsync();
+                if (recheck.Success || !recheck.StandardError.Contains("not a git repository", StringComparison.OrdinalIgnoreCase))
+                {
+                    GitStatus = "Git の状態が変化したため、初期化を中止しました。";
+                    return;
+                }
+                var result = await git.InitializeAsync();
+                if (!result.Success) { GitStatus = "Git の初期化に失敗しました。"; return; }
+                detected = await git.DetectAsync();
+            }
+            if (!detected.Success) { GitStatus = "Git リポジトリが見つかりません。"; return; }
+            var status = await git.StatusAsync();
+            var branches = await git.BranchesAsync();
+            GitStatus = status.Success && branches.Success
+                ? $"Git: {detected.StandardOutput.Trim()}\n{branches.StandardOutput.Trim()}\n{(string.IsNullOrEmpty(status.StandardOutput) ? "変更なし" : status.StandardOutput.Replace('\0', '\n'))}"
+                : "Git の状態を取得できませんでした。";
+        });
     }
 
     public void SetTimelineToolInfo(TimelineToolInfo info)

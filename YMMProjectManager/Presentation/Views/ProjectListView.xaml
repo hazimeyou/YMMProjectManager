@@ -70,6 +70,22 @@
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
             <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,6,0,0">
+                <Button Content="Git 状態" MinWidth="90" Margin="0,0,8,0" Command="{Binding RefreshGitStatusCommand}" />
+                <Button Content="Git 初期化" MinWidth="90" Command="{Binding InitializeGitCommand}" />
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="ステージ" Command="{Binding StageGitPathCommand}" Margin="0,0,4,0" />
+                <Button Content="解除" Command="{Binding UnstageGitPathCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="メッセージ" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitCommitMessage, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="コミット" Command="{Binding CommitGitCommand}" />
+            </StackPanel>
 
             <ListBox
                 ItemsSource="{Binding Projects}"

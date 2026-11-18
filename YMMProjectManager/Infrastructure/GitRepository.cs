@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
@@ -31,6 +33,120 @@ public sealed class GitRepository
     }
     public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("branch", name, token);
     public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("switch", name, token);
+
+    public async Task<GitResult> FetchAsync(CancellationToken token = default)
+    {
+        var remote = await ValidateOriginAsync(push: false, token).ConfigureAwait(false);
+        return remote ?? SanitizeRemote(await RunAsync(["fetch", "--", "origin"], token).ConfigureAwait(false));
+    }
+
+    public async Task<GitResult> PullAsync(CancellationToken token = default)
+    {
+        var remote = await ValidateOriginAsync(push: false, token).ConfigureAwait(false);
+        if (remote is not null) return remote;
+        var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
+        if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pulling.");
+        var name = branch.StandardOutput.Trim();
+        if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
+            return new GitResult(1, "", "Invalid branch name.");
+        return SanitizeRemote(await RunAsync(["pull", "--ff-only", "--", "origin", "refs/heads/" + name], token).ConfigureAwait(false));
+    }
+
+    public async Task<GitResult> PushAsync(CancellationToken token = default)
+    {
+        var remote = await ValidateOriginAsync(push: true, token).ConfigureAwait(false);
+        if (remote is not null) return remote;
+        var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
+        if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing.");
+        var name = branch.StandardOutput.Trim();
+        if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
+            return new GitResult(1, "", "Invalid branch name.");
+        return SanitizeRemote(await RunAsync(["-c", "remote.origin.mirror=false", "-c", "push.followTags=false", "push", "--no-follow-tags", "--", "origin", "HEAD:refs/heads/" + name], token).ConfigureAwait(false));
+    }
+
+    public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>
+        CloneCoreAsync(remote, destination, null, token);
+
+    internal static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token)
+    {
+        ValidateRemote(remote);
+        ArgumentException.ThrowIfNullOrWhiteSpace(destination);
+        var full = Path.GetFullPath(destination);
+        if (Directory.Exists(full) || File.Exists(full)) throw new IOException("Clone destination already exists.");
+        var parent = Path.GetDirectoryName(full) ?? throw new ArgumentException("Invalid clone destination.", nameof(destination));
+        var repository = new GitRepository(parent);
+        // Reserve an owned sibling with an exclusive OS create before Git can write to it.
+        var temporary = Path.Combine(parent, ".ymmpm-clone-" + Guid.NewGuid().ToString("N"));
+        if (!CreateDirectory(temporary, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        GitResult result;
+        try { result = SanitizeRemote(await repository.RunAsync(["clone", "--", remote, temporary], token).ConfigureAwait(false)); }
+        catch (Exception ex)
+        {
+            ex.Data["CloneRecoveryPath"] = temporary;
+            throw;
+        }
+        if (!result.Success) return result with { RecoveryPath = temporary };
+        try
+        {
+            beforeMove?.Invoke();
+            Directory.Move(temporary, full);
+            return result;
+        }
+        catch (IOException)
+        {
+            // The completed clone remains in the owned temporary directory for the caller to inspect.
+            return new GitResult(1, "", "Clone destination became unavailable.", GitFailure.Unknown) { RecoveryPath = temporary };
+        }
+        catch (Exception ex)
+        {
+            ex.Data["CloneRecoveryPath"] = temporary;
+            throw;
+        }
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
+
+    private async Task<GitResult?> ValidateOriginAsync(bool push, CancellationToken token)
+    {
+        var args = push ? new[] { "remote", "get-url", "--push", "--all", "origin" } : new[] { "remote", "get-url", "--all", "origin" };
+        var result = await RunAsync(args, token).ConfigureAwait(false);
+        if (!result.Success) return new GitResult(result.ExitCode, "", "Remote origin is unavailable.");
+        var urls = result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        if (urls.Length != 1) return new GitResult(1, "", "Exactly one origin URL is required.");
+        try { ValidateRemote(urls[0]); }
+        catch (ArgumentException) { return new GitResult(1, "", "Remote URL is unsupported or contains credentials."); }
+        return null;
+    }
+
+    private static void ValidateRemote(string remote)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(remote);
+        if (remote.StartsWith('-') || remote.Contains('\r') || remote.Contains('\n') || remote.Contains('\0'))
+            throw new ArgumentException("Invalid remote.", nameof(remote));
+        if (Path.IsPathFullyQualified(remote) && !remote.StartsWith("\\\\", StringComparison.Ordinal)) return;
+        if (!Uri.TryCreate(remote, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new ArgumentException("Only local paths and HTTPS URLs without credentials are supported.", nameof(remote));
+    }
+
+    // Git, credential helpers and hooks can emit arbitrary secrets; do not return their output for remote operations.
+    private static GitResult SanitizeRemote(GitResult result)
+    {
+        if (result.Success) return new GitResult(result.ExitCode, "", "");
+        var error = result.StandardError;
+        var category = error.Contains("authentication failed", StringComparison.OrdinalIgnoreCase) || error.Contains("could not read Username", StringComparison.OrdinalIgnoreCase)
+            ? GitFailure.Authentication
+            : error.Contains("permission denied", StringComparison.OrdinalIgnoreCase) || error.Contains("403", StringComparison.OrdinalIgnoreCase)
+                ? GitFailure.Permission
+                : error.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) || error.Contains("not possible to fast-forward", StringComparison.OrdinalIgnoreCase) || error.Contains("fetch first", StringComparison.OrdinalIgnoreCase)
+                    ? GitFailure.Divergence
+                    : error.Contains("could not resolve host", StringComparison.OrdinalIgnoreCase) || error.Contains("couldn't connect", StringComparison.OrdinalIgnoreCase)
+                        ? GitFailure.Network
+                        : GitFailure.Unknown;
+        return new GitResult(result.ExitCode, "", "Remote operation failed. Check authentication, connectivity and branch state.", category);
+    }
 
     private Task<GitResult> RunBranchAsync(string command, string name, CancellationToken token)
     {
@@ -89,7 +205,10 @@ public sealed class GitRepository
     }
 }
 
-public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError)
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown }
+
+public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError, GitFailure Failure = GitFailure.None)
 {
     public bool Success => ExitCode == 0;
+    public string? RecoveryPath { get; init; }
 }

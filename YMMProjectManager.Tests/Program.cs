@@ -102,6 +102,7 @@ internal static class Program
         await TestProjectGenerationStorageReplaceAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);
         await GitRepositoryTests.RunAsync(workRoot);
+        await GitRemoteTests.RunAsync(workRoot);
         await AssetInventoryTests.RunAsync(workRoot);
     }
 
