@@ -19,6 +19,10 @@ internal static class YmmpxBundleTests
         {
             await TestPackageAndExtractWithYmmpxLibAsync(workRoot, ymmpxLibPath);
         }
+        else
+        {
+            Console.WriteLine("SKIP conditional case: real YmmpxLib unavailable");
+        }
     }
 
     private static Task TestInstallGuideMessageAsync(string workRoot)

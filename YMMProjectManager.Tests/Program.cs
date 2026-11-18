@@ -20,8 +20,12 @@ using YmmPreviewDiscoveryResult = YMMProjectManager.Infrastructure.Output.YmmPre
 
 internal static class Program
 {
+    private static int groupsPassed;
+    private static int groupsFailed;
+
     public static async Task Main()
     {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
 
@@ -32,6 +36,8 @@ internal static class Program
         }
         finally
         {
+            Console.WriteLine($"Test groups executed: total={groupsPassed + groupsFailed}, passed={groupsPassed}, failed={groupsFailed}, duration={timer.Elapsed}");
+            Console.WriteLine("Counts are top-level groups; nested cases and conditional skips are not counted.");
             try
             {
                 if (Directory.Exists(workRoot))
@@ -54,56 +60,62 @@ internal static class Program
             return;
         }
 
-        await TestZeroGenerationsAsync(workRoot);
-        await TestCreateAndListAsync(workRoot);
-        await TestMultipleGenerationsAsync(workRoot);
-        await TestManifestCorruptionAsync(workRoot);
-        await GenerationManifestProtectionTests.RunAsync(workRoot);
-        await ManifestWriteHardeningTests.RunAsync(workRoot);
-        await RelinkIntegrityTests.RunAsync(workRoot);
-        await TestMetadataCorruptionAsync(workRoot);
-        await TestRestoreAsync(workRoot);
-        await TestDeleteAsync(workRoot);
-        await TestDeletedFolderExistsAsync(workRoot);
-        await TestShaMismatchAsync(workRoot);
-        await TestMissingGenerationAsync(workRoot);
-        await TestLockedFileRestoreFailureAsync(workRoot);
-        await TestDiagnosticsAsync(workRoot);
-        await TestFastThumbnailOptionsDefaultsAsync();
-        await TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync();
-        await TestFastThumbnailFrameSamplingAsync();
-        await TestFastThumbnailResultSerializationAsync();
-        await TestThumbnailFastGenerationBenchmarkResultSerializationAsync();
-        await TestThumbnailFastGenerationBenchmarkSummaryReportSerializationAsync();
-        await TestThumbnailFastGenerationBenchmarkComparisonCalculationAsync();
-        await TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync(workRoot);
-        await TestPreviewBitmapDiagnosticsResultSerializationAsync();
-        await TestPreviewBitmapMethodSignatureSerializationAsync();
-        await TestPreviewBitmapCaptureResultSerializationAsync();
-        await TestPreviewBitmapComparisonResultSerializationAsync();
-        await TestPreviewBitmapDiagnosticsNoDispatcherAsync();
-        await TestSeekAdapterReflectionFailureAsync();
-        await TestSeekAdapterUsesAbsoluteTargetFrameAsync();
-        await TestSeekAdapterDetectsSetterExceptionAsync();
-        await TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync();
-        await TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync();
-        await TestSeekAdapterUsesCommandBindingFallbackAsync();
-        await TestSeekResultSerializationAsync();
-        await TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync();
-        await TestSeekProbeWriterAsync(workRoot);
-        await TestPreviewCaptureFallbackAsync();
-        await TestCurrentPreviewCaptureResultSerializationAsync();
-        await TestCurrentPreviewCapturePreviewViewModelFallbackAsync(workRoot);
-        await TestCurrentPreviewCaptureGetBitmapFallbackAsync(workRoot);
-        await TestLegacyProjectStoreCompatibilityAsync(workRoot);
-        await ProjectListSaveTests.RunAsync(workRoot);
-        await ProjectListRecoveryTests.RunAsync(workRoot);
-        await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
-        await TestProjectGenerationStorageReplaceAsync(workRoot);
-        await YmmpxBundleTests.RunAsync(workRoot);
-        await GitRepositoryTests.RunAsync(workRoot);
-        await GitRemoteTests.RunAsync(workRoot);
-        await AssetInventoryTests.RunAsync(workRoot);
+        await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
+        await RunGroupAsync("TestCreateAndListAsync", () => TestCreateAndListAsync(workRoot));
+        await RunGroupAsync("TestMultipleGenerationsAsync", () => TestMultipleGenerationsAsync(workRoot));
+        await RunGroupAsync("TestManifestCorruptionAsync", () => TestManifestCorruptionAsync(workRoot));
+        await RunGroupAsync("GenerationManifestProtectionTests.RunAsync", () => GenerationManifestProtectionTests.RunAsync(workRoot));
+        await RunGroupAsync("ManifestWriteHardeningTests.RunAsync", () => ManifestWriteHardeningTests.RunAsync(workRoot));
+        await RunGroupAsync("RelinkIntegrityTests.RunAsync", () => RelinkIntegrityTests.RunAsync(workRoot));
+        await RunGroupAsync("TestMetadataCorruptionAsync", () => TestMetadataCorruptionAsync(workRoot));
+        await RunGroupAsync("TestRestoreAsync", () => TestRestoreAsync(workRoot));
+        await RunGroupAsync("TestDeleteAsync", () => TestDeleteAsync(workRoot));
+        await RunGroupAsync("TestDeletedFolderExistsAsync", () => TestDeletedFolderExistsAsync(workRoot));
+        await RunGroupAsync("TestShaMismatchAsync", () => TestShaMismatchAsync(workRoot));
+        await RunGroupAsync("TestMissingGenerationAsync", () => TestMissingGenerationAsync(workRoot));
+        await RunGroupAsync("TestLockedFileRestoreFailureAsync", () => TestLockedFileRestoreFailureAsync(workRoot));
+        await RunGroupAsync("TestDiagnosticsAsync", () => TestDiagnosticsAsync(workRoot));
+        await RunGroupAsync("TestFastThumbnailOptionsDefaultsAsync", () => TestFastThumbnailOptionsDefaultsAsync());
+        await RunGroupAsync("TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync", () => TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync());
+        await RunGroupAsync("TestFastThumbnailFrameSamplingAsync", () => TestFastThumbnailFrameSamplingAsync());
+        await RunGroupAsync("TestFastThumbnailResultSerializationAsync", () => TestFastThumbnailResultSerializationAsync());
+        await RunGroupAsync("TestThumbnailFastGenerationBenchmarkResultSerializationAsync", () => TestThumbnailFastGenerationBenchmarkResultSerializationAsync());
+        await RunGroupAsync("TestThumbnailFastGenerationBenchmarkSummaryReportSerializationAsync", () => TestThumbnailFastGenerationBenchmarkSummaryReportSerializationAsync());
+        await RunGroupAsync("TestThumbnailFastGenerationBenchmarkComparisonCalculationAsync", () => TestThumbnailFastGenerationBenchmarkComparisonCalculationAsync());
+        await RunGroupAsync("TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync", () => TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync(workRoot));
+        await RunGroupAsync("TestPreviewBitmapDiagnosticsResultSerializationAsync", () => TestPreviewBitmapDiagnosticsResultSerializationAsync());
+        await RunGroupAsync("TestPreviewBitmapMethodSignatureSerializationAsync", () => TestPreviewBitmapMethodSignatureSerializationAsync());
+        await RunGroupAsync("TestPreviewBitmapCaptureResultSerializationAsync", () => TestPreviewBitmapCaptureResultSerializationAsync());
+        await RunGroupAsync("TestPreviewBitmapComparisonResultSerializationAsync", () => TestPreviewBitmapComparisonResultSerializationAsync());
+        await RunGroupAsync("TestPreviewBitmapDiagnosticsNoDispatcherAsync", () => TestPreviewBitmapDiagnosticsNoDispatcherAsync());
+        await RunGroupAsync("TestSeekAdapterReflectionFailureAsync", () => TestSeekAdapterReflectionFailureAsync());
+        await RunGroupAsync("TestSeekAdapterUsesAbsoluteTargetFrameAsync", () => TestSeekAdapterUsesAbsoluteTargetFrameAsync());
+        await RunGroupAsync("TestSeekAdapterDetectsSetterExceptionAsync", () => TestSeekAdapterDetectsSetterExceptionAsync());
+        await RunGroupAsync("TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync", () => TestSeekAdapterDetectsAfterFrameOutsideToleranceAsync());
+        await RunGroupAsync("TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync", () => TestSeekAdapterDiscoversTimelineFromWindowDataContextAsync());
+        await RunGroupAsync("TestSeekAdapterUsesCommandBindingFallbackAsync", () => TestSeekAdapterUsesCommandBindingFallbackAsync());
+        await RunGroupAsync("TestSeekResultSerializationAsync", () => TestSeekResultSerializationAsync());
+        await RunGroupAsync("TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync", () => TestSeekAdapterCommandBindingFallbackSkipsSafelyAsync());
+        await RunGroupAsync("TestSeekProbeWriterAsync", () => TestSeekProbeWriterAsync(workRoot));
+        await RunGroupAsync("TestPreviewCaptureFallbackAsync", () => TestPreviewCaptureFallbackAsync());
+        await RunGroupAsync("TestCurrentPreviewCaptureResultSerializationAsync", () => TestCurrentPreviewCaptureResultSerializationAsync());
+        await RunGroupAsync("TestCurrentPreviewCapturePreviewViewModelFallbackAsync", () => TestCurrentPreviewCapturePreviewViewModelFallbackAsync(workRoot));
+        await RunGroupAsync("TestCurrentPreviewCaptureGetBitmapFallbackAsync", () => TestCurrentPreviewCaptureGetBitmapFallbackAsync(workRoot));
+        await RunGroupAsync("TestLegacyProjectStoreCompatibilityAsync", () => TestLegacyProjectStoreCompatibilityAsync(workRoot));
+        await RunGroupAsync("ProjectListSaveTests.RunAsync", () => ProjectListSaveTests.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListRecoveryTests.RunAsync(workRoot));
+        await RunGroupAsync("TestProjectEntryThumbnailCacheDirectoryNotificationAsync", () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync());
+        await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));
+        await RunGroupAsync("YmmpxBundleTests.RunAsync", () => YmmpxBundleTests.RunAsync(workRoot));
+        await RunGroupAsync("GitRepositoryTests.RunAsync", () => GitRepositoryTests.RunAsync(workRoot));
+        await RunGroupAsync("GitRemoteTests.RunAsync", () => GitRemoteTests.RunAsync(workRoot));
+        await RunGroupAsync("AssetInventoryTests.RunAsync", () => AssetInventoryTests.RunAsync(workRoot));
+    }
+
+    private static async Task RunGroupAsync(string name, Func<Task> run)
+    {
+        try { await run(); groupsPassed++; Console.WriteLine($"PASS group: {name}"); }
+        catch { groupsFailed++; Console.WriteLine($"FAIL group: {name}"); throw; }
     }
 
     private static async Task RunFilteredAsync(string workRoot, string filter)
