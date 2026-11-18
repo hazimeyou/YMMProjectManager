@@ -70,6 +70,12 @@ internal static class GitRemoteTests
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
             var unsafeOrigin = await one.OriginAsync();
             Check(!unsafeOrigin.Success && !unsafeOrigin.StandardOutput.Contains("secret") && !unsafeOrigin.StandardError.Contains("secret"), "credential disclosure");
+            await Command(source, "remote", "set-url", "origin", "https://alpha.invalid/repo");
+            await Command(source, "config", "--local", "url.https://beta.invalid/.insteadOf", "https://alpha.invalid/");
+            await Command(source, "config", "--local", "url.https://gamma.invalid/.insteadOf", "https://beta.invalid/");
+            var once = await Command(source, "remote", "get-url", "origin");
+            var twice = await Command(source, "ls-remote", "--get-url", once);
+            Check(once == "https://beta.invalid/repo" && twice == "https://gamma.invalid/repo", "rewrite fixture changed");
             await Command(source, "remote", "set-url", "origin", bare);
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
