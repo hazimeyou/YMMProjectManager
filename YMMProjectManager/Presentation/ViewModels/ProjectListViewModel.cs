@@ -242,18 +242,22 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     {
         var selected = SelectedProject;
         if (selected is null) return;
+        var requestedPath = GitPath;
+        var requestedMessage = GitCommitMessage;
+        var requestedBranch = GitBranch;
         await ExecuteWithBusyAsync("Git", async () =>
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
             if (directory is null || !Directory.Exists(directory)) { GitStatus = "プロジェクトのフォルダーが見つかりません。"; return; }
-            if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(GitPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
-            if (operation == "commit" && string.IsNullOrWhiteSpace(GitCommitMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
-            if ((operation == "branch-create" || operation == "branch-switch") && string.IsNullOrWhiteSpace(GitBranch)) { GitStatus = "ブランチ名を入力してください。"; return; }
+            if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(requestedPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
+            if (operation == "commit" && string.IsNullOrWhiteSpace(requestedMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
+            if ((operation == "branch-create" || operation == "branch-switch") && string.IsNullOrWhiteSpace(requestedBranch)) { GitStatus = "ブランチ名を入力してください。"; return; }
             var git = new GitRepository(directory);
             if (operation is "commit" or "push")
             {
                 var repositoryRoot = await git.DetectAsync();
                 if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
+                if (!ReferenceEquals(selected, SelectedProject)) return;
                 var message = operation == "commit"
                     ? "このリポジトリのステージ済みの変更をすべてコミットします。"
                     : "このリポジトリの現在のブランチを origin の同名ブランチに送信します。";
@@ -261,17 +265,18 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
             var result = operation switch
             {
-                "stage" => await git.StageAsync([GitPath]),
-                "unstage" => await git.UnstageAsync([GitPath]),
-                "commit" => await git.CommitAsync(GitCommitMessage),
-                "branch-create" => await git.CreateBranchAsync(GitBranch),
-                "branch-switch" => await git.SwitchBranchAsync(GitBranch),
+                "stage" => await git.StageAsync([requestedPath]),
+                "unstage" => await git.UnstageAsync([requestedPath]),
+                "commit" => await git.CommitAsync(requestedMessage),
+                "branch-create" => await git.CreateBranchAsync(requestedBranch),
+                "branch-switch" => await git.SwitchBranchAsync(requestedBranch),
                 "fetch" => await git.FetchAsync(),
                 "pull" => await git.PullAsync(),
                 "push" => await git.PushAsync(),
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
-            GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({result.Failure})。パス、認証、通信、リポジトリ状態を確認してください。";
+            if (ReferenceEquals(selected, SelectedProject))
+                GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({result.Failure})。パス、認証、通信、リポジトリ状態を確認してください。";
         });
     }
 
@@ -289,6 +294,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             }
             var git = new GitRepository(directory);
             var detected = await git.DetectAsync();
+            if (!ReferenceEquals(selected, SelectedProject)) return;
             if (!detected.Success && initialize)
             {
                 if (!detected.StandardError.Contains("not a git repository", StringComparison.OrdinalIgnoreCase))
@@ -310,6 +316,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             if (!detected.Success) { GitStatus = "Git リポジトリが見つかりません。"; return; }
             var status = await git.StatusAsync();
             var branches = await git.BranchesAsync();
+            if (!ReferenceEquals(selected, SelectedProject)) return;
             GitStatus = status.Success && branches.Success
                 ? $"Git: {detected.StandardOutput.Trim()}\n{branches.StandardOutput.Trim()}\n{(string.IsNullOrEmpty(status.StandardOutput) ? "変更なし" : status.StandardOutput.Replace('\0', '\n'))}"
                 : "Git の状態を取得できませんでした。";
