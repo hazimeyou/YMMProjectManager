@@ -202,6 +202,9 @@ public sealed class YmmpxLibBridge
 
         try
         {
+            token.ThrowIfCancellationRequested();
+            using var archiveStream = new FileStream(ymmpxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            ValidateArchiveForExtraction(archiveStream, token);
             logger.Info(
                 $"YmmpxLib 展開開始。対象 ymmpx={ymmpxPath}, 展開先={outputDirectory}, 探索パス={string.Join(" | ", searchedPaths)}");
 
@@ -262,6 +265,47 @@ public sealed class YmmpxLibBridge
                 Success = false,
                 ErrorMessage = "YmmpxLib を使った展開に失敗しました。ログを確認してください。",
             };
+        }
+    }
+
+    internal static void ValidateArchiveForExtraction(Stream stream, CancellationToken token, long maxTotalBytes = 100L * 1024 * 1024 * 1024, int maxEntries = 100000)
+    {
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        long total = 0;
+        if (archive.Entries.Count > maxEntries) throw new InvalidDataException("パッケージ内の項目数が多すぎます。");
+        foreach (var entry in archive.Entries)
+        {
+            token.ThrowIfCancellationRequested();
+            var name = entry.FullName.Replace('\\', '/');
+            if (string.IsNullOrEmpty(name) || name.StartsWith('/') || name.Contains(':'))
+                throw new InvalidDataException("パッケージに不正なパスがあります。");
+            var parts = name.TrimEnd('/').Split('/');
+            if (parts.Any(part => part.Length == 0 || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+                throw new InvalidDataException("パッケージに不正なパスがあります。");
+            foreach (var part in parts)
+            {
+                var stem = part.Split('.')[0];
+                if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase) || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
+                    stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
+                    (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && stem[3] is >= '1' and <= '9'))
+                    throw new InvalidDataException("パッケージに予約済みの名前があります。");
+            }
+            if (!paths.Add(string.Join('/', parts))) throw new InvalidDataException("パッケージに重複したパスがあります。");
+            if (!name.EndsWith('/')) files.Add(string.Join('/', parts));
+            if (((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000) throw new InvalidDataException("リンク項目は展開できません。");
+            if (entry.Length > maxTotalBytes - total) throw new InvalidDataException("パッケージの展開サイズが上限を超えます。");
+            total += entry.Length;
+        }
+        foreach (var path in paths)
+        {
+            var slash = path.IndexOf('/');
+            while (slash >= 0)
+            {
+                if (files.Contains(path[..slash])) throw new InvalidDataException("ファイルとディレクトリが競合しています。");
+                slash = path.IndexOf('/', slash + 1);
+            }
         }
     }
 

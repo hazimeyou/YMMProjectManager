@@ -121,6 +121,7 @@ internal static class Program
         await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));
         await RunGroupAsync("YmmpxBundleTests.RunAsync", () => YmmpxBundleTests.RunAsync(workRoot));
         await RunGroupAsync("YmmpxFailureTests.RunAsync", () => YmmpxFailureTests.RunAsync(workRoot));
+        await RunGroupAsync("YmmpxArchiveValidationTests.RunAsync", () => YmmpxArchiveValidationTests.RunAsync(workRoot));
         await RunGroupAsync("GitRepositoryTests.RunAsync", () => GitRepositoryTests.RunAsync(workRoot));
         await RunGroupAsync("GitRemoteTests.RunAsync", () => GitRemoteTests.RunAsync(workRoot));
         await RunGroupAsync("OfflineControlsTests.RunAsync", () => OfflineControlsTests.RunAsync(workRoot));
