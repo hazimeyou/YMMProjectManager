@@ -25,6 +25,7 @@ internal static class GitRemoteTests
             }
             var source = Path.Combine(root, "source"); var bare = Path.Combine(root, "remote.git"); var clone = Path.Combine(root, "clone");
             Directory.CreateDirectory(source); var one = new GitRepository(source); Check((await one.InitializeAsync()).Success, "init");
+            Check(!(await one.FetchAsync()).Success, "missing remote accepted");
             await Command(source, "config", "user.name", "Synthetic Tester"); await Command(source, "config", "user.email", "synthetic@example.invalid");
             await File.WriteAllTextAsync(Path.Combine(source, "one.txt"), "one");
             Check((await one.StageAsync(["one.txt"])).Success && (await one.CommitAsync("first")).Success, "initial commit");
@@ -49,6 +50,14 @@ internal static class GitRemoteTests
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
+            using (var cancelled = new CancellationTokenSource())
+            {
+                cancelled.Cancel();
+                var cancelledDestination = Path.Combine(root, "cancelled");
+                var countBefore = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Count();
+                try { await GitRepository.CloneAsync(bare, cancelledDestination, cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
+                Check(!Directory.Exists(cancelledDestination) && countBefore == Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Count(), "cancelled clone created files");
+            }
             var raced = Path.Combine(root, "raced");
             var race = await GitRepository.CloneCoreAsync(bare, raced, () => { Directory.CreateDirectory(raced); File.WriteAllText(Path.Combine(raced, "sentinel"), "keep"); }, CancellationToken.None);
             Check(!race.Success && race.RecoveryPath is not null && Directory.Exists(race.RecoveryPath), "race clone recovery");

@@ -68,6 +68,12 @@
                     Margin="0,0,8,0"
                     Command="{Binding PackageOpenedProjectCommand}" />
             </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="ブランチ" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="作成" Command="{Binding CreateGitBranchCommand}" Margin="0,0,4,0" />
+                <Button Content="切替" Command="{Binding SwitchGitBranchCommand}" />
+            </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
             <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,6,0,0">
@@ -76,7 +82,12 @@
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
-                <TextBlock Text="相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
+                <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}" Margin="0,0,4,0" />
+                <Button Content="Push" Command="{Binding PushGitCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="プロジェクトからの相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="ステージ" Command="{Binding StageGitPathCommand}" Margin="0,0,4,0" />
                 <Button Content="解除" Command="{Binding UnstageGitPathCommand}" />

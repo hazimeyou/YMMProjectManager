@@ -69,6 +69,7 @@ public sealed class GitRepository
 
     internal static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         ValidateRemote(remote);
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         var full = Path.GetFullPath(destination);

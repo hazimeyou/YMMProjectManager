@@ -39,6 +39,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string gitStatus = string.Empty;
     private string gitPath = string.Empty;
     private string gitCommitMessage = string.Empty;
+    private string gitBranch = string.Empty;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -104,9 +105,15 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand StageGitPathCommand { get; }
     public ICommand UnstageGitPathCommand { get; }
     public ICommand CommitGitCommand { get; }
+    public ICommand CreateGitBranchCommand { get; }
+    public ICommand SwitchGitBranchCommand { get; }
+    public ICommand FetchGitCommand { get; }
+    public ICommand PullGitCommand { get; }
+    public ICommand PushGitCommand { get; }
     public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
     public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
     public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
+    public string GitBranch { get => gitBranch; set => SetProperty(ref gitBranch, value); }
 
     public ProjectListViewModel()
         : this(CreateLogger(), null)
@@ -139,6 +146,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         StageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("stage"), () => !IsBusy && SelectedProject is not null);
         UnstageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("unstage"), () => !IsBusy && SelectedProject is not null);
         CommitGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("commit"), () => !IsBusy && SelectedProject is not null);
+        CreateGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-create"), () => !IsBusy && SelectedProject is not null);
+        SwitchGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-switch"), () => !IsBusy && SelectedProject is not null);
+        FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => !IsBusy && SelectedProject is not null);
+        PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => !IsBusy && SelectedProject is not null);
+        PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => !IsBusy && SelectedProject is not null);
     }
 
     private async Task ChangeGitAsync(string operation)
@@ -149,18 +161,32 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         {
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
             if (directory is null || !Directory.Exists(directory)) { GitStatus = "プロジェクトのフォルダーが見つかりません。"; return; }
-            if (operation != "commit" && string.IsNullOrWhiteSpace(GitPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
+            if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(GitPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
             if (operation == "commit" && string.IsNullOrWhiteSpace(GitCommitMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
-            if (operation == "commit" && MessageBox.Show("現在ステージされているすべての変更をコミットします。続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            if ((operation == "branch-create" || operation == "branch-switch") && string.IsNullOrWhiteSpace(GitBranch)) { GitStatus = "ブランチ名を入力してください。"; return; }
             var git = new GitRepository(directory);
+            if (operation is "commit" or "push")
+            {
+                var repositoryRoot = await git.DetectAsync();
+                if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
+                var message = operation == "commit"
+                    ? "このリポジトリのステージ済みの変更をすべてコミットします。"
+                    : "このリポジトリの現在のブランチを origin の同名ブランチに送信します。";
+                if (MessageBox.Show($"{message}\n{repositoryRoot.StandardOutput.Trim()}\n続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+            }
             var result = operation switch
             {
                 "stage" => await git.StageAsync([GitPath]),
                 "unstage" => await git.UnstageAsync([GitPath]),
                 "commit" => await git.CommitAsync(GitCommitMessage),
+                "branch-create" => await git.CreateBranchAsync(GitBranch),
+                "branch-switch" => await git.SwitchBranchAsync(GitBranch),
+                "fetch" => await git.FetchAsync(),
+                "pull" => await git.PullAsync(),
+                "push" => await git.PushAsync(),
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
-            GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : "Git 操作に失敗しました。パス、メッセージ、リポジトリ状態を確認してください。";
+            GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({result.Failure})。パス、認証、通信、リポジトリ状態を確認してください。";
         });
     }
 
