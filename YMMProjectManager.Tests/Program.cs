@@ -101,6 +101,8 @@ internal static class Program
         await TestProjectEntryThumbnailCacheDirectoryNotificationAsync();
         await TestProjectGenerationStorageReplaceAsync(workRoot);
         await YmmpxBundleTests.RunAsync(workRoot);
+        await GitRepositoryTests.RunAsync(workRoot);
+        await AssetInventoryTests.RunAsync(workRoot);
     }
 
     private static async Task RunFilteredAsync(string workRoot, string filter)
