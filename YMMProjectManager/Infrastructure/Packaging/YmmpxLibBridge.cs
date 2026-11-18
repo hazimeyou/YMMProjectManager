@@ -2,6 +2,8 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.IO.Compression;
 using YMMProjectManager.Domain.Packaging;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
@@ -50,8 +52,18 @@ public sealed class YmmpxLibBridge
             };
         }
 
+        string? temporaryPath = null;
+        var temporaryOwned = false;
         try
         {
+            token.ThrowIfCancellationRequested();
+            var destination = Path.GetFullPath(outputYmmpxPath);
+            if (string.Equals(destination, Path.GetFullPath(ymmpPath), StringComparison.OrdinalIgnoreCase))
+                throw new IOException("プロジェクトと同じパスには出力できません。");
+            var existed = File.Exists(destination);
+            var originalHash = existed ? HashFile(destination) : null;
+            temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
+            using (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { temporaryOwned = true; }
             var scan = ScanProjectForLogging(ymmpPath);
             logger.Info(
                 $"YmmpxLib 同梱開始。対象 ymmp={ymmpPath}, 出力 ymmpx={outputYmmpxPath}, 探索パス={string.Join(" | ", searchedPaths)}");
@@ -89,8 +101,8 @@ public sealed class YmmpxLibBridge
                 ?? throw new MissingMethodException("CreatePackageAsync が見つかりません。");
 
             var args = createMethod.GetParameters().Length >= 6
-                ? new object?[] { ymmpPath, outputYmmpxPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter, token }
-                : new object?[] { ymmpPath, outputYmmpxPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter };
+                ? new object?[] { ymmpPath, temporaryPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter, token }
+                : new object?[] { ymmpPath, temporaryPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter };
 
             var taskObj = createMethod.Invoke(null, args) ?? throw new InvalidOperationException("CreatePackageAsync の戻り値が null です。");
             if (taskObj is not Task task)
@@ -100,9 +112,35 @@ public sealed class YmmpxLibBridge
 
             await task.ConfigureAwait(false);
             var result = ExtractTaskResult(taskObj);
-            var packagedOutputPath = GetStringProperty(result, "OutputPath") ?? outputYmmpxPath;
+            var packagedOutputPath = GetStringProperty(result, "OutputPath") ?? temporaryPath;
+            if (!string.Equals(Path.GetFullPath(packagedOutputPath), temporaryPath, StringComparison.OrdinalIgnoreCase) ||
+                !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
+                throw new IOException("一時出力が不正です。");
+            using (var archive = ZipFile.OpenRead(temporaryPath))
+                if (archive.Entries.Count == 0) throw new InvalidDataException("空のパッケージは保存できません。");
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
+            var links = scan.Links.Select(link => new YmmpxPackageLink
+            {
+                OriginalPath = link.OriginalPath,
+                ResolvedPath = link.ResolvedPath,
+                BundlePath = fileMap.TryGetValue(link.BundleFileName, out var bundlePath) ? bundlePath : link.BundlePath,
+                Exists = link.Exists,
+                Status = link.Exists ? "packaged" : "missing",
+            }).ToArray();
+            token.ThrowIfCancellationRequested();
+            if (existed)
+            {
+                if (!File.Exists(destination) || !CryptographicOperations.FixedTimeEquals(originalHash!, HashFile(destination)))
+                    throw new IOException("出力先が外部で変更されました。");
+                File.Replace(temporaryPath, destination, null);
+            }
+            else
+            {
+                File.Move(temporaryPath, destination);
+            }
+            temporaryOwned = false;
+            packagedOutputPath = destination;
 
             logger.Info(
                 $"YmmpxLib 同梱成功。対象 ymmp={ymmpPath}, 出力 ymmpx={packagedOutputPath}, 検出={scan.DetectedCount}, 同梱成功={resourceCount}, 不足={scan.MissingCount}, 重複={scan.DuplicateCount}, 解決={resolvedAssemblyPath}");
@@ -116,14 +154,7 @@ public sealed class YmmpxLibBridge
                 PackagedMaterialCount = resourceCount,
                 MissingMaterialCount = scan.MissingCount,
                 DuplicateMaterialCount = scan.DuplicateCount,
-                Links = scan.Links.Select(link => new YmmpxPackageLink
-                {
-                    OriginalPath = link.OriginalPath,
-                    ResolvedPath = link.ResolvedPath,
-                    BundlePath = fileMap.TryGetValue(link.BundleFileName, out var bundlePath) ? bundlePath : link.BundlePath,
-                    Exists = link.Exists,
-                    Status = link.Exists ? "packaged" : "missing",
-                }).ToArray(),
+                Links = links,
             };
         }
         catch (OperationCanceledException)
@@ -142,6 +173,19 @@ public sealed class YmmpxLibBridge
                 ErrorMessage = "YmmpxLib を使った同梱に失敗しました。ログを確認してください。",
             };
         }
+        finally
+        {
+            if (temporaryOwned && temporaryPath is not null)
+            {
+                try { File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    private static byte[] HashFile(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        return SHA256.HashData(stream);
     }
 
     public async Task<YmmpxExtractResult> ExtractPackageAsync(
