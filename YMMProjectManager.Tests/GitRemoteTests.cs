@@ -56,7 +56,32 @@ internal static class GitRemoteTests
             await Command(clone, "config", "user.name", "Synthetic Tester"); await Command(clone, "config", "user.email", "synthetic@example.invalid");
             await File.WriteAllTextAsync(Path.Combine(clone, "two.txt"), "two");
             Check((await two.StageAsync(["two.txt"])).Success && (await two.CommitAsync("second")).Success && (await two.PushAsync()).Success, "clone push");
-            Check((await one.FetchAsync()).Success && (await one.PullAsync()).Success, "fetch and fast-forward pull");
+            await Command(source, "branch", "race-side");
+            var sideBefore = await Command(source, "rev-parse", "refs/heads/race-side");
+            one.BeforeRemoteExecution = () =>
+            {
+                var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
+                start.ArgumentList.Add("switch"); start.ArgumentList.Add("race-side");
+                using var process = Process.Start(start)!; process.WaitForExit();
+                Check(process.ExitCode == 0, "switch branch during pull fixture");
+            };
+            var racedPull = await one.PullAsync();
+            one.BeforeRemoteExecution = null;
+            Check(!racedPull.Success && racedPull.Failure == GitFailure.UnsafeOperation && !string.IsNullOrWhiteSpace(racedPull.StandardError), "raced pull did not report failure");
+            Check(await Command(source, "symbolic-ref", "--short", "HEAD") == "race-side", "pull race fixture did not switch branches");
+            Check(await Command(source, "rev-parse", "refs/heads/race-side") == sideBefore, "raced pull changed unintended branch");
+            await Command(source, "switch", branch);
+            using (var cancelledPull = new CancellationTokenSource())
+            {
+                cancelledPull.Cancel();
+                try { await one.PullAsync(cancelledPull.Token); throw new Exception("pull cancellation ignored"); }
+                catch (OperationCanceledException) { }
+            }
+            Check((await one.FetchAsync()).Success, "fetch");
+            var disabledPull = await one.PullAsync();
+            Check(!disabledPull.Success && disabledPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
+            Program.ReportConditionalSkip("product fast-forward pull disabled pending cross-process branch protection");
+            await Command(source, "merge", "--ff-only", "refs/remotes/origin/" + branch);
             Check(await Command(source, "rev-parse", "HEAD") == await Command(clone, "rev-parse", "HEAD"), "heads differ");
             await File.WriteAllTextAsync(Path.Combine(source, "local.txt"), "local");
             Check((await one.StageAsync(["local.txt"])).Success && (await one.CommitAsync("local")).Success, "local commit");
@@ -65,7 +90,8 @@ internal static class GitRemoteTests
             var prior = await Command(source, "rev-parse", "HEAD");
             var rejectedPush = await one.PushAsync(); var rejectedPull = await one.PullAsync();
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
-            Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.Divergence, "divergence classification");
+            Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, "failure classification");
+            Program.ReportConditionalSkip("product pull divergence classification disabled pending safe pull implementation");
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
             var unsafeOrigin = await one.OriginAsync();

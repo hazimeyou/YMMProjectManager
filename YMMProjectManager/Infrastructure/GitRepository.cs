@@ -63,7 +63,10 @@ public sealed class GitRepository
         if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
         BeforeRemoteExecution?.Invoke();
-        return SanitizeRemote(await RunAsync(["pull", "--ff-only", "--", url!, "refs/heads/" + name], token).ConfigureAwait(false));
+        token.ThrowIfCancellationRequested();
+        // Git pull updates the branch checked out when it executes, not necessarily the
+        // one observed above. Another process can switch HEAD even after a recheck.
+        return new GitResult(1, "", "Pull is disabled because the checked-out branch can change concurrently.", GitFailure.UnsafeOperation);
     }
 
     public async Task<GitResult> PushAsync(CancellationToken token = default)
@@ -228,7 +231,7 @@ public sealed class GitRepository
     }
 }
 
-public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown }
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation }
 
 public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError, GitFailure Failure = GitFailure.None)
 {
