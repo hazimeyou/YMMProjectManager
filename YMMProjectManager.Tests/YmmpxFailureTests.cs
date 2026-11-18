@@ -10,7 +10,7 @@ internal static class YmmpxFailureTests
         var root = Path.Combine(workRoot, "ymmpx-failure"); Directory.CreateDirectory(root);
         var project = Path.Combine(root, "sample.ymmp"); var output = Path.Combine(root, "sample.ymmpx");
         await File.WriteAllTextAsync(project, "{}"); await File.WriteAllTextAsync(output, "original package");
-        var bridge = new YmmpxLibBridge(new FileLogger(Path.Combine(root, "test.log")), typeof(YmmpxLib.YmmpxPackageService).Assembly.Location, root);
+        var bridge = new YmmpxLibBridge(new FileLogger(Path.Combine(root, "test.log")), typeof(YmmpxLib.YmmpxPackageService).Assembly);
         var result = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
         if (result.Success || await File.ReadAllTextAsync(output) != "original package")
             throw new Exception("existing package was not preserved after library failure");

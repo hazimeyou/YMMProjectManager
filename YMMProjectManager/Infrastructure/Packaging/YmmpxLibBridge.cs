@@ -24,6 +24,13 @@ public sealed class YmmpxLibBridge
         this.baseDirectory = baseDirectory;
     }
 
+    internal YmmpxLibBridge(FileLogger logger, Assembly assembly)
+    {
+        this.logger = logger;
+        cachedAssembly = assembly;
+        cachedAssemblyPath = assembly.Location;
+    }
+
     public IReadOnlyList<string> SearchedPaths => searchedPaths;
 
     public string MissingLibraryMessage =>
