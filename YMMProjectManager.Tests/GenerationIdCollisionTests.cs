@@ -46,6 +46,14 @@ internal static class GenerationIdCollisionTests
         var restore = await new ProjectGenerationService(logger, storage).RestoreGenerationAsync(project, first.GenerationId, GenerationRestoreMode.RestoreAsNewFile);
         var restoreHashAfter = SHA256.HashData(await File.ReadAllBytesAsync(restoredPath));
         if (restore.Success || !restoreHash.SequenceEqual(restoreHashAfter)) throw new Exception("restore as new overwrote existing file");
+        var createTemp = typeof(ProjectGenerationService).GetMethod("CreateValidatedRestoreTempAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        try
+        {
+            await (Task<string>)createTemp.Invoke(null, new object[] { snapshot, new string('0', 64), root, CancellationToken.None })!;
+            throw new Exception("restore accepted a bad hash");
+        }
+        catch (InvalidDataException) { }
+        if (Directory.EnumerateFiles(root, "*.restore.tmp").Any()) throw new Exception("restore validation left a temporary file");
         var manifestPath = storage.GetManifestPath(projectId);
         var manifest = JsonNode.Parse(await File.ReadAllTextAsync(manifestPath))!;
         manifest["Generations"]![0]!["GenerationId"] = @"..\..\victim";

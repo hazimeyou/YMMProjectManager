@@ -440,25 +440,35 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     {
         Directory.CreateDirectory(targetDirectory);
         var tempPath = Path.Combine(targetDirectory, $"{Guid.NewGuid():N}.restore.tmp");
-
-        await using (var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-        await using (var destination = File.Create(tempPath))
+        var owned = false;
+        try
         {
-            await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            await using (var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            await using (var destination = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
+            {
+                owned = true;
+                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
+            }
+
+            var tempSha = await Task.Run(() =>
+            {
+                using var stream = File.OpenRead(tempPath);
+                var bytes = SHA256.HashData(stream);
+                return Convert.ToHexString(bytes).ToLowerInvariant();
+            }, cancellationToken).ConfigureAwait(false);
+
+            if (!string.Equals(tempSha, expectedSha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("一時ファイルの SHA256 検証に失敗しました。");
+            return tempPath;
         }
-
-        var tempSha = await Task.Run(() =>
+        catch
         {
-            using var stream = File.OpenRead(tempPath);
-            var bytes = SHA256.HashData(stream);
-            return Convert.ToHexString(bytes).ToLowerInvariant();
-        }, cancellationToken).ConfigureAwait(false);
-
-        if (!string.Equals(tempSha, expectedSha256, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidDataException("一時ファイルの SHA256 検証に失敗しました。");
+            if (owned)
+            {
+                try { File.Delete(tempPath); }
+                catch { /* Preserve the original copy or validation failure. */ }
+            }
+            throw;
         }
-
-        return tempPath;
     }
 }
