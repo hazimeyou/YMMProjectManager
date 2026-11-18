@@ -37,6 +37,14 @@ internal static class Program
             await ProjectListConcurrencyTests.RunWorkerAsync(args[1], args[2]);
             return;
         }
+        if (args.Length == 2 && args[0] == "--ymmpx-missing-fixture")
+        {
+            var allowed = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests")) + Path.DirectorySeparatorChar;
+            var fixtureRoot = Path.GetFullPath(args[1]);
+            if (!fixtureRoot.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Fixture outside isolated root.");
+            await YmmpxBundleTests.TestMissingYmmpxLibReturnsErrorAsync(fixtureRoot);
+            return;
+        }
         var timer = System.Diagnostics.Stopwatch.StartNew();
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);

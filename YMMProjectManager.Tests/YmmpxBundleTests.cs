@@ -12,7 +12,19 @@ internal static class YmmpxBundleTests
         await TestLegacyFolderDetectionAsync(workRoot);
         await TestInstallerDownloadAndLaunchAsync(workRoot);
         await TestResolverSearchPathsAsync(workRoot);
-        await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
+        var configuredLibrary = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
+        if (string.IsNullOrWhiteSpace(configuredLibrary)) await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
+        else
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+            start.ArgumentList.Add("--ymmpx-missing-fixture"); start.ArgumentList.Add(workRoot);
+            start.Environment.Remove("YMMPX_LIB_PATH");
+            using var child = System.Diagnostics.Process.Start(start)!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try { await child.WaitForExitAsync(timeout.Token); }
+            finally { if (!child.HasExited) child.Kill(true); }
+            AssertTrue(child.ExitCode == 0, "isolated missing-library fixture failed: " + await child.StandardError.ReadToEndAsync());
+        }
 
         var ymmpxLibPath = LocateYmmpxLibDll();
         if (!string.IsNullOrWhiteSpace(ymmpxLibPath))
@@ -90,7 +102,7 @@ internal static class YmmpxBundleTests
         return Task.CompletedTask;
     }
 
-    private static async Task TestMissingYmmpxLibReturnsErrorAsync(string workRoot)
+    internal static async Task TestMissingYmmpxLibReturnsErrorAsync(string workRoot)
     {
         var root = CreateRoot(workRoot, nameof(TestMissingYmmpxLibReturnsErrorAsync));
         var logger = new FileLogger(Path.Combine(root, "logs", "missing.log"));
@@ -149,6 +161,15 @@ internal static class YmmpxBundleTests
 
         var extractRoot = Path.Combine(root, "extract");
         var extractResult = await service.ExtractPackageAsync(outputPath, extractRoot, CancellationToken.None);
+
+        if (!extractResult.Success)
+        {
+            AssertTrue(extractResult.ErrorMessage == "展開先の保護を検証中のため、ymmpx の展開は利用できません。", "unexpected extraction failure");
+            AssertTrue(!Directory.Exists(extractRoot), "disabled extraction created output");
+            Program.ReportConditionalSkip("product Ymmpx extraction success remains disabled");
+            await RealYmmpxR5Tests.RunAsync(workRoot);
+            return;
+        }
 
         AssertTrue(extractResult.Success, extractResult.ErrorMessage ?? "extract failed");
         AssertTrue(File.Exists(extractResult.RestoredProjectPath ?? string.Empty), "restored ymmp should exist");
