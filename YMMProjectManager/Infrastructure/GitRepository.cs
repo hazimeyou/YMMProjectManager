@@ -212,6 +212,14 @@ public sealed class GitRepository
         };
         foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES" })
             start.Environment.Remove(name);
+        // Inherited command-scoped config can inject hooks or rewrite a remote independently
+        // of the repository and normal user Git configuration that the UI asks users to trust.
+        foreach (var name in start.Environment.Keys.Where(name =>
+            name.Equals("GIT_CONFIG_COUNT", StringComparison.OrdinalIgnoreCase) ||
+            name.Equals("GIT_CONFIG_PARAMETERS", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase) ||
+            name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(name);
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         // Status refresh must not silently start a repository-configured fsmonitor process.

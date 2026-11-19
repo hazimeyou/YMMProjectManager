@@ -29,6 +29,51 @@ internal static class GitRepositoryTests
         await File.WriteAllTextAsync(Path.Combine(root, "-special.txt"), "literal path");
         Check((await git.StageAsync(["one.txt", "-special.txt"])).Success, "stage paths");
         Check((await git.CommitAsync("first commit")).Success, "commit");
+        var hooks = Path.Combine(root, "injected-hooks"); Directory.CreateDirectory(hooks);
+        await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nprintf invoked > injected-hook-ran\n");
+        var previousCount = Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT");
+        var previousKey = Environment.GetEnvironmentVariable("GIT_CONFIG_KEY_0");
+        var previousValue = Environment.GetEnvironmentVariable("GIT_CONFIG_VALUE_0");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "injected.txt"), "synthetic");
+            Check((await git.StageAsync(["injected.txt"])).Success, "stage for injected config test");
+            Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", "1");
+            Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", "core.hooksPath");
+            Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", hooks.Replace('\\', '/'));
+            Check((await git.CommitAsync("config environment fixture")).Success, "commit with environment fixture");
+            Check(!File.Exists(Path.Combine(root, "injected-hook-ran")), "Git executed inherited config-injected hook");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", previousCount);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", previousKey);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", previousValue);
+        }
+        var previousParameters = Environment.GetEnvironmentVariable("GIT_CONFIG_PARAMETERS");
+        try
+        {
+            await File.WriteAllTextAsync(Path.Combine(root, "parameters.txt"), "synthetic");
+            Check((await git.StageAsync(["parameters.txt"])).Success, "stage for parameters test");
+            Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", $"'core.hooksPath={hooks.Replace('\\', '/')}'");
+            var probe = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            foreach (var arg in new[] { "config", "--get", "core.hooksPath" }) probe.ArgumentList.Add(arg);
+            using (var process = Process.Start(probe)!)
+            {
+                var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
+                await process.WaitForExitAsync();
+                Check(process.ExitCode == 0 && (await output).Trim() == hooks.Replace('\\', '/'), "parameters injection fixture invalid: " + await error);
+            }
+            Check((await git.CommitAsync("config parameters fixture")).Success, "commit with parameters fixture");
+            Check(!File.Exists(Path.Combine(root, "injected-hook-ran")), "Git executed GIT_CONFIG_PARAMETERS-injected hook");
+        }
+        finally { Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", previousParameters); }
+        var hookConfig = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
+        foreach (var arg in new[] { "config", "--local", "core.hooksPath", hooks.Replace('\\', '/') }) hookConfig.ArgumentList.Add(arg);
+        using (var process = Process.Start(hookConfig)!) { await process.WaitForExitAsync(); Check(process.ExitCode == 0, "fixture local hook config"); }
+        await File.WriteAllTextAsync(Path.Combine(root, "local-hook.txt"), "synthetic");
+        Check((await git.StageAsync(["local-hook.txt"])).Success && (await git.CommitAsync("local hook fixture")).Success, "local hook commit");
+        Check(File.Exists(Path.Combine(root, "injected-hook-ran")), "intentionally configured repository hook was suppressed");
         Check((await git.DetectAsync()).Success && (await git.HistoryAsync()).StandardOutput.Contains("first commit"), "detect/history");
         Check((await git.CreateBranchAsync("feature/test")).Success && (await git.SwitchBranchAsync("feature/test")).Success, "branches");
         Check((await git.BranchesAsync()).StandardOutput.Contains("feature/test"), "branch list");

@@ -35,6 +35,25 @@ internal static class GitRemoteTests
             await Command(root, "--git-dir", bare, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             var decoy = Path.Combine(root, "decoy.git");
             await Command(root, "init", "--bare", decoy);
+            var oldCount = Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT");
+            var oldKey = Environment.GetEnvironmentVariable("GIT_CONFIG_KEY_0");
+            var oldValue = Environment.GetEnvironmentVariable("GIT_CONFIG_VALUE_0");
+            try
+            {
+                var redirected = new Uri(decoy).AbsoluteUri;
+                Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", "1");
+                Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", $"url.{redirected}.insteadOf");
+                Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", bare);
+                Check((await Command(source, "remote", "get-url", "origin")) == redirected, "environment rewrite fixture invalid");
+                var actual = await one.OriginAsync();
+                Check(actual.Success && actual.StandardOutput == bare, "origin followed inherited config rewrite");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("GIT_CONFIG_COUNT", oldCount);
+                Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", oldKey);
+                Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", oldValue);
+            }
             one.BeforeRemoteExecution = () =>
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
@@ -90,7 +109,7 @@ internal static class GitRemoteTests
             var prior = await Command(source, "rev-parse", "HEAD");
             var rejectedPush = await one.PushAsync(); var rejectedPull = await one.PullAsync();
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
-            Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, "failure classification");
+            Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, $"failure classification: push={rejectedPush.Failure}, pull={rejectedPull.Failure}");
             Program.ReportConditionalSkip("product pull divergence classification disabled pending safe pull implementation");
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
