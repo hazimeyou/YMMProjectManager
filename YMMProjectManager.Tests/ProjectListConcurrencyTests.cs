@@ -69,6 +69,7 @@ internal static class ProjectListConcurrencyTests
             "{\"Projects\":[],\"Folders\":[{\"Name\":\"preserve\"}]}",
             "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"FilePath\":\"\"}]}]}",
             "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"FilePath\":\"p.ymmp\",\"Role\":\"FutureRole\"}]}]}",
+            "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"Id\":\"11111111-1111-1111-1111-111111111111\",\"FilePath\":\"p.ymmp\",\"Role\":\"Backup, Draft\",\"RegisteredAt\":\"2026-01-01T00:00:00Z\",\"UpdatedAt\":\"2026-01-01T00:00:00Z\",\"Exists\":true}]}]}",
             "{\"Projects\":[],\"Projects\":[]}",
         };
         foreach (var input in unsafeInputs)

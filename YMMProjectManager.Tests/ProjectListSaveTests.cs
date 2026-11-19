@@ -80,7 +80,9 @@ internal static class ProjectListSaveTests
         var concurrent = await Repo().LoadAsync(); Check(concurrent.Projects.Count == 1 && concurrent.Projects[0].DisplayName!.StartsWith("concurrent", StringComparison.Ordinal), "concurrent save"); NoTemps();
         // T13: old-form fields remain compatible after a round trip.
         await File.WriteAllTextAsync(path, "{\"Projects\":[{\"FullPath\":\"C:\\\\Temp\\\\legacy.ymmp\",\"DisplayName\":\"legacy\",\"Pinned\":true,\"LastAccess\":\"2026-06-08T00:00:00+09:00\"}]}");
-        var legacy = await Repo().LoadAsync(); await Repo().SaveAsync(legacy); var roundtrip = await Repo().LoadAsync();
+        var legacy = await Repo().LoadAsync();
+        Check(legacy.IsRecoverySafe, "legacy empty linked list should remain safely writable");
+        await Repo().SaveAsync(legacy); var roundtrip = await Repo().LoadAsync();
         Check(roundtrip.Projects.Single().DisplayName == "legacy" && roundtrip.Projects[0].Pinned && roundtrip.Projects[0].LastAccess == legacy.Projects[0].LastAccess && roundtrip.Projects[0].LinkedYmmpFiles.Count > 0, "legacy roundtrip");
         Check(roundtrip.Projects[0].ProjectId is null, "legacy identity must remain unresolved");
         var id1 = Guid.NewGuid(); var id2 = Guid.NewGuid();
@@ -98,6 +100,9 @@ internal static class ProjectListSaveTests
         identified.Projects[1].ProjectId = id2; identified.Projects[1].FullPath = "";
         await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
         Check(Hash() == identityHash, "identified project without path modified list");
+        identified.Projects[1].ProjectId = null;
+        await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
+        Check(Hash() == identityHash, "legacy project without path modified list");
         await File.WriteAllTextAsync(path, $"{{\"Projects\":[{{\"FullPath\":\"one.ymmp\",\"ProjectId\":\"{id1}\"}},{{\"FullPath\":\"two.ymmp\",\"ProjectId\":\"{id1}\"}}]}}");
         var duplicateHash = Hash(); await Expect<InvalidDataException>(() => Repo().LoadAsync()); Check(Hash() == duplicateHash, "duplicate load modified list");
         var bomBytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"Projects\":[],\"Folders\":[]}")).ToArray();

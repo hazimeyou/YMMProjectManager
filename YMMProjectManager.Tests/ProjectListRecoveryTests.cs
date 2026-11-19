@@ -154,6 +154,13 @@ internal static class ProjectListRecoveryTests
             duringVm = new ProjectListViewModel(logger, duringRepo); await duringVm.InitializeAsync(); duringVm.SelectedProject = duringVm.Projects.Single();
             await duringVm.AssociateLegacyMetadataAsync(duringVm.SelectedProject, AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid()));
             if (!duringVm.HasUnsavedProjectList || duringVm.SelectedProject.DisplayName != "changed during save") throw new Exception("save-time change was not preserved as unsaved");
+            var r9Path = Path.Combine(root, "r9-empty-links.json"); var r9Repo = new JsonProjectRepository(logger, r9Path); var r9Store = await r9Repo.LoadAsync();
+            r9Store.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project }); await r9Repo.SaveAsync(r9Store);
+            var r9Vm = new ProjectListViewModel(logger, r9Repo); await r9Vm.InitializeAsync(); r9Vm.SelectedProject = r9Vm.Projects.Single();
+            var r9Manifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            await r9Vm.AssociateLegacyMetadataAsync(r9Vm.SelectedProject, r9Manifest);
+            var r9After = await r9Repo.LoadAsync();
+            if (r9After.Projects.Single().ProjectId != r9Manifest.ProjectId || r9After.Projects.Single().LinkedYmmpFiles.Count != 1) throw new Exception("R9 empty-links project was not safely migrated");
             var unsafeListPath = Path.Combine(root, "unknown-list.json");
             var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"FutureField\":\"keep\"}";
             await File.WriteAllTextAsync(unsafeListPath, unknownJson);

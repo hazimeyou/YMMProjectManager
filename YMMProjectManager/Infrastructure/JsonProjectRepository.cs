@@ -91,9 +91,9 @@ public sealed class JsonProjectRepository : IProjectRepository
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
-                if (project.LinkedYmmpFiles.Count == 0 && project.FullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase)) return false;
                 if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) || l.Id is null ||
-                    l.RegisteredAt is null || l.UpdatedAt is null || l.Exists is null || !Enum.TryParse<YmmpRole>(l.Role, true, out _))) return false;
+                    l.RegisteredAt is null || l.UpdatedAt is null || l.Exists is null ||
+                    !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase)))) return false;
             }
             using var document = JsonDocument.Parse(jsonContent);
             return !HasDuplicateProperties(document.RootElement);
@@ -144,6 +144,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 }).ToList(),
             };
             var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, JsonOptions);
+            if (!IsSafeForRecovery(bytes)) throw new InvalidDataException("Project list contains entries that cannot be safely reloaded.");
             cancellationToken.ThrowIfCancellationRequested();
             var directory = Path.GetDirectoryName(jsonPath)!;
             Directory.CreateDirectory(directory);
