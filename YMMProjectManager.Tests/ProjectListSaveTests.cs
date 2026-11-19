@@ -108,6 +108,9 @@ internal static class ProjectListSaveTests
         var bomBytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"Projects\":[],\"Folders\":[]}")).ToArray();
         await File.WriteAllBytesAsync(path, bomBytes); var bomHash = Hash(); var bomStore = await Repo().LoadAsync();
         Check(bomStore.Projects.Count == 0 && bomStore.IsRecoverySafe && Hash() == bomHash && bomStore.Revision!.Sha256 == bomHash, "BOM list load changed content or revision");
+        await File.WriteAllTextAsync(path, "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"FilePath\":\"p.ymmp\"}]}]}");
+        var legacyLink = await Repo().LoadAsync(); Check(legacyLink.IsRecoverySafe && legacyLink.Projects.Single().LinkedYmmpFiles.Count == 1, "legacy minimal link rejected");
+        await Repo().SaveAsync(legacyLink); Check((await Repo().LoadAsync()).Projects.Single().LinkedYmmpFiles.Single().FilePath == "p.ymmp", "legacy minimal link lost");
         // Corrupt read must not silently become a new empty store.
         await File.WriteAllTextAsync(path, "{invalid"); var corruptHash=Hash();
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");

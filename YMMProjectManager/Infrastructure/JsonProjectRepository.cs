@@ -86,14 +86,13 @@ public sealed class JsonProjectRepository : IProjectRepository
             var jsonContent = StripUtf8Bom(content);
             var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, StrictRecoveryOptions);
             if (dto?.Projects is null || dto.Folders is null) return false;
-            if (dto.Folders.Any(f => f is null || f.Id is null || string.IsNullOrWhiteSpace(f.Name) || f.DisplayOrder is null || f.CreatedAt is null || f.UpdatedAt is null)) return false;
+            if (dto.Folders.Any(f => f is null || f.Id is null || string.IsNullOrWhiteSpace(f.Name))) return false;
             foreach (var project in dto.Projects)
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
-                if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) || l.Id is null ||
-                    l.RegisteredAt is null || l.UpdatedAt is null || l.Exists is null ||
-                    !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase)))) return false;
+                if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) ||
+                    (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;
             }
             using var document = JsonDocument.Parse(jsonContent);
             return !HasDuplicateProperties(document.RootElement);
