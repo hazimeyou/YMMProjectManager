@@ -71,6 +71,72 @@ internal static class AssetManifestTests
         async Task<bool> Save(AssetManifest value) { try { await AssetManifestStore.SaveNewAsync(racePath, value); return true; } catch (IOException) { return false; } }
         var winners = await Task.WhenAll(Save(next), Save(AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, loaded, true)));
         if (winners.Count(x => x) != 1 || (await AssetManifestStore.LoadAsync(racePath)).ProjectId != initial.ProjectId) throw new Exception("concurrent revisions overwritten");
+        await TestRevisionSeriesAsync(root, project, item);
         Console.WriteLine("Project asset immutable revision checks passed.");
+    }
+
+    private static async Task TestRevisionSeriesAsync(string root, string project, AssetMetadata item)
+    {
+        var directory = Path.Combine(root, "managed-series"); Directory.CreateDirectory(directory);
+        var initial = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+        var head = await AssetRevisionSeries.InitializeAsync(directory, initial);
+        if (head != await AssetRevisionSeries.ReadHeadAsync(directory)) throw new Exception("series head did not persist");
+        using (var held = new FileStream(Path.Combine(directory, ".asset-revisions.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            try { await AssetRevisionSeries.ReadHeadAsync(directory); throw new Exception("held series lock was ignored"); } catch (IOException) { }
+        }
+        var first = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, initial, true, projectId: initial.ProjectId);
+        var second = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, initial, true, projectId: initial.ProjectId);
+        var firstPath = Path.Combine(directory, $"revision-{initial.RevisionId:N}.json");
+        var oldBytes = await File.ReadAllBytesAsync(firstPath);
+        try { await AssetRevisionSeries.InitializeAsync(directory, initial); throw new Exception("series reinitialization accepted"); } catch (InvalidDataException) { }
+        var afterReinitialize = await File.ReadAllBytesAsync(firstPath);
+        if (!oldBytes.SequenceEqual(afterReinitialize)) throw new Exception("reinitialization altered existing revision");
+        async Task<bool> Append(AssetManifest revision)
+        {
+            try { await AssetRevisionSeries.AppendAsync(directory, head, revision); return true; }
+            catch (IOException) { return false; }
+            catch (InvalidDataException) { return false; }
+        }
+        var results = await Task.WhenAll(Append(first), Append(second));
+        if (results.Count(x => x) != 1) throw new Exception("concurrent head updates did not produce exactly one winner");
+        var firstAfterUpdate = await File.ReadAllBytesAsync(firstPath);
+        if (!oldBytes.SequenceEqual(firstAfterUpdate)) throw new Exception("series update changed historical revision");
+        var current = await AssetRevisionSeries.ReadHeadAsync(directory);
+        if (current.ProjectId != initial.ProjectId || (current.RevisionId != first.RevisionId && current.RevisionId != second.RevisionId)) throw new Exception("incorrect current head");
+        try { await AssetRevisionSeries.AppendAsync(directory, head, second); throw new Exception("stale head accepted"); } catch (InvalidDataException) { }
+        var idCollision = initial with { ParentRevisionId = current.RevisionId };
+        try { await AssetRevisionSeries.AppendAsync(directory, current, idCollision); throw new Exception("historical revision collision accepted"); } catch (IOException) { }
+        var incorrectProject = first with { RevisionId = Guid.NewGuid(), ParentRevisionId = current.RevisionId, ProjectId = Guid.NewGuid() };
+        try { await AssetRevisionSeries.AppendAsync(directory, current, incorrectProject); throw new Exception("foreign project revision accepted"); } catch (InvalidDataException) { }
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try { await AssetRevisionSeries.ReadHeadAsync(directory, cancelled.Token); throw new Exception("series cancellation ignored"); } catch (OperationCanceledException) { }
+        }
+        var foreign = initial with { RevisionId = Guid.NewGuid(), ParentRevisionId = initial.RevisionId };
+        await AssetManifestStore.SaveNewAsync(Path.Combine(directory, $"revision-{foreign.RevisionId:N}.json"), foreign);
+        try { await AssetRevisionSeries.ReadHeadAsync(directory); throw new Exception("divergent head accepted"); } catch (InvalidDataException) { }
+        var firstAfterDivergence = await File.ReadAllBytesAsync(firstPath);
+        if (!oldBytes.SequenceEqual(firstAfterDivergence)) throw new Exception("divergence changed historical revision");
+
+        var corruptDirectory = Path.Combine(root, "corrupt-series"); Directory.CreateDirectory(corruptDirectory);
+        var corruptRoot = await AssetRevisionSeries.InitializeAsync(corruptDirectory, initial);
+        var corruptPath = Path.Combine(corruptDirectory, $"revision-{initial.RevisionId:N}.json");
+        var altered = initial with { ProjectFileName = "altered.ymmp" };
+        await File.WriteAllTextAsync(corruptPath, JsonSerializer.Serialize(altered));
+        try { await AssetRevisionSeries.AppendAsync(corruptDirectory, corruptRoot, first); throw new Exception("replaced parent accepted"); } catch (InvalidDataException) { }
+        if ((await AssetManifestStore.LoadAsync(corruptPath)).ProjectFileName != "altered.ymmp") throw new Exception("replacement overwritten");
+
+        var orphanDirectory = Path.Combine(root, "orphan-series"); Directory.CreateDirectory(orphanDirectory);
+        await AssetManifestStore.SaveNewAsync(Path.Combine(orphanDirectory, $"revision-{first.RevisionId:N}.json"), first);
+        try { await AssetRevisionSeries.ReadHeadAsync(orphanDirectory); throw new Exception("missing parent accepted"); } catch (InvalidDataException) { }
+
+        var duplicateDirectory = Path.Combine(root, "duplicate-json-series"); Directory.CreateDirectory(duplicateDirectory);
+        var duplicatePath = Path.Combine(duplicateDirectory, $"revision-{initial.RevisionId:N}.json");
+        var duplicateJson = JsonSerializer.Serialize(initial).Insert(1, "\"SchemaVersion\":1,");
+        await File.WriteAllTextAsync(duplicatePath, duplicateJson);
+        try { await AssetRevisionSeries.ReadHeadAsync(duplicateDirectory); throw new Exception("duplicate JSON property accepted"); } catch (InvalidDataException) { }
+        if (await File.ReadAllTextAsync(duplicatePath) != duplicateJson) throw new Exception("corrupt revision was altered");
     }
 }
