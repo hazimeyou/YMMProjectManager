@@ -81,6 +81,58 @@ internal static class ProjectListConcurrencyTests
             try { await unsafeRepo.SaveAsync(loaded); throw new Exception("unsafe repository save accepted"); } catch (InvalidDataException) { }
             if (await File.ReadAllTextAsync(unsafePath) != input) throw new Exception("unsafe recovery input changed");
         }
+        var mergeBase = new ProjectStore { Revision = new ProjectListRevision("base"), IsRecoverySafe = true };
+        mergeBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "base.ymmp"), ProjectId = Guid.NewGuid(), DisplayName = "base" });
+        var local = ProjectListMerge.Snapshot(mergeBase); var remote = ProjectListMerge.Snapshot(mergeBase);
+        local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "local.ymmp"), ProjectId = Guid.NewGuid() });
+        remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "remote.ymmp"), ProjectId = Guid.NewGuid() });
+        var independent = ProjectListMerge.Merge(mergeBase, local, remote);
+        if (independent.Store?.Projects.Count != 3 || independent.Conflicts.Count != 0) throw new Exception("independent additions did not merge");
+        local = ProjectListMerge.Snapshot(mergeBase); remote = ProjectListMerge.Snapshot(mergeBase);
+        local.Projects[0].DisplayName = "local"; remote.Projects[0].Pinned = true;
+        var differentFields = ProjectListMerge.Merge(mergeBase, local, remote);
+        if (differentFields.Store?.Projects.Single().DisplayName != "local" || !differentFields.Store.Projects.Single().Pinned) throw new Exception("independent field edits did not merge");
+        var timeBase = ProjectListMerge.Snapshot(mergeBase); timeBase.Projects[0].LastAccess = DateTimeOffset.Parse("2026-01-01T10:00:00+09:00");
+        var timeLocal = ProjectListMerge.Snapshot(timeBase); var timeRemote = ProjectListMerge.Snapshot(timeBase);
+        timeLocal.Projects[0].LastAccess = DateTimeOffset.Parse("2026-01-01T01:00:00+00:00");
+        var timeMerge = ProjectListMerge.Merge(timeBase, timeLocal, timeRemote);
+        if (timeMerge.Store?.Projects[0].LastAccess?.Offset != TimeSpan.Zero) throw new Exception("timestamp offset change was lost");
+        remote.Projects[0].DisplayName = "remote";
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("same-field conflict was accepted");
+        remote = ProjectListMerge.Snapshot(mergeBase); remote.Projects[0].ProjectId = Guid.NewGuid();
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("external project identity change was accepted");
+        local = ProjectListMerge.Snapshot(mergeBase); local.Projects.Clear();
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("delete versus edit was accepted");
+        local = ProjectListMerge.Snapshot(mergeBase); local.Projects.Clear(); remote = ProjectListMerge.Snapshot(mergeBase);
+        remote.Projects[0].FullPath = Path.Combine(root, "remote-move.ymmp");
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("delete versus remote move was accepted");
+        local = ProjectListMerge.Snapshot(mergeBase); local.Projects[0].FullPath = Path.Combine(root, "local-move.ymmp"); remote = ProjectListMerge.Snapshot(mergeBase); remote.Projects.Clear();
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("local move versus deletion was accepted");
+        local = ProjectListMerge.Snapshot(mergeBase); remote = ProjectListMerge.Snapshot(mergeBase);
+        local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
+        remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("conflicting additions were accepted");
+        local = ProjectListMerge.Snapshot(mergeBase); local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "duplicate-id.ymmp"), ProjectId = mergeBase.Projects[0].ProjectId });
+        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("duplicate project identity was accepted");
+        var folder = new ProjectFolder { Name = "folder" }; var folderBase = ProjectListMerge.Snapshot(mergeBase);
+        folderBase.Folders.Add(folder); folderBase.Projects[0].FolderId = folder.Id;
+        var folderLocal = ProjectListMerge.Snapshot(folderBase); var folderRemote = ProjectListMerge.Snapshot(folderBase);
+        folderLocal.Projects[0].FolderId = null; folderLocal.Folders.Clear();
+        folderRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "external-folder.ymmp"), ProjectId = Guid.NewGuid(), FolderId = folder.Id });
+        if (ProjectListMerge.Merge(folderBase, folderLocal, folderRemote).Store is not null) throw new Exception("folder deletion orphaned an external project");
+        var mergePath = Path.Combine(root, "merge-failure.json"); var mergeRepo = new JsonProjectRepository(logger, mergePath);
+        var mergeSeed = await mergeRepo.LoadAsync(); mergeSeed.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "seed.ymmp"), ProjectId = Guid.NewGuid() }); await mergeRepo.SaveAsync(mergeSeed);
+        var mergeBaseline = await mergeRepo.LoadAsync(); var mergeLocal = ProjectListMerge.Snapshot(mergeBaseline);
+        mergeLocal.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "local-change.ymmp"), ProjectId = Guid.NewGuid() });
+        var otherRepo = new JsonProjectRepository(logger, mergePath); var mergeRemote = await otherRepo.LoadAsync();
+        mergeRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "external-change.ymmp"), ProjectId = Guid.NewGuid() }); await otherRepo.SaveAsync(mergeRemote);
+        var mergeLatest = await mergeRepo.LoadAsync(); var recoveryPlan = ProjectListMerge.Merge(mergeBaseline, mergeLocal, mergeLatest);
+        if (recoveryPlan.Store is null) throw new Exception("recovery plan unexpectedly conflicts");
+        var beforeFailure = SHA256.HashData(await File.ReadAllBytesAsync(mergePath));
+        var injected = new JsonProjectRepository(logger, mergePath, beforeReplace: () => throw new IOException("synthetic recovery save failure"));
+        try { await injected.SaveAsync(recoveryPlan.Store); throw new Exception("recovery save failure hidden"); } catch (IOException) { }
+        var afterFailure = SHA256.HashData(await File.ReadAllBytesAsync(mergePath));
+        if (!beforeFailure.SequenceEqual(afterFailure) || mergeLocal.Projects.Count != 2 || (await mergeRepo.LoadAsync()).Projects.Count != 2) throw new Exception("recovery failure lost local or remote state");
     }
 
     public static async Task RunWorkerAsync(string root, string id)

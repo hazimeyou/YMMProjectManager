@@ -127,24 +127,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         {
             cancellationToken.ThrowIfCancellationRequested();
             stage = "serialize";
-            if (!store.IsRecoverySafe) throw new InvalidDataException("Project list contains data that cannot be safely preserved.");
-            var projectIds = new HashSet<Guid>();
-            foreach (var project in store.Projects)
-            {
-                if (project.ProjectId is not null && string.IsNullOrWhiteSpace(project.FullPath)) throw new InvalidDataException("Identified project has no path.");
-                if (project.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
-            }
-            var dto = new ProjectListFileDto
-            {
-                Folders = store.Folders.Select(x => new ProjectFolderDto { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt }).ToList(),
-                Projects = store.Projects.Select(x => new ProjectRecordDto
-                {
-                    FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
-                    LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
-                }).ToList(),
-            };
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, JsonOptions);
-            if (!IsSafeForRecovery(bytes)) throw new InvalidDataException("Project list contains entries that cannot be safely reloaded.");
+            var bytes = SerializeStore(store);
             cancellationToken.ThrowIfCancellationRequested();
             var directory = Path.GetDirectoryName(jsonPath)!;
             Directory.CreateDirectory(directory);
@@ -198,6 +181,53 @@ public sealed class JsonProjectRepository : IProjectRepository
             processLock?.Dispose();
             SaveGate.Release();
         }
+    }
+
+    private static byte[] SerializeStore(ProjectStore store)
+    {
+        if (!store.IsRecoverySafe) throw new InvalidDataException("Project list contains data that cannot be safely preserved.");
+        var projectIds = new HashSet<Guid>();
+        foreach (var project in store.Projects)
+        {
+            if (project.ProjectId is not null && string.IsNullOrWhiteSpace(project.FullPath)) throw new InvalidDataException("Identified project has no path.");
+            if (project.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
+        }
+        var dto = new ProjectListFileDto
+        {
+            Folders = store.Folders.Select(x => new ProjectFolderDto { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt }).ToList(),
+            Projects = store.Projects.Select(x => new ProjectRecordDto
+            {
+                FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
+                LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
+            }).ToList(),
+        };
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, JsonOptions);
+        if (!IsSafeForRecovery(bytes)) throw new InvalidDataException("Project list contains entries that cannot be safely reloaded.");
+        return bytes;
+    }
+
+    // Recovery export never replaces an existing file, including a file created after the dialog.
+    internal async Task SaveNewCopyAsync(ProjectStore store, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        var bytes = SerializeStore(store);
+        var directory = Path.GetDirectoryName(Path.GetFullPath(jsonPath))!;
+        var candidate = Path.Combine(directory, $"{Path.GetFileName(jsonPath)}.tmp-{Guid.NewGuid():N}");
+        var owned = false;
+        try
+        {
+            await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                owned = true;
+                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                await stream.FlushAsync(token).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+            token.ThrowIfCancellationRequested();
+            File.Move(candidate, jsonPath, overwrite: false);
+            owned = false;
+        }
+        finally { if (owned) { try { File.Delete(candidate); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
     }
 
     private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); return Path.Combine(appData, "YMMProjectManager", "plugin", PluginDirectoryName, "data", "projects.json"); }

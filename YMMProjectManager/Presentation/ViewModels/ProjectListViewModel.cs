@@ -38,6 +38,9 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private ProjectListRevision? projectListRevision;
     private PendingIdentity? pendingIdentity;
     private string? lastSavedFingerprint;
+    private ProjectStore? savedBaseline;
+    private ProjectStore? retainedRecoverySnapshot;
+    private readonly Dictionary<string, (Guid Id, string Hash)> pendingAdditionEvidence = new(StringComparer.OrdinalIgnoreCase);
     private bool isProjectListLossless;
     private bool hasUnsavedProjectList;
     private string bundleStatus = string.Empty;
@@ -109,6 +112,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand AssignLegacyProjectIdCommand { get; }
     public ICommand AssociateLegacyMetadataCommand { get; }
     public ICommand RecoverIdentityCommand { get; }
+    public ICommand RecoverProjectListCommand { get; }
+    public ICommand ExportRecoverySnapshotCommand { get; }
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -168,6 +173,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         AssignLegacyProjectIdCommand = new AsyncRelayCommand(AssignLegacyProjectIdAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         AssociateLegacyMetadataCommand = new AsyncRelayCommand(ChooseLegacyMetadataAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         RecoverIdentityCommand = new AsyncRelayCommand(RecoverIdentityAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && pendingIdentity is not null);
+        RecoverProjectListCommand = new AsyncRelayCommand(RecoverProjectListAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && savedBaseline is not null);
+        ExportRecoverySnapshotCommand = new AsyncRelayCommand(ExportRecoverySnapshotAsync, () => !IsBusy && retainedRecoverySnapshot is not null);
         AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
         RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
         OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
@@ -523,6 +530,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
             folders = store.Folders.ToList();
             lastSavedFingerprint = CurrentStoreFingerprint();
+            savedBaseline = ProjectListMerge.Snapshot(store);
 
             isInitialized = true;
             CommandManager.InvalidateRequerySuggested();
@@ -593,6 +601,16 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                     ProjectId = Guid.NewGuid(),
                     DisplayName = Path.GetFileNameWithoutExtension(fullPath),
                 };
+                try
+                {
+                    var hash = await HashRecoveryFileAsync(fullPath).ConfigureAwait(true);
+                    pendingAdditionEvidence[fullPath] = (entry.ProjectId!.Value, hash);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
+                {
+                    logger.Info("Project recovery evidence unavailable; addition can be saved normally but not automatically recovered.");
+                }
+                if (Projects.Any(item => string.Equals(item.FullPath, fullPath, StringComparison.OrdinalIgnoreCase))) continue;
                 entry.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = fullPath, DisplayName = entry.DisplayName, Role = YmmpRole.Main, Exists = true, LastCheckedAt = DateTimeOffset.Now });
                 Projects.Add(entry);
                 SelectedProject = entry;
@@ -942,6 +960,8 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 ProjectId = Guid.NewGuid(),
                 DisplayName = Path.GetFileNameWithoutExtension(fullPath),
             };
+            try { pendingAdditionEvidence[fullPath] = (entry.ProjectId!.Value, await HashRecoveryFileAsync(fullPath).ConfigureAwait(true)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException) { logger.Info("Project recovery evidence unavailable."); }
             entry.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = fullPath, DisplayName = entry.DisplayName, Role = YmmpRole.Main, Exists = File.Exists(fullPath), LastCheckedAt = DateTimeOffset.Now });
 
             Projects.Add(entry);
@@ -1228,6 +1248,15 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         return Convert.ToHexString(await SHA256.HashDataAsync(stream).ConfigureAwait(false));
     }
 
+    private static async Task<string> HashRecoveryFileAsync(string path)
+    {
+        var full = Path.GetFullPath(path);
+        for (var directory = new DirectoryInfo(Path.GetDirectoryName(full)!); directory is not null; directory = directory.Parent)
+            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("project path traverses a reparse point");
+        if ((File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) throw new IOException("project is a reparse point");
+        return await HashProjectAsync(full).ConfigureAwait(false);
+    }
+
     private string CurrentStoreFingerprint() => ProjectListRecovery.Fingerprint(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList() });
 
     private void SetPendingIdentity(ProjectEntry project, Guid identity, string projectHash)
@@ -1258,6 +1287,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             var confirm = MessageBox.Show($"最新一覧では追加 {added} 件、削除 {removed} 件です。その他の項目や属性の変更内容は表示しません。\n対象: {pending.Path}\n保留中の ID: {pending.Id}\n最新一覧の内容を維持して、この ID だけ再適用しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
             if (CurrentStoreFingerprint() != pending.Fingerprint || await HashProjectAsync(pending.Path).ConfigureAwait(true) != pending.ProjectHash) throw new InvalidDataException("未保存の一覧または project が変更されました。");
+            var retained = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless });
             await repository.SaveAsync(latest).ConfigureAwait(true);
             projectListRevision = latest.Revision;
             isProjectListLossless = latest.IsRecoverySafe;
@@ -1272,15 +1302,102 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 AssetStatus = "保存中に未保存の一覧が変わりました。内容を保持しています。再確認が必要です。";
                 return;
             }
-            Projects.Clear();
-            foreach (var project in latest.Projects) Projects.Add(project);
-            folders = latest.Folders.ToList();
-            SelectedProject = Projects.Single(p => string.Equals(p.FullPath, pending.Path, StringComparison.OrdinalIgnoreCase));
+            if (!AdoptRecoveredStore(latest, retained, pending.Path)) return;
             pendingIdentity = null;
             lastSavedFingerprint = CurrentStoreFingerprint();
+            savedBaseline = ProjectListMerge.Snapshot(latest);
             HasUnsavedProjectList = false;
             PrepareThumbnailMetadata(Projects.ToList());
             AssetStatus = "最新一覧へ ID を再適用しました。";
+        }).ConfigureAwait(true);
+    }
+
+    private async Task RecoverProjectListAsync()
+    {
+        var baseline = savedBaseline;
+        if (baseline is null || !HasUnsavedProjectList) return;
+        await ExecuteWithBusyAsync("Recover project list", async () =>
+        {
+            var local = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless });
+            var fingerprint = ProjectListRecovery.Fingerprint(local);
+            var latest = await repository.LoadAsync().ConfigureAwait(true);
+            if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。再確認してください。");
+            var plan = ProjectListMerge.Merge(baseline, local, latest);
+            if (plan.Conflicts.Count != 0) throw new InvalidDataException(string.Join("\n", plan.Conflicts.Take(20)) + (plan.Conflicts.Count > 20 ? "\n他にも競合があります。" : ""));
+            if (plan.Changes.Count == 0) throw new InvalidDataException("再適用する変更がありません。ID 設定は専用の回復操作を使用してください。");
+            if (plan.Changes.Count > 20) throw new InvalidDataException("変更が20件を超えています。すべてを表示できないため再適用を中止しました。");
+            var basePaths = baseline.Projects.Select(p => p.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var additions = local.Projects.Where(p => !basePaths.Contains(p.FullPath)).ToArray();
+            async Task VerifyAdditionsAsync()
+            {
+                foreach (var item in additions)
+                {
+                    if (!pendingAdditionEvidence.TryGetValue(item.FullPath, out var expected) || item.ProjectId != expected.Id ||
+                        await HashRecoveryFileAsync(item.FullPath).ConfigureAwait(true) != expected.Hash)
+                        throw new InvalidDataException("追加 project の元の内容を確認できません。自動再適用を中止しました。");
+                }
+            }
+            await VerifyAdditionsAsync().ConfigureAwait(true);
+            var summary = string.Join("\n", plan.Changes);
+            if (summary.Length > 12000) throw new InvalidDataException("変更内容が大きすぎて確認できないため再適用を中止しました。");
+            var confirm = MessageBox.Show($"最新一覧を保持し、次の未保存変更を再適用します。最新側の属性変更は表示されません。\n{summary}\n続行しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+            if (confirm != MessageBoxResult.Yes) return;
+            if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
+            await VerifyAdditionsAsync().ConfigureAwait(true);
+            if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
+            var merged = plan.Store!;
+            await repository.SaveAsync(merged).ConfigureAwait(true);
+            if (CurrentStoreFingerprint() != fingerprint)
+            {
+                projectListRevision = null; savedBaseline = null; pendingIdentity = null; lastSavedFingerprint = null; HasUnsavedProjectList = true;
+                AssetStatus = "再適用は保存されましたが、その間に一覧が変わりました。未保存内容を保持しています。";
+                return;
+            }
+            projectListRevision = merged.Revision; isProjectListLossless = merged.IsRecoverySafe;
+            if (!AdoptRecoveredStore(merged, local, null)) return;
+            savedBaseline = ProjectListMerge.Snapshot(merged); pendingIdentity = null;
+            pendingAdditionEvidence.Clear();
+            lastSavedFingerprint = CurrentStoreFingerprint(); HasUnsavedProjectList = false;
+            PrepareThumbnailMetadata(Projects.ToList());
+            AssetStatus = "最新一覧へ未保存変更を再適用しました。";
+        }).ConfigureAwait(true);
+    }
+
+    private bool AdoptRecoveredStore(ProjectStore saved, ProjectStore originalLocal, string? selectionPath)
+    {
+        try
+        {
+            var expected = ProjectListRecovery.Fingerprint(saved);
+            Projects.Clear(); foreach (var item in saved.Projects) Projects.Add(item);
+            folders = saved.Folders.ToList();
+            SelectedProject = selectionPath is null ? null : Projects.Single(p => string.Equals(p.FullPath, selectionPath, StringComparison.OrdinalIgnoreCase));
+            if (CurrentStoreFingerprint() != expected) throw new InvalidOperationException("画面更新中に一覧が変更されました。");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            retainedRecoverySnapshot = ProjectListMerge.Snapshot(originalLocal);
+            projectListRevision = null; savedBaseline = null; pendingIdentity = null; lastSavedFingerprint = null;
+            HasUnsavedProjectList = true;
+            AssetStatus = "再適用は保存されましたが画面更新に失敗しました。変更前の未保存一覧をメモリに保持しています。「退避一覧を保存」で別名保存してください。";
+            logger.Error(ex, "Project list saved but UI recovery did not complete.");
+            CommandManager.InvalidateRequerySuggested();
+            return false;
+        }
+    }
+
+    private async Task ExportRecoverySnapshotAsync()
+    {
+        var snapshot = retainedRecoverySnapshot;
+        if (snapshot is null) return;
+        var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "未保存一覧を新しいファイルに退避", OverwritePrompt = false };
+        if (dialog.ShowDialog() != true) return;
+        await ExecuteWithBusyAsync("Export recovery snapshot", async () =>
+        {
+            var exporter = new JsonProjectRepository(logger, dialog.FileName);
+            var copy = ProjectListMerge.Snapshot(snapshot);
+            await exporter.SaveNewCopyAsync(copy).ConfigureAwait(true);
+            AssetStatus = "未保存一覧を新しいファイルへ退避しました。元の画面と一覧は変更していません。";
         }).ConfigureAwait(true);
     }
 
@@ -1302,11 +1419,15 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 IsRecoverySafe = isProjectListLossless,
             };
             var expectedFingerprint = ProjectListRecovery.Fingerprint(store);
+            var expectedBaseline = ProjectListMerge.Snapshot(store);
             await repository.SaveAsync(store).ConfigureAwait(true);
             projectListRevision = store.Revision;
             isProjectListLossless = store.IsRecoverySafe;
             lastSavedFingerprint = CurrentStoreFingerprint() == expectedFingerprint ? expectedFingerprint : null;
+            expectedBaseline.Revision = store.Revision; expectedBaseline.IsRecoverySafe = store.IsRecoverySafe;
+            savedBaseline = lastSavedFingerprint is null ? null : expectedBaseline;
             pendingIdentity = null;
+            pendingAdditionEvidence.Clear();
             HasUnsavedProjectList = lastSavedFingerprint is null;
         }
         catch
@@ -1347,7 +1468,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             logger.Error(ex, "Project list is locked by another process.");
             MessageBox.Show("別のプロセスが一覧を保存中です。未保存の変更は画面に残っています。処理が終わってから再試行してください。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
-        catch (InvalidDataException ex) when (operationName == "Recover project identity")
+        catch (InvalidDataException ex) when (operationName is "Recover project identity" or "Recover project list")
         {
             logger.Error(ex, "Project list recovery was rejected.");
             MessageBox.Show($"競合を自動回復できません。未保存の一覧は保持しています。\n{ex.Message}", "一覧の競合回復", MessageBoxButton.OK, MessageBoxImage.Warning);

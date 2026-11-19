@@ -136,6 +136,44 @@ internal static class ProjectListRecoveryTests
             var recovered = await conflictRepo.LoadAsync();
             if (conflictVm.HasUnsavedProjectList || recovered.Projects.Count != 2 || recovered.Projects.First().ProjectId != conflictManifest.ProjectId || recovered.Projects.Last().FullPath != extracted)
                 throw new Exception("identity recovery lost pending or external change: " + conflictVm.AssetStatus + "; pending=" + conflictVm.HasUnsavedProjectList + "; first=" + recovered.Projects.First().ProjectId + "; safe=" + recovered.IsRecoverySafe);
+            var generalPath = Path.Combine(root, "general-recovery.json"); var generalRepo = new JsonProjectRepository(logger, generalPath);
+            var generalSeed = await generalRepo.LoadAsync(); generalSeed.Projects.Add(Entry(project, Guid.NewGuid())); await generalRepo.SaveAsync(generalSeed);
+            var generalVm = new ProjectListViewModel(logger, generalRepo); await generalVm.InitializeAsync();
+            var generalOutside = new JsonProjectRepository(logger, generalPath); var generalExternal = await generalOutside.LoadAsync();
+            generalExternal.Projects.Add(Entry(extracted, Guid.NewGuid())); await generalOutside.SaveAsync(generalExternal);
+            var localFile = Path.Combine(root, "local-add.ymmp"); await File.WriteAllTextAsync(localFile, "{}");
+            timer.Start(); try { await generalVm.AddProjectsAsync([localFile]); } finally { timer.Stop(); }
+            if (!generalVm.HasUnsavedProjectList || (await generalRepo.LoadAsync()).Projects.Count != 2) throw new Exception("general recovery setup failed");
+            async Task RecoverGeneral() => await (Task)typeof(ProjectListViewModel).GetMethod("RecoverProjectListAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(generalVm, null)!;
+            dialogReply = 7; confirmTimer.Start(); try { await RecoverGeneral(); } finally { confirmTimer.Stop(); }
+            if (!generalVm.HasUnsavedProjectList || (await generalRepo.LoadAsync()).Projects.Count != 2) throw new Exception("cancelled general recovery changed disk");
+            await File.WriteAllTextAsync(localFile, "{\"changed\":true}");
+            timer.Start(); try { await RecoverGeneral(); } finally { timer.Stop(); }
+            if (!generalVm.HasUnsavedProjectList || (await generalRepo.LoadAsync()).Projects.Count != 2) throw new Exception("changed added project was recovered");
+            await File.WriteAllTextAsync(localFile, "{}");
+            dialogReply = 6; confirmTimer.Start(); try { await RecoverGeneral(); } finally { confirmTimer.Stop(); }
+            var generalResult = await generalRepo.LoadAsync();
+            if (generalVm.HasUnsavedProjectList || generalResult.Projects.Count != 3 || !generalResult.Projects.Any(x => x.FullPath == localFile) || !generalResult.Projects.Any(x => x.FullPath == extracted))
+                throw new Exception("general recovery failed to preserve independent changes");
+            var reentrantPath = Path.Combine(root, "reentrant-recovery.json"); var reentrantRepo = new JsonProjectRepository(logger, reentrantPath);
+            var reentrantSeed = await reentrantRepo.LoadAsync(); reentrantSeed.Projects.Add(Entry(project, Guid.NewGuid())); await reentrantRepo.SaveAsync(reentrantSeed);
+            var reentrantVm = new ProjectListViewModel(logger, reentrantRepo); await reentrantVm.InitializeAsync();
+            var reentrantOutsideRepo = new JsonProjectRepository(logger, reentrantPath); var reentrantOutside = await reentrantOutsideRepo.LoadAsync();
+            reentrantOutside.Projects.Add(Entry(extracted, Guid.NewGuid())); await reentrantOutsideRepo.SaveAsync(reentrantOutside);
+            timer.Start(); try { await reentrantVm.AddProjectsAsync([localFile]); } finally { timer.Stop(); }
+            var mutated = false;
+            reentrantVm.Projects.CollectionChanged += (_, args) =>
+            {
+                if (!mutated && args.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset)
+                {
+                    mutated = true;
+                    reentrantVm.Projects.Add(Entry(Path.Combine(root, "observer.ymmp"), Guid.NewGuid()));
+                }
+            };
+            async Task RecoverReentrant() => await (Task)typeof(ProjectListViewModel).GetMethod("RecoverProjectListAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(reentrantVm, null)!;
+            dialogReply = 6; confirmTimer.Start(); try { await RecoverReentrant(); } finally { confirmTimer.Stop(); }
+            if (!mutated || !reentrantVm.HasUnsavedProjectList || !reentrantVm.ExportRecoverySnapshotCommand.CanExecute(null) || (await reentrantRepo.LoadAsync()).Projects.Count != 3)
+                throw new Exception("reentrant UI update was reported as successful or lost retained snapshot");
             var baselinePath = Path.Combine(root, "baseline-conflict.json");
             var baselineRepo = new JsonProjectRepository(logger, baselinePath); var baselineStore = await baselineRepo.LoadAsync();
             baselineStore.Projects.Add(Entry(project)); await baselineRepo.SaveAsync(baselineStore);

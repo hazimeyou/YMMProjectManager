@@ -111,6 +111,12 @@ internal static class ProjectListSaveTests
         await File.WriteAllTextAsync(path, "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"FilePath\":\"p.ymmp\"}]}]}");
         var legacyLink = await Repo().LoadAsync(); Check(legacyLink.IsRecoverySafe && legacyLink.Projects.Single().LinkedYmmpFiles.Count == 1, "legacy minimal link rejected");
         await Repo().SaveAsync(legacyLink); Check((await Repo().LoadAsync()).Projects.Single().LinkedYmmpFiles.Single().FilePath == "p.ymmp", "legacy minimal link lost");
+        var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
+        await File.WriteAllTextAsync(copyPath, "existing synthetic data");
+        await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));
+        Check(await File.ReadAllTextAsync(copyPath) == "existing synthetic data", "recovery copy overwrote existing file");
+        var newCopyPath = Path.Combine(root, "recovery-new.json"); var newCopy = new JsonProjectRepository(logger, newCopyPath);
+        await newCopy.SaveNewCopyAsync(legacyLink); Check((await newCopy.LoadAsync()).Projects.Count == 1, "recovery copy did not reload");
         // Corrupt read must not silently become a new empty store.
         await File.WriteAllTextAsync(path, "{invalid"); var corruptHash=Hash();
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");
