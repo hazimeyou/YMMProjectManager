@@ -117,6 +117,17 @@ internal static class GitRemoteTests
             var race = await GitRepository.CloneCoreAsync(bare, raced, () => { Directory.CreateDirectory(raced); File.WriteAllText(Path.Combine(raced, "sentinel"), "keep"); }, CancellationToken.None);
             Check(!race.Success && race.RecoveryPath is not null && Directory.Exists(race.RecoveryPath), "race clone recovery");
             Check(File.ReadAllText(Path.Combine(raced, "sentinel")) == "keep", "race overwrote destination");
+            var deep = root;
+            while (deep.Length < 225) deep = Path.Combine(deep, "abcdefghij");
+            if (deep.Length >= 248) Program.ReportConditionalSkip("long-path clone fixture parent exceeds Windows process working-directory limits");
+            else
+            {
+                Directory.CreateDirectory(deep);
+                var deepDestination = Path.Combine(deep, "clone");
+                var deepResult = await GitRepository.CloneAsync(bare, deepDestination);
+                Check(deepResult.Success || (deepResult.RecoveryPath is not null && Directory.Exists(deepResult.RecoveryPath)), "long-path reservation failed without a recoverable owned directory");
+                Console.WriteLine(deepResult.Success ? "Long-path clone completed." : "Long-path clone failed with an owned recovery directory; Git filesystem limits remain.");
+            }
             Console.WriteLine("Offline Git remote integration checks passed.");
         }
         finally { Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", global); Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", system); }

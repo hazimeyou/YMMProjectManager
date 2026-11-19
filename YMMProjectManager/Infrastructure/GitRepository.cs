@@ -100,7 +100,7 @@ public sealed class GitRepository
         var repository = new GitRepository(parent);
         // Reserve an owned sibling with an exclusive OS create before Git can write to it.
         var temporary = Path.Combine(parent, ".ymmpm-clone-" + Guid.NewGuid().ToString("N"));
-        if (!CreateDirectory(temporary, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!CreateDirectory(ToNativePath(temporary), IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
         GitResult result;
         try { result = SanitizeRemote(await repository.RunAsync(["clone", "--", remote, temporary], token).ConfigureAwait(false)); }
         catch (Exception ex)
@@ -130,6 +130,10 @@ public sealed class GitRepository
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
+
+    private static string ToNativePath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
+        : @"\\?\" + path;
 
     private async Task<(string? Url, GitResult? Error)> ResolveOriginAsync(bool push, CancellationToken token)
     {
