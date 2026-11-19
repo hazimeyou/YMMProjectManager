@@ -77,7 +77,7 @@ public static class PackagingOutputHelper
             throw new FileNotFoundException("一時出力ファイルが見つかりません。", sourcePath);
         }
 
-        File.Move(sourcePath, destinationPath, true);
+        File.Move(sourcePath, destinationPath, overwrite: false);
     }
 
     public static string EnsureTrailingDirectorySeparator(string path)

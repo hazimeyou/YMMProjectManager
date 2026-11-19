@@ -69,6 +69,8 @@ public sealed class YmmpxLibBridge
                 throw new IOException("プロジェクトと同じパスには出力できません。");
             if (File.Exists(destination) || Directory.Exists(destination))
                 return new YmmpxPackageResult { Success = false, ErrorMessage = "出力先は既に存在します。既存データを保護するため、別の名前で保存してください。" };
+            // Keep the source readable but deny cooperating writers and replacement while packaging.
+            await using var sourceGuard = new FileStream(ymmpPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
             using (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { temporaryOwned = true; }
             var scan = ScanProjectForLogging(ymmpPath);
@@ -123,10 +125,8 @@ public sealed class YmmpxLibBridge
             if (!string.Equals(Path.GetFullPath(packagedOutputPath), temporaryPath, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
-            using (var archive = ZipFile.OpenRead(temporaryPath))
-                if (archive.Entries.Count == 0) throw new InvalidDataException("空のパッケージは保存できません。");
             using (var packageStream = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                ValidateArchiveForExtraction(packageStream, token);
+                await ValidateCreatedPackageAsync(packageStream, token).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink
@@ -278,6 +278,33 @@ public sealed class YmmpxLibBridge
                 slash = path.IndexOf('/', slash + 1);
             }
         }
+    }
+
+    private static async Task ValidateCreatedPackageAsync(Stream stream, CancellationToken token)
+    {
+        ValidateArchiveForExtraction(stream, token);
+        stream.Position = 0;
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        var marker = archive.Entries.SingleOrDefault(entry => string.Equals(entry.FullName, "_ymmpx_project_path.txt", StringComparison.OrdinalIgnoreCase));
+        var links = archive.Entries.SingleOrDefault(entry => string.Equals(entry.FullName, "links.json", StringComparison.OrdinalIgnoreCase));
+        if (marker is null || links is null || marker.Length > 4096)
+            throw new InvalidDataException("パッケージに必要なプロジェクト情報がありません。");
+        var bytes = new byte[4097];
+        var count = 0;
+        await using (var source = marker.Open())
+        {
+            while (count < bytes.Length)
+            {
+                var read = await source.ReadAsync(bytes.AsMemory(count), token).ConfigureAwait(false);
+                if (read == 0) break;
+                count += read;
+            }
+        }
+        if (count > 4096) throw new InvalidDataException("プロジェクト情報が大きすぎます。");
+        var projectPath = new UTF8Encoding(false, true).GetString(bytes, 0, count).TrimStart('\uFEFF').Trim().Replace('\\', '/');
+        if (!projectPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase) ||
+            !archive.Entries.Any(entry => string.Equals(entry.FullName.Replace('\\', '/'), projectPath, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("パッケージに対象のプロジェクトがありません。");
     }
 
     private Assembly? ResolveAssembly(out string? resolvedAssemblyPath)
