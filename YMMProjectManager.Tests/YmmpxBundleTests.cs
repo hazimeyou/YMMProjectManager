@@ -113,6 +113,17 @@ internal static class YmmpxBundleTests
         { "FilePath": "asset.png" }
         """);
 
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try { await service.CreatePackageAsync(projectPath, Path.Combine(root, "cancelled.ymmpx"), cancelled.Token); throw new Exception("missing-library package cancellation was ignored"); }
+            catch (OperationCanceledException) { }
+            try { await service.ExtractPackageAsync(Path.Combine(root, "missing.ymmpx"), Path.Combine(root, "extract"), cancelled.Token); throw new Exception("missing-library extraction cancellation was ignored"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(!File.Exists(Path.Combine(root, "cancelled.ymmpx")) && !Directory.Exists(Path.Combine(root, "extract")), "cancelled operation created output");
+            AssertTrue(service.SearchedPaths.Count == 0, "cancelled operation resolved a library");
+        }
+
         var result = await service.CreatePackageAsync(projectPath, Path.Combine(root, "sample.ymmpx"), CancellationToken.None);
 
         AssertTrue(!result.Success, "package creation should fail when YmmpxLib is missing");

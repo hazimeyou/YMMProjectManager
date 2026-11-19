@@ -47,6 +47,7 @@ public sealed class YmmpxLibBridge
         CancellationToken token,
         IProgress<double>? progress = null)
     {
+        token.ThrowIfCancellationRequested();
         var assembly = ResolveAssembly(out var resolvedAssemblyPath);
         if (assembly is null)
         {
@@ -191,6 +192,7 @@ public sealed class YmmpxLibBridge
         CancellationToken token,
         IProgress<double>? progress = null)
     {
+        token.ThrowIfCancellationRequested();
         var assembly = ResolveAssembly(out var resolvedAssemblyPath);
         if (assembly is null)
         {
@@ -238,6 +240,7 @@ public sealed class YmmpxLibBridge
 
     internal static void ValidateArchiveForExtraction(Stream stream, CancellationToken token, long maxTotalBytes = 100L * 1024 * 1024 * 1024, int maxEntries = 100000)
     {
+        token.ThrowIfCancellationRequested();
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

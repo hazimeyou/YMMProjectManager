@@ -36,6 +36,13 @@ internal static class YmmpxArchiveValidationTests
             try { YmmpxLibBridge.ValidateArchiveForExtraction(archive, cancelled.Token); throw new Exception("cancellation ignored"); }
             catch (OperationCanceledException) { }
         }
+        using (var cancelled = new CancellationTokenSource())
+        using (var emptyArchive = Archive())
+        {
+            cancelled.Cancel();
+            try { YmmpxLibBridge.ValidateArchiveForExtraction(emptyArchive, cancelled.Token); throw new Exception("empty archive cancellation ignored"); }
+            catch (OperationCanceledException) { }
+        }
         var root = Path.Combine(workRoot, "ymmpx-archive-preflight"); Directory.CreateDirectory(root);
         var path = Path.Combine(root, "unsafe.ymmpx");
         using (var bytes = Archive("../outside.txt")) await File.WriteAllBytesAsync(path, bytes.ToArray());

@@ -28,6 +28,10 @@ internal static class YmmpxFailureTests
             cancelled.Cancel();
             try { await bridge.CreatePackageAsync(project, newPath, cancelled.Token); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
             if (File.Exists(newPath)) throw new Exception("cancelled operation created package");
+            var extractPath = Path.Combine(root, "cancelled-extraction");
+            var calls = YmmpxLib.YmmpxPackageService.ExtractionCalls;
+            try { await bridge.ExtractPackageAsync(output, extractPath, cancelled.Token); throw new Exception("extraction cancellation ignored"); } catch (OperationCanceledException) { }
+            if (Directory.Exists(extractPath) || YmmpxLib.YmmpxPackageService.ExtractionCalls != calls) throw new Exception("cancelled extraction created output or called extractor");
         }
         YmmpxLib.YmmpxPackageService.Mode = "success";
         YmmpxLib.YmmpxPackageService.ExternalPath = newPath;
