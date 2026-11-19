@@ -10,6 +10,7 @@ internal static class YmmpxBundleTests
     {
         await TestInstallGuideMessageAsync(workRoot);
         await TestLegacyFolderDetectionAsync(workRoot);
+        await TestInstallerCancellationPreservesExistingFileAsync(workRoot);
         await TestInstallerDownloadAndLaunchAsync(workRoot);
         await TestResolverSearchPathsAsync(workRoot);
         var configuredLibrary = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
@@ -90,6 +91,42 @@ internal static class YmmpxBundleTests
         AssertTrue(File.Exists(result.DownloadPath!), "downloaded ymme should exist");
         AssertTrue(launchedPaths.Count == 1, "installer should be launched once");
         AssertTrue(string.Equals(launchedPaths[0], result.DownloadPath, StringComparison.OrdinalIgnoreCase), "launched path should match downloaded ymme");
+    }
+
+    private static async Task TestInstallerCancellationPreservesExistingFileAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallerCancellationPreservesExistingFileAsync));
+        var oldTemp = Environment.GetEnvironmentVariable("TEMP");
+        var oldTmp = Environment.GetEnvironmentVariable("TMP");
+        try
+        {
+            Environment.SetEnvironmentVariable("TEMP", root);
+            Environment.SetEnvironmentVariable("TMP", root);
+            AssertTrue(Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) == Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), "installer fixture is not isolated");
+            var launches = 0;
+            var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
+                launcher: _ => launches++, downloader: (_, _, token) => { token.ThrowIfCancellationRequested(); throw new IOException("synthetic download failure"); });
+            var existing = guide.GetInstallerDownloadPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
+            await File.WriteAllTextAsync(existing, "synthetic existing installer");
+            using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+            try { await guide.DownloadAndLaunchInstallerAsync(cancelled.Token); throw new Exception("installer cancellation ignored"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled installer modified existing file or launched");
+            var failed = await guide.DownloadAndLaunchInstallerAsync();
+            AssertTrue(!failed.Success && await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "failed download modified existing file or launched");
+            using var interrupted = new CancellationTokenSource();
+            var duringDownload = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "during.log")),
+                launcher: _ => launches++, downloader: async (_, path, _) => { await File.WriteAllTextAsync(path, "synthetic partial"); interrupted.Cancel(); });
+            try { await duringDownload.DownloadAndLaunchInstallerAsync(interrupted.Token); throw new Exception("download cancellation ignored before launch"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled download modified existing file or launched");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TEMP", oldTemp);
+            Environment.SetEnvironmentVariable("TMP", oldTmp);
+        }
     }
 
     private static Task TestResolverSearchPathsAsync(string workRoot)
