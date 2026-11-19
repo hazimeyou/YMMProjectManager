@@ -96,7 +96,9 @@ public sealed class YmmpxLibInstallGuide
 
     public async Task<YmmpxLibInstallResult> DownloadAndLaunchInstallerAsync(CancellationToken cancellationToken = default)
     {
-        var downloadPath = GetInstallerDownloadPath();
+        cancellationToken.ThrowIfCancellationRequested();
+        var defaultPath = GetInstallerDownloadPath();
+        var downloadPath = Path.Combine(Path.GetDirectoryName(defaultPath)!, $"{Path.GetFileNameWithoutExtension(defaultPath)}-{Guid.NewGuid():N}{Path.GetExtension(defaultPath)}");
         try
         {
             logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
@@ -107,11 +109,6 @@ public sealed class YmmpxLibInstallGuide
             if (!string.IsNullOrWhiteSpace(downloadDirectory))
             {
                 Directory.CreateDirectory(downloadDirectory);
-            }
-
-            if (File.Exists(downloadPath))
-            {
-                File.Delete(downloadPath);
             }
 
             if (downloader is not null)
@@ -125,6 +122,7 @@ public sealed class YmmpxLibInstallGuide
 
             logger.Info($"YmmpxLibPlugin のダウンロードに成功しました。path={downloadPath}");
             logger.Flush();
+            cancellationToken.ThrowIfCancellationRequested();
 
             var startInfo = new ProcessStartInfo
             {
@@ -147,6 +145,10 @@ public sealed class YmmpxLibInstallGuide
                 Success = true,
                 DownloadPath = downloadPath,
             };
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch (Exception ex)
         {
@@ -175,7 +177,7 @@ public sealed class YmmpxLibInstallGuide
         response.EnsureSuccessStatusCode();
 
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await using var output = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
     }
 

@@ -203,6 +203,10 @@ public partial class ProjectGenerationListWindow : Window, INotifyPropertyChange
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationListRefresh failed. projectPath={projectPath}");
+            IsEmptyStateVisible = true;
+            EmptyStateMessage = "世代一覧を読み込めません。既存データを確認してください。";
+            CanRestore = false;
+            CanDelete = false;
             MessageBox.Show("世代一覧の更新に失敗しました。ログを確認してください。", "世代一覧", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }

@@ -1,10 +1,11 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using System.Text;
 using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Relink;
@@ -54,7 +55,11 @@ public sealed class RelinkRow : INotifyPropertyChanged
     public string? SelectedCandidate
     {
         get => selectedCandidate;
-        set => SetProperty(ref selectedCandidate, value);
+        set
+        {
+            if (SetProperty(ref selectedCandidate, value) && Status == RelinkStatus.Ambiguous && !string.IsNullOrWhiteSpace(value))
+                Status = RelinkStatus.Updated;
+        }
     }
 
     public string Message
@@ -63,7 +68,7 @@ public sealed class RelinkRow : INotifyPropertyChanged
         set => SetProperty(ref message, value);
     }
 
-    public bool IsEditable => Status == RelinkStatus.Ambiguous;
+    public bool IsEditable => Status == RelinkStatus.Ambiguous || (Status == RelinkStatus.Updated && CandidateCount > 1);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -134,6 +139,7 @@ public sealed class RelinkDocumentContext
     public string YmmpPath { get; init; } = string.Empty;
     public string OriginalJsonText { get; init; } = string.Empty;
     public List<RelinkRow> Rows { get; init; } = [];
+    internal byte[]? OriginalBytes { get; init; }
 }
 
 public sealed class RelinkScanService
@@ -157,7 +163,9 @@ public sealed class RelinkScanService
                 return (null, result);
             }
 
-            var text = await File.ReadAllTextAsync(ymmpPath, token).ConfigureAwait(false);
+            var bytes = await File.ReadAllBytesAsync(ymmpPath, token).ConfigureAwait(false);
+            var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
+            var text = new UTF8Encoding(false, true).GetString(bytes, offset, bytes.Length - offset);
             var root = JsonNode.Parse(text);
             if (root is null)
             {
@@ -211,7 +219,7 @@ public sealed class RelinkScanService
 
             logger.Info($"Scan completed. scannedFilePathCount={result.ScannedFilePathCount}, missingCount={result.MissingCount}, updatedCount={result.UpdatedCount}, ambiguousCount={result.AmbiguousCount}, notFoundCount={result.NotFoundCount}, skippedCount={result.SkippedCount}, failedCount={result.FailedCount}");
             logger.Flush();
-            return (new RelinkDocumentContext { YmmpPath = ymmpPath, OriginalJsonText = text, Rows = rows }, result);
+            return (new RelinkDocumentContext { YmmpPath = ymmpPath, OriginalJsonText = text, OriginalBytes = bytes, Rows = rows }, result);
         }
         catch (OperationCanceledException)
         {
@@ -495,57 +503,78 @@ public sealed class RelinkSearchService
 public sealed class RelinkSaveService
 {
     private readonly FileLogger logger;
+    private readonly Func<Stream, byte[], CancellationToken, Task> write;
+    private readonly Action<FileStream> flush;
+    private readonly Action? beforeCommit;
 
-    public RelinkSaveService(FileLogger logger)
+    public RelinkSaveService(FileLogger logger) : this(logger, null, null, null) { }
+    internal RelinkSaveService(FileLogger logger, Func<Stream, byte[], CancellationToken, Task>? write,
+        Action<FileStream>? flush, Action? beforeCommit)
     {
         this.logger = logger;
+        this.write = write ?? ((stream, bytes, token) => stream.WriteAsync(bytes, token).AsTask());
+        this.flush = flush ?? (stream => stream.Flush(flushToDisk: true));
+        this.beforeCommit = beforeCommit;
     }
 
-    public async Task<(bool Success, string? ErrorMessage, string? BackupPath)> SaveAsync(RelinkDocumentContext context, CancellationToken token)
+    public async Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token)
     {
+        string? temporary = null;
         try
         {
-            logger.Info($"Relink.SaveService start. ymmp={context.YmmpPath}");
-            var updatedRows = context.Rows
-                .Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate))
-                .ToList();
-            if (updatedRows.Count == 0)
+            token.ThrowIfCancellationRequested();
+            var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated)).ToArray();
+            if (rows.Length == 0) return (false, "更新対象はありません。");
+            var original = context.OriginalBytes?.ToArray();
+            if (original is null || rows.Any(row => string.IsNullOrWhiteSpace(row.SelectedCandidate)))
+                return (false, "再リンク対象を確認できません。");
+            var source = Path.GetFullPath(context.YmmpPath);
+            var output = Path.GetFullPath(destination);
+            if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.OrdinalIgnoreCase))
+                return (false, "相対素材パスを保護するため、元のプロジェクトと同じフォルダーに別名保存してください。");
+            if (File.Exists(output) || Directory.Exists(output)) return (false, "既存ファイルは上書きできません。別名を選択してください。");
+            var expected = SHA256.HashData(original);
+            var current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
+            if (!expected.SequenceEqual(SHA256.HashData(current)))
+                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            var updated = RelinkJsonUpdate.Apply(original, rows);
+            using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
+            var candidate = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileName(output) + ".tmp-" + Guid.NewGuid().ToString("N"));
+            await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
             {
-                logger.Info($"Relink.SaveService skipped. ymmp={context.YmmpPath}, reason=no updates");
-                logger.Flush();
-                return (true, null, null);
+                temporary = candidate;
+                await write(stream, updated, token).ConfigureAwait(false);
+                await stream.FlushAsync(token).ConfigureAwait(false);
+                flush(stream);
             }
-
-            var backupPath = context.YmmpPath + ".bak";
-            File.Copy(context.YmmpPath, backupPath, overwrite: true);
-
-            var text = context.OriginalJsonText;
-            foreach (var row in updatedRows)
-            {
-                token.ThrowIfCancellationRequested();
-
-                var oldToken = JsonSerializer.Serialize(row.OriginalPath);
-                var newToken = JsonSerializer.Serialize(row.SelectedCandidate!);
-                var pattern = "(\"FilePath\"\\s*:\\s*)" + Regex.Escape(oldToken);
-                text = Regex.Replace(text, pattern, "$1" + newToken, RegexOptions.CultureInvariant);
-            }
-
-            await File.WriteAllTextAsync(context.YmmpPath, text, token).ConfigureAwait(false);
-
-            logger.Info($"Save completed. updatedCount={updatedRows.Count}, backup={backupPath}");
-            logger.Flush();
-            return (true, null, backupPath);
+            beforeCommit?.Invoke();
+            token.ThrowIfCancellationRequested();
+            current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
+            if (!expected.SequenceEqual(SHA256.HashData(current)))
+                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            File.Move(temporary, output);
+            temporary = null;
+            return (true, null);
         }
-        catch (OperationCanceledException)
-        {
-            logger.Info($"Relink.SaveService canceled. ymmp={context.YmmpPath}");
-            logger.Flush();
-            throw;
-        }
+        catch (OperationCanceledException) { throw; }
+        catch (InvalidDataException ex) { return (false, ex.Message); }
         catch (Exception ex)
         {
-            logger.Error(ex, $"Relink.SaveService failed. ymmp={context.YmmpPath}");
-            return (false, "保存に失敗しました。ログを確認してください。", null);
+            logger.Error(ex, "Relink save-as failed.");
+            return (false, "別名保存に失敗しました。出力先とログを確認してください。");
+        }
+        finally
+        {
+            if (temporary is not null) { try { File.Delete(temporary); } catch (Exception ex) { logger.Error(ex, "Relink save-as cleanup failed."); } }
         }
     }
+
+    // In-place replacement cannot prevent a concurrent external write between comparison and replace.
+    // Existing callers must choose a new destination through SaveAsAsync instead.
+    public Task<(bool Success, string? ErrorMessage, string? BackupPath)> SaveAsync(RelinkDocumentContext context, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return Task.FromResult<(bool, string?, string?)>((false, "元ファイルへの上書きは無効です。別名保存してください。", null));
+    }
+
 }
