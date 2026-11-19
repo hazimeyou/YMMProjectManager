@@ -36,6 +36,7 @@
                     </TextBlock.Style>
                 </TextBlock>
                 <Button Content="一覧の保存を再試行" Command="{Binding RetryProjectListSaveCommand}" />
+                <Button Content="ID 設定の競合を回復" Command="{Binding RecoverIdentityCommand}" Margin="4,0,0,0" />
             </StackPanel>
 
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->

@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 using YMMProjectManager.Application;
@@ -16,6 +17,7 @@ public sealed class JsonProjectRepository : IProjectRepository
 {
     private const string PluginDirectoryName = "YMMProjectManager";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+    private static readonly JsonSerializerOptions StrictRecoveryOptions = new() { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
     private static readonly SemaphoreSlim SaveGate = new(1, 1);
     private readonly string jsonPath;
     private readonly Func<Stream, byte[], CancellationToken, Task> writeTemporaryFile;
@@ -39,9 +41,10 @@ public sealed class JsonProjectRepository : IProjectRepository
         try
         {
             var content = await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false);
-            var dto = JsonSerializer.Deserialize<ProjectListFileDto>(content, JsonOptions);
+            var jsonContent = StripUtf8Bom(content);
+            var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
             if (dto is null) throw new InvalidDataException("Project list is null.");
-            var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))) };
+            var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))), IsRecoverySafe = IsSafeForRecovery(content) };
             foreach (var f in dto.Folders ?? [])
             {
                 if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
@@ -70,10 +73,49 @@ public sealed class JsonProjectRepository : IProjectRepository
             }
             return store;
         }
-        catch (FileNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null) }; }
-        catch (DirectoryNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null) }; }
+        catch (FileNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
+        catch (DirectoryNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.Error("Failed to load projects.json", ex); throw; }
+    }
+
+    private static bool IsSafeForRecovery(byte[] content)
+    {
+        try
+        {
+            var jsonContent = StripUtf8Bom(content);
+            var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, StrictRecoveryOptions);
+            if (dto?.Projects is null || dto.Folders is null) return false;
+            if (dto.Folders.Any(f => f is null || f.Id is null || string.IsNullOrWhiteSpace(f.Name) || f.DisplayOrder is null || f.CreatedAt is null || f.UpdatedAt is null)) return false;
+            foreach (var project in dto.Projects)
+            {
+                if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
+                    (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
+                if (project.LinkedYmmpFiles.Count == 0 && project.FullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase)) return false;
+                if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) || l.Id is null ||
+                    l.RegisteredAt is null || l.UpdatedAt is null || l.Exists is null || !Enum.TryParse<YmmpRole>(l.Role, true, out _))) return false;
+            }
+            using var document = JsonDocument.Parse(jsonContent);
+            return !HasDuplicateProperties(document.RootElement);
+        }
+        catch (JsonException) { return false; }
+    }
+
+    private static ReadOnlyMemory<byte> StripUtf8Bom(byte[] content) =>
+        content.Length >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF
+            ? content.AsMemory(3) : content.AsMemory();
+
+    private static bool HasDuplicateProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+                if (!names.Add(property.Name) || HasDuplicateProperties(property.Value)) return true;
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) if (HasDuplicateProperties(item)) return true;
+        return false;
     }
 
     public async Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default)
@@ -133,6 +175,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 File.Move(tempPath, jsonPath);
             tempPath = null;
             store.Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(bytes)));
+            store.IsRecoverySafe = IsSafeForRecovery(bytes);
         }
         catch (OperationCanceledException)
         {

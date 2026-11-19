@@ -100,6 +100,9 @@ internal static class ProjectListSaveTests
         Check(Hash() == identityHash, "identified project without path modified list");
         await File.WriteAllTextAsync(path, $"{{\"Projects\":[{{\"FullPath\":\"one.ymmp\",\"ProjectId\":\"{id1}\"}},{{\"FullPath\":\"two.ymmp\",\"ProjectId\":\"{id1}\"}}]}}");
         var duplicateHash = Hash(); await Expect<InvalidDataException>(() => Repo().LoadAsync()); Check(Hash() == duplicateHash, "duplicate load modified list");
+        var bomBytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"Projects\":[],\"Folders\":[]}")).ToArray();
+        await File.WriteAllBytesAsync(path, bomBytes); var bomHash = Hash(); var bomStore = await Repo().LoadAsync();
+        Check(bomStore.Projects.Count == 0 && bomStore.IsRecoverySafe && Hash() == bomHash && bomStore.Revision!.Sha256 == bomHash, "BOM list load changed content or revision");
         // Corrupt read must not silently become a new empty store.
         await File.WriteAllTextAsync(path, "{invalid"); var corruptHash=Hash();
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");

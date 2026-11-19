@@ -21,6 +21,12 @@ internal static class ProjectListRecoveryTests
             var list = Path.Combine(root, "projects.json"); var project = Path.Combine(root, "sample.ymmp");
             await File.WriteAllTextAsync(project, "{}");
             var logger = new FileLogger(Path.Combine(root, "test.log"));
+            YMMProjectManager.Domain.ProjectEntry Entry(string path, Guid? id = null)
+            {
+                var item = new YMMProjectManager.Domain.ProjectEntry { FullPath = path, ProjectId = id };
+                item.LinkedYmmpFiles.Add(new YMMProjectManager.Domain.LinkedYmmpFile { FilePath = path, Role = YMMProjectManager.Domain.YmmpRole.Main, Exists = File.Exists(path) });
+                return item;
+            }
             var initialRepo = new JsonProjectRepository(logger, list); await initialRepo.SaveAsync(await initialRepo.LoadAsync());
             var before = System.Security.Cryptography.SHA256.HashData(await File.ReadAllBytesAsync(list));
             bool fail = true; bool cancel = false; int calls = 0;
@@ -62,7 +68,7 @@ internal static class ProjectListRecoveryTests
             var legacyPath = Path.Combine(root, "legacy-list.json");
             var legacyRepo = new JsonProjectRepository(logger, legacyPath);
             var legacyStore = await legacyRepo.LoadAsync();
-            legacyStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project });
+            legacyStore.Projects.Add(Entry(project));
             await legacyRepo.SaveAsync(legacyStore);
             var legacyVm = new ProjectListViewModel(logger, legacyRepo); await legacyVm.InitializeAsync();
             legacyVm.SelectedProject = legacyVm.Projects.Single();
@@ -80,8 +86,8 @@ internal static class ProjectListRecoveryTests
             var associatePath = Path.Combine(root, "associate-list.json");
             var associateRepo = new JsonProjectRepository(logger, associatePath);
             var associateStore = await associateRepo.LoadAsync();
-            associateStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = migrated.ProjectId });
-            associateStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project });
+            associateStore.Projects.Add(Entry(extracted, migrated.ProjectId));
+            associateStore.Projects.Add(Entry(project));
             await associateRepo.SaveAsync(associateStore);
             var associateVm = new ProjectListViewModel(logger, associateRepo); await associateVm.InitializeAsync();
             associateVm.SelectedProject = associateVm.Projects.Last();
@@ -94,7 +100,7 @@ internal static class ProjectListRecoveryTests
             if ((await associateRepo.LoadAsync()).Projects.Last().ProjectId != uniqueManifest.ProjectId) throw new Exception("metadata association not persisted");
             var failedPath = Path.Combine(root, "associate-failure.json");
             var failedSeed = new JsonProjectRepository(logger, failedPath); var failedStore = await failedSeed.LoadAsync();
-            failedStore.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project }); await failedSeed.SaveAsync(failedStore);
+            failedStore.Projects.Add(Entry(project)); await failedSeed.SaveAsync(failedStore);
             var failAssociation = true;
             var failedRepo = new JsonProjectRepository(logger, failedPath, beforeReplace: () => { if (failAssociation) throw new IOException("synthetic association failure"); });
             var failedVm = new ProjectListViewModel(logger, failedRepo); await failedVm.InitializeAsync(); failedVm.SelectedProject = failedVm.Projects.Single();
@@ -107,16 +113,56 @@ internal static class ProjectListRecoveryTests
             if (failedVm.HasUnsavedProjectList || (await failedRepo.LoadAsync()).Projects.Single().ProjectId != failedManifest.ProjectId) throw new Exception("association retry failed");
             var conflictPath = Path.Combine(root, "associate-conflict.json");
             var conflictRepo = new JsonProjectRepository(logger, conflictPath); var conflictSeed = await conflictRepo.LoadAsync();
-            conflictSeed.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = project }); await conflictRepo.SaveAsync(conflictSeed);
+            conflictSeed.Projects.Add(Entry(project)); await conflictRepo.SaveAsync(conflictSeed);
             var conflictVm = new ProjectListViewModel(logger, conflictRepo); await conflictVm.InitializeAsync(); conflictVm.SelectedProject = conflictVm.Projects.Single();
             var outsideRepo = new JsonProjectRepository(logger, conflictPath); var outside = await outsideRepo.LoadAsync();
-            outside.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = Guid.NewGuid() }); await outsideRepo.SaveAsync(outside);
+            var outsideEntry = new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = Guid.NewGuid() };
+            outsideEntry.LinkedYmmpFiles.Add(new YMMProjectManager.Domain.LinkedYmmpFile { FilePath = extracted, Role = YMMProjectManager.Domain.YmmpRole.Main, Exists = true });
+            outside.Projects.Add(outsideEntry); await outsideRepo.SaveAsync(outside);
             var conflictManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
             try { await conflictVm.AssociateLegacyMetadataAsync(conflictVm.SelectedProject, conflictManifest); throw new Exception("stale association accepted"); }
             catch (YMMProjectManager.Application.ProjectListConflictException) { }
             if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.Count != 2) throw new Exception("association conflict lost pending or external data");
             timer.Start(); try { await conflictVm.RetryProjectListSaveAsync(); } finally { timer.Stop(); }
             if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.Count != 2) throw new Exception("association conflict retry overwrote external data");
+            async Task Recover() => await (Task)typeof(ProjectListViewModel).GetMethod("RecoverIdentityAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(conflictVm, null)!;
+            dialogReply = 7; confirmTimer.Start(); try { await Recover(); } finally { confirmTimer.Stop(); }
+            if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.First().ProjectId is not null) throw new Exception("cancelled conflict recovery changed data");
+            await File.WriteAllTextAsync(project, "{\"modified\":true}");
+            timer.Start(); try { await Recover(); } finally { timer.Stop(); }
+            if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.First().ProjectId is not null) throw new Exception("changed project was associated during recovery");
+            await File.WriteAllTextAsync(project, "{}");
+            dialogReply = 6; confirmTimer.Start(); try { await Recover(); } finally { confirmTimer.Stop(); }
+            var recovered = await conflictRepo.LoadAsync();
+            if (conflictVm.HasUnsavedProjectList || recovered.Projects.Count != 2 || recovered.Projects.First().ProjectId != conflictManifest.ProjectId || recovered.Projects.Last().FullPath != extracted)
+                throw new Exception("identity recovery lost pending or external change: " + conflictVm.AssetStatus + "; pending=" + conflictVm.HasUnsavedProjectList + "; first=" + recovered.Projects.First().ProjectId + "; safe=" + recovered.IsRecoverySafe);
+            var baselinePath = Path.Combine(root, "baseline-conflict.json");
+            var baselineRepo = new JsonProjectRepository(logger, baselinePath); var baselineStore = await baselineRepo.LoadAsync();
+            baselineStore.Projects.Add(Entry(project)); await baselineRepo.SaveAsync(baselineStore);
+            var baselineVm = new ProjectListViewModel(logger, baselineRepo); await baselineVm.InitializeAsync(); baselineVm.SelectedProject = baselineVm.Projects.Single();
+            baselineVm.SelectedProject.DisplayName = "unsaved name";
+            var baselineOutside = new JsonProjectRepository(logger, baselinePath); var newOutside = await baselineOutside.LoadAsync();
+            newOutside.Projects.Add(new YMMProjectManager.Domain.ProjectEntry { FullPath = extracted, ProjectId = Guid.NewGuid() }); await baselineOutside.SaveAsync(newOutside);
+            var baselineManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            try { await baselineVm.AssociateLegacyMetadataAsync(baselineVm.SelectedProject, baselineManifest); throw new Exception("baseline conflict missed"); }
+            catch (YMMProjectManager.Application.ProjectListConflictException) { }
+            if (baselineVm.RecoverIdentityCommand.CanExecute(null) || baselineVm.SelectedProject.DisplayName != "unsaved name") throw new Exception("unrelated unsaved change made recoverable or was lost");
+            var duringPath = Path.Combine(root, "during-save.json"); var duringSeed = new JsonProjectRepository(logger, duringPath); var duringStore = await duringSeed.LoadAsync();
+            duringStore.Projects.Add(Entry(project)); await duringSeed.SaveAsync(duringStore);
+            ProjectListViewModel? duringVm = null;
+            var duringRepo = new JsonProjectRepository(logger, duringPath, beforeReplace: () => duringVm!.SelectedProject!.DisplayName = "changed during save");
+            duringVm = new ProjectListViewModel(logger, duringRepo); await duringVm.InitializeAsync(); duringVm.SelectedProject = duringVm.Projects.Single();
+            await duringVm.AssociateLegacyMetadataAsync(duringVm.SelectedProject, AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid()));
+            if (!duringVm.HasUnsavedProjectList || duringVm.SelectedProject.DisplayName != "changed during save") throw new Exception("save-time change was not preserved as unsaved");
+            var unsafeListPath = Path.Combine(root, "unknown-list.json");
+            var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"FutureField\":\"keep\"}";
+            await File.WriteAllTextAsync(unsafeListPath, unknownJson);
+            var unsafeRepo = new JsonProjectRepository(logger, unsafeListPath); var unsafeVm = new ProjectListViewModel(logger, unsafeRepo);
+            await unsafeVm.InitializeAsync(); unsafeVm.SelectedProject = unsafeVm.Projects.Single();
+            try { await unsafeVm.AssociateLegacyMetadataAsync(unsafeVm.SelectedProject, AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid())); throw new Exception("unsafe list association accepted"); }
+            catch (InvalidDataException) { }
+            timer.Start(); try { await unsafeVm.AddProjectsAsync([extracted]); } finally { timer.Stop(); }
+            if (!unsafeVm.HasUnsavedProjectList || await File.ReadAllTextAsync(unsafeListPath) != unknownJson) throw new Exception("unsafe project list was overwritten");
             foreach (var content in new[] { "{invalid", "" })
             {
                 var broken = Path.Combine(root, content.Length == 0 ? "empty.json" : "broken.json");
