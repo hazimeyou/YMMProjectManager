@@ -1299,6 +1299,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
                 Projects = Projects.ToList(),
                 Folders = folders.ToList(),
                 Revision = projectListRevision,
+                IsRecoverySafe = isProjectListLossless,
             };
             var expectedFingerprint = ProjectListRecovery.Fingerprint(store);
             await repository.SaveAsync(store).ConfigureAwait(true);

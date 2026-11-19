@@ -18,7 +18,7 @@ internal static class ProjectListSaveTests
         ProjectStore Store(string name) => new() { Projects = [new ProjectEntry { FullPath = Path.Combine(root, name + ".ymmp"), DisplayName = name, Pinned = true }] };
         async Task Save(JsonProjectRepository repo, ProjectStore store, CancellationToken token = default)
         {
-            store.Revision = (await repo.LoadAsync()).Revision;
+            var baseline = await repo.LoadAsync(); store.Revision = baseline.Revision; store.IsRecoverySafe = baseline.IsRecoverySafe;
             await repo.SaveAsync(store, token);
         }
         void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
@@ -65,7 +65,7 @@ internal static class ProjectListSaveTests
             await Expect<OperationCanceledException>(() => Save(Repo(beforeReplace: cts.Cancel), Store("lost"), cts.Token));
         await CheckPreserved(hash, size, bytes);
         // T07: Windows sharing restriction denies the final replacement.
-        var lockedStore = Store("lost"); lockedStore.Revision = (await Repo().LoadAsync()).Revision;
+        var lockedStore = Store("lost"); var lockedBaseline = await Repo().LoadAsync(); lockedStore.Revision = lockedBaseline.Revision; lockedStore.IsRecoverySafe = lockedBaseline.IsRecoverySafe;
         using (var locked = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             await Expect<IOException>(() => Repo().SaveAsync(lockedStore));
         await CheckPreserved(hash, size, bytes);
@@ -73,8 +73,8 @@ internal static class ProjectListSaveTests
             await Expect<IOException>(() => Repo().LoadAsync());
         await CheckPreserved(hash, size, bytes);
         // T12: separate repository instances serialize writes; final document is a complete submitted snapshot.
-        var concurrentRevision = (await Repo().LoadAsync()).Revision;
-        async Task<bool> Compete(int i) { var store = Store("concurrent" + i); store.Revision = concurrentRevision; try { await Repo().SaveAsync(store); return true; } catch (ProjectListConflictException) { return false; } }
+        var concurrentBaseline = await Repo().LoadAsync();
+        async Task<bool> Compete(int i) { var store = Store("concurrent" + i); store.Revision = concurrentBaseline.Revision; store.IsRecoverySafe = concurrentBaseline.IsRecoverySafe; try { await Repo().SaveAsync(store); return true; } catch (ProjectListConflictException) { return false; } }
         var winners = await Task.WhenAll(Enumerable.Range(0, 12).Select(Compete));
         Check(winners.Count(x => x) == 1, "stale concurrent writes were accepted");
         var concurrent = await Repo().LoadAsync(); Check(concurrent.Projects.Count == 1 && concurrent.Projects[0].DisplayName!.StartsWith("concurrent", StringComparison.Ordinal), "concurrent save"); NoTemps();

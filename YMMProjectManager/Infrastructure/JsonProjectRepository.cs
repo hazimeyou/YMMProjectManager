@@ -128,6 +128,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         {
             cancellationToken.ThrowIfCancellationRequested();
             stage = "serialize";
+            if (!store.IsRecoverySafe) throw new InvalidDataException("Project list contains data that cannot be safely preserved.");
             var projectIds = new HashSet<Guid>();
             foreach (var project in store.Projects)
             {

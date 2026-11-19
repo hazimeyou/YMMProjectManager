@@ -78,6 +78,7 @@ internal static class ProjectListConcurrencyTests
             var unsafeRepo = new JsonProjectRepository(logger, unsafePath); var loaded = await unsafeRepo.LoadAsync();
             if (loaded.IsRecoverySafe) throw new Exception("lossy recovery input was accepted");
             try { ProjectListRecovery.ApplyIdentity(loaded, "p.ymmp", Guid.NewGuid()); throw new Exception("unsafe recovery accepted"); } catch (InvalidDataException) { }
+            try { await unsafeRepo.SaveAsync(loaded); throw new Exception("unsafe repository save accepted"); } catch (InvalidDataException) { }
             if (await File.ReadAllTextAsync(unsafePath) != input) throw new Exception("unsafe recovery input changed");
         }
     }
