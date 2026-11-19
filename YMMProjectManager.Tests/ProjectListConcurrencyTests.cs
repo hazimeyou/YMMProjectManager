@@ -120,6 +120,13 @@ internal static class ProjectListConcurrencyTests
         folderLocal.Projects[0].FolderId = null; folderLocal.Folders.Clear();
         folderRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "external-folder.ymmp"), ProjectId = Guid.NewGuid(), FolderId = folder.Id });
         if (ProjectListMerge.Merge(folderBase, folderLocal, folderRemote).Store is not null) throw new Exception("folder deletion orphaned an external project");
+        var orderBase = ProjectListMerge.Snapshot(mergeBase);
+        orderBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "second-order.ymmp"), ProjectId = Guid.NewGuid() });
+        var orderLocal = ProjectListMerge.Snapshot(orderBase); var orderRemote = ProjectListMerge.Snapshot(orderBase);
+        orderLocal.Projects.Reverse(); orderLocal.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "third-order.ymmp"), ProjectId = Guid.NewGuid() });
+        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("local reorder was silently lost");
+        orderLocal = ProjectListMerge.Snapshot(orderBase); orderLocal.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "inserted.ymmp"), ProjectId = Guid.NewGuid() });
+        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("local insertion order was silently lost");
         var mergePath = Path.Combine(root, "merge-failure.json"); var mergeRepo = new JsonProjectRepository(logger, mergePath);
         var mergeSeed = await mergeRepo.LoadAsync(); mergeSeed.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "seed.ymmp"), ProjectId = Guid.NewGuid() }); await mergeRepo.SaveAsync(mergeSeed);
         var mergeBaseline = await mergeRepo.LoadAsync(); var mergeLocal = ProjectListMerge.Snapshot(mergeBaseline);

@@ -172,8 +172,10 @@ internal static class ProjectListRecoveryTests
             };
             async Task RecoverReentrant() => await (Task)typeof(ProjectListViewModel).GetMethod("RecoverProjectListAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(reentrantVm, null)!;
             dialogReply = 6; confirmTimer.Start(); try { await RecoverReentrant(); } finally { confirmTimer.Stop(); }
-            if (!mutated || !reentrantVm.HasUnsavedProjectList || !reentrantVm.ExportRecoverySnapshotCommand.CanExecute(null) || (await reentrantRepo.LoadAsync()).Projects.Count != 3)
+            if (!mutated || !reentrantVm.HasUnsavedProjectList || !reentrantVm.ExportRecoverySnapshotCommand.CanExecute(null) || !reentrantVm.ExportRecoveryScreenCommand.CanExecute(null) || reentrantVm.AddCommand.CanExecute(null) || reentrantVm.RetryProjectListSaveCommand.CanExecute(null) || (await reentrantRepo.LoadAsync()).Projects.Count != 3)
                 throw new Exception("reentrant UI update was reported as successful or lost retained snapshot");
+            var frozenCount = reentrantVm.Projects.Count; await reentrantVm.AddProjectsAsync([extracted]);
+            if (reentrantVm.Projects.Count != frozenCount) throw new Exception("partial recovery allowed new list mutation");
             var baselinePath = Path.Combine(root, "baseline-conflict.json");
             var baselineRepo = new JsonProjectRepository(logger, baselinePath); var baselineStore = await baselineRepo.LoadAsync();
             baselineStore.Projects.Add(Entry(project)); await baselineRepo.SaveAsync(baselineStore);

@@ -39,6 +39,7 @@
                 <Button Content="ID 設定の競合を回復" Command="{Binding RecoverIdentityCommand}" Margin="4,0,0,0" />
                 <Button Content="一覧変更の競合を確認" Command="{Binding RecoverProjectListCommand}" Margin="4,0,0,0" />
                 <Button Content="退避一覧を保存" Command="{Binding ExportRecoverySnapshotCommand}" Margin="4,0,0,0" />
+                <Button Content="画面状態を退避" Command="{Binding ExportRecoveryScreenCommand}" Margin="4,0,0,0" />
             </StackPanel>
 
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->

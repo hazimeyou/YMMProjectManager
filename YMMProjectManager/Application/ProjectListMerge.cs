@@ -25,6 +25,9 @@ internal static class ProjectListMerge
             return new(null, changes, ["一覧に未知・不正な項目があるか、最新の版がありません。"]);
         if (!Valid(baseline) || !Valid(local) || !Valid(remote))
             return new(null, changes, ["パス、project ID、folder ID の重複または不正があります。"]);
+        if (!OrderIsAppendOnly(baseline.Projects.Select(p => p.FullPath), local.Projects.Select(p => p.FullPath), StringComparer.OrdinalIgnoreCase) ||
+            !OrderIsAppendOnly(baseline.Folders.Select(f => f.Id), local.Folders.Select(f => f.Id), EqualityComparer<Guid>.Default))
+            return new(null, changes, ["未保存の並べ替えまたは途中への挿入は自動再適用できません。"]);
         foreach (var original in baseline.Projects.Where(p => p.ProjectId is not null))
         {
             var localIdentity = local.Projects.SingleOrDefault(p => p.ProjectId == original.ProjectId);
@@ -107,6 +110,20 @@ internal static class ProjectListMerge
 
     private static bool Equal<T>(T left, T right) => left is DateTimeOffset a && right is DateTimeOffset b
         ? a.EqualsExact(b) : EqualityComparer<T>.Default.Equals(left, right);
+
+    private static bool OrderIsAppendOnly<T>(IEnumerable<T> baseline, IEnumerable<T> local, IEqualityComparer<T> comparer)
+    {
+        var baseArray = baseline.ToArray(); var localArray = local.ToArray();
+        var baseSet = baseArray.ToHashSet(comparer); var localSet = localArray.ToHashSet(comparer);
+        if (!baseArray.Where(localSet.Contains).SequenceEqual(localArray.Where(baseSet.Contains), comparer)) return false;
+        var seenNew = false;
+        foreach (var item in localArray)
+        {
+            if (!baseSet.Contains(item)) seenNew = true;
+            else if (seenNew) return false;
+        }
+        return true;
+    }
 
     private static void MergeFolders(ProjectStore baseline, ProjectStore local, ProjectStore remote, ProjectStore merged, List<string> changes, List<string> conflicts)
     {

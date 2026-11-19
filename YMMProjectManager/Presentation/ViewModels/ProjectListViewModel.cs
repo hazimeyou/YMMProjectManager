@@ -40,6 +40,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     private string? lastSavedFingerprint;
     private ProjectStore? savedBaseline;
     private ProjectStore? retainedRecoverySnapshot;
+    private ProjectStore? retainedScreenSnapshot;
     private readonly Dictionary<string, (Guid Id, string Hash)> pendingAdditionEvidence = new(StringComparer.OrdinalIgnoreCase);
     private bool isProjectListLossless;
     private bool hasUnsavedProjectList;
@@ -114,6 +115,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
     public ICommand RecoverIdentityCommand { get; }
     public ICommand RecoverProjectListCommand { get; }
     public ICommand ExportRecoverySnapshotCommand { get; }
+    public ICommand ExportRecoveryScreenCommand { get; }
     public ICommand AddCommand { get; }
     public ICommand RemoveCommand { get; }
     public ICommand OpenCommand { get; }
@@ -169,15 +171,16 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         bundleService = new YmmpxLibBundleService(logger);
         ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
-        RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList);
+        RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && retainedRecoverySnapshot is null);
         AssignLegacyProjectIdCommand = new AsyncRelayCommand(AssignLegacyProjectIdAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         AssociateLegacyMetadataCommand = new AsyncRelayCommand(ChooseLegacyMetadataAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
         RecoverIdentityCommand = new AsyncRelayCommand(RecoverIdentityAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && pendingIdentity is not null);
         RecoverProjectListCommand = new AsyncRelayCommand(RecoverProjectListAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && savedBaseline is not null);
         ExportRecoverySnapshotCommand = new AsyncRelayCommand(ExportRecoverySnapshotAsync, () => !IsBusy && retainedRecoverySnapshot is not null);
-        AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy);
-        RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && SelectedProject is not null);
-        OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && SelectedProject is not null);
+        ExportRecoveryScreenCommand = new AsyncRelayCommand(ExportRecoveryScreenAsync, () => !IsBusy && retainedScreenSnapshot is not null);
+        AddCommand = new AsyncRelayCommand(() => AddProjectsAsync(), () => isInitialized && !IsBusy && retainedRecoverySnapshot is null);
+        RemoveCommand = new AsyncRelayCommand(RemoveAsync, () => !IsBusy && retainedRecoverySnapshot is null && SelectedProject is not null);
+        OpenCommand = new AsyncRelayCommand(OpenAsync, () => !IsBusy && retainedRecoverySnapshot is null && SelectedProject is not null);
         GenerateThumbnailsFastCommand = new AsyncRelayCommand(GenerateThumbnailsFastAsync, () => !IsBusy && SelectedProject is not null);
         RunSeekProbeCommand = new AsyncRelayCommand(RunSeekProbeAsync, () => !IsBusy);
         OpenRelinkWindowCommand = new AsyncRelayCommand(OpenOpenedProjectRelinkWindowAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
@@ -1293,13 +1296,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             isProjectListLossless = latest.IsRecoverySafe;
             if (CurrentStoreFingerprint() != pending.Fingerprint)
             {
-                // The latest snapshot was saved, but the visible unsaved state changed while awaiting I/O.
-                // Do not make it eligible to overwrite entries that exist only in the latest snapshot.
-                projectListRevision = null;
-                pendingIdentity = null;
-                lastSavedFingerprint = null;
-                HasUnsavedProjectList = true;
-                AssetStatus = "保存中に未保存の一覧が変わりました。内容を保持しています。再確認が必要です。";
+                FreezePartialRecovery(retained, "保存中に未保存の一覧が変わりました。");
                 return;
             }
             if (!AdoptRecoveredStore(latest, retained, pending.Path)) return;
@@ -1349,8 +1346,7 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
             await repository.SaveAsync(merged).ConfigureAwait(true);
             if (CurrentStoreFingerprint() != fingerprint)
             {
-                projectListRevision = null; savedBaseline = null; pendingIdentity = null; lastSavedFingerprint = null; HasUnsavedProjectList = true;
-                AssetStatus = "再適用は保存されましたが、その間に一覧が変わりました。未保存内容を保持しています。";
+                FreezePartialRecovery(local, "保存中に未保存の一覧が変わりました。");
                 return;
             }
             projectListRevision = merged.Revision; isProjectListLossless = merged.IsRecoverySafe;
@@ -1376,20 +1372,41 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
         }
         catch (Exception ex)
         {
-            retainedRecoverySnapshot = ProjectListMerge.Snapshot(originalLocal);
-            projectListRevision = null; savedBaseline = null; pendingIdentity = null; lastSavedFingerprint = null;
-            HasUnsavedProjectList = true;
-            AssetStatus = "再適用は保存されましたが画面更新に失敗しました。変更前の未保存一覧をメモリに保持しています。「退避一覧を保存」で別名保存してください。";
+            FreezePartialRecovery(originalLocal, "画面更新中に一覧が変更されたか、更新に失敗しました。");
             logger.Error(ex, "Project list saved but UI recovery did not complete.");
-            CommandManager.InvalidateRequerySuggested();
             return false;
         }
+    }
+
+    private void FreezePartialRecovery(ProjectStore originalLocal, string reason)
+    {
+        retainedRecoverySnapshot = ProjectListMerge.Snapshot(originalLocal);
+        projectListRevision = null; savedBaseline = null; pendingIdentity = null; lastSavedFingerprint = null;
+        HasUnsavedProjectList = true;
+        try { retainedScreenSnapshot = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), IsRecoverySafe = isProjectListLossless }); }
+        catch (Exception ex) { retainedScreenSnapshot = null; logger.Error(ex, "Could not snapshot the changed UI state."); }
+        AssetStatus = reason + (retainedScreenSnapshot is null
+            ? "再適用は保存されています。回復前の一覧を保持しましたが、現在の画面状態は退避できません。画面内容を確認してください。"
+            : "再適用は保存されています。回復前の未保存一覧と現在の画面状態をメモリに保持しています。各退避ボタンで別名保存し、内容を確認してください。");
+        CommandManager.InvalidateRequerySuggested();
     }
 
     private async Task ExportRecoverySnapshotAsync()
     {
         var snapshot = retainedRecoverySnapshot;
         if (snapshot is null) return;
+        await ExportSnapshotAsync(snapshot).ConfigureAwait(true);
+    }
+
+    private async Task ExportRecoveryScreenAsync()
+    {
+        var snapshot = retainedScreenSnapshot;
+        if (snapshot is null) return;
+        await ExportSnapshotAsync(snapshot).ConfigureAwait(true);
+    }
+
+    private async Task ExportSnapshotAsync(ProjectStore snapshot)
+    {
         var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "未保存一覧を新しいファイルに退避", OverwritePrompt = false };
         if (dialog.ShowDialog() != true) return;
         await ExecuteWithBusyAsync("Export recovery snapshot", async () =>
@@ -1439,6 +1456,11 @@ public sealed class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 
     private async Task ExecuteWithBusyAsync(string operationName, Func<Task> action)
     {
+        if (retainedRecoverySnapshot is not null && operationName is "Add batch" or "Remove" or "Open" or "Retry project list save" or "Assign project identity" or "Associate legacy metadata" or "Recover project identity" or "Recover project list")
+        {
+            AssetStatus = "回復前と画面の一覧を退避し、確認するまで一覧変更はできません。";
+            return;
+        }
         if (IsBusy)
         {
             return;
