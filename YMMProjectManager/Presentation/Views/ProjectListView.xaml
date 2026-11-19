@@ -22,6 +22,23 @@
                 <Button Content="開く" Width="90" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
             </StackPanel>
 
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+                <TextBlock Text="一覧に未保存の変更があります。" VerticalAlignment="Center" Margin="0,0,8,0">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding HasUnsavedProjectList}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+                <Button Content="一覧の保存を再試行" Command="{Binding RetryProjectListSaveCommand}" />
+                <Button Content="ID 設定の競合を回復" Command="{Binding RecoverIdentityCommand}" Margin="4,0,0,0" />
+            </StackPanel>
+
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
@@ -53,7 +70,69 @@
                     Command="{Binding PackageOpenedProjectCommand}" />
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
+            <TextBlock DockPanel.Dock="Top" Text="ymmpx 展開は保存先保護の検証中です。" Margin="0,0,0,6" TextWrapping="Wrap" />
             <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
+            <Expander DockPanel.Dock="Top" Header="Git と素材" Margin="0,4,0,4">
+                <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                    <StackPanel>
+            <Button Content="Git / 素材処理を中止" HorizontalAlignment="Left" Command="{Binding CancelToolCommand}" Margin="0,0,0,4" />
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="ブランチ" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="作成" Command="{Binding CreateGitBranchCommand}" Margin="0,0,4,0" />
+                <Button Content="切替" Command="{Binding SwitchGitBranchCommand}" />
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,6,0,0">
+                <Button Content="Git 状態" MinWidth="90" Margin="0,0,8,0" Command="{Binding RefreshGitStatusCommand}" />
+                <Button Content="Git 初期化" MinWidth="90" Command="{Binding InitializeGitCommand}" />
+                <Button Content="履歴" Command="{Binding GitHistoryCommand}" Margin="4,0,0,0" />
+                <Button Content="origin" Command="{Binding GitOriginCommand}" Margin="4,0,0,0" />
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+            <TextBlock Text="リモート操作は安全性を検証中です。" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
+                <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}" Margin="0,0,4,0" />
+                <Button Content="Push" Command="{Binding PushGitCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="clone URL" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="200" Text="{Binding GitRemote, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <TextBox Width="120" Text="{Binding GitCloneName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" ToolTip="新規フォルダー名" />
+                <Button Content="clone" Command="{Binding GitCloneCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="プロジェクトからの相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="ステージ" Command="{Binding StageGitPathCommand}" Margin="0,0,4,0" />
+                <Button Content="解除" Command="{Binding UnstageGitPathCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                <TextBlock Text="メッセージ" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Text="{Binding GitCommitMessage, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="コミット" Command="{Binding CommitGitCommand}" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <Button Content="素材候補" Command="{Binding FindAssetCandidatesCommand}" Margin="0,0,4,0" />
+                <Button Content="旧項目に ID を設定" Command="{Binding AssignLegacyProjectIdCommand}" Margin="0,0,4,0" />
+                <Button Content="旧 metadata を関連付け" Command="{Binding AssociateLegacyMetadataCommand}" Margin="0,0,4,0" />
+                <Button Content="選択プロジェクトを再リンク" Command="{Binding OpenSelectedProjectRelinkCommand}" Margin="0,0,4,0" />
+                <TextBlock Text="相対パス（1行に1件）" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="150" Height="48" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Text="{Binding AssetPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
+                <Button Content="素材検査" Command="{Binding InspectAssetCommand}" Margin="0,0,4,0" />
+                <Button Content="メタデータ保存" Command="{Binding ExportAssetMetadataCommand}" />
+                <Button Content="新しい版を保存" Command="{Binding UpdateAssetMetadataCommand}" Margin="4,0,0,0" />
+                <Button Content="メタデータ照合" Command="{Binding VerifyAssetMetadataCommand}" Margin="4,0,0,0" />
+            </StackPanel>
+            <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
+                <TextBlock Text="HTTPS URL (任意)" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="220" Text="{Binding AssetUrl, UpdateSourceTrigger=PropertyChanged}" />
+            </StackPanel>
+            <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedProject.ProjectId, StringFormat='Project ID: {0}', TargetNullValue='Project ID: 未設定'}" Margin="0,4,0,0" />
+            <TextBlock DockPanel.Dock="Top" Text="{Binding AssetStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+                    </StackPanel>
+                </ScrollViewer>
+            </Expander>
 
             <ListBox
                 ItemsSource="{Binding Projects}"

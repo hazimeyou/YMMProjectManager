@@ -10,14 +10,31 @@ internal static class YmmpxBundleTests
     {
         await TestInstallGuideMessageAsync(workRoot);
         await TestLegacyFolderDetectionAsync(workRoot);
+        await TestInstallerCancellationPreservesExistingFileAsync(workRoot);
         await TestInstallerDownloadAndLaunchAsync(workRoot);
         await TestResolverSearchPathsAsync(workRoot);
-        await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
+        var configuredLibrary = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
+        if (string.IsNullOrWhiteSpace(configuredLibrary)) await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
+        else
+        {
+            var start = new System.Diagnostics.ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardError = true };
+            start.ArgumentList.Add("--ymmpx-missing-fixture"); start.ArgumentList.Add(workRoot);
+            start.Environment.Remove("YMMPX_LIB_PATH");
+            using var child = System.Diagnostics.Process.Start(start)!;
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try { await child.WaitForExitAsync(timeout.Token); }
+            finally { if (!child.HasExited) child.Kill(true); }
+            AssertTrue(child.ExitCode == 0, "isolated missing-library fixture failed: " + await child.StandardError.ReadToEndAsync());
+        }
 
         var ymmpxLibPath = LocateYmmpxLibDll();
         if (!string.IsNullOrWhiteSpace(ymmpxLibPath))
         {
             await TestPackageAndExtractWithYmmpxLibAsync(workRoot, ymmpxLibPath);
+        }
+        else
+        {
+            Program.ReportConditionalSkip("real YmmpxLib unavailable");
         }
     }
 
@@ -76,6 +93,42 @@ internal static class YmmpxBundleTests
         AssertTrue(string.Equals(launchedPaths[0], result.DownloadPath, StringComparison.OrdinalIgnoreCase), "launched path should match downloaded ymme");
     }
 
+    private static async Task TestInstallerCancellationPreservesExistingFileAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallerCancellationPreservesExistingFileAsync));
+        var oldTemp = Environment.GetEnvironmentVariable("TEMP");
+        var oldTmp = Environment.GetEnvironmentVariable("TMP");
+        try
+        {
+            Environment.SetEnvironmentVariable("TEMP", root);
+            Environment.SetEnvironmentVariable("TMP", root);
+            AssertTrue(Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) == Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar), "installer fixture is not isolated");
+            var launches = 0;
+            var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
+                launcher: _ => launches++, downloader: (_, _, token) => { token.ThrowIfCancellationRequested(); throw new IOException("synthetic download failure"); });
+            var existing = guide.GetInstallerDownloadPath();
+            Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
+            await File.WriteAllTextAsync(existing, "synthetic existing installer");
+            using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
+            try { await guide.DownloadAndLaunchInstallerAsync(cancelled.Token); throw new Exception("installer cancellation ignored"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled installer modified existing file or launched");
+            var failed = await guide.DownloadAndLaunchInstallerAsync();
+            AssertTrue(!failed.Success && await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "failed download modified existing file or launched");
+            using var interrupted = new CancellationTokenSource();
+            var duringDownload = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "during.log")),
+                launcher: _ => launches++, downloader: async (_, path, _) => { await File.WriteAllTextAsync(path, "synthetic partial"); interrupted.Cancel(); });
+            try { await duringDownload.DownloadAndLaunchInstallerAsync(interrupted.Token); throw new Exception("download cancellation ignored before launch"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled download modified existing file or launched");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TEMP", oldTemp);
+            Environment.SetEnvironmentVariable("TMP", oldTmp);
+        }
+    }
+
     private static Task TestResolverSearchPathsAsync(string workRoot)
     {
         var root = CreateRoot(workRoot, nameof(TestResolverSearchPathsAsync));
@@ -86,7 +139,7 @@ internal static class YmmpxBundleTests
         return Task.CompletedTask;
     }
 
-    private static async Task TestMissingYmmpxLibReturnsErrorAsync(string workRoot)
+    internal static async Task TestMissingYmmpxLibReturnsErrorAsync(string workRoot)
     {
         var root = CreateRoot(workRoot, nameof(TestMissingYmmpxLibReturnsErrorAsync));
         var logger = new FileLogger(Path.Combine(root, "logs", "missing.log"));
@@ -96,6 +149,17 @@ internal static class YmmpxBundleTests
         await File.WriteAllTextAsync(projectPath, """
         { "FilePath": "asset.png" }
         """);
+
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try { await service.CreatePackageAsync(projectPath, Path.Combine(root, "cancelled.ymmpx"), cancelled.Token); throw new Exception("missing-library package cancellation was ignored"); }
+            catch (OperationCanceledException) { }
+            try { await service.ExtractPackageAsync(Path.Combine(root, "missing.ymmpx"), Path.Combine(root, "extract"), cancelled.Token); throw new Exception("missing-library extraction cancellation was ignored"); }
+            catch (OperationCanceledException) { }
+            AssertTrue(!File.Exists(Path.Combine(root, "cancelled.ymmpx")) && !Directory.Exists(Path.Combine(root, "extract")), "cancelled operation created output");
+            AssertTrue(service.SearchedPaths.Count == 0, "cancelled operation resolved a library");
+        }
 
         var result = await service.CreatePackageAsync(projectPath, Path.Combine(root, "sample.ymmpx"), CancellationToken.None);
 
@@ -145,6 +209,15 @@ internal static class YmmpxBundleTests
 
         var extractRoot = Path.Combine(root, "extract");
         var extractResult = await service.ExtractPackageAsync(outputPath, extractRoot, CancellationToken.None);
+
+        if (!extractResult.Success)
+        {
+            AssertTrue(extractResult.ErrorMessage == "展開先の保護を検証中のため、ymmpx の展開は利用できません。", "unexpected extraction failure");
+            AssertTrue(!Directory.Exists(extractRoot), "disabled extraction created output");
+            Program.ReportConditionalSkip("product Ymmpx extraction success remains disabled");
+            await RealYmmpxR5Tests.RunAsync(workRoot);
+            return;
+        }
 
         AssertTrue(extractResult.Success, extractResult.ErrorMessage ?? "extract failed");
         AssertTrue(File.Exists(extractResult.RestoredProjectPath ?? string.Empty), "restored ymmp should exist");
