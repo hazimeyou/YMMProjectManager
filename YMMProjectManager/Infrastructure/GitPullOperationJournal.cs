@@ -31,6 +31,10 @@ internal sealed class GitPullOperationJournal : IDisposable
             return true;
         }
         catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+        // An unreadable record must also block a new operation.
+        catch (IOException) { return true; }
+        catch (UnauthorizedAccessException) { return true; }
     }
 
     internal static GitPullOperationJournal Create(string repositoryRoot, ApprovalEvidence target)

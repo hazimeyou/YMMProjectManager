@@ -265,6 +265,16 @@ public sealed partial class GitRepository
         catch (IOException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
         catch (UnauthorizedAccessException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
 
+        // A read-only diagnosis runs the same constrained status command as confirmed Pull.
+        // Keep the configuration handle through this observation, then release it before
+        // the caller checks for intervening changes and takes the next observation.
+        using var diagnosticSession = pullSettings is null
+            ? await OpenPullSessionAsync(token).ConfigureAwait(false)
+            : null;
+        if (pullSettings is null && diagnosticSession is null)
+            return new(GitPullState.IndexNotVerifiable, "The repository configuration or filesystem does not support safe worktree inspection.");
+        pullSettings ??= diagnosticSession!.Settings;
+
         var index = await RunDirectAsync(["ls-files", "--stage", "-v", "-z"], token, pullSettings: pullSettings).ConfigureAwait(false);
         if (!index.Success)
             return new(GitPullState.Unavailable, "Could not inspect the Git index.");

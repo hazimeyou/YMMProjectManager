@@ -172,7 +172,8 @@ public sealed partial class GitRepository
         var endpoint = await ReadSinglePullSettingAsync(session, $"remote.{remote}.url", token).ConfigureAwait(false);
         try { ValidateRemote(endpoint ?? ""); }
         catch (ArgumentException) { return (null, UnsupportedPullRemote()); }
-        if (Path.IsPathFullyQualified(endpoint!) && !IsOrdinaryDirectory(endpoint!))
+        if (Path.IsPathFullyQualified(endpoint!) &&
+            (!OnFixedLocalNtfs(endpoint!) || !IsOrdinaryDirectory(endpoint!)))
             return (null, UnsupportedPullRemote());
         return (new GitPullRemote(directory, branch.BranchRef, branch.ObjectId, remote, upstream, endpoint!, session.Identity, session.Settings), null);
     }
@@ -249,7 +250,7 @@ public sealed partial class GitRepository
         UnsafeRemote("The approved repository, branch, configuration or remote commit changed. Inspect and confirm the Pull again.");
 
     private bool HasPendingPullEvidence() =>
-        !HasHiddenText(directory) && IsOrdinaryDirectory(Path.Combine(directory, ".git")) &&
+        !HasHiddenText(directory) && OnFixedLocalNtfs(directory) && IsOrdinaryDirectory(Path.Combine(directory, ".git")) &&
         GitPullOperationJournal.Exists(directory);
     private GitResult UnresolvedPull() =>
         new GitResult(1, "", "The outcome could not be verified. Keep the operation record and review the repository before using Pull again.",

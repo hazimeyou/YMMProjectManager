@@ -22,7 +22,7 @@ public sealed partial class GitRepository
     private async Task<PullSession?> OpenPullSessionAsync(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (!HasDirectRepository() || !OnFixedLocalNtfs()) return null;
+        if (!OnFixedLocalNtfs(directory) || !HasDirectRepository()) return null;
         var gitDirectory = Path.Combine(directory, ".git");
         OwnedFilePublication.DirectoryFence? fence = null;
         GitRepositoryLease? repository = null;
@@ -109,16 +109,16 @@ public sealed partial class GitRepository
         return settings.ToArray();
     }
 
-    private bool OnFixedLocalNtfs()
+    internal static bool OnFixedLocalNtfs(string path)
     {
         try
         {
-            var root = Path.GetPathRoot(directory);
+            var root = Path.GetPathRoot(path);
             if (root is not { Length: 3 } || root[1] != ':') return false;
             var drive = new DriveInfo(root);
             return drive.DriveType == DriveType.Fixed && string.Equals("NTFS", drive.DriveFormat, StringComparison.OrdinalIgnoreCase);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
 
     private static bool SafePullRepositoryMetadata(string gitDirectory)

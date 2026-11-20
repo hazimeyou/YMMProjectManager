@@ -50,6 +50,32 @@ internal static class GitPullRecoveryTests
         });
         await Program.RunNamedCaseAsync("Confirmed Pull refuses a target that contains case-colliding files",
             () => TestCaseCollidingTargetAsync(root));
+        await Program.RunNamedCaseAsync("Pull rejects UNC endpoint syntax before any filesystem lookup", () =>
+        {
+            Require(Path.IsPathFullyQualified("//synthetic.invalid/share") &&
+                !GitRepository.OnFixedLocalNtfs("//synthetic.invalid/share") &&
+                !GitRepository.OnFixedLocalNtfs(@"\\synthetic.invalid\share\project.git"),
+                "A UNC endpoint was classified as a fixed local drive.");
+            return Task.CompletedTask;
+        });
+        await Program.RunNamedCaseAsync("Read-only Pull diagnostics decline mutable Git config includes", async () =>
+        {
+            var worktree = Directory.CreateDirectory(Path.Combine(root, "diagnostic")).FullName;
+            await GitAsync(worktree, ["init", "-b", "main"]);
+            await GitAsync(worktree, ["config", "user.name", "Synthetic Git Fixture"]);
+            await GitAsync(worktree, ["config", "user.email", "fixture@example.invalid"]);
+            await File.WriteAllTextAsync(Path.Combine(worktree, "project.ymmp"), "{}");
+            await GitAsync(worktree, ["add", "--", "project.ymmp"]);
+            await GitAsync(worktree, ["commit", "-m", "baseline"]);
+            var repository = new GitRepository(worktree);
+            Require((await repository.InspectPullAsync()).State == GitPullState.TrackingUnavailable,
+                "The normal checkout could not be diagnosed.");
+            var include = Path.Combine(root, "empty-config");
+            await File.WriteAllTextAsync(include, "# empty synthetic include\n");
+            await GitAsync(worktree, ["config", "include.path", include]);
+            Require((await repository.InspectPullAsync()).State == GitPullState.IndexNotVerifiable,
+                "Diagnostics admitted mutable include configuration.");
+        });
     }
 
     private static async Task TestCaseCollidingTargetAsync(string root)
