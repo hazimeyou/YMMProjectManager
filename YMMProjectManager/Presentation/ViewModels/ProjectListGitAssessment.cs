@@ -35,6 +35,7 @@ public sealed partial class ProjectListViewModel
             GitPullState.IndexNotVerifiable => "現在の Git 設定または index では、作業ツリーが安全に更新可能か確認できません。",
             GitPullState.IgnoredPathCollision => "取り込む履歴のパスが、Git の追跡対象外として除外された作業ファイルと重なります。",
             GitPullState.Dirty => "作業ツリーまたは index に変更があります。",
+            GitPullState.HistoryNotVerifiable => "Git の履歴を書き換えて表示する設定があるため、保存済みのブランチとの関係を確認できません。",
             GitPullState.TrackingUnavailable => "保存済みの追跡ブランチがありません。必要に応じて Fetch してください。",
             GitPullState.Changed => "確認中にリポジトリが変更されました。再確認してください。",
             _ => "状態を確認できません。通常のリポジトリのルートとブランチを確認してください。",
