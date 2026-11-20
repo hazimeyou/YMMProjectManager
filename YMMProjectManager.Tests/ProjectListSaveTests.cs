@@ -120,6 +120,11 @@ internal static class ProjectListSaveTests
         // Corrupt read must not silently become a new empty store.
         await File.WriteAllTextAsync(path, "{invalid"); var corruptHash=Hash();
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");
+        var rawCopy = Path.Combine(root, "original-raw.json");
+        await Repo().ExportOriginalAsync(rawCopy);
+        Check((await File.ReadAllBytesAsync(rawCopy)).SequenceEqual(await File.ReadAllBytesAsync(path)), "raw recovery export altered original bytes");
+        await Expect<IOException>(() => Repo().ExportOriginalAsync(rawCopy));
+        Check(Hash() == corruptHash, "raw recovery export changed original file");
         Console.WriteLine("Project list save regression checks passed.");
     }
 }

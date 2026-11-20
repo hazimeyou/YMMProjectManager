@@ -11,4 +11,4 @@ public sealed class ProjectStore
     public bool IsRecoverySafe { get; set; }
 }
 
-public sealed record ProjectListRevision(string? Sha256);
+public sealed record ProjectListRevision(string? Sha256, Guid? OperationId = null);

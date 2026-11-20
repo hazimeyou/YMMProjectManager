@@ -98,7 +98,16 @@ internal static class ProjectListConcurrencyTests
         var timeMerge = ProjectListMerge.Merge(timeBase, timeLocal, timeRemote);
         if (timeMerge.Store?.Projects[0].LastAccess?.Offset != TimeSpan.Zero) throw new Exception("timestamp offset change was lost");
         remote.Projects[0].DisplayName = "remote";
-        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("same-field conflict was accepted");
+        var contested = ProjectListMerge.Merge(mergeBase, local, remote);
+        if (contested.Store is not null || !contested.CanResolveAll) throw new Exception("same-field conflict was not presented");
+        var name = contested.Choices.Single();
+        var chooseLocal = ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [name] = true });
+        var chooseRemote = ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [name] = false });
+        if (chooseLocal.Store?.Projects.Single().DisplayName != "local" || !chooseLocal.Store.Projects.Single().Pinned ||
+            chooseRemote.Store?.Projects.Single().DisplayName != "remote") throw new Exception("manual resolution did not preserve the chosen field and independent edits");
+        remote.Projects[0].DisplayName = "newer";
+        if (ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [name] = true }).Store is not null)
+            throw new Exception("manual resolution was silently applied to a newer conflict");
         remote = ProjectListMerge.Snapshot(mergeBase); remote.Projects[0].ProjectId = Guid.NewGuid();
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("external project identity change was accepted");
         local = ProjectListMerge.Snapshot(mergeBase); local.Projects.Clear();
@@ -107,7 +116,25 @@ internal static class ProjectListConcurrencyTests
         remote.Projects[0].FullPath = Path.Combine(root, "remote-move.ymmp");
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("delete versus remote move was accepted");
         local = ProjectListMerge.Snapshot(mergeBase); local.Projects[0].FullPath = Path.Combine(root, "local-move.ymmp"); remote = ProjectListMerge.Snapshot(mergeBase); remote.Projects.Clear();
-        if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("local move versus deletion was accepted");
+        var moveConflict = ProjectListMerge.Merge(mergeBase, local, remote);
+        if (moveConflict.Store is not null || !moveConflict.CanResolveAll) throw new Exception("local move versus deletion was not presented");
+        if (ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [moveConflict.Choices.Single()] = true })
+            .Store?.Projects.Single().FullPath != local.Projects[0].FullPath)
+            throw new Exception("approved move was lost");
+        remote = ProjectListMerge.Snapshot(mergeBase);
+        remote.Projects[0].Pinned = true;
+        var independentMove = ProjectListMerge.Merge(mergeBase, local, remote).Store?.Projects.Single();
+        if (independentMove is not { Pinned: true } || independentMove.FullPath != local.Projects[0].FullPath)
+            throw new Exception("independent move and property change did not merge");
+        var linkBase = ProjectListMerge.Snapshot(mergeBase);
+        linkBase.Projects[0].LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = linkBase.Projects[0].FullPath, Role = YmmpRole.Main });
+        var linkLocal = ProjectListMerge.Snapshot(linkBase);
+        var linkRemote = ProjectListMerge.Snapshot(linkBase);
+        linkLocal.Projects[0].LinkedYmmpFiles[0].Memo = "local memo";
+        linkRemote.Projects[0].LinkedYmmpFiles[0].DisplayName = "remote label";
+        var linkResult = ProjectListMerge.Merge(linkBase, linkLocal, linkRemote).Store?.Projects.Single().LinkedYmmpFiles.Single();
+        if (linkResult is not { Memo: "local memo", DisplayName: "remote label" })
+            throw new Exception("independent changes to a link were not merged");
         local = ProjectListMerge.Snapshot(mergeBase); remote = ProjectListMerge.Snapshot(mergeBase);
         local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
         remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
@@ -130,7 +157,22 @@ internal static class ProjectListConcurrencyTests
             !reordered.Projects.Single(p => p.FullPath == orderBase.Projects[0].FullPath).Pinned)
             throw new Exception("reorder or independent remote attribute edit was lost");
         orderRemote.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "remote-order.ymmp"), ProjectId = Guid.NewGuid() });
-        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("incompatible order changes were accepted");
+        var orderConflict = ProjectListMerge.Merge(orderBase, orderLocal, orderRemote);
+        if (orderConflict.Store is not null || !orderConflict.CanResolveAll) throw new Exception("incompatible order changes were not presented");
+        var manualOrder = ProjectListMerge.Merge(orderBase, orderLocal, orderRemote,
+            new Dictionary<ProjectListConflict, bool> { [orderConflict.Choices.Single()] = true }).Store;
+        if (manualOrder is null || manualOrder.Projects.Count != 4 || !manualOrder.Projects.Take(3).Select(p => p.FullPath)
+            .SequenceEqual(orderLocal.Projects.Select(p => p.FullPath))) throw new Exception("manual order dropped a remote-only row");
+        var keepBase = ProjectListMerge.Snapshot(orderBase);
+        keepBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "third-existing.ymmp"), ProjectId = Guid.NewGuid() });
+        var keepLocal = ProjectListMerge.Snapshot(keepBase); var keepRemote = ProjectListMerge.Snapshot(keepBase);
+        keepLocal.Projects.RemoveAt(0); keepLocal.Projects.Reverse();
+        keepRemote.Projects[0].Pinned = true;
+        var keepConflict = ProjectListMerge.Merge(keepBase, keepLocal, keepRemote);
+        var keepResult = ProjectListMerge.Merge(keepBase, keepLocal, keepRemote,
+            new Dictionary<ProjectListConflict, bool> { [keepConflict.Choices.Single()] = false }).Store;
+        if (keepResult is null || !keepResult.Projects.Take(2).Select(p => p.ProjectId).SequenceEqual(keepLocal.Projects.Select(p => p.ProjectId)) ||
+            !keepResult.Projects.Last().Pinned) throw new Exception("retaining a remote edit discarded the local order of surviving rows");
         orderRemote = ProjectListMerge.Snapshot(orderBase);
         orderLocal = ProjectListMerge.Snapshot(orderBase); orderLocal.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "inserted.ymmp"), ProjectId = Guid.NewGuid() });
         if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store?.Projects[0].FullPath != orderLocal.Projects[0].FullPath)

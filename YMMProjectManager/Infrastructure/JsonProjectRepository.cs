@@ -22,18 +22,23 @@ public sealed class JsonProjectRepository : IProjectRepository
     private readonly string jsonPath;
     private readonly Func<Stream, byte[], CancellationToken, Task> writeTemporaryFile;
     private readonly Action? beforeReplace;
+    private readonly Action? afterReplace;
+    private readonly Action? beforeCandidate;
     private readonly FileLogger logger;
 
     public JsonProjectRepository(FileLogger logger) : this(logger, ResolvePath()) { }
 
     // Internal hooks make failures at the file boundary deterministic in isolated tests.
     internal JsonProjectRepository(FileLogger logger, string path,
-        Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null)
+        Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null,
+        Action? afterReplace = null, Action? beforeCandidate = null)
     {
         this.logger = logger;
-        jsonPath = path;
+        jsonPath = Path.GetFullPath(path);
         this.writeTemporaryFile = writeTemporaryFile ?? ((stream, bytes, token) => stream.WriteAsync(bytes, token).AsTask());
         this.beforeReplace = beforeReplace;
+        this.afterReplace = afterReplace;
+        this.beforeCandidate = beforeCandidate;
     }
 
     internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
@@ -56,7 +61,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         var jsonContent = StripUtf8Bom(content);
         var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
         if (dto is null) throw new InvalidDataException("Project list is null.");
-        var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))), IsRecoverySafe = IsSafeForRecovery(content) };
+        var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content)), dto.SaveOperationId), IsRecoverySafe = IsSafeForRecovery(content) };
         foreach (var f in dto.Folders ?? [])
         {
             if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
@@ -71,7 +76,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 continue;
             }
             if (x.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
-            var p = new ProjectEntry { FullPath = x.FullPath!, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ?? false, LastAccess = x.LastAccess, FolderId = x.FolderId };
+            var p = new ProjectEntry { FullPath = x.FullPath!, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, FileIdentity = x.FileIdentity, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ?? false, LastAccess = x.LastAccess, FolderId = x.FolderId };
             foreach (var l in x.LinkedYmmpFiles ?? [])
             {
                 if (string.IsNullOrWhiteSpace(l.FilePath)) continue;
@@ -92,13 +97,14 @@ public sealed class JsonProjectRepository : IProjectRepository
         {
             var jsonContent = StripUtf8Bom(content);
             var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, StrictRecoveryOptions);
-            if (dto?.Projects is null || dto.Folders is null) return false;
+            if (dto?.Projects is null || dto.Folders is null || dto.SaveOperationId == Guid.Empty) return false;
             if (dto.Folders.Any(f => f is null || f.Id is null || string.IsNullOrWhiteSpace(f.Name))) return false;
             foreach (var project in dto.Projects)
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
                 if (project.MetadataAssociation is { } metadata && (!ValidMetadata(metadata) || project.ProjectId is null)) return false;
+                if (project.FileIdentity is { } identity && (identity.FileId == Guid.Empty || !IsHash(identity.Sha256) || project.ProjectId is null)) return false;
                 if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) ||
                     (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;
             }
@@ -133,7 +139,51 @@ public sealed class JsonProjectRepository : IProjectRepository
         return false;
     }
 
-    public async Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default)
+    public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default) =>
+        SaveCoreAsync(store, null, cancellationToken);
+
+    internal async Task SaveWithDraftAsync(ProjectStore store, string claimedDraft, CancellationToken token = default)
+    {
+        var id = new ProjectListDrafts(RecoveryDirectory).GetClaimedId(claimedDraft);
+        using var claim = new FileStream(claimedDraft, FileMode.Open, FileAccess.Read, FileShare.Read);
+        await SaveCoreAsync(store, id, token).ConfigureAwait(false);
+    }
+
+    internal async Task<ProjectListPublications.Outcome> ReconcileDraftAsync(string claimedDraft, CancellationToken token = default)
+    {
+        var drafts = new ProjectListDrafts(RecoveryDirectory);
+        var id = drafts.GetClaimedId(claimedDraft);
+        using var processLock = AcquireProcessLock();
+        var store = await LoadAsync(token).ConfigureAwait(false);
+        var revision = store.Revision!;
+        var outcome = await new ProjectListPublications(RecoveryDirectory)
+            .ReconcileAsync(id, revision.Sha256, revision.OperationId, HasUnconsumedCandidate, token).ConfigureAwait(false);
+        if (outcome == ProjectListPublications.Outcome.Unpublished && store.IsRecoverySafe)
+            drafts.ReleaseUnpublishedClaim(claimedDraft);
+        else if (outcome == ProjectListPublications.Outcome.Committed)
+            drafts.Retire(claimedDraft, claimed: true);
+        else
+            outcome = ProjectListPublications.Outcome.Unknown;
+        logger.Info($"Project list publication reconciled. draft={id:N} outcome={outcome}");
+        return outcome;
+    }
+
+    private FileStream AcquireProcessLock()
+    {
+        try { return new FileStream(jsonPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
+        catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { throw new ProjectListBusyException(ex); }
+    }
+
+    private string CandidatePath(Guid operationId) => $"{jsonPath}.tmp-{operationId:N}";
+
+    private bool HasUnconsumedCandidate(Guid operationId)
+    {
+        try { return (File.GetAttributes(CandidatePath(operationId)) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) == 0; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
+    private async Task SaveCoreAsync(ProjectStore store, Guid? draftId, CancellationToken cancellationToken)
     {
         string? tempPath = null;
         FileStream? processLock = null;
@@ -143,14 +193,21 @@ public sealed class JsonProjectRepository : IProjectRepository
         {
             cancellationToken.ThrowIfCancellationRequested();
             stage = "serialize";
-            var bytes = SerializeStore(store);
+            var baseline = store.Revision ?? throw new InvalidDataException("Project list must be loaded before saving.");
+            var operationId = Guid.NewGuid();
+            var bytes = SerializeStore(store, operationId);
+            var expectedResult = Convert.ToHexString(SHA256.HashData(bytes));
             cancellationToken.ThrowIfCancellationRequested();
             var directory = Path.GetDirectoryName(jsonPath)!;
             Directory.CreateDirectory(directory);
             stage = "inter-process lock";
-            try { processLock = new FileStream(jsonPath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None); }
-            catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { throw new ProjectListBusyException(ex); }
-            var candidatePath = Path.Combine(directory, $"{Path.GetFileName(jsonPath)}.tmp-{Guid.NewGuid():N}");
+            processLock = AcquireProcessLock();
+            stage = "write publication receipt";
+            var publications = new ProjectListPublications(RecoveryDirectory);
+            var receipt = new ProjectListPublications.Receipt(1, operationId, draftId, baseline.Sha256, expectedResult, PublicationStarted: false);
+            await publications.WriteAsync(receipt, cancellationToken).ConfigureAwait(false);
+            beforeCandidate?.Invoke();
+            var candidatePath = CandidatePath(operationId);
             stage = "write temporary file";
             await using (var stream = new FileStream(candidatePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
             {
@@ -162,12 +219,12 @@ public sealed class JsonProjectRepository : IProjectRepository
             stage = "replace";
             beforeReplace?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
-            if (store.Revision is null) throw new InvalidDataException("Project list must be loaded before saving.");
+            await publications.WriteAsync(receipt with { PublicationStarted = true }, cancellationToken).ConfigureAwait(false);
             string? currentHash;
             try { currentHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false))); }
             catch (FileNotFoundException) { currentHash = null; }
             catch (DirectoryNotFoundException) { currentHash = null; }
-            if (!string.Equals(currentHash, store.Revision.Sha256, StringComparison.Ordinal))
+            if (!string.Equals(currentHash, baseline.Sha256, StringComparison.Ordinal))
                 throw new ProjectListConflictException();
             cancellationToken.ThrowIfCancellationRequested();
             if (currentHash is not null)
@@ -175,8 +232,10 @@ public sealed class JsonProjectRepository : IProjectRepository
             else
                 File.Move(tempPath, jsonPath);
             tempPath = null;
-            store.Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(bytes)));
-            store.IsRecoverySafe = IsSafeForRecovery(bytes);
+            store.Revision = new ProjectListRevision(expectedResult, operationId);
+            store.IsRecoverySafe = true;
+            stage = "after publication";
+            afterReplace?.Invoke();
         }
         catch (OperationCanceledException)
         {
@@ -200,7 +259,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
     }
 
-    internal static byte[] SerializeStore(ProjectStore store)
+    internal static byte[] SerializeStore(ProjectStore store, Guid? saveOperationId = null)
     {
         if (!store.IsRecoverySafe) throw new InvalidDataException("Project list contains data that cannot be safely preserved.");
         var projectIds = new HashSet<Guid>();
@@ -211,10 +270,11 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
         var dto = new ProjectListFileDto
         {
+            SaveOperationId = saveOperationId,
             Folders = store.Folders.Select(x => new ProjectFolderDto { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt }).ToList(),
             Projects = store.Projects.Select(x => new ProjectRecordDto
             {
-                FullPath = x.FullPath, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
+                FullPath = x.FullPath, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, FileIdentity = x.FileIdentity, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
                 LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
             }).ToList(),
         };
@@ -224,12 +284,23 @@ public sealed class JsonProjectRepository : IProjectRepository
     }
 
     // Recovery export never replaces an existing file, including a file created after the dialog.
-    internal async Task SaveNewCopyAsync(ProjectStore store, CancellationToken token = default)
+    internal Task SaveNewCopyAsync(ProjectStore store, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        var bytes = SerializeStore(store);
-        var directory = Path.GetDirectoryName(Path.GetFullPath(jsonPath))!;
-        var candidate = Path.Combine(directory, $"{Path.GetFileName(jsonPath)}.tmp-{Guid.NewGuid():N}");
+        return WriteNewCopyAsync(jsonPath, SerializeStore(store), token);
+    }
+
+    internal async Task ExportOriginalAsync(string destination, CancellationToken token = default)
+    {
+        var bytes = await File.ReadAllBytesAsync(jsonPath, token).ConfigureAwait(false);
+        await WriteNewCopyAsync(Path.GetFullPath(destination), bytes, token).ConfigureAwait(false);
+    }
+
+    private static async Task WriteNewCopyAsync(string destination, byte[] bytes, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        var directory = Path.GetDirectoryName(destination)!;
+        var candidate = Path.Combine(directory, $"{Path.GetFileName(destination)}.tmp-{Guid.NewGuid():N}");
         var owned = false;
         try
         {
@@ -241,7 +312,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 stream.Flush(flushToDisk: true);
             }
             token.ThrowIfCancellationRequested();
-            File.Move(candidate, jsonPath, overwrite: false);
+            File.Move(candidate, destination, overwrite: false);
             owned = false;
         }
         finally { if (owned) { try { File.Delete(candidate); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
@@ -249,8 +320,14 @@ public sealed class JsonProjectRepository : IProjectRepository
 
     private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); return Path.Combine(appData, "YMMProjectManager", "plugin", PluginDirectoryName, "data", "projects.json"); }
 
-    private sealed class ProjectListFileDto { public List<ProjectRecordDto> Projects { get; set; } = []; public List<ProjectFolderDto> Folders { get; set; } = []; }
-    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectMetadataAssociation? MetadataAssociation { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }
+    private sealed class ProjectListFileDto
+    {
+        public List<ProjectRecordDto> Projects { get; set; } = [];
+        public List<ProjectFolderDto> Folders { get; set; } = [];
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public Guid? SaveOperationId { get; set; }
+    }
+    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectMetadataAssociation? MetadataAssociation { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectFileIdentity? FileIdentity { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }
     private sealed class LinkedYmmpFileDto { public Guid? Id { get; set; } public string? FilePath { get; set; } public string? DisplayName { get; set; } public string? Role { get; set; } public string? Memo { get; set; } public DateTimeOffset? RegisteredAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } public DateTimeOffset? LastCheckedAt { get; set; } public bool? Exists { get; set; } }
     private sealed class ProjectFolderDto { public Guid? Id { get; set; } public string? Name { get; set; } public int? DisplayOrder { get; set; } public DateTimeOffset? CreatedAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } }
 }

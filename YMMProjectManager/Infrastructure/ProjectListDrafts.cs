@@ -22,6 +22,8 @@ internal sealed class ProjectListDrafts(string directory)
 
     internal string DirectoryPath => directory;
 
+    internal Guid GetClaimedId(string path) => CheckPath(path, claimed: true);
+
     internal async Task<string> WriteAsync(ProjectStore baseline, ProjectStore local, Dictionary<string, Evidence> evidence)
     {
         if (baseline.Revision is null) throw new InvalidDataException("Recovery draft has no base revision.");
@@ -124,7 +126,9 @@ internal sealed class ProjectListDrafts(string directory)
         return id;
     }
 
-    private void CheckDirectory()
+    private void CheckDirectory() => CheckOrdinaryDirectory(directory);
+
+    internal static void CheckOrdinaryDirectory(string directory)
     {
         for (var item = new DirectoryInfo(directory); item is not null; item = item.Parent)
         {

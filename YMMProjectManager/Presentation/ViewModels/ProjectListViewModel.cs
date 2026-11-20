@@ -196,15 +196,15 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         CommitGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("commit"), () => !IsBusy && SelectedProject is not null);
         CreateGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-create"), () => !IsBusy && SelectedProject is not null);
         SwitchGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-switch"), () => !IsBusy && SelectedProject is not null);
-        // Remote configuration can change between validation and execution; keep network controls disabled until fenced.
-        FetchGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("fetch"), () => false);
+        FetchGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Fetch), () => !IsBusy && SelectedProject is not null);
         PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => false);
-        PushGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("push"), () => false);
+        PushGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Push), () => !IsBusy && SelectedProject is not null);
         GitHistoryCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(false), () => !IsBusy && SelectedProject is not null);
         GitOriginCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(true), () => !IsBusy && SelectedProject is not null);
-        GitCloneCommand = new AsyncRelayCommand(CloneGitAsync, () => false);
+        GitCloneCommand = new AsyncRelayCommand(CloneGitAsync, () => !IsBusy);
         FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
+        InspectExternalAssetCommand = new AsyncRelayCommand(InspectExternalAssetAsync, () => !IsBusy && SelectedProject is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         UpdateAssetMetadataCommand = new AsyncRelayCommand(() => SaveAssetMetadataAsync(true), () => !IsBusy && SelectedProject is not null);
         VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
@@ -212,7 +212,10 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         ImportMetadataSeriesCommand = new AsyncRelayCommand(ImportMetadataSeriesAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         InspectMetadataSeriesCommand = new AsyncRelayCommand(InspectMetadataSeriesAsync, () => !IsBusy && SelectedProject?.MetadataAssociation is not null);
         ReassociateProjectCommand = new AsyncRelayCommand(ReassociateProjectAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
+        VerifyProjectIdentityCommand = new AsyncRelayCommand(VerifyProjectIdentityAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         ReviewDraftCommand = new AsyncRelayCommand(ReviewDraftAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository);
+        ExportOriginalProjectListCommand = new AsyncRelayCommand(ExportOriginalProjectListAsync,
+            () => !IsBusy && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
         CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
     }
 
@@ -262,14 +265,56 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var name = GitCloneName;
         if (string.IsNullOrWhiteSpace(remote) || string.IsNullOrWhiteSpace(name) || name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         { GitStatus = "HTTPS またはローカルの URL と、フォルダー名を入力してください。"; return; }
+        var inspected = GitRepository.InspectCloneRemote(remote);
+        if (!inspected.Success) { GitStatus = DescribeRemoteFailure(inspected); return; }
         var dialog = new OpenFolderDialog { Title = "clone 先の親フォルダーを選択" };
         if (dialog.ShowDialog() != true) return;
         var destination = Path.Combine(dialog.FolderName, name);
+        if (!ConfirmGitTrust("Clone", destination, inspected.StandardOutput)) return;
         await ExecuteToolAsync("Git clone", async token =>
         {
-            var result = await GitRepository.CloneAsync(remote, destination, token);
-            GitStatus = result.Success ? $"clone が完了しました: {destination}" : $"clone に失敗しました。残存フォルダー: {result.RecoveryPath ?? "なし"}";
+            GitStatus = "Clone を実行中です。";
+            try
+            {
+                var result = await GitRepository.CloneTrustedAsync(remote, destination, token);
+                GitStatus = result.Success ? $"Clone が完了しました。{destination}" : DescribeRemoteFailure(result);
+            }
+            catch (ArgumentException)
+            {
+                GitStatus = "接続先または保存先の形式を確認してください。資格情報は URL に入力できません。";
+            }
         });
+    }
+
+    private Task RunTrustedRemoteAsync(GitRemoteOperation operation) => ExecuteToolAsync($"Git {operation}", async token =>
+    {
+        var project = SelectedProject;
+        if (project is null) return;
+        var directory = Path.GetDirectoryName(Path.GetFullPath(project.FullPath))!;
+        var git = new GitRepository(directory);
+        var inspected = await git.InspectRemoteAsync(operation, token);
+        if (!inspected.Success) { GitStatus = DescribeRemoteFailure(inspected); return; }
+        var target = inspected.PushTarget;
+        if (operation == GitRemoteOperation.Push && target is null) throw new InvalidDataException("送信対象のブランチを確認できません。");
+        var details = target is null ? inspected.StandardOutput :
+            $"{target.Endpoint}\n対象 {target.BranchRef}\nコミット {target.ObjectId}";
+        if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), target?.RepositoryRoot ?? directory, details)) return;
+        token.ThrowIfCancellationRequested();
+        GitStatus = $"{operation} を実行中です。";
+        var result = target is null
+            ? await git.FetchTrustedAsync(inspected.StandardOutput, token)
+            : await git.PushTrustedAsync(target, token);
+        GitStatus = result.Success ? $"{operation} が完了しました。" : DescribeRemoteFailure(result);
+    });
+
+    private static bool ConfirmGitTrust(string operation, string directory, string endpoint) =>
+        MessageBox.Show($"{operation}\n{directory}\n{endpoint}\n\nインストール済みの Git、システム・利用者・リポジトリの Git 設定、認証ヘルパーなどを信頼する場合に限り続行してください。",
+            "Git 操作の確認", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
+
+    private static string DescribeRemoteFailure(GitResult result)
+    {
+        var message = $"Git 操作を完了できませんでした（{result.Failure}）。接続先、権限、Git 設定またはブランチを確認してください。";
+        return result.RecoveryPath is { } path ? $"{message}\n残存フォルダー {path}" : message;
     }
 
     private async Task FindAssetCandidatesAsync()
@@ -280,7 +325,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             var source = selected.FullPath;
             var expected = selected.ProjectId is Guid id && selected.MetadataAssociation is { } association
-                ? (await ResolveMetadataAsync(id, association, token)).Selected.Manifest.Assets : null;
+                ? (await ResolveMetadataBranchAsync(id, association, token)).Selected.Manifest.Assets : null;
             var references = await AssetInventory.ScanProjectAsync(source, expected, token);
             token.ThrowIfCancellationRequested();
             if (!ReferenceEquals(selected, SelectedProject) || selected.FullPath != source) return;
@@ -296,7 +341,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 };
                 var actual = reference.Actual is { } asset ? $" / {asset.Size} bytes / SHA-256 {asset.Sha256}" : "";
                 var prior = reference.Expected is { } known ? $" / 期待 {known.Size} bytes / SHA-256 {known.Sha256}" : "";
-                return $"{reference.Path}  {status}{actual}{prior}";
+                var external = reference.Expected?.ExternalLocation is { } location ? $" / 保管先 {location.StorageName}/{location.RelativePath}" : "";
+                return $"{reference.Path}  {status}{actual}{prior}{external}";
             });
             AssetStatus = references.Count == 0 ? "FilePath 候補はありません。" :
                 "FilePath 候補（素材とは限りません）\n" + string.Join("\n", rows);
@@ -307,27 +353,33 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     {
         var selected = SelectedProject;
         if (selected is null) return;
-        await ExecuteWithBusyAsync("Selected project relink", () =>
+        await ExecuteWithBusyAsync("Selected project relink", async () =>
         {
             if (!TryGetOpenableProjectPath(selected.FullPath, out var projectPath, out var reason))
             {
                 MessageBox.Show(reason, "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return Task.CompletedTask;
+                return;
             }
             if (TimelineContextService.Timeline is not null)
             {
                 MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return Task.CompletedTask;
+                return;
             }
             Func<CancellationToken, Task<AssetRevisionSeries.Selection>>? resolve = null;
             string? seriesDirectory = null;
             if (selected.ProjectId is Guid id && selected.MetadataAssociation is { } association)
             {
+                if (selected.FileIdentity is { } observed && !observed.IsSameFile(await ProjectFileEvidence.ReadAsync(projectPath)))
+                    throw new InvalidDataException("登録時と異なるファイルです。「識別情報を照合」から確認してください。");
                 seriesDirectory = association.Directory;
                 resolve = token => ResolveMetadataAsync(id, association, token);
             }
-            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId, resolve, seriesDirectory));
-            return Task.CompletedTask;
+            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId, resolve, seriesDirectory)
+            {
+                ExpectedSourceIdentity = selected.FileIdentity,
+                TransferAssociationAsync = selected.MetadataAssociation is { } metadata
+                    ? (receipt, token) => ApplyRelinkOutputAsync(selected, metadata, receipt, token) : null,
+            });
         });
     }
 
@@ -341,6 +393,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             var requestedPath = AssetPath;
             var requestedUrl = AssetUrl;
             inspectedAssets = null;
+            inspectedExternalRoot = null;
             var paths = requestedPath.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
             if (paths.Length == 0 || paths.Length > 1000) { AssetStatus = "素材パスを1〜1000件入力してください。"; return; }
             if (paths.Length != 1 && !string.IsNullOrWhiteSpace(requestedUrl)) { AssetStatus = "URL は素材を1件指定したときだけ入力できます。"; return; }
@@ -363,6 +416,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     {
         var selected = SelectedProject;
         var assets = inspectedAssets;
+        var externalRoot = inspectedExternalRoot;
         if (selected is null || assets is null) { AssetStatus = "先に素材を検査してください。"; return; }
         var association = update ? selected.MetadataAssociation : null;
         var source = selected.FullPath;
@@ -381,11 +435,11 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
             var directory = Path.GetDirectoryName(Path.GetFullPath(source)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             foreach (var asset in assets)
-                if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = $"素材が変更されたか見つかりません: {asset.RelativePath}"; return; }
+                if (await VerifyInspectedAssetAsync(directory, externalRoot, asset, token) != AssetVerification.Valid) { AssetStatus = $"素材が変更されたか見つかりません: {asset.RelativePath}"; return; }
             var verifiedAtUtc = DateTimeOffset.UtcNow;
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            var managed = association is not null && selected.ProjectId is Guid id ? await ResolveMetadataAsync(id, association, token) : null;
-            if (association is not null && (managed is null || managed.Selected.Receipt != managed.Head))
+            var managed = association is not null && selected.ProjectId is Guid id ? await ResolveMetadataBranchAsync(id, association, token) : null;
+            if (association is not null && (managed is null || !managed.Graph.Heads.Contains(managed.Selected.Receipt)))
                 throw new InvalidDataException("現在の head を選択し直してから版を追加してください。");
             var parent = managed?.Selected.Manifest ?? (parentPath is null ? null : await AssetManifestStore.LoadAsync(parentPath, token));
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
@@ -407,12 +461,13 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 selected.FullPath != source || HasUnsavedProjectList || (association is not null && selected.MetadataAssociation != association))
                 throw new InvalidDataException("素材またはプロジェクトの選択が変更されました。");
             foreach (var asset in assets)
-                if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid)
+                if (await VerifyInspectedAssetAsync(directory, externalRoot, asset, token) != AssetVerification.Valid)
                     throw new InvalidDataException($"確認後に素材が変更されました。{asset.RelativePath}");
             var manifest = AssetManifestStore.Create(source, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0, projectId: selected.ProjectId);
             if (association is not null && managed is not null)
             {
-                var receipt = await AssetRevisionSeries.AppendAsync(association.Directory, managed.Root, managed.Head, manifest, token);
+                var receipt = await AssetRevisionSeries.AppendToBranchAsync(association.Directory, managed.Graph.Root,
+                    managed.Graph.Heads, managed.Selected.Receipt, manifest, token);
                 AssetStatus = $"履歴に版を追加しました。{receipt.RevisionId}\n使用する版は「履歴の版を選択」から変更できます。";
                 return;
             }
@@ -477,14 +532,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 if (MessageBox.Show($"{action}時に、このリポジトリで設定された Git フィルターなどの外部プログラムが実行される場合があります。設定を信頼できる場合のみ続行してください。", "Git", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             }
             var git = new GitRepository(directory);
-            if (operation is "commit" or "push")
+            if (operation == "commit")
             {
                 var repositoryRoot = await git.DetectAsync(token);
                 if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
                 if (!ReferenceEquals(selected, SelectedProject)) return;
-                var message = operation == "commit"
-                    ? "このリポジトリのステージ済みの変更をすべてコミットします。設定された Git hook が実行される場合があります。"
-                    : "このリポジトリの現在のブランチを origin の同名ブランチに送信します。";
+                const string message = "このリポジトリのステージ済みの変更をすべてコミットします。設定された Git hook が実行される場合があります。";
                 if (MessageBox.Show($"{message}\n{repositoryRoot.StandardOutput.Trim()}\n続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
             }
             var result = operation switch
@@ -494,9 +547,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 "commit" => await git.CommitAsync(requestedMessage, token),
                 "branch-create" => await git.CreateBranchAsync(requestedBranch, token),
                 "branch-switch" => await git.SwitchBranchAsync(requestedBranch, token),
-                "fetch" => await git.FetchAsync(token),
-                "pull" => await git.PullAsync(token),
-                "push" => await git.PushAsync(token),
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
             if (ReferenceEquals(selected, SelectedProject))
@@ -650,8 +700,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 };
                 try
                 {
-                    var hash = await HashRecoveryFileAsync(fullPath).ConfigureAwait(true);
-                    pendingAdditionEvidence[fullPath] = (entry.ProjectId!.Value, hash);
+                    var evidence = await ProjectFileEvidence.ReadAsync(fullPath);
+                    if (Projects.Any(other => other.FileIdentity is { } recorded && recorded.IsSameFile(evidence)))
+                    {
+                        AssetStatus = $"同じファイルが別のパスから登録されています。追加を中止しました。\n{fullPath}";
+                        continue;
+                    }
+                    entry.FileIdentity = evidence;
+                    pendingAdditionEvidence[fullPath] = (entry.ProjectId!.Value, evidence.Sha256);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or NotSupportedException)
                 {
@@ -965,7 +1021,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         if (Projects.Any(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase))) return;
         var id = Guid.NewGuid();
         var entry = new ProjectEntry { FullPath = fullPath, ProjectId = id, DisplayName = Path.GetFileNameWithoutExtension(fullPath) };
-        pendingAdditionEvidence[fullPath] = (id, await HashRecoveryFileAsync(fullPath));
+        entry.FileIdentity = await ProjectFileEvidence.ReadAsync(fullPath);
+        pendingAdditionEvidence[fullPath] = (id, entry.FileIdentity.Sha256);
         entry.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = fullPath, DisplayName = entry.DisplayName,
             Role = YmmpRole.Main, Exists = true, LastCheckedAt = DateTimeOffset.Now });
         Projects.Add(entry);
@@ -1313,7 +1370,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             var fingerprint = ProjectListRecovery.Fingerprint(local);
             var latest = await repository.LoadAsync().ConfigureAwait(true);
             if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。再確認してください。");
-            var plan = ProjectListMerge.Merge(baseline, local, latest);
+            var plan = MergeWithReview(baseline, local, latest);
+            if (plan is null) return;
             if (plan.Conflicts.Count != 0) throw new InvalidDataException(string.Join("\n", plan.Conflicts.Take(20)) + (plan.Conflicts.Count > 20 ? "\n他にも競合があります。" : ""));
             if (plan.Changes.Count == 0) throw new InvalidDataException("再適用する変更がありません。ID 設定は専用の回復操作を使用してください。");
             if (plan.Changes.Count > 20) throw new InvalidDataException("変更が20件を超えています。すべてを表示できないため再適用を中止しました。");

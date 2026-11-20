@@ -23,6 +23,15 @@ internal static class Program
     private static int groupsPassed;
     private static int groupsFailed;
     private static int conditionalSkipped;
+    private static int namedCasesPassed;
+    private static int namedCasesFailed;
+
+    internal static async Task RunNamedCaseAsync(string name, Func<Task> run)
+    {
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try { await run(); namedCasesPassed++; Console.WriteLine($"PASS case: {name} ({timer.Elapsed})"); }
+        catch { namedCasesFailed++; Console.Error.WriteLine($"FAIL case: {name} ({timer.Elapsed})"); throw; }
+    }
 
     internal static void ReportConditionalSkip(string name)
     {
@@ -32,6 +41,11 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == "--list-publication-crash")
+        {
+            await ProjectListPublicationTests.CrashAsync(args[1], args[2]);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--project-list-worker")
         {
             await ProjectListConcurrencyTests.RunWorkerAsync(args[1], args[2]);
@@ -46,6 +60,10 @@ internal static class Program
             return;
         }
         var timer = System.Diagnostics.Stopwatch.StartNew();
+        var configuration = typeof(Program).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyConfigurationAttribute), false)
+            .OfType<System.Reflection.AssemblyConfigurationAttribute>().SingleOrDefault()?.Configuration ?? "unknown";
+        var library = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
+        Console.WriteLine($"Configuration={configuration}; explicitly configured YmmpxLib present={File.Exists(library)}");
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
         var previousGitGlobal = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
@@ -64,6 +82,7 @@ internal static class Program
             Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", previousGitSystem);
             Console.WriteLine($"Test groups executed: total={groupsPassed + groupsFailed}, passed={groupsPassed}, failed={groupsFailed}, duration={timer.Elapsed}");
             Console.WriteLine($"Explicit conditional skips: {conditionalSkipped}. Counts are top-level groups; other nested cases and skips are not counted.");
+            Console.WriteLine($"Individually instrumented cases: passed={namedCasesPassed}, failed={namedCasesFailed}; legacy nested checks are outside this count.");
             try
             {
                 if (Directory.Exists(workRoot))
@@ -132,6 +151,9 @@ internal static class Program
         await RunGroupAsync("ProjectListSaveTests.RunAsync", () => ProjectListSaveTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListConcurrencyTests.RunAsync", () => ProjectListConcurrencyTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListDraftTests.RunAsync", () => ProjectListDraftTests.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListPublicationTests.RunAsync", () => ProjectListPublicationTests.RunAsync(workRoot));
+        await RunGroupAsync("RelinkAssociationTests.RunAsync", () =>
+            RunNamedCaseAsync("Relink SaveAs, revision and WPF association retry", () => RelinkAssociationTests.RunAsync(workRoot)));
         await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListRecoveryTests.RunAsync(workRoot));
         await RunGroupAsync("TestProjectEntryThumbnailCacheDirectoryNotificationAsync", () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync());
         await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));

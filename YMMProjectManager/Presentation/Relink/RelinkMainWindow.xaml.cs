@@ -64,6 +64,8 @@ public partial class RelinkMainWindow : Window
     }
 
     public string? YmmpPath { get; }
+    internal Func<AssetRelinkRecovery.OutputReceipt, CancellationToken, Task>? TransferAssociationAsync { get; init; }
+    internal YMMProjectManager.Domain.ProjectFileIdentity? ExpectedSourceIdentity { get; init; }
     public ObservableCollection<RelinkRow> Rows => rows;
     private bool IsRuntimeTimelineMode => timelineInfo?.Timeline is not null;
 
@@ -329,6 +331,8 @@ public partial class RelinkMainWindow : Window
         var dialog = new SaveFileDialog { Filter = "YMM Project (*.ymmp)|*.ymmp", OverwritePrompt = false,
             Title = "元のプロジェクトと同じフォルダーに別名で保存", InitialDirectory = Path.GetDirectoryName(snapshot.YmmpPath) };
         if (dialog.ShowDialog() != true) return;
+        await using var sourceFile = ProjectFileEvidence.OpenRead(snapshot.YmmpPath);
+        await VerifyManagedIdentityAsync(sourceFile, token);
         using var candidateLocks = new RelinkCandidateVerifier.CandidateReadLocks(snapshot.Rows);
         var evidence = await AssetRelinkRecovery.PrepareAsync(snapshot, dialog.FileName, metadataDirectory!, history.Root,
             history.Selected.Receipt, review, mismatches, token);
@@ -338,16 +342,18 @@ public partial class RelinkMainWindow : Window
             SetSummaryText($"別名保存を完了できませんでした。{error}");
             return;
         }
+        AssetRelinkRecovery.OutputReceipt receipt;
         try
         {
-            var receipt = await AssetRelinkRecovery.CompleteAsync(evidence, metadataDirectory!, history.Root, token, snapshot.YmmpPath);
-            SetSummaryText($"別名保存とメタデータ版の追加が完了しました。\n{dialog.FileName}\n版 {receipt.RevisionId}。一覧の選択版は以前のままです。");
+            receipt = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, metadataDirectory!, history.Root, token, snapshot.YmmpPath);
         }
         catch (Exception ex)
         {
             logger.Error(ex, "Managed relink metadata update failed after SaveAs.");
             SetSummaryText($"別名保存済みです。メタデータ更新は完了確認できませんでした。「メタデータ更新を再開」で次の記録を選んでください。\n{evidence}");
+            return;
         }
+        await OfferAssociationTransferAsync(receipt, evidence, token);
     }
 
     private async void OnRecoverMetadataClick(object sender, RoutedEventArgs e)
@@ -361,9 +367,11 @@ public partial class RelinkMainWindow : Window
             var dialog = new OpenFileDialog { Filter = "素材再リンクの回復記録 (.ymmpm-relink-*.json)|.ymmpm-relink-*.json",
                 InitialDirectory = Path.GetDirectoryName(source) };
             if (dialog.ShowDialog() != true) return;
+            await using var sourceFile = ProjectFileEvidence.OpenRead(source);
+            await VerifyManagedIdentityAsync(sourceFile, cancellation.Token);
             var selection = await resolveMetadata(cancellation.Token);
-            var receipt = await AssetRelinkRecovery.CompleteAsync(dialog.FileName, metadataDirectory, selection.Root, cancellation.Token, source);
-            SetSummaryText($"メタデータ版を確認しました。版 {receipt.RevisionId}。");
+            var receipt = await AssetRelinkRecovery.CompleteForTransferAsync(dialog.FileName, metadataDirectory, selection.Root, cancellation.Token, source);
+            await OfferAssociationTransferAsync(receipt, dialog.FileName, cancellation.Token);
         }
         catch (OperationCanceledException) { SetSummaryText("メタデータ更新の再開を中止しました。回復記録は保持されています。"); }
         catch (Exception ex)
@@ -375,6 +383,34 @@ public partial class RelinkMainWindow : Window
     }
 
     private void OnCancelSaveClick(object sender, RoutedEventArgs e) => saveCancellation?.Cancel();
+
+    private async Task VerifyManagedIdentityAsync(FileStream source, CancellationToken token)
+    {
+        if (ExpectedSourceIdentity is { } expected && !expected.IsSameFile(await ProjectFileEvidence.ReadAsync(source, token)))
+            throw new InvalidDataException("登録時と異なる元ファイルです。プロジェクトの識別情報を照合してください。");
+    }
+
+    private async Task OfferAssociationTransferAsync(AssetRelinkRecovery.OutputReceipt receipt, string evidence, CancellationToken token)
+    {
+        var completed = $"別名保存とメタデータ版を確認しました。\n{receipt.Output}\n版 {receipt.Revision.RevisionId}";
+        if (TransferAssociationAsync is null || token.IsCancellationRequested ||
+            MessageBox.Show($"一覧の登録先をこの出力へ切り替えますか？\n{receipt.Output}\n\nプロジェクト ID は引き継ぎ、元のファイルは保持します。",
+                "再リンク出力への切り替え", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+        {
+            SetSummaryText(completed + "\n登録先は現在の一覧のままです。");
+            return;
+        }
+        try
+        {
+            await TransferAssociationAsync(receipt, token);
+            SetSummaryText(completed + "\n一覧の登録先も切り替えました。");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Relink output saved; project-list association transfer did not complete.");
+            SetSummaryText(completed + $"\n一覧の切り替えは完了確認できませんでした。一覧の保存状態と回復記録を確認してください。\n{evidence}");
+        }
+    }
 
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {

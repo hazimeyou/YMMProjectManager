@@ -180,9 +180,21 @@ public sealed class ProjectEntry : INotifyPropertyChanged
     private ImageSource? thumbnailSource;
     private string? thumbnailCacheDirectory;
     private Guid? projectId;
+    private string fullPath = string.Empty;
 
-    public string FullPath { get; set; } = string.Empty;
+    public string FullPath
+    {
+        get => fullPath;
+        set
+        {
+            if (fullPath == value) return;
+            fullPath = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(EffectiveDisplayName));
+        }
+    }
     public ProjectMetadataAssociation? MetadataAssociation { get; set; }
+    public ProjectFileIdentity? FileIdentity { get; set; }
     public Guid? ProjectId
     {
         get => projectId;

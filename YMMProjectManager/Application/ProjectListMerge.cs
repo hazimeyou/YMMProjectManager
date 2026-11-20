@@ -6,10 +6,14 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Application;
 
-internal sealed record ProjectListMergeResult(ProjectStore? Store, IReadOnlyList<string> Changes, IReadOnlyList<string> Conflicts);
+internal sealed record ProjectListConflict(string Item, string Field, string Local, string Remote);
+internal sealed record ProjectListMergeResult(ProjectStore? Store, IReadOnlyList<string> Changes, IReadOnlyList<string> Conflicts)
+{
+    internal IReadOnlyList<ProjectListConflict> Choices { get; init; } = [];
+    internal bool CanResolveAll => Conflicts.Count > 0 && Conflicts.Count == Choices.Count;
+}
 
-// A conservative three-way merge. Linked files are treated as one field, so competing
-// link edits are rejected rather than guessed or silently combined.
+// Index rows by known logical identity across moves, and reject ambiguous legacy moves.
 internal static class ProjectListMerge
 {
     internal static ProjectStore Snapshot(ProjectStore source) => new()
@@ -18,30 +22,30 @@ internal static class ProjectListMerge
         Projects = source.Projects.Select(Clone).ToList(), Folders = source.Folders.Select(Clone).ToList(),
     };
 
-    internal static ProjectListMergeResult Merge(ProjectStore baseline, ProjectStore local, ProjectStore remote)
+    internal static ProjectListMergeResult Merge(ProjectStore baseline, ProjectStore local, ProjectStore remote,
+        IReadOnlyDictionary<ProjectListConflict, bool>? useLocal = null)
     {
         var conflicts = new List<string>(); var changes = new List<string>();
+        var choices = new List<ProjectListConflict>();
         if (!baseline.IsRecoverySafe || !local.IsRecoverySafe || !remote.IsRecoverySafe || remote.Revision is null)
             return new(null, changes, ["一覧に未知・不正な項目があるか、最新の版がありません。"]);
         if (!Valid(baseline) || !Valid(local) || !Valid(remote))
             return new(null, changes, ["パス、project ID、folder ID の重複または不正があります。"]);
-        foreach (var original in baseline.Projects.Where(p => p.ProjectId is not null))
-        {
-            var localIdentity = local.Projects.SingleOrDefault(p => p.ProjectId == original.ProjectId);
-            var remoteIdentity = remote.Projects.SingleOrDefault(p => p.ProjectId == original.ProjectId);
-            if ((localIdentity is not null && !string.Equals(localIdentity.FullPath, original.FullPath, StringComparison.OrdinalIgnoreCase)) ||
-                (remoteIdentity is not null && !string.Equals(remoteIdentity.FullPath, original.FullPath, StringComparison.OrdinalIgnoreCase)))
-                conflicts.Add($"project の移動または名前変更は自動再適用できません: {original.FullPath}");
-        }
+        var originalPaths = baseline.Projects.Where(project => project.ProjectId.HasValue)
+            .ToDictionary(project => project.ProjectId!.Value, project => project.FullPath);
+        string Key(ProjectEntry project) => project.ProjectId is { } id && originalPaths.TryGetValue(id, out var original)
+            ? original : project.FullPath;
         var basePaths = baseline.Projects.Select(p => p.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool AmbiguousLegacyMove(ProjectStore side) => baseline.Projects.Any(p => p.ProjectId is null && !side.Projects.Any(x => string.Equals(x.FullPath, p.FullPath, StringComparison.OrdinalIgnoreCase))) &&
             side.Projects.Any(p => !basePaths.Contains(p.FullPath));
         if (AmbiguousLegacyMove(local) || AmbiguousLegacyMove(remote)) conflicts.Add("ID のない項目の移動と追加・削除を区別できません。");
+        if (new[] { local, remote }.Any(store => store.Projects.Select(Key).Distinct(StringComparer.OrdinalIgnoreCase).Count() != store.Projects.Count))
+            conflicts.Add("移動前のパスが別の登録に使われているため、対象を区別できません。");
         if (conflicts.Count != 0) return new(null, changes, conflicts);
         var merged = Snapshot(remote);
         var baseProjects = baseline.Projects.ToDictionary(p => p.FullPath, StringComparer.OrdinalIgnoreCase);
-        var localProjects = local.Projects.ToDictionary(p => p.FullPath, StringComparer.OrdinalIgnoreCase);
-        var remoteProjects = remote.Projects.ToDictionary(p => p.FullPath, StringComparer.OrdinalIgnoreCase);
+        var localProjects = local.Projects.ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+        var remoteProjects = remote.Projects.ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
         foreach (var key in baseProjects.Keys.Union(localProjects.Keys, StringComparer.OrdinalIgnoreCase))
         {
             baseProjects.TryGetValue(key, out var b); localProjects.TryGetValue(key, out var l); remoteProjects.TryGetValue(key, out var r);
@@ -50,34 +54,76 @@ internal static class ProjectListMerge
                 if (l is null) continue;
                 if (l.ProjectId is null) { conflicts.Add($"ID のない新規項目は自動再適用できません: {key}"); continue; }
                 if (r is null) { merged.Projects.Add(Clone(l)); changes.Add($"追加: {key} (ID: {l.ProjectId})"); }
-                else if (!Same(l, r)) conflicts.Add($"同じパスへの異なる追加: {key}");
+                else if (!Same(l, r) && Decide(key, "同じパスへの追加", ProjectDetails(l), ProjectDetails(r), conflicts, choices, useLocal) is true)
+                {
+                    merged.Projects[merged.Projects.FindIndex(p => string.Equals(Key(p), key, StringComparison.OrdinalIgnoreCase))] = Clone(l);
+                    changes.Add($"未保存の登録を採用: {key}");
+                }
                 continue;
             }
             if (l is null)
             {
                 if (r is null) continue;
                 if (b.ProjectId is null) { conflicts.Add($"ID のない項目の削除は自動再適用できません: {key}"); continue; }
-                if (!Same(b, r)) conflicts.Add($"削除と外部変更の競合: {key}");
-                else { merged.Projects.RemoveAll(p => string.Equals(p.FullPath, key, StringComparison.OrdinalIgnoreCase)); changes.Add($"削除: {key}"); }
+                if (Same(b, r) || Decide(key, "削除と外部の編集・移動", "登録を削除", ProjectDetails(r), conflicts, choices, useLocal) is true)
+                {
+                    merged.Projects.RemoveAll(p => string.Equals(Key(p), key, StringComparison.OrdinalIgnoreCase));
+                    changes.Add($"削除: {key}");
+                }
                 continue;
             }
             if (Same(b, l)) continue;
-            if (r is null) { conflicts.Add($"編集と外部削除の競合: {key}"); continue; }
             if (b.ProjectId is null) { conflicts.Add($"ID のない項目の編集は自動再適用できません: {key}"); continue; }
             if (b.ProjectId != l.ProjectId) { conflicts.Add($"ID 設定には専用の競合回復を使用してください: {key}"); continue; }
+            if (r is null)
+            {
+                if (Decide(key, "編集・移動と外部の削除", ProjectDetails(l), "登録を削除", conflicts, choices, useLocal) is true)
+                {
+                    merged.Projects.Add(Clone(l));
+                    changes.Add($"編集・移動した登録を採用: {l.FullPath}");
+                }
+                continue;
+            }
             if (b.ProjectId != r.ProjectId) { conflicts.Add($"外部で project ID が変更されたため再適用できません: {key}"); continue; }
-            var target = merged.Projects.Single(p => string.Equals(p.FullPath, key, StringComparison.OrdinalIgnoreCase));
+            if (b.FullPath != l.FullPath && b.FullPath != r.FullPath && l.FullPath != r.FullPath)
+            {
+                conflicts.Add($"別々の移動先が指定されました。同一のファイルと確認してからやり直してください: {key}");
+                continue;
+            }
+            if ((b.FullPath != l.FullPath && b.FullPath == r.FullPath && FileBindingChanged(b, r)) ||
+                (b.FullPath != r.FullPath && b.FullPath == l.FullPath && FileBindingChanged(b, l)))
+            {
+                conflicts.Add($"移動とファイル識別情報またはメタデータの変更が競合しています: {key}");
+                continue;
+            }
+            var target = merged.Projects.Single(p => string.Equals(Key(p), key, StringComparison.OrdinalIgnoreCase));
             var before = conflicts.Count;
-            target.FullPath = Field(b.FullPath, l.FullPath, r.FullPath, key, "FullPath", conflicts);
-            target.ProjectId = Field(b.ProjectId, l.ProjectId, r.ProjectId, key, "ProjectId", conflicts);
-            target.DisplayName = Field(b.DisplayName, l.DisplayName, r.DisplayName, key, "DisplayName", conflicts);
-            target.Pinned = Field(b.Pinned, l.Pinned, r.Pinned, key, "Pinned", conflicts);
-            target.LastAccess = Field(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", conflicts);
-            target.FolderId = Field(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", conflicts);
-            target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts);
+            target.FullPath = Field(b.FullPath, l.FullPath, r.FullPath, key, "FullPath", conflicts, choices, useLocal);
+            target.ProjectId = Field(b.ProjectId, l.ProjectId, r.ProjectId, key, "ProjectId", conflicts, choices, useLocal);
+            target.DisplayName = Field(b.DisplayName, l.DisplayName, r.DisplayName, key, "DisplayName", conflicts, choices, useLocal);
+            target.Pinned = Field(b.Pinned, l.Pinned, r.Pinned, key, "Pinned", conflicts, choices, useLocal);
+            target.LastAccess = Field(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", conflicts, choices, useLocal);
+            target.FolderId = Field(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", conflicts, choices, useLocal);
+            target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts, choices, useLocal);
+            target.FileIdentity = Field(b.FileIdentity, l.FileIdentity, r.FileIdentity, key, "FileIdentity", conflicts, choices, useLocal);
             var bLinks = LinksFingerprint(b); var lLinks = LinksFingerprint(l); var rLinks = LinksFingerprint(r);
-            var selected = Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts);
-            if (selected == lLinks && lLinks != rLinks) { target.LinkedYmmpFiles.Clear(); foreach (var link in l.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link)); }
+            var linkOrder = b.LinkedYmmpFiles.Select(link => link.Id).ToArray();
+            if (bLinks != lLinks && bLinks != rLinks && lLinks != rLinks &&
+                linkOrder.SequenceEqual(l.LinkedYmmpFiles.Select(link => link.Id)) && linkOrder.SequenceEqual(r.LinkedYmmpFiles.Select(link => link.Id)))
+            {
+                for (var i = 0; i < linkOrder.Length; i++)
+                    MergeLink(b.LinkedYmmpFiles[i], l.LinkedYmmpFiles[i], r.LinkedYmmpFiles[i], target.LinkedYmmpFiles[i],
+                        $"{key} / link {linkOrder[i]}", conflicts, choices, useLocal);
+            }
+            else
+            {
+                var selected = Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts, choices, useLocal);
+                if (selected == lLinks && lLinks != rLinks)
+                {
+                    target.LinkedYmmpFiles.Clear();
+                    foreach (var link in l.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link));
+                }
+            }
             if (before == conflicts.Count)
             {
                 Describe(b.FullPath, l.FullPath, r.FullPath, key, "FullPath", changes);
@@ -86,24 +132,59 @@ internal static class ProjectListMerge
                 Describe(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", changes);
                 Describe(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", changes);
                 Describe(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", changes);
+                Describe(b.FileIdentity, l.FileIdentity, r.FileIdentity, key, "FileIdentity", changes);
                 Describe(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", changes);
             }
         }
-        MergeFolders(baseline, local, remote, merged, changes, conflicts);
+        MergeFolders(baseline, local, remote, merged, changes, conflicts, choices, useLocal);
         MergeOrder(baseline.Projects, local.Projects, remote.Projects, merged.Projects,
-            p => p.FullPath, StringComparer.OrdinalIgnoreCase, "プロジェクト", changes, conflicts);
+            Key, StringComparer.OrdinalIgnoreCase, "プロジェクト", changes, conflicts, choices, useLocal);
         MergeOrder(baseline.Folders, local.Folders, remote.Folders, merged.Folders,
-            f => f.Id, EqualityComparer<Guid>.Default, "フォルダー", changes, conflicts);
+            f => f.Id, EqualityComparer<Guid>.Default, "フォルダー", changes, conflicts, choices, useLocal);
         if (!Valid(merged)) conflicts.Add("再適用により project ID、パスまたは folder ID が重複します。");
-        return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts);
+        return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts) { Choices = choices };
     }
 
-    private static T Field<T>(T b, T l, T r, string key, string name, List<string> conflicts)
+    private static void MergeLink(LinkedYmmpFile baseline, LinkedYmmpFile local, LinkedYmmpFile remote, LinkedYmmpFile target,
+        string key, List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
+    {
+        target.FilePath = Field(baseline.FilePath, local.FilePath, remote.FilePath, key, "FilePath", conflicts, choices, useLocal);
+        target.DisplayName = Field(baseline.DisplayName, local.DisplayName, remote.DisplayName, key, "DisplayName", conflicts, choices, useLocal);
+        target.Role = Field(baseline.Role, local.Role, remote.Role, key, "Role", conflicts, choices, useLocal);
+        target.Memo = Field(baseline.Memo, local.Memo, remote.Memo, key, "Memo", conflicts, choices, useLocal);
+        target.RegisteredAt = Field(baseline.RegisteredAt, local.RegisteredAt, remote.RegisteredAt, key, "RegisteredAt", conflicts, choices, useLocal);
+        target.LastCheckedAt = Field(baseline.LastCheckedAt, local.LastCheckedAt, remote.LastCheckedAt, key, "LastCheckedAt", conflicts, choices, useLocal);
+        target.Exists = Field(baseline.Exists, local.Exists, remote.Exists, key, "Exists", conflicts, choices, useLocal);
+        target.UpdatedAt = local.UpdatedAt >= remote.UpdatedAt ? local.UpdatedAt : remote.UpdatedAt;
+    }
+
+    private static T Field<T>(T b, T l, T r, string key, string name, List<string> conflicts,
+        List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
         if (Equal(l, b)) return r;
         if (Equal(r, b) || Equal(l, r)) return l;
-        conflicts.Add($"{key}: {name} が両方で変更されました。"); return r;
+        return Decide(key, name, System.Text.Json.JsonSerializer.Serialize(l), System.Text.Json.JsonSerializer.Serialize(r),
+            conflicts, choices, useLocal) is true ? l : r;
     }
+
+    private static bool? Decide(string key, string field, string local, string remote, List<string> conflicts,
+        List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
+    {
+        var choice = new ProjectListConflict(key, field, local, remote);
+        if (useLocal is not null && useLocal.TryGetValue(choice, out var selected)) return selected;
+        choices.Add(choice);
+        conflicts.Add($"{key}: {field} が競合しています。");
+        return null;
+    }
+
+    private static string ProjectDetails(ProjectEntry p) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        p.FullPath, p.ProjectId, p.DisplayName, p.Pinned, p.LastAccess, p.FolderId, p.MetadataAssociation, p.FileIdentity,
+        LinkedYmmpFiles = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(LinksFingerprint(p)),
+    });
+
+    private static bool FileBindingChanged(ProjectEntry baseline, ProjectEntry side) =>
+        baseline.FileIdentity != side.FileIdentity || baseline.MetadataAssociation != side.MetadataAssociation;
 
     private static void Describe<T>(T b, T l, T r, string key, string name, List<string> changes)
     {
@@ -115,7 +196,8 @@ internal static class ProjectListMerge
         ? a.EqualsExact(b) : EqualityComparer<T>.Default.Equals(left, right);
 
     private static void MergeOrder<T, TKey>(List<T> baseline, List<T> local, List<T> remote, List<T> merged,
-        Func<T, TKey> key, IEqualityComparer<TKey> comparer, string label, List<string> changes, List<string> conflicts)
+        Func<T, TKey> key, IEqualityComparer<TKey> comparer, string label, List<string> changes, List<string> conflicts,
+        List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
         where TKey : notnull
     {
         var baseArray = baseline.Select(key).ToArray();
@@ -127,17 +209,19 @@ internal static class ProjectListMerge
         {
             // Remote may have field edits even when its sequence is unchanged.
             var byKey = merged.ToDictionary(key, comparer);
-            if (localArray.Length != byKey.Count || !localArray.All(byKey.ContainsKey)) return;
             var current = merged.Select(key).ToArray();
-            if (current.SequenceEqual(localArray, comparer)) return;
+            if (baseArray.Where(localSet.Contains).SequenceEqual(localArray, comparer)) return;
+            // A delete/edit decision can retain rows outside the local ordering.
+            var ordered = localArray.Concat(current).Where(byKey.ContainsKey).Distinct(comparer).ToArray();
+            if (current.SequenceEqual(ordered, comparer)) return;
             merged.Clear();
-            merged.AddRange(localArray.Select(id => byKey[id]));
-            changes.Add($"{label}の並び順を再適用:\n" + string.Join("\n", localArray));
+            merged.AddRange(ordered.Select(id => byKey[id]));
+            changes.Add($"{label}の並び順を再適用（選んだ順序にない登録は末尾）:\n" + string.Join("\n", ordered));
             return;
         }
         if (!baseArray.Where(localSet.Contains).SequenceEqual(localArray.Where(baseSet.Contains), comparer))
         {
-            conflicts.Add($"{label}の並べ替えと外部の順序変更または追加・削除が競合しています。");
+            ChooseOrder();
             return;
         }
         var seenNew = false;
@@ -146,13 +230,28 @@ internal static class ProjectListMerge
             if (!baseSet.Contains(item)) seenNew = true;
             else if (seenNew)
             {
-                conflicts.Add($"{label}の途中への挿入と外部の順序変更または追加・削除が競合しています。");
+                ChooseOrder();
                 return;
             }
         }
+
+        void ChooseOrder()
+        {
+            var useEntered = Decide(label, "順序（選択した側にない登録は末尾）", string.Join("\n", localArray),
+                string.Join("\n", remoteArray), conflicts, choices, useLocal);
+            if (useEntered is null) return;
+            var preferred = useEntered.Value ? localArray : remoteArray;
+            var alternative = useEntered.Value ? remoteArray : localArray;
+            var entries = merged.ToDictionary(key, comparer);
+            var ordered = preferred.Concat(alternative).Concat(merged.Select(key)).Where(entries.ContainsKey).Distinct(comparer).ToArray();
+            merged.Clear();
+            merged.AddRange(ordered.Select(id => entries[id]));
+            changes.Add($"{label}の順序を確定:\n" + string.Join("\n", ordered));
+        }
     }
 
-    private static void MergeFolders(ProjectStore baseline, ProjectStore local, ProjectStore remote, ProjectStore merged, List<string> changes, List<string> conflicts)
+    private static void MergeFolders(ProjectStore baseline, ProjectStore local, ProjectStore remote, ProjectStore merged, List<string> changes,
+        List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
         var bs = baseline.Folders.ToDictionary(x => x.Id); var ls = local.Folders.ToDictionary(x => x.Id); var rs = remote.Folders.ToDictionary(x => x.Id);
         foreach (var id in bs.Keys.Union(ls.Keys))
@@ -163,10 +262,10 @@ internal static class ProjectListMerge
             if (Same(b, l)) continue;
             if (r is null) { conflicts.Add($"folder の編集と削除が競合: {id}"); continue; }
             var target = merged.Folders.Single(f => f.Id == id); var before = conflicts.Count;
-            target.Name = Field(b.Name, l.Name, r.Name, id.ToString(), "Name", conflicts);
-            target.DisplayOrder = Field(b.DisplayOrder, l.DisplayOrder, r.DisplayOrder, id.ToString(), "DisplayOrder", conflicts);
-            target.CreatedAt = Field(b.CreatedAt, l.CreatedAt, r.CreatedAt, id.ToString(), "CreatedAt", conflicts);
-            target.UpdatedAt = Field(b.UpdatedAt, l.UpdatedAt, r.UpdatedAt, id.ToString(), "UpdatedAt", conflicts);
+            target.Name = Field(b.Name, l.Name, r.Name, id.ToString(), "Name", conflicts, choices, useLocal);
+            target.DisplayOrder = Field(b.DisplayOrder, l.DisplayOrder, r.DisplayOrder, id.ToString(), "DisplayOrder", conflicts, choices, useLocal);
+            target.CreatedAt = Field(b.CreatedAt, l.CreatedAt, r.CreatedAt, id.ToString(), "CreatedAt", conflicts, choices, useLocal);
+            target.UpdatedAt = Field(b.UpdatedAt, l.UpdatedAt, r.UpdatedAt, id.ToString(), "UpdatedAt", conflicts, choices, useLocal);
             if (before == conflicts.Count)
             {
                 Describe(b.Name, l.Name, r.Name, id.ToString(), "Name", changes);
@@ -184,6 +283,7 @@ internal static class ProjectListMerge
             if (value.Projects.Any(x => string.IsNullOrWhiteSpace(x.FullPath) || !Path.IsPathFullyQualified(x.FullPath) || x.ProjectId == Guid.Empty)) return false;
             if (value.Projects.Select(x => Path.GetFullPath(x.FullPath)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != value.Projects.Count) return false;
             if (value.Projects.Where(x => x.ProjectId.HasValue).Select(x => x.ProjectId).Distinct().Count() != value.Projects.Count(x => x.ProjectId.HasValue)) return false;
+            if (value.Projects.Any(x => x.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != x.LinkedYmmpFiles.Count)) return false;
             if (value.Folders.Any(x => x.Id == Guid.Empty || string.IsNullOrWhiteSpace(x.Name)) || value.Folders.Select(x => x.Id).Distinct().Count() != value.Folders.Count) return false;
             var folderIds = value.Folders.Select(x => x.Id).ToHashSet();
             return value.Projects.All(x => x.FolderId is null || folderIds.Contains(x.FolderId.Value));
@@ -199,6 +299,7 @@ internal static class ProjectListMerge
         var copy = new ProjectEntry { FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = x.DisplayName, Pinned = x.Pinned, LastAccess = x.LastAccess, FolderId = x.FolderId, ThumbnailCacheDirectory = x.ThumbnailCacheDirectory, ThumbnailSource = x.ThumbnailSource };
         foreach (var link in x.LinkedYmmpFiles) copy.LinkedYmmpFiles.Add(Clone(link));
         copy.MetadataAssociation = x.MetadataAssociation;
+        copy.FileIdentity = x.FileIdentity;
         return copy;
     }
     private static LinkedYmmpFile Clone(LinkedYmmpFile x) => new() { Id = x.Id, FilePath = x.FilePath, DisplayName = x.DisplayName, Role = x.Role, Memo = x.Memo, RegisteredAt = x.RegisteredAt, LastCheckedAt = x.LastCheckedAt, Exists = x.Exists, UpdatedAt = x.UpdatedAt };

@@ -222,10 +222,26 @@ internal static class ProjectListRecoveryTests
             try { await moveVm.ApplyProjectRelocationAsync(moving, movedPath); throw new Exception("copy was treated as a move"); }
             catch (InvalidDataException) { }
             File.Delete(originalPath);
-            await moveVm.ApplyProjectRelocationAsync(moving, movedPath);
+            var approvedFile = await ProjectFileEvidence.ReadAsync(movedPath);
+            File.Move(movedPath, Path.Combine(root, "approved-but-moved.ymmp"));
+            await File.WriteAllTextAsync(movedPath, "{}");
+            var replacementFile = await ProjectFileEvidence.ReadAsync(movedPath);
+            if (approvedFile.Sha256 != replacementFile.Sha256 || approvedFile.IsSameFile(replacementFile))
+                throw new Exception("fixture did not produce identical bytes with a different file ID");
+            try { await moveVm.ApplyProjectRelocationAsync(moving, movedPath, approvedFile); throw new Exception("replacement bypassed approved physical identity"); }
+            catch (InvalidDataException) { }
+            await moveVm.ApplyProjectRelocationAsync(moving, movedPath, replacementFile);
             var moved = (await moveRepo.LoadAsync()).Projects.Single();
-            if (moved.ProjectId != moveId || moved.FullPath != movedPath || moved.LinkedYmmpFiles.All(link => link.FilePath != movedPath))
+            if (moved.ProjectId != moveId || moved.FullPath != movedPath || moved.FileIdentity != replacementFile ||
+                moved.LinkedYmmpFiles.All(link => link.FilePath != movedPath))
                 throw new Exception("explicit relocation did not preserve identity and update the main link");
+            var independentCopy = Path.Combine(root, "independent-copy.ymmp");
+            File.Copy(movedPath, independentCopy);
+            await moveVm.AddProjectsAsync([independentCopy]);
+            var copy = (await moveRepo.LoadAsync()).Projects.Single(p => p.FullPath == independentCopy);
+            if (copy.ProjectId is null || copy.ProjectId == moveId || copy.FileIdentity is not { } copyEvidence ||
+                copyEvidence.IsSameFile(replacementFile) || copyEvidence.Sha256 != replacementFile.Sha256)
+                throw new Exception("independent copy reused the source identity or changed its contents");
             var unsafeListPath = Path.Combine(root, "unknown-list.json");
             var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"FutureField\":\"keep\"}";
             await File.WriteAllTextAsync(unsafeListPath, unknownJson);
