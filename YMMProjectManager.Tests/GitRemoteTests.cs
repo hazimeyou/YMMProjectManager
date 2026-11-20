@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Security.Cryptography;
 using YMMProjectManager.Infrastructure.Git;
 
 internal static class GitRemoteTests
@@ -110,21 +111,48 @@ internal static class GitRemoteTests
             Check(!racedPull.Success && racedPull.Failure == GitFailure.UnsafeOperation && !string.IsNullOrWhiteSpace(racedPull.StandardError), "raced pull did not report failure");
             Check(await Command(source, "symbolic-ref", "--short", "HEAD") == "race-side", "pull race fixture did not switch branches");
             Check(await Command(source, "rev-parse", "refs/heads/race-side") == sideBefore, "raced pull changed unintended branch");
+            Check((await one.InspectPullAsync()).State == GitPullState.TrackingUnavailable, "unknown tracking ref treated as pull candidate");
             await Command(source, "switch", branch);
             using (var cancelledPull = new CancellationTokenSource())
             {
                 cancelledPull.Cancel();
                 try { await one.PullAsync(cancelledPull.Token); throw new Exception("pull cancellation ignored"); }
                 catch (OperationCanceledException) { }
+                try { await one.InspectPullAsync(cancelledPull.Token); throw new Exception("pull inspection ignored cancellation"); }
+                catch (OperationCanceledException) { }
             }
             Check((await one.FetchAsync()).Success, "fetch");
+            var originalIndex = SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(source, ".git", "index")));
+            var currentLocal = await Command(source, "rev-parse", "HEAD");
+            var currentUpstream = await Command(source, "rev-parse", "refs/remotes/origin/" + branch);
+            var checkPull = await one.InspectPullAsync();
+            Check(checkPull is { State: GitPullState.FastForwardCandidate } && checkPull.BranchRef == "refs/heads/" + branch &&
+                checkPull.LocalObjectId == currentLocal && checkPull.TrackingRef == "refs/remotes/origin/" + branch &&
+                checkPull.TrackingObjectId == currentUpstream, "incorrect pull assessment");
+            Check(await Command(source, "rev-parse", "HEAD") == currentLocal &&
+                await Command(source, "rev-parse", "refs/remotes/origin/" + branch) == currentUpstream &&
+                SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(source, ".git", "index"))).SequenceEqual(originalIndex) &&
+                !File.Exists(Path.Combine(source, "two.txt")), "pull assessment modified refs, index or worktree");
+            one.BeforePullInspectionRecheck = () =>
+            {
+                File.WriteAllText(Path.Combine(source, ".git", "HEAD"), "ref: refs/heads/race-side\n");
+            };
+            Check((await one.InspectPullAsync()).State == GitPullState.Changed, "stale inspection did not detect a changed HEAD");
+            one.BeforePullInspectionRecheck = null;
+            await Command(source, "switch", branch);
+            var untracked = Path.Combine(source, "untracked.txt");
+            await File.WriteAllTextAsync(untracked, "keep");
+            Check((await one.InspectPullAsync()).State == GitPullState.Dirty && File.Exists(untracked), "untracked data was ignored or lost");
+            File.Delete(untracked);
             var disabledPull = await one.PullAsync();
             Check(!disabledPull.Success && disabledPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
             Program.ReportConditionalSkip("product fast-forward pull disabled pending cross-process branch protection");
             await Command(source, "merge", "--ff-only", "refs/remotes/origin/" + branch);
             Check(await Command(source, "rev-parse", "HEAD") == await Command(clone, "rev-parse", "HEAD"), "heads differ");
+            Check((await one.InspectPullAsync()).State == GitPullState.UpToDate, "matching branches classified as different");
             await File.WriteAllTextAsync(Path.Combine(source, "local.txt"), "local");
             Check((await one.StageAsync(["local.txt"])).Success && (await one.CommitAsync("local")).Success, "local commit");
+            Check((await one.InspectPullAsync()).State == GitPullState.LocalAhead, "local-ahead branch classified as pull candidate");
             await File.WriteAllTextAsync(Path.Combine(clone, "remote.txt"), "remote");
             Check((await two.StageAsync(["remote.txt"])).Success && (await two.CommitAsync("remote")).Success && (await two.PushAsync()).Success, "remote commit");
             var prior = await Command(source, "rev-parse", "HEAD");
@@ -132,7 +160,8 @@ internal static class GitRemoteTests
             var rejectedPush = await one.PushAsync(); var rejectedPull = await one.PullAsync();
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
             Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, $"failure classification: push={rejectedPush.Failure}, pull={rejectedPull.Failure}");
-            Program.ReportConditionalSkip("product pull divergence classification disabled pending safe pull implementation");
+            Check((await one.FetchAsync()).Success, "offline divergence fetch");
+            Check((await one.InspectPullAsync()).State == GitPullState.Diverged, "diverged branches classified as pull candidate");
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
             Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == remoteBeforeRejectedPush, "divergence changed remote head");
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
