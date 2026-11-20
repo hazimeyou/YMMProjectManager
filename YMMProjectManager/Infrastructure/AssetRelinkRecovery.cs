@@ -11,7 +11,11 @@ internal static class AssetRelinkRecovery
 {
     private const int MaxIntentBytes = 8 * 1024 * 1024;
     private const int MaxSourceBytes = 64 * 1024 * 1024;
-    private static readonly JsonSerializerOptions JsonOptions = new() { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        AllowDuplicateProperties = false,
+    };
 
     internal sealed record Comparison(int RowIndex, string OriginalPath, string CandidatePath, string? ExpectedSha256, string CandidateSha256,
         string TypeHint)
@@ -20,26 +24,36 @@ internal static class AssetRelinkRecovery
     }
 
     internal sealed record Intent(int Version, Guid OperationId, string Source, string SourceSha256, string Output, string OutputSha256,
-        AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetManifest Next, Comparison[] Approved);
+        AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetManifest Next, Comparison[] Approved,
+        AssetRevisionSeries.Head[]? ObservedTips = null);
 
     internal sealed record OutputReceipt(AssetRevisionSeries.Head Revision, Guid OperationId, string Source, string SourceSha256,
         string Output, string OutputSha256);
 
-    internal static async Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
+    internal static Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, CancellationToken token)
+        => ReviewAsync(context, seriesDirectory, root, parent, [parent], token);
+
+    internal static async Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
+        AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips,
+        CancellationToken token)
     {
-        var history = await AssetRevisionSeries.ResolveAsync(seriesDirectory, root.ProjectId, root.RevisionId,
-            root.Sha256, parent.RevisionId, parent.Sha256, token).ConfigureAwait(false);
-        if (history.Head != parent) throw new InvalidDataException("The metadata head has changed. Reload before creating a revision.");
+        var selected = await ResolveTipAsync(seriesDirectory, root, parent, observedTips, token).ConfigureAwait(false);
         var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated));
-        var (review, _) = await InspectRowsAsync(Path.GetDirectoryName(Path.GetFullPath(context.YmmpPath))!, history.Selected.Manifest, rows, token).ConfigureAwait(false);
+        var (review, _) = await InspectRowsAsync(Path.GetDirectoryName(Path.GetFullPath(context.YmmpPath))!, selected, rows, token).ConfigureAwait(false);
         return review;
     }
 
-    internal static async Task<string> PrepareAsync(RelinkDocumentContext context, string destination, string seriesDirectory,
+    internal static Task<string> PrepareAsync(RelinkDocumentContext context, string destination, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<Comparison> reviewed, bool confirmedMismatches, CancellationToken token)
+        => PrepareAsync(context, destination, seriesDirectory, root, parent, [parent], reviewed, confirmedMismatches, token);
+
+    internal static async Task<string> PrepareAsync(RelinkDocumentContext context, string destination, string seriesDirectory,
+        AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips,
+        IReadOnlyList<Comparison> reviewed, bool confirmedMismatches, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        var expectedTips = observedTips.ToArray();
         var source = Path.GetFullPath(context.YmmpPath);
         var output = Path.GetFullPath(destination);
         ValidatePaths(source, output);
@@ -47,25 +61,33 @@ internal static class AssetRelinkRecovery
         var original = context.OriginalBytes?.ToArray() ?? throw new InvalidDataException("The source snapshot is missing.");
         if (original.Length > MaxSourceBytes) throw new InvalidDataException("The project is too large for relink recovery.");
         var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated));
-        var history = await AssetRevisionSeries.ResolveAsync(seriesDirectory, root.ProjectId, root.RevisionId,
-            root.Sha256, parent.RevisionId, parent.Sha256, token).ConfigureAwait(false);
-        if (history.Head != parent) throw new InvalidDataException("The metadata head has changed. Reload before creating a revision.");
+        var selected = await ResolveTipAsync(seriesDirectory, root, parent, expectedTips, token).ConfigureAwait(false);
         var sourceDirectory = Path.GetDirectoryName(source)!;
-        var (review, candidates) = await InspectRowsAsync(sourceDirectory, history.Selected.Manifest, rows, token).ConfigureAwait(false);
+        var (review, candidates) = await InspectRowsAsync(sourceDirectory, selected, rows, token).ConfigureAwait(false);
         if (!review.SequenceEqual(reviewed)) throw new InvalidDataException("A relink candidate changed after review.");
         if (review.Any(item => item.RequiresConfirmation) && !confirmedMismatches)
             throw new InvalidDataException("Missing or different asset hashes require confirmation.");
 
         var next = AssetManifestStore.Create(output, candidates, DateTimeOffset.UtcNow,
-            history.Selected.Manifest, confirmedProjectAssociation: true, confirmedHashChanges: confirmedMismatches, projectId: root.ProjectId);
-        var intent = new Intent(1, next.RevisionId, source, Hash(original), output, Hash(RelinkJsonUpdate.Apply(original, rows)),
-            root, parent, next, review);
+            selected, confirmedProjectAssociation: true, confirmedHashChanges: confirmedMismatches, projectId: root.ProjectId);
+        var intent = new Intent(2, next.RevisionId, source, Hash(original), output, Hash(RelinkJsonUpdate.Apply(original, rows)),
+            root, parent, next, review, expectedTips);
         await using var sourceLease = OpenVerifiedPath(source);
         if (await HashAsync(sourceLease, token).ConfigureAwait(false) != intent.SourceSha256)
             throw new InvalidDataException("The source project changed before relink preparation.");
         var evidence = EvidencePath(source, intent.OperationId);
         await WriteNewAsync(evidence, intent, token).ConfigureAwait(false);
         return evidence;
+    }
+
+    private static async Task<AssetManifest> ResolveTipAsync(string directory, AssetRevisionSeries.Head root,
+        AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips, CancellationToken token)
+    {
+        var history = await AssetRevisionSeries.ResolveBranchAsync(directory, root.ProjectId, root.RevisionId, root.Sha256,
+            parent.RevisionId, parent.Sha256, token).ConfigureAwait(false);
+        if (!history.Graph.Heads.Contains(parent) || !AssetRevisionSeries.SameTips(history.Graph.Heads, observedTips))
+            throw new InvalidDataException("The metadata branches changed or the selected revision is no longer a tip.");
+        return history.Selected.Manifest;
     }
 
     private static async Task<(Comparison[], AssetMetadata[])> InspectRowsAsync(string sourceDirectory, AssetManifest manifest,
@@ -106,13 +128,15 @@ internal static class AssetRelinkRecovery
         await using var intentStream = OpenVerifiedPath(evidencePath);
         if (intentStream.Length > MaxIntentBytes) throw new InvalidDataException("The relink recovery record is too large.");
         var intent = await JsonSerializer.DeserializeAsync<Intent>(intentStream, JsonOptions, token).ConfigureAwait(false);
-        if (intent is null || intent.Version != 1 || intent.Root != associatedRoot || intent.Next is null ||
+        if (intent is null || intent.Version is not (1 or 2) || intent.Root != associatedRoot || intent.Next is null ||
             intent.OperationId == Guid.Empty || intent.OperationId != intent.Next.RevisionId || intent.Parent?.ProjectId != associatedRoot.ProjectId ||
             intent.Next.ProjectId != associatedRoot.ProjectId || intent.Next.ParentRevisionId != intent.Parent.RevisionId ||
             intent.Approved is not { Length: > 0 and <= 10 } ||
             intent.Approved.Any(item => item is null || string.IsNullOrWhiteSpace(item.OriginalPath) || !Path.IsPathFullyQualified(item.CandidatePath) ||
                 item.TypeHint is null || !IsHash(item.CandidateSha256)) || !IsHash(intent.SourceSha256) || !IsHash(intent.OutputSha256))
             throw new InvalidDataException("The relink recovery record is invalid or belongs to a different project.");
+        if (intent.Version == 1 ? intent.ObservedTips is not null : !ValidTipEvidence(intent.ObservedTips, intent.Parent))
+            throw new InvalidDataException("The relink recovery record has invalid branch evidence.");
         ValidatePaths(intent.Source, intent.Output);
         if (expectedSource is not null && !string.Equals(Path.GetFullPath(expectedSource), intent.Source, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("This recovery record belongs to a different source project file.");
@@ -122,7 +146,7 @@ internal static class AssetRelinkRecovery
         if (intent.Next.ProjectFileName != Path.GetFileName(intent.Output))
             throw new InvalidDataException("The metadata revision targets a different output.");
 
-        var history = await AssetRevisionSeries.ResolveAsync(seriesDirectory, associatedRoot.ProjectId, associatedRoot.RevisionId,
+        var history = await AssetRevisionSeries.ResolveBranchAsync(seriesDirectory, associatedRoot.ProjectId, associatedRoot.RevisionId,
             associatedRoot.Sha256, intent.Parent.RevisionId, intent.Parent.Sha256, token).ConfigureAwait(false);
         await using var source = OpenVerifiedPath(intent.Source);
         if (source.Length > MaxSourceBytes) throw new InvalidDataException("The project is too large for relink recovery.");
@@ -163,7 +187,9 @@ internal static class AssetRelinkRecovery
             if (!review.SequenceEqual(intent.Approved) ||
                 !JsonSerializer.SerializeToUtf8Bytes(derived).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(intent.Next)))
                 throw new InvalidDataException("The pending metadata does not match the relink evidence.");
-            var revision = await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
+            var revision = intent.ObservedTips is { } tips
+                ? await AssetRevisionSeries.AppendToBranchOrVerifyAsync(seriesDirectory, associatedRoot, tips, intent.Parent, intent.Next, token).ConfigureAwait(false)
+                : await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
             return new OutputReceipt(revision, intent.OperationId, intent.Source, intent.SourceSha256, intent.Output, intent.OutputSha256);
         }
         finally
@@ -171,6 +197,11 @@ internal static class AssetRelinkRecovery
             foreach (var lease in leases) await lease.DisposeAsync().ConfigureAwait(false);
         }
     }
+
+    private static bool ValidTipEvidence(AssetRevisionSeries.Head[]? tips, AssetRevisionSeries.Head parent)
+        => tips is { Length: > 0 and <= 4096 } &&
+            tips.All(tip => tip is not null && tip.ProjectId == parent.ProjectId && tip.RevisionId != Guid.Empty && IsHash(tip.Sha256)) &&
+            tips.Select(tip => tip.RevisionId).Distinct().Count() == tips.Length && tips.Contains(parent);
 
     internal static Task VerifyOutputAsync(OutputReceipt receipt, CancellationToken token)
         => WithVerifiedProjectsAsync(receipt, _ => Task.CompletedTask, token);

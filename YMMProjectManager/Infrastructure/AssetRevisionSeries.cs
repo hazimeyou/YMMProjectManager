@@ -198,6 +198,13 @@ public static class AssetRevisionSeries
     internal static Task<Head> AppendOrVerifyAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token)
         => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: true, token);
 
+    internal static Task<Head> AppendToBranchOrVerifyAsync(string directory, Head expectedRoot, IReadOnlyList<Head> observedTips,
+        Head expectedTip, AssetManifest next, CancellationToken token)
+        => AppendCoreAsync(directory, expectedRoot, observedTips.ToArray(), expectedTip, next, acceptCommittedRevision: true, token);
+
+    internal static bool SameTips(IReadOnlyList<Head> current, IReadOnlyList<Head> expected)
+        => current.Count == expected.Count && current.ToHashSet().SetEquals(expected);
+
     private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head[]? observedTips, Head expected, AssetManifest next,
         bool acceptCommittedRevision, CancellationToken token)
     {
@@ -214,8 +221,6 @@ public static class AssetRevisionSeries
             throw new InvalidDataException("The associated metadata series changed; reload before updating.");
         if (observedTips is null)
             RequireSingleHead(graph);
-        else if (observedTips.Length != graph.Heads.Count || !graph.Heads.ToHashSet().SetEquals(observedTips))
-            throw new InvalidDataException("The revision branches changed; inspect them before updating.");
         var head = MakeHead(next);
         if (acceptCommittedRevision && graph.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
         {
@@ -224,6 +229,8 @@ public static class AssetRevisionSeries
             return committed.Receipt;
         }
 
+        if (observedTips is not null && !SameTips(graph.Heads, observedTips))
+            throw new InvalidDataException("The revision branches changed; inspect them before updating.");
         if (!graph.Heads.Contains(expected)) throw new InvalidDataException("The selected revision is no longer a branch tip.");
         if (nodes.Count >= MaxRevisions || nodes.Values.Sum(node => node.ByteCount) + SerializeRevision(next).Length > MaxHistoryBytes)
             throw new InvalidDataException("The revision history exceeds the storage limit.");

@@ -105,6 +105,10 @@ internal static class AssetManifestTests
         await RejectAsync(() => AssetRelinkRecovery.PrepareAsync(context, output, seriesDirectory, head, head, review, true, default));
         await File.WriteAllTextAsync(candidate, "replacement asset");
         var evidence = await AssetRelinkRecovery.PrepareAsync(context, output, seriesDirectory, head, head, review, true, default);
+        var oldEvidence = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(evidence))!.AsObject();
+        oldEvidence["Version"] = 1;
+        oldEvidence.Remove("ObservedTips");
+        await File.WriteAllTextAsync(evidence, oldEvidence.ToJsonString());
         try
         {
             await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
@@ -185,6 +189,36 @@ internal static class AssetManifestTests
             history.Revisions[1].Manifest.Assets.Count != 2 || !bytes.SequenceEqual(preservedSource) ||
             !published.SequenceEqual(preservedOutput) || !published.SequenceEqual(pendingBytes) || !File.Exists(pending))
             throw new Exception("relink recovery duplicated a revision or failed to preserve existing or pending data");
+
+        var fork = AssetManifestStore.Create(source, [originalAsset], DateTimeOffset.UtcNow, initial, true, projectId: head.ProjectId);
+        await AssetManifestStore.SaveNewAsync(Path.Combine(seriesDirectory, $"revision-{fork.RevisionId:N}.json"), fork);
+        var graph = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
+        var forkTip = graph.Heads.Single(tip => tip.RevisionId == fork.RevisionId);
+        await RejectAsync(() => AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, forkTip, default));
+        await RejectAsync(() => AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, head, graph.Heads, default));
+        var forkReview = await AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, forkTip, graph.Heads, default);
+        var forkOutput = Path.Combine(folder, "fork.ymmp");
+        var forkEvidence = await AssetRelinkRecovery.PrepareAsync(context, forkOutput, seriesDirectory, head, forkTip, graph.Heads, forkReview, true, default);
+        if (!(await saver.SaveAsAsync(context, forkOutput, default)).Success) throw new Exception("branch relink SaveAs failed");
+        var branchReceipt = await AssetRelinkRecovery.CompleteForTransferAsync(forkEvidence, seriesDirectory, head, default, source);
+        var afterFork = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
+        if (!afterFork.Heads.ToHashSet().SetEquals([competingHead, branchReceipt.Revision]) ||
+            afterFork.Revisions.Single(revision => revision.Receipt == branchReceipt.Revision).Manifest.ParentRevisionId != forkTip.RevisionId)
+            throw new Exception("managed relink updated the wrong metadata branch");
+
+        var staleOutput = Path.Combine(folder, "stale.ymmp");
+        var staleReview = await AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, branchReceipt.Revision, afterFork.Heads, default);
+        var staleEvidence = await AssetRelinkRecovery.PrepareAsync(context, staleOutput, seriesDirectory, head, branchReceipt.Revision, afterFork.Heads, staleReview, true, default);
+        if (!(await saver.SaveAsAsync(context, staleOutput, default)).Success) throw new Exception("stale branch relink SaveAs failed");
+        var otherUpdate = AssetManifestStore.Create(output, [], DateTimeOffset.UtcNow, competing, true, projectId: head.ProjectId);
+        var otherTip = await AssetRevisionSeries.AppendToBranchAsync(seriesDirectory, head, afterFork.Heads, competingHead, otherUpdate);
+        await RejectAsync(() => AssetRelinkRecovery.CompleteForTransferAsync(staleEvidence, seriesDirectory, head, default, source));
+        if (!File.Exists(staleOutput) || !File.Exists(staleEvidence)) throw new Exception("a stale branch lost its output or intent");
+        if (await AssetRelinkRecovery.CompleteForTransferAsync(forkEvidence, seriesDirectory, head, default, source) != branchReceipt)
+            throw new Exception("a committed branch relink could not be confirmed after another branch advanced");
+        var finalGraph = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
+        if (!finalGraph.Heads.ToHashSet().SetEquals([otherTip, branchReceipt.Revision]) || finalGraph.Revisions.Count != 6)
+            throw new Exception("a refused or repeated branch completion published an unexpected revision");
 
         static async Task RejectAsync(Func<Task> run)
         {
