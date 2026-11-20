@@ -104,6 +104,35 @@ internal static class AssetManifestTests
         if (!oldBytes.SequenceEqual(firstAfterUpdate)) throw new Exception("series update changed historical revision");
         var current = await AssetRevisionSeries.ReadHeadAsync(directory);
         if (current.ProjectId != initial.ProjectId || (current.RevisionId != first.RevisionId && current.RevisionId != second.RevisionId)) throw new Exception("incorrect current head");
+        var history = await AssetRevisionSeries.InspectAsync(directory);
+        if (history.Root != head || history.Head != current ||
+            !history.Revisions.Select(r => r.Receipt).SequenceEqual(new[] { head, current }))
+            throw new Exception("series inspection lost causal order or receipt identity");
+        var selection = await AssetRevisionSeries.ResolveAsync(directory, head.ProjectId, head.RevisionId, head.Sha256, head.RevisionId, head.Sha256);
+        if (selection.Selected.Manifest.RevisionId != initial.RevisionId || selection.Head != current)
+            throw new Exception("historical selection was lost after a newer revision");
+        try
+        {
+            await AssetRevisionSeries.ResolveAsync(directory, Guid.NewGuid(), head.RevisionId, head.Sha256, current.RevisionId, current.Sha256);
+            throw new Exception("foreign metadata association accepted");
+        }
+        catch (InvalidDataException) { }
+        try
+        {
+            await AssetRevisionSeries.ResolveAsync(directory, head.ProjectId, head.RevisionId, head.Sha256, current.RevisionId, new string('0', 64));
+            throw new Exception("changed selected metadata accepted");
+        }
+        catch (InvalidDataException) { }
+        var committed = current.RevisionId == first.RevisionId ? first : second;
+        if (await AssetRevisionSeries.AppendOrVerifyAsync(directory, head, committed) != current ||
+            (await AssetRevisionSeries.InspectAsync(directory)).Revisions.Count != 2)
+            throw new Exception("retry duplicated the already-published revision");
+        try
+        {
+            await AssetRevisionSeries.AppendOrVerifyAsync(directory, head, committed with { ProjectFileName = "different.ymmp" });
+            throw new Exception("retry accepted different bytes at the same revision ID");
+        }
+        catch (InvalidDataException) { }
         try { await AssetRevisionSeries.AppendAsync(directory, head, second); throw new Exception("stale head accepted"); } catch (InvalidDataException) { }
         var idCollision = initial with { ParentRevisionId = current.RevisionId };
         try { await AssetRevisionSeries.AppendAsync(directory, current, idCollision); throw new Exception("historical revision collision accepted"); } catch (IOException) { }
@@ -125,6 +154,12 @@ internal static class AssetManifestTests
         var corruptPath = Path.Combine(corruptDirectory, $"revision-{initial.RevisionId:N}.json");
         var altered = initial with { ProjectFileName = "altered.ymmp" };
         await File.WriteAllTextAsync(corruptPath, JsonSerializer.Serialize(altered));
+        try
+        {
+            await AssetRevisionSeries.ResolveAsync(corruptDirectory, corruptRoot.ProjectId, corruptRoot.RevisionId, corruptRoot.Sha256, corruptRoot.RevisionId, corruptRoot.Sha256);
+            throw new Exception("replaced metadata root accepted");
+        }
+        catch (InvalidDataException) { }
         try { await AssetRevisionSeries.AppendAsync(corruptDirectory, corruptRoot, first); throw new Exception("replaced parent accepted"); } catch (InvalidDataException) { }
         if ((await AssetManifestStore.LoadAsync(corruptPath)).ProjectFileName != "altered.ymmp") throw new Exception("replacement overwritten");
 
