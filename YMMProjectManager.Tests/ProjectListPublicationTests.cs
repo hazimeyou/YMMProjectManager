@@ -14,6 +14,87 @@ internal static class ProjectListPublicationTests
             "missing-descendant", "corrupt-descendant", "duplicate-descendant", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
         })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
+        foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation" })
+            await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
+    }
+
+    private static async Task RunGenerationPointAsync(string workRoot, string point)
+    {
+        var root = Path.Combine(workRoot, "list-generation", point);
+        Directory.CreateDirectory(root);
+        var repository = Open(root);
+        var baseline = await repository.LoadAsync();
+        baseline.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "base" });
+        await repository.SaveAsync(baseline);
+        var original = await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"));
+        var older = await repository.LoadAsync();
+        older.Projects.Single().DisplayName = "older";
+        var previous = await repository.WritePendingDraftAsync(baseline, older, [], null);
+        var priorBytes = await File.ReadAllBytesAsync(previous);
+
+        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("--list-publication-crash");
+        start.ArgumentList.Add(root);
+        start.ArgumentList.Add(point);
+        using var child = Process.Start(start) ?? throw new Exception("Generation interruption fixture could not start.");
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await child.WaitForExitAsync(timeout.Token);
+        }
+        finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
+        Require(child.ExitCode == 86, "Child never reached the generation interruption.");
+        Require(Enumerable.SequenceEqual(priorBytes, await File.ReadAllBytesAsync(previous)), "The predecessor changed during generation transition.");
+        Require(Enumerable.SequenceEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"))), "A draft transition wrote the list.");
+
+        var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
+        var (review, superseded) = await drafts.ReadForReviewAsync(previous);
+        Require(review.Local.Projects.Single().DisplayName == "older", "The old draft cannot be exported.");
+        if (point == "before-generation")
+        {
+            Require(!superseded, "An uncommitted temporary draft fenced its predecessor.");
+            Require(Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Single() == previous,
+                "The interrupted write created a usable successor.");
+            await repository.SaveReadyDraftAsync(review.Local, previous);
+            Require((await repository.LoadAsync()).Projects.Single().DisplayName == "older" && File.Exists(previous + ".closed"),
+                "The predecessor could not be saved after an interrupted generation write.");
+            return;
+        }
+
+        Require(superseded, "A published successor did not fence its predecessor.");
+        await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(review.Local, previous));
+        var successor = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Single(path => path != previous);
+        var next = await drafts.ReadAsync(successor);
+        Require(next.Local.Projects.Single().DisplayName == "newer", "The published successor did not retain the newer edits.");
+        await ExpectRejectedAsync(() => repository.WritePendingDraftAsync(baseline, older, [], previous));
+
+        if (point == "ambiguous-generation")
+        {
+            var broken = Path.Combine(repository.RecoveryDirectory, $"{Guid.NewGuid():N}.{Path.GetFileName(previous)[..32]}.draft.json");
+            await File.WriteAllTextAsync(broken, "unknown future format");
+            var (_, exportOnly) = await drafts.ReadForReviewAsync(successor);
+            Require(exportOnly, "A peer with unsupported data did not block the competing generation.");
+            await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(next.Local, successor));
+            Require(await File.ReadAllTextAsync(broken) == "unknown future format" &&
+                Enumerable.SequenceEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"))),
+                "An ambiguous transition lost evidence or wrote the list.");
+            return;
+        }
+
+        await repository.SaveReadyDraftAsync(next.Local, successor);
+        Require(File.Exists(successor + ".closed") && !File.Exists(successor) &&
+            (await repository.LoadAsync()).Projects.Single().DisplayName == "newer", "The successor could not be saved and retired.");
+        await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(review.Local, previous));
+        await File.WriteAllTextAsync(successor + ".closed", "unsupported archived evidence");
+        await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(review.Local, previous));
+        drafts.Retire(previous);
+        Require(Enumerable.SequenceEqual(priorBytes, await File.ReadAllBytesAsync(previous + ".closed")), "Legacy retirement did not preserve the original bytes.");
+    }
+
+    private static async Task ExpectRejectedAsync(Func<Task> run)
+    {
+        try { await run(); throw new Exception("An obsolete or ambiguous draft could be replayed."); }
+        catch (InvalidDataException) { }
     }
 
     private static async Task RunPointAsync(string workRoot, string point)
@@ -133,6 +214,15 @@ internal static class ProjectListPublicationTests
         var candidate = await repository.LoadAsync();
         candidate.Projects.Single().DisplayName = "after";
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
+        if (point is "before-generation" or "after-generation" or "ambiguous-generation")
+        {
+            var previous = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Single();
+            candidate.Projects.Single().DisplayName = "newer";
+            await repository.WritePendingDraftAsync(baseline, candidate, [], previous,
+                beforePublication: point == "before-generation" ? () => Environment.Exit(86) : null,
+                afterPublication: () => Environment.Exit(point == "before-generation" ? 87 : 86));
+            throw new Exception("Generation fault hook returned unexpectedly.");
+        }
         var ready = await drafts.WriteAsync(baseline, candidate, []);
         if (point == "fresh-attempt")
         {

@@ -262,6 +262,16 @@ public sealed class JsonProjectRepository : IProjectRepository
     public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default) =>
         SaveCoreAsync(store, null, cancellationToken);
 
+    internal async Task<string> WritePendingDraftAsync(ProjectStore baseline, ProjectStore local,
+        Dictionary<string, ProjectListDrafts.Evidence> evidence, string? predecessor, Action? beforePublication = null,
+        Action? afterPublication = null)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
+        using var processLock = AcquireProcessLock();
+        return await new ProjectListDrafts(RecoveryDirectory)
+            .WriteAsync(baseline, local, evidence, predecessor, beforePublication, afterPublication).ConfigureAwait(false);
+    }
+
     internal Task SaveReadyDraftAsync(ProjectStore store, string readyDraft, CancellationToken token = default) =>
         SaveCoreAsync(store, readyDraft, token);
 
