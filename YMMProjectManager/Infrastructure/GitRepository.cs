@@ -392,9 +392,10 @@ public sealed partial class GitRepository
         Task<GitResult> ReadGitAsync(string[] args) => trusted ? RunDirectAsync(args, token, pullSettings: pullSettings) : RunAsync(args, token);
     }
 
-    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false, string[]? pullSettings = null) =>
+    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false,
+        string[]? pullSettings = null, Action? afterStart = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
-            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings);
+            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -681,7 +682,7 @@ public sealed partial class GitRepository
     }
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
-        bool ignoreLegacyGrafts = false, string[]? pullSettings = null)
+        bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action? afterStart = null)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -726,6 +727,7 @@ public sealed partial class GitRepository
             {
                 "--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=NUL", "-c", "core.askPass=", "-c", "credential.helper=",
                 "-c", "core.protectNTFS=true", "-c", "submodule.recurse=false", "-c", "gc.auto=0",
+                "-c", "advice.graftFileDeprecated=false",
             }.Concat(pullSettings))
                 start.ArgumentList.Add(argument);
         }
@@ -761,7 +763,11 @@ public sealed partial class GitRepository
         deadline.CancelAfter(Timeout);
         var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
         var error = process.StandardError.ReadToEndAsync(deadline.Token);
-        try { await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error).ConfigureAwait(false); }
+        try
+        {
+            afterStart?.Invoke();
+            await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error).ConfigureAwait(false);
+        }
         catch (OperationCanceledException)
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }

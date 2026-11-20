@@ -7,6 +7,7 @@ public sealed partial class GitRepository
 {
     internal Action<CancellationToken>? BeforePullExecutionRecheck { get; set; }
     internal Action? AfterPullJournalCreated { get; set; }
+    internal Action? AfterPullProcessStarted { get; set; }
     internal Action? AfterPullProcessExit { get; set; }
 
     public Task<GitResult> InspectPullRemoteAsync(CancellationToken token = default) =>
@@ -55,7 +56,11 @@ public sealed partial class GitRepository
         var (advertised, error) = await ReadAdvertisedCommitAsync(session, approved.Remote, preparationToken).ConfigureAwait(false);
         if (error is not null) return error;
         if (advertised != approved.TargetObjectId) return ChangedPull();
-        if (!approved.ChangesWorktree) return new GitResult(0, "", "The approved branch is already up to date.");
+        if (!approved.ChangesWorktree)
+        {
+            var (_, unchangedError) = await ReadPreparedPullAsync(session, approved, preparationToken).ConfigureAwait(false);
+            return unchangedError ?? new GitResult(0, "", "The approved branch, index and checkout are already up to date.");
+        }
 
         var imported = await RunPullTransportAsync(session, approved.Endpoint,
             ["fetch", "--no-recurse-submodules", "--no-tags", "--no-prune", "--no-prune-tags",
@@ -114,7 +119,7 @@ public sealed partial class GitRepository
                 {
                     command = await RunPullCommandAsync(session,
                         ["merge", "--ff-only", "--no-overwrite-ignore", "--no-autostash", "--no-edit",
-                            "--no-stat", "--no-verify-signatures", "--", approved.TargetObjectId], execution.Token).ConfigureAwait(false);
+                            "--no-stat", "--no-verify-signatures", "--", approved.TargetObjectId], execution.Token, AfterPullProcessStarted).ConfigureAwait(false);
                     AfterPullProcessExit?.Invoke();
                 }
                 catch (Exception ex) when (ex is OperationCanceledException or TimeoutException or IOException or Win32Exception or InvalidOperationException)
@@ -125,7 +130,7 @@ public sealed partial class GitRepository
                 using var verification = new CancellationTokenSource(RemoteTimeout);
                 var after = await ReadCurrentPullStateAsync(session, approved, verification.Token).ConfigureAwait(false);
                 if (after is null) return UnresolvedPull();
-                if (after.StartObjectId == approved.TargetObjectId &&
+                if (command is { Success: true } && after.StartObjectId == approved.TargetObjectId &&
                     after.Branches == ReplaceBranchObjectId(before!.Branches, approved.BranchRef, approved.TargetObjectId))
                     return ClearPullJournal(journal, new GitResult(0, "", "The approved fast-forward and checkout were verified."));
                 if (command is { Success: false } && after.StartObjectId == approved.StartObjectId &&

@@ -22,7 +22,7 @@ public sealed partial class GitRepository
     private async Task<PullSession?> OpenPullSessionAsync(CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if (!HasDirectRepository()) return null;
+        if (!HasDirectRepository() || !OnFixedLocalNtfs()) return null;
         var gitDirectory = Path.Combine(directory, ".git");
         OwnedFilePublication.DirectoryFence? fence = null;
         GitRepositoryLease? repository = null;
@@ -85,10 +85,16 @@ public sealed partial class GitRepository
             ("core.safecrlf", ["true", "false", "warn"]),
         ];
         var checkoutPolicies = await RunDirectAsync(
-            ["config", "--name-only", "--get-regexp", @"^(core\.attributesfile|merge\.verifysignatures|branch\..*\.mergeoptions)$"],
+            ["config", "--name-only", "--get-regexp", @"^(core\.attributesfile|branch\..*\.mergeoptions)$"],
             token).ConfigureAwait(false);
         if (checkoutPolicies.ExitCode != 1 || checkoutPolicies.StandardOutput.Length != 0 || checkoutPolicies.StandardError.Length != 0)
             return null;
+        var signaturePolicy = await RunDirectAsync(["config", "--type=bool", "--get", "merge.verifySignatures"], token).ConfigureAwait(false);
+        if (!((signaturePolicy.ExitCode == 1 && signaturePolicy.StandardOutput.Length == 0) ||
+              (signaturePolicy.Success && signaturePolicy.StandardOutput.Trim() == "false")) ||
+            signaturePolicy.StandardError.Length != 0)
+            return null;
+
         var settings = new List<string>();
         foreach (var (name, values) in allowed)
         {
@@ -101,6 +107,18 @@ public sealed partial class GitRepository
             settings.Add(name + "=" + value);
         }
         return settings.ToArray();
+    }
+
+    private bool OnFixedLocalNtfs()
+    {
+        try
+        {
+            var root = Path.GetPathRoot(directory);
+            if (root is not { Length: 3 } || root[1] != ':') return false;
+            var drive = new DriveInfo(root);
+            return drive.DriveType == DriveType.Fixed && string.Equals("NTFS", drive.DriveFormat, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
 
     private static bool SafePullRepositoryMetadata(string gitDirectory)
@@ -118,8 +136,8 @@ public sealed partial class GitRepository
         return true;
     }
 
-    private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token) =>
-        RunDirectAsync(arguments, token, pullSettings: session.Settings);
+    private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token, Action? afterStart = null) =>
+        RunDirectAsync(arguments, token, pullSettings: session.Settings, afterStart: afterStart);
 
     private Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token)
     {
