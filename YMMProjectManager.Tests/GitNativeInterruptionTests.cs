@@ -94,14 +94,27 @@ internal static class GitNativeInterruptionTests
         {
             Require(process.StartInfo.WorkingDirectory == checkout && process.StartInfo.ArgumentList.Contains("merge") &&
                 process.StartInfo.ArgumentList.Contains(target), "The intervention must target only the actual approved synthetic merge child.");
-            var path = observed.Task.WaitAsync(TimeSpan.FromSeconds(20)).GetAwaiter().GetResult();
-            Require(!process.HasExited, "Native Git exited before the file observation could be used.");
-            File.WriteAllText(untrackedPath, untrackedContents);
-            var lockBeforeStop = File.Exists(indexLockPath);
-            Require(!process.HasExited, "Native Git exited before termination after observing the worktree change.");
-            process.Kill();
-            Require(process.WaitForExit(10_000) && process.ExitCode != 0, "The observed Git process did not terminate unsuccessfully.");
-            interruption = (path, lockBeforeStop, process.ExitCode);
+            try
+            {
+                var path = observed.Task.WaitAsync(TimeSpan.FromSeconds(20)).GetAwaiter().GetResult();
+                Require(!process.HasExited, "Native Git exited before the file observation could be used.");
+                File.WriteAllText(untrackedPath, untrackedContents);
+                var lockBeforeStop = File.Exists(indexLockPath);
+                Require(!process.HasExited, "Native Git exited before termination after observing the worktree change.");
+                process.Kill();
+                Require(process.WaitForExit(10_000) && process.ExitCode != 0, "The observed Git process did not terminate unsuccessfully.");
+                interruption = (path, lockBeforeStop, process.ExitCode);
+            }
+            finally
+            {
+                // Stop only the owned test child even if observation failed. Such a stop is not test evidence.
+                if (!process.HasExited)
+                {
+                    process.Kill();
+                    if (!process.WaitForExit(10_000))
+                        throw new TimeoutException("The owned native Git child did not stop after the fixture failed.");
+                }
+            }
         };
 
         var result = await service.PullTrustedAsync(preview.PullTarget!);
