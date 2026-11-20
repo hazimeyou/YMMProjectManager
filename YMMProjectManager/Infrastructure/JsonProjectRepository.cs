@@ -24,6 +24,10 @@ public sealed class JsonProjectRepository : IProjectRepository
     private readonly Action? beforeReplace;
     private readonly Action? afterReplace;
     private readonly Action? beforeCandidate;
+    private readonly Action? beforeReceipt;
+    private readonly Action? afterReceipt;
+    private readonly Action? afterDraftClaim;
+    private readonly Action? duringReceipt;
     private readonly FileLogger logger;
 
     public JsonProjectRepository(FileLogger logger) : this(logger, ResolvePath()) { }
@@ -31,7 +35,8 @@ public sealed class JsonProjectRepository : IProjectRepository
     // Internal hooks make failures at the file boundary deterministic in isolated tests.
     internal JsonProjectRepository(FileLogger logger, string path,
         Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null,
-        Action? afterReplace = null, Action? beforeCandidate = null)
+        Action? afterReplace = null, Action? beforeCandidate = null, Action? beforeReceipt = null,
+        Action? afterReceipt = null, Action? afterDraftClaim = null, Action? duringReceipt = null)
     {
         this.logger = logger;
         jsonPath = Path.GetFullPath(path);
@@ -39,6 +44,10 @@ public sealed class JsonProjectRepository : IProjectRepository
         this.beforeReplace = beforeReplace;
         this.afterReplace = afterReplace;
         this.beforeCandidate = beforeCandidate;
+        this.beforeReceipt = beforeReceipt;
+        this.afterReceipt = afterReceipt;
+        this.afterDraftClaim = afterDraftClaim;
+        this.duringReceipt = duringReceipt;
     }
 
     internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
@@ -140,24 +149,31 @@ public sealed class JsonProjectRepository : IProjectRepository
     }
 
     public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default) =>
-        SaveCoreAsync(store, null, cancellationToken);
+        SaveCoreAsync(store, null, null, cancellationToken);
+
+    internal Task SaveReadyDraftAsync(ProjectStore store, string readyDraft, CancellationToken token = default) =>
+        SaveCoreAsync(store, null, readyDraft, token);
+
+    internal string GetReadyDraftPath(string claimedDraft) => new ProjectListDrafts(RecoveryDirectory).GetReadyPath(claimedDraft);
 
     internal async Task SaveWithDraftAsync(ProjectStore store, string claimedDraft, CancellationToken token = default)
     {
-        var id = new ProjectListDrafts(RecoveryDirectory).GetClaimedId(claimedDraft);
+        var (id, operation) = new ProjectListDrafts(RecoveryDirectory).GetClaimedIdentity(claimedDraft);
+        if (operation is not null) throw new InvalidDataException("An operation-bound claim must be reconciled before saving again.");
         using var claim = new FileStream(claimedDraft, FileMode.Open, FileAccess.Read, FileShare.Read);
-        await SaveCoreAsync(store, id, token).ConfigureAwait(false);
+        await SaveCoreAsync(store, id, null, token).ConfigureAwait(false);
     }
 
     internal async Task<ProjectListPublications.Outcome> ReconcileDraftAsync(string claimedDraft, CancellationToken token = default)
     {
         var drafts = new ProjectListDrafts(RecoveryDirectory);
-        var id = drafts.GetClaimedId(claimedDraft);
         using var processLock = AcquireProcessLock();
+        var (id, operation) = drafts.GetClaimedIdentity(claimedDraft);
+        await drafts.ReadAsync(claimedDraft, claimed: true).ConfigureAwait(false);
         var store = await LoadAsync(token).ConfigureAwait(false);
         var revision = store.Revision!;
         var outcome = await new ProjectListPublications(RecoveryDirectory)
-            .ReconcileAsync(id, revision.Sha256, revision.OperationId, HasUnconsumedCandidate, token).ConfigureAwait(false);
+            .ReconcileAsync(id, operation, revision.Sha256, revision.OperationId, HasUnconsumedCandidate, token).ConfigureAwait(false);
         if (outcome == ProjectListPublications.Outcome.Unpublished && store.IsRecoverySafe)
             drafts.ReleaseUnpublishedClaim(claimedDraft);
         else if (outcome == ProjectListPublications.Outcome.Committed)
@@ -183,10 +199,14 @@ public sealed class JsonProjectRepository : IProjectRepository
         catch (DirectoryNotFoundException) { return false; }
     }
 
-    private async Task SaveCoreAsync(ProjectStore store, Guid? draftId, CancellationToken cancellationToken)
+    private async Task SaveCoreAsync(ProjectStore store, Guid? draftId, string? readyDraft, CancellationToken cancellationToken)
     {
         string? tempPath = null;
         FileStream? processLock = null;
+        var drafts = new ProjectListDrafts(RecoveryDirectory);
+        string? claim = null;
+        var publicationAttempted = false;
+        var committed = false;
         var stage = "waiting";
         await SaveGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -203,9 +223,23 @@ public sealed class JsonProjectRepository : IProjectRepository
             stage = "inter-process lock";
             processLock = AcquireProcessLock();
             stage = "write publication receipt";
+            if (readyDraft is not null)
+            {
+                draftId = drafts.GetReadyId(readyDraft);
+                await drafts.ReadAsync(readyDraft).ConfigureAwait(false);
+            }
             var publications = new ProjectListPublications(RecoveryDirectory);
             var receipt = new ProjectListPublications.Receipt(1, operationId, draftId, baseline.Sha256, expectedResult, PublicationStarted: false);
-            await publications.WriteAsync(receipt, cancellationToken).ConfigureAwait(false);
+            beforeReceipt?.Invoke();
+            await publications.WriteAsync(receipt, cancellationToken, duringReceipt).ConfigureAwait(false);
+            afterReceipt?.Invoke();
+            if (readyDraft is not null)
+            {
+                stage = "claim prepared draft";
+                cancellationToken.ThrowIfCancellationRequested();
+                claim = drafts.Claim(readyDraft, operationId);
+                afterDraftClaim?.Invoke();
+            }
             beforeCandidate?.Invoke();
             var candidatePath = CandidatePath(operationId);
             stage = "write temporary file";
@@ -227,11 +261,13 @@ public sealed class JsonProjectRepository : IProjectRepository
             if (!string.Equals(currentHash, baseline.Sha256, StringComparison.Ordinal))
                 throw new ProjectListConflictException();
             cancellationToken.ThrowIfCancellationRequested();
+            publicationAttempted = true;
             if (currentHash is not null)
                 File.Replace(tempPath, jsonPath, null);
             else
                 File.Move(tempPath, jsonPath);
             tempPath = null;
+            committed = true;
             store.Revision = new ProjectListRevision(expectedResult, operationId);
             store.IsRecoverySafe = true;
             stage = "after publication";
@@ -249,6 +285,18 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
         finally
         {
+            if (claim is not null)
+            {
+                try
+                {
+                    if (committed) drafts.Retire(claim, claimed: true);
+                    else if (!publicationAttempted) drafts.ReleaseUnpublishedClaim(claim);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    logger.Error(ex, "A project list draft needs reconciliation.");
+                }
+            }
             if (tempPath is not null)
             {
                 try { File.Delete(tempPath); }

@@ -7,7 +7,11 @@ internal static class ProjectListPublicationTests
 {
     internal static async Task RunAsync(string workRoot)
     {
-        foreach (var point in new[] { "before-candidate", "write", "flushed", "published", "externally-replaced", "externally-restored", "missing-receipt", "corrupt-receipt" })
+        foreach (var point in new[]
+        {
+            "before-receipt", "during-receipt", "after-receipt", "after-claim", "before-candidate", "write", "flushed", "published",
+            "fresh-attempt", "externally-replaced", "externally-restored", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
+        })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
     }
 
@@ -33,10 +37,26 @@ internal static class ProjectListPublicationTests
         finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
         Require(child.ExitCode == 86, $"Child did not stop at {point}.");
 
+        if (point is "before-receipt" or "during-receipt" or "after-receipt")
+        {
+            Require(!Directory.EnumerateFiles(repository.RecoveryDirectory, "*.saving").Any(), "Claim was made before receipt became durable.");
+            var ready = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.draft.json").Single();
+            var retry = await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(ready);
+            Require((await repository.LoadAsync()).Revision == original.Revision, "Unclaimed draft changed the list.");
+            await repository.SaveReadyDraftAsync(retry.Local, ready);
+            Require(File.Exists(ready + ".closed") && (await repository.LoadAsync()).Projects.Single().DisplayName == "after",
+                "Ready draft could not be saved after an interrupted receipt.");
+            return;
+        }
+
         var claim = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.saving").Single();
-        var draft = await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(claim, claimed: true);
+        var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
+        var (draftId, operation) = drafts.GetClaimedIdentity(claim);
+        var draft = await drafts.ReadAsync(claim, claimed: true);
+        Require((point == "legacy-claim") == (operation is null), "The new claim did not bind exactly one operation.");
         var receipt = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication.json")
-            .Single(path => !Path.GetFileName(path).StartsWith("standalone-", StringComparison.Ordinal));
+            .Single(path => Path.GetFileName(path).StartsWith($"{draftId:N}-", StringComparison.Ordinal) &&
+                (operation is null || Path.GetFileName(path).Contains($"{operation:N}", StringComparison.Ordinal)));
         if (point == "externally-replaced")
         {
             var external = await repository.LoadAsync();
@@ -46,21 +66,23 @@ internal static class ProjectListPublicationTests
         if (point == "externally-restored") await File.WriteAllBytesAsync(Path.Combine(root, "projects.json"), originalBytes);
         if (point == "missing-receipt") File.Move(receipt, receipt + ".fixture-hidden");
         if (point == "corrupt-receipt") await File.WriteAllTextAsync(receipt, "{}");
+        if (point == "corrupt-claim") await File.WriteAllTextAsync(claim, "{}");
 
         var revision = (await repository.LoadAsync()).Revision;
-        if (point == "corrupt-receipt")
+        if (point is "corrupt-receipt" or "corrupt-claim")
         {
             try { await repository.ReconcileDraftAsync(claim); throw new Exception("Corrupt receipt was accepted."); }
             catch (InvalidDataException) { }
-            Require(File.Exists(claim) && await File.ReadAllTextAsync(receipt) == "{}", "Corrupt evidence was modified.");
+            Require(File.Exists(claim) && await File.ReadAllTextAsync(point == "corrupt-claim" ? claim : receipt) == "{}",
+                "Corrupt evidence was modified.");
         }
         else
         {
             var actual = await repository.ReconcileDraftAsync(claim);
             var expected = point switch
             {
-                "published" => ProjectListPublications.Outcome.Committed,
-                "before-candidate" or "write" or "flushed" => ProjectListPublications.Outcome.Unpublished,
+                "published" or "legacy-claim" => ProjectListPublications.Outcome.Committed,
+                "after-claim" or "fresh-attempt" or "before-candidate" or "write" or "flushed" => ProjectListPublications.Outcome.Unpublished,
                 _ => ProjectListPublications.Outcome.Unknown,
             };
             Require(actual == expected, $"Unexpected outcome for {point}: {actual}.");
@@ -70,14 +92,16 @@ internal static class ProjectListPublicationTests
             }
             else
             {
-                Require(!File.Exists(claim) && File.Exists(claim[..^7] + (actual == ProjectListPublications.Outcome.Committed ? ".closed" : "")),
+                var ready = repository.GetReadyDraftPath(claim);
+                Require(!File.Exists(claim) && File.Exists(ready + (actual == ProjectListPublications.Outcome.Committed ? ".closed" : "")),
                     "Recovery record moved to the wrong state.");
                 try { await repository.ReconcileDraftAsync(claim); throw new Exception("Old claim was reused."); }
                 catch (FileNotFoundException) { }
             }
         }
         Require((await repository.LoadAsync()).Revision == revision, "Reconciliation wrote the project list.");
-        if (point is "before-candidate" or "write" or "flushed") Require(revision == original.Revision, "Unpublished output replaced the base.");
+        if (point is "after-claim" or "fresh-attempt" or "before-candidate" or "write" or "flushed")
+            Require(revision == original.Revision, "Unpublished output replaced the base.");
         if (point == "published") Require((await repository.LoadAsync()).Projects.Single().DisplayName == draft.Local.Projects.Single().DisplayName,
             "Committed list did not contain the planned value.");
     }
@@ -92,7 +116,15 @@ internal static class ProjectListPublicationTests
         var candidate = await repository.LoadAsync();
         candidate.Projects.Single().DisplayName = "after";
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
-        var claim = drafts.Claim(await drafts.WriteAsync(baseline, candidate, []));
+        var ready = await drafts.WriteAsync(baseline, candidate, []);
+        if (point == "fresh-attempt")
+        {
+            var publications = new ProjectListPublications(repository.RecoveryDirectory);
+            var receipt = new ProjectListPublications.Receipt(1, Guid.NewGuid(), drafts.GetReadyId(ready),
+                new string('1', 64), new string('2', 64), false);
+            await publications.WriteAsync(receipt, default);
+            await publications.WriteAsync(receipt with { PublicationStarted = true }, default);
+        }
         var crash = new JsonProjectRepository(new FileLogger(Path.Combine(root, "crash.log")), Path.Combine(root, "projects.json"),
             writeTemporaryFile: point == "write" ? async (file, bytes, token) =>
             {
@@ -100,9 +132,14 @@ internal static class ProjectListPublicationTests
                 Environment.Exit(86);
             } : null,
             beforeReplace: point == "flushed" ? () => Environment.Exit(86) : null,
-            afterReplace: point is not ("before-candidate" or "write" or "flushed") ? () => Environment.Exit(86) : null,
-            beforeCandidate: point == "before-candidate" ? () => Environment.Exit(86) : null);
-        await crash.SaveWithDraftAsync(candidate, claim);
+            afterReplace: () => Environment.Exit(86),
+            beforeCandidate: point == "before-candidate" ? () => Environment.Exit(86) : null,
+            beforeReceipt: point == "before-receipt" ? () => Environment.Exit(86) : null,
+            afterReceipt: point == "after-receipt" ? () => Environment.Exit(86) : null,
+            afterDraftClaim: point is "after-claim" or "fresh-attempt" ? () => Environment.Exit(86) : null,
+            duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null);
+        if (point == "legacy-claim") await crash.SaveWithDraftAsync(candidate, drafts.Claim(ready));
+        else await crash.SaveReadyDraftAsync(candidate, ready);
         throw new Exception("Crash hook was not executed.");
     }
 

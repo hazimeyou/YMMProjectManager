@@ -22,7 +22,15 @@ internal sealed class ProjectListDrafts(string directory)
 
     internal string DirectoryPath => directory;
 
-    internal Guid GetClaimedId(string path) => CheckPath(path, claimed: true);
+    internal Guid GetReadyId(string path) => CheckPath(path, claimed: false).Id;
+
+    internal (Guid Id, Guid? Operation) GetClaimedIdentity(string path) => CheckPath(path, claimed: true);
+
+    internal string GetReadyPath(string claimedPath)
+    {
+        var (id, _) = CheckPath(claimedPath, claimed: true, requireFile: false);
+        return Path.Combine(directory, $"{id:N}.draft.json");
+    }
 
     internal async Task<string> WriteAsync(ProjectStore baseline, ProjectStore local, Dictionary<string, Evidence> evidence)
     {
@@ -64,7 +72,7 @@ internal sealed class ProjectListDrafts(string directory)
 
     internal async Task<Draft> ReadAsync(string path, bool claimed = false)
     {
-        var id = CheckPath(path, claimed);
+        var (id, _) = CheckPath(path, claimed);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
         if (stream.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         var envelope = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options).ConfigureAwait(false);
@@ -85,10 +93,10 @@ internal sealed class ProjectListDrafts(string directory)
         return new Draft(baseline, local, document.Additions);
     }
 
-    internal string Claim(string path)
+    internal string Claim(string path, Guid? operation = null)
     {
         CheckPath(path);
-        var claimed = path + ".saving";
+        var claimed = operation is { } id ? $"{path}.{id:N}.saving" : path + ".saving";
         File.Move(path, claimed, overwrite: false);
         return claimed;
     }
@@ -96,7 +104,7 @@ internal sealed class ProjectListDrafts(string directory)
     internal string ReleaseUnpublishedClaim(string path)
     {
         CheckPath(path, claimed: true);
-        var ready = path[..^7];
+        var ready = GetReadyPath(path);
         File.Move(path, ready, overwrite: false);
         return ready;
     }
@@ -104,26 +112,34 @@ internal sealed class ProjectListDrafts(string directory)
     internal void Retire(string path, bool claimed = false)
     {
         CheckPath(path, claimed);
-        var closed = claimed ? path[..^7] + ".closed" : path + ".closed";
+        var closed = claimed ? GetReadyPath(path) + ".closed" : path + ".closed";
         File.Move(path, closed, overwrite: false);
     }
 
-    private Guid CheckPath(string path, bool claimed = false)
+    private (Guid Id, Guid? Operation) CheckPath(string path, bool claimed = false, bool requireFile = true)
     {
         CheckDirectory();
         var full = Path.GetFullPath(path);
         var name = Path.GetFileName(full);
+        Guid? operation = null;
         if (claimed)
         {
             if (!name.EndsWith(".saving", StringComparison.Ordinal)) throw new InvalidDataException("Recovery claim is invalid.");
             name = name[..^7];
+            var separator = name.LastIndexOf('.');
+            if (!name.EndsWith(".draft.json", StringComparison.Ordinal) && separator >= 0 &&
+                Guid.TryParseExact(name[(separator + 1)..], "N", out var parsed) && parsed != Guid.Empty)
+            {
+                operation = parsed;
+                name = name[..separator];
+            }
         }
         if (!string.Equals(Path.GetDirectoryName(full), directory, StringComparison.OrdinalIgnoreCase) ||
             !name.EndsWith(".draft.json", StringComparison.Ordinal) ||
-            !Guid.TryParseExact(name[..^11], "N", out var id) ||
-            (File.GetAttributes(full) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0)
+            !Guid.TryParseExact(name[..^11], "N", out var id) || id == Guid.Empty ||
+            (requireFile && (File.GetAttributes(full) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0))
             throw new InvalidDataException("Recovery draft path is invalid.");
-        return id;
+        return (id, operation);
     }
 
     private void CheckDirectory() => CheckOrdinaryDirectory(directory);

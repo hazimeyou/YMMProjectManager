@@ -16,7 +16,7 @@ internal sealed class ProjectListPublications(string directory)
         AllowDuplicateProperties = false,
     };
 
-    internal async Task WriteAsync(Receipt receipt, CancellationToken token)
+    internal async Task WriteAsync(Receipt receipt, CancellationToken token, Action? afterPartialWrite = null)
     {
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         Directory.CreateDirectory(directory);
@@ -32,7 +32,14 @@ internal sealed class ProjectListPublications(string directory)
             await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
             {
                 owned = true;
-                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                if (afterPartialWrite is null)
+                    await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                else
+                {
+                    await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), token).ConfigureAwait(false);
+                    afterPartialWrite();
+                    await stream.WriteAsync(bytes.AsMemory(bytes.Length / 2), token).ConfigureAwait(false);
+                }
                 stream.Flush(flushToDisk: true);
             }
             token.ThrowIfCancellationRequested();
@@ -53,7 +60,7 @@ internal sealed class ProjectListPublications(string directory)
         }
     }
 
-    internal async Task<Outcome> ReconcileAsync(Guid draftId, string? current, Guid? currentOperation,
+    internal async Task<Outcome> ReconcileAsync(Guid draftId, Guid? boundOperation, string? current, Guid? currentOperation,
         Func<Guid, bool> hasUnconsumedCandidate, CancellationToken token)
     {
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
@@ -61,7 +68,9 @@ internal sealed class ProjectListPublications(string directory)
         var known = false;
         var unpublished = true;
         var committed = false;
-        foreach (var path in Directory.EnumerateFiles(directory, $"{Prefix(draftId)}*.publication.json"))
+        // Older claims did not name an operation. Keep their conservative all-receipts check.
+        var pattern = boundOperation is { } operation ? Name(draftId, operation) : $"{Prefix(draftId)}*.publication.json";
+        foreach (var path in Directory.EnumerateFiles(directory, pattern))
         {
             token.ThrowIfCancellationRequested();
             if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
@@ -73,6 +82,7 @@ internal sealed class ProjectListPublications(string directory)
                 throw new InvalidDataException("Invalid publication receipt checksum.");
             var receipt = JsonSerializer.Deserialize<Receipt>(envelope.Payload, Options);
             if (receipt is not { Version: 1 } || receipt.Id == Guid.Empty || receipt.DraftId != draftId ||
+                (boundOperation is { } required && receipt.Id != required) ||
                 Path.GetFileName(path) != Name(draftId, receipt.Id) ||
                 !IsDigest(receipt.Result) || (receipt.Expected is not null && !IsDigest(receipt.Expected)))
                 throw new InvalidDataException("Invalid publication receipt contents.");
