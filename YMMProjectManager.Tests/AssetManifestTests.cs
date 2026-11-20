@@ -75,6 +75,8 @@ internal static class AssetManifestTests
             () => TestRevisionSeriesAsync(root, project, item));
         await Program.RunNamedCaseAsync("Managed relink branch selection, version compatibility and retry",
             () => TestRelinkRecoveryAsync(root));
+        await Program.RunNamedCaseAsync("Managed relink durable output proof, cancellation and explicit retry",
+            () => TestPreparedOutputRecoveryAsync(root));
         Console.WriteLine("Project asset immutable revision checks passed.");
     }
 
@@ -257,6 +259,111 @@ internal static class AssetManifestTests
             try { await run(); throw new Exception("invalid relink state accepted"); }
             catch (InvalidDataException) { }
         }
+    }
+
+    private static async Task TestPreparedOutputRecoveryAsync(string parent)
+    {
+        var root = Path.Combine(parent, "prepared-output");
+        var series = Path.Combine(root, "series");
+        Directory.CreateDirectory(series);
+        var source = Path.Combine(root, "source.ymmp");
+        var candidate = Path.Combine(root, "candidate.wav");
+        var original = """{"Items":[{"FilePath":"original.wav"}]}"""u8.ToArray();
+        await File.WriteAllBytesAsync(source, original);
+        await File.WriteAllTextAsync(candidate, "synthetic candidate");
+        var manifest = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow);
+        var baseline = await AssetRevisionSeries.InitializeAsync(series, manifest);
+        var logger = new FileLogger(Path.Combine(root, "test.log"));
+        var context = new RelinkDocumentContext
+        {
+            YmmpPath = source, OriginalBytes = original,
+            Rows = [new RelinkRow { OriginalPath = "original.wav", SelectedCandidate = candidate, Status = RelinkStatus.Updated }]
+        };
+
+        async Task<string> PrepareAsync(string path, AssetRevisionSeries.Head tip)
+        {
+            var review = await AssetRelinkRecovery.ReviewAsync(context, series, baseline, tip, [tip], default);
+            return await AssetRelinkRecovery.PrepareManagedOutputAsync(context, path, series, baseline, tip, [tip], review, true, default);
+        }
+
+        static async Task RejectAsync<T>(Func<Task> operation) where T : Exception
+        {
+            try { await operation(); }
+            catch (T) { return; }
+            throw new Exception("Invalid managed relink operation was accepted.");
+        }
+
+        var unrelated = Path.Combine(root, "unproven.ymmp");
+        var unproven = await PrepareAsync(unrelated, baseline);
+        var partialWriter = new RelinkSaveService(logger, async (stream, bytes, token) =>
+        {
+            await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), token);
+            throw new IOException("synthetic incomplete staged write");
+        }, null, null);
+        if ((await AssetRelinkRecovery.SavePreparedOutputAsync(unproven, context, partialWriter, default)).Success ||
+            File.Exists(unrelated) || File.Exists(unproven + ".output.tmp") || File.Exists(unproven + ".publish"))
+            throw new Exception("Failed pre-proof save published or leaked a stage.");
+        await File.WriteAllBytesAsync(unrelated, RelinkJsonUpdate.Apply(original, context.Rows.ToList()));
+        await RejectAsync<FileNotFoundException>(() =>
+            AssetRelinkRecovery.CompleteForTransferAsync(unproven, series, baseline, default, source, resumePreparedOutput: true));
+
+        var output = Path.Combine(root, "retry.ymmp");
+        var evidence = await PrepareAsync(output, baseline);
+        var staged = evidence + ".output.tmp";
+        var proof = evidence + ".publish";
+        using (var stopAfterProof = new CancellationTokenSource())
+        {
+            var interrupted = new RelinkSaveService(logger, null, null, stopAfterProof.Cancel);
+            await RejectAsync<OperationCanceledException>(() =>
+                AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token));
+        }
+        if (File.Exists(output) || !File.Exists(staged) || !File.Exists(proof) ||
+            await AssetRevisionSeries.ReadHeadAsync(series) != baseline)
+            throw new Exception("Interruption between proof and rename did not preserve a retriable stage.");
+        var stagedBytes = await File.ReadAllBytesAsync(staged);
+        var stagedIdentity = await ProjectFileEvidence.ReadAsync(staged);
+        await RejectAsync<FileNotFoundException>(() => AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source));
+
+        // A different file at the proposed destination must not be consumed, even when the bytes match.
+        await File.WriteAllBytesAsync(output, stagedBytes);
+        await RejectAsync<InvalidDataException>(() =>
+            AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true));
+        var keptCollision = await File.ReadAllBytesAsync(output);
+        if (!stagedBytes.SequenceEqual(keptCollision) || !File.Exists(staged) || await AssetRevisionSeries.ReadHeadAsync(series) != baseline)
+            throw new Exception("The occupied destination or prepared stage was changed.");
+        File.Delete(output);
+
+        // Even with the same file identity, changed staged bytes must stop recovery.
+        await File.WriteAllTextAsync(staged, "unexpected staged contents");
+        await RejectAsync<InvalidDataException>(() =>
+            AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true));
+        if (File.Exists(output)) throw new Exception("Recovery published a changed stage.");
+        await File.WriteAllBytesAsync(staged, stagedBytes);
+
+        var recovered = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true);
+        var again = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true);
+        if (again != recovered || File.Exists(staged) || !File.Exists(proof) ||
+            !stagedIdentity.IsSameFile(await ProjectFileEvidence.ReadAsync(output)) ||
+            (await AssetRevisionSeries.InspectGraphAsync(series)).Revisions.Count != 2)
+            throw new Exception("Explicit retry did not publish the owned stage exactly once.");
+
+        var second = Path.Combine(root, "normal.ymmp");
+        var secondEvidence = await PrepareAsync(second, recovered.Revision);
+        if (!(await AssetRelinkRecovery.SavePreparedOutputAsync(secondEvidence, context, new RelinkSaveService(logger), default)).Success)
+            throw new Exception("Regular managed publication failed.");
+        var secondBytes = await File.ReadAllBytesAsync(second);
+        var preserved = second + ".retained";
+        File.Move(second, preserved);
+        await File.WriteAllBytesAsync(second, secondBytes);
+        await RejectAsync<InvalidDataException>(() =>
+            AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source));
+        var stillOriginal = await File.ReadAllBytesAsync(source);
+        if ((await AssetRevisionSeries.InspectGraphAsync(series)).Revisions.Count != 2 ||
+            !original.SequenceEqual(stillOriginal))
+            throw new Exception("Replaced output altered source or metadata history.");
+        File.Delete(second);
+        File.Move(preserved, second);
+        _ = await AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source);
     }
 
     private static async Task TestRevisionSeriesAsync(string root, string project, AssetMetadata item)

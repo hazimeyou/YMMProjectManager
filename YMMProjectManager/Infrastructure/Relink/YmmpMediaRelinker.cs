@@ -517,7 +517,15 @@ public sealed class RelinkSaveService
         this.beforeCommit = beforeCommit;
     }
 
-    public async Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token)
+    public Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token) =>
+        SaveAsCoreAsync(context, destination, null, null, token);
+
+    internal Task<(bool Success, string? ErrorMessage)> SavePreparedAsync(RelinkDocumentContext context, string destination,
+        string stage, Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token) =>
+        SaveAsCoreAsync(context, destination, stage, persistPublication, token);
+
+    private async Task<(bool Success, string? ErrorMessage)> SaveAsCoreAsync(RelinkDocumentContext context, string destination,
+        string? stage, Func<FileStream, CancellationToken, Task>? persistPublication, CancellationToken token)
     {
         string? temporary = null;
         try
@@ -539,6 +547,11 @@ public sealed class RelinkSaveService
                 return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
             var updated = RelinkJsonUpdate.Apply(original, rows);
             using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
+            if (persistPublication is not null)
+            {
+                await PublishPreparedAsync(stage!, output, updated, persistPublication, token).ConfigureAwait(false);
+                return (true, null);
+            }
             var candidate = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileName(output) + ".tmp-" + Guid.NewGuid().ToString("N"));
             await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
             {
@@ -566,6 +579,31 @@ public sealed class RelinkSaveService
         finally
         {
             if (temporary is not null) { try { File.Delete(temporary); } catch (Exception ex) { logger.Error(ex, "Relink save-as cleanup failed."); } }
+        }
+    }
+
+    private async Task PublishPreparedAsync(string stage, string output, byte[] updated,
+        Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token)
+    {
+        await using var stream = OwnedFilePublication.CreateOwnedOutputFile(stage, readBack: true);
+        var durable = false;
+        try
+        {
+            await write(stream, updated, token).ConfigureAwait(false);
+            await stream.FlushAsync(token).ConfigureAwait(false);
+            flush(stream);
+            token.ThrowIfCancellationRequested();
+            stream.Position = 0;
+            await persistPublication(stream, token).ConfigureAwait(false);
+            durable = true;
+            beforeCommit?.Invoke();
+            token.ThrowIfCancellationRequested();
+            OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, output);
+        }
+        finally
+        {
+            // After the proof is durable, keep this file for explicit retry if publication fails.
+            if (!durable) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
         }
     }
 
