@@ -31,8 +31,9 @@ internal static class RealYmmpxR5Tests
         var restored = extracted.GetType().GetProperty("ProjectFilePath")!.GetValue(extracted)?.ToString();
         if (restored is null || !Path.GetFullPath(restored).StartsWith(Path.GetFullPath(destination) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) || !File.Exists(restored))
             throw new Exception("direct extraction result outside isolated destination");
-        var blocked = await service.ExtractPackageAsync(output, Path.Combine(root, "bridge-extract"), CancellationToken.None);
-        if (blocked.Success || Directory.Exists(Path.Combine(root, "bridge-extract"))) throw new Exception("bridge extraction was not blocked");
-        Console.WriteLine("R5 real YmmpxLib: bridge creation and isolated direct-library extraction passed; bridge extraction remains blocked.");
+        var managed = await service.ExtractPackageAsync(output, Path.Combine(root, "bridge-extract"), CancellationToken.None);
+        if (!managed.Success || managed.ReplacedPathCount < 1 || !File.Exists(managed.RestoredProjectPath))
+            throw new Exception("managed reader could not extract the real package");
+        Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
     }
 }

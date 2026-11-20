@@ -35,6 +35,12 @@ internal static class YmmpxFailureTests
         YmmpxLib.YmmpxPackageService.Mode = "oversized-marker";
         var oversizedMarker = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (oversizedMarker.Success || File.Exists(newPath)) throw new Exception("package with oversized marker was published");
+        foreach (var mode in new[] { "invalid-project-json", "invalid-links-json" })
+        {
+            YmmpxLib.YmmpxPackageService.Mode = mode;
+            if ((await bridge.CreatePackageAsync(project, newPath, CancellationToken.None)).Success || File.Exists(newPath))
+                throw new Exception("package with malformed JSON was published: " + mode);
+        }
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -85,7 +91,7 @@ internal static class YmmpxFailureTests
     private static bool IsPackage(string path)
     {
         using var archive = ZipFile.OpenRead(path);
-        return archive.GetEntry("synthetic.txt") is not null;
+        return archive.GetEntry("resources/synthetic.txt") is not null;
     }
 }
 
@@ -121,14 +127,14 @@ namespace YmmpxLib
             using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {
-                using (var writer = new StreamWriter(archive.CreateEntry(Mode == "unsafe" ? "../escape.txt" : "synthetic.txt").Open()))
+                using (var writer = new StreamWriter(archive.CreateEntry(Mode == "unsafe" ? "../escape.txt" : "resources/synthetic.txt").Open()))
                     await writer.WriteAsync("synthetic package");
                 if (Mode != "missing-marker")
                     using (var writer = new StreamWriter(archive.CreateEntry("_ymmpx_project_path.txt").Open())) await writer.WriteAsync(Mode == "oversized-marker" ? new string('x', 4097) : "project.ymmp");
                 if (Mode != "missing-project")
-                    using (var writer = new StreamWriter(archive.CreateEntry("project.ymmp").Open())) await writer.WriteAsync("{}");
+                    using (var writer = new StreamWriter(archive.CreateEntry("project.ymmp").Open())) await writer.WriteAsync(Mode == "invalid-project-json" ? "{" : """{"FilePath":"resources/synthetic.txt"}""");
                 if (Mode != "missing-links")
-                    using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync("{}");
+                    using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync(Mode == "invalid-links-json" ? "[]" : """{"resources/synthetic.txt":"resources/synthetic.txt"}""");
             }
             if (ExternalPath is not null) await File.WriteAllTextAsync(ExternalPath, "external edit", token);
             return new { OutputPath = output, ResourceCount = 1 };

@@ -99,6 +99,7 @@ public sealed class YmmpxLibInstallGuide
         cancellationToken.ThrowIfCancellationRequested();
         var defaultPath = GetInstallerDownloadPath();
         var downloadPath = Path.Combine(Path.GetDirectoryName(defaultPath)!, $"{Path.GetFileNameWithoutExtension(defaultPath)}-{Guid.NewGuid():N}{Path.GetExtension(defaultPath)}");
+        var cleanup = false;
         try
         {
             logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
@@ -111,6 +112,9 @@ public sealed class YmmpxLibInstallGuide
                 Directory.CreateDirectory(downloadDirectory);
             }
 
+            using (new FileStream(downloadPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                cleanup = true;
+
             if (downloader is not null)
             {
                 await downloader(YmmpxLibPluginLatestDownloadUrl, downloadPath, cancellationToken).ConfigureAwait(false);
@@ -119,6 +123,9 @@ public sealed class YmmpxLibInstallGuide
             {
                 await DownloadFileAsync(YmmpxLibPluginLatestDownloadUrl, downloadPath, cancellationToken).ConfigureAwait(false);
             }
+
+            if (new FileInfo(downloadPath).Length == 0)
+                throw new IOException("インストーラーのファイルが空です。");
 
             logger.Info($"YmmpxLibPlugin のダウンロードに成功しました。path={downloadPath}");
             logger.Flush();
@@ -138,6 +145,7 @@ public sealed class YmmpxLibInstallGuide
                 Process.Start(startInfo);
             }
 
+            cleanup = false;
             logger.Info($"YmmpxLibPlugin の .ymme 起動に成功しました。path={downloadPath}");
             logger.Flush();
             return new YmmpxLibInstallResult
@@ -161,6 +169,15 @@ public sealed class YmmpxLibInstallGuide
                 ErrorMessage = "YmmpxLibPlugin のダウンロードまたは起動に失敗しました。",
             };
         }
+        finally
+        {
+            if (cleanup)
+            {
+                try { File.Delete(downloadPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
     }
 
     public string GetInstallerDownloadPath()
@@ -177,7 +194,7 @@ public sealed class YmmpxLibInstallGuide
         response.EnsureSuccessStatusCode();
 
         await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await using var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+        await using var output = new FileStream(path, FileMode.Truncate, FileAccess.Write, FileShare.None);
         await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
     }
 

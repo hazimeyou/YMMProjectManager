@@ -126,7 +126,7 @@ public sealed class YmmpxLibBridge
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             using (var packageStream = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                await ValidateCreatedPackageAsync(packageStream, token).ConfigureAwait(false);
+                await YmmpxPackageReader.ValidateAsync(packageStream, token).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink
@@ -193,32 +193,9 @@ public sealed class YmmpxLibBridge
         IProgress<double>? progress = null)
     {
         token.ThrowIfCancellationRequested();
-        var assembly = ResolveAssembly(out var resolvedAssemblyPath);
-        if (assembly is null)
-        {
-            LogMissingYmmpxLib("展開");
-            return new YmmpxExtractResult
-            {
-                Success = false,
-                ErrorMessage = MissingLibraryMessage,
-            };
-        }
-
         try
         {
-            token.ThrowIfCancellationRequested();
-            await Task.Run(() =>
-            {
-                using var archiveStream = new FileStream(ymmpxPath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                ValidateArchiveForExtraction(archiveStream, token);
-            }, token).ConfigureAwait(false);
-            // The external extractor has not yet established an exclusively owned output
-            // directory or bounded cleanup. Validate first, then fail closed.
-            return new YmmpxExtractResult
-            {
-                Success = false,
-                ErrorMessage = "展開先の保護を検証中のため、ymmpx の展開は利用できません。",
-            };
+            return await Task.Run(() => YmmpxPackageReader.ExtractAsync(ymmpxPath, outputDirectory, token, progress), token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -233,7 +210,7 @@ public sealed class YmmpxLibBridge
             return new YmmpxExtractResult
             {
                 Success = false,
-                ErrorMessage = "YmmpxLib を使った展開に失敗しました。ログを確認してください。",
+                ErrorMessage = "展開に失敗しました。現行の YMMPX 形式と未使用の展開先を確認してください。",
             };
         }
     }
@@ -253,19 +230,22 @@ public sealed class YmmpxLibBridge
             if (string.IsNullOrEmpty(name) || name.StartsWith('/') || name.Contains(':'))
                 throw new InvalidDataException("パッケージに不正なパスがあります。");
             var parts = name.TrimEnd('/').Split('/');
-            if (parts.Any(part => part.Length == 0 || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+            if (parts.Length > 32 || name.Length > 2048 || parts.Any(part => part.Length is 0 or > 255 || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
                 throw new InvalidDataException("パッケージに不正なパスがあります。");
             foreach (var part in parts)
             {
-                var stem = part.Split('.')[0];
+                var stem = part.Split('.')[0].TrimEnd(' ');
                 if (stem.Equals("CON", StringComparison.OrdinalIgnoreCase) || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
                     stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
-                    (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && stem[3] is >= '1' and <= '9'))
+                    stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) ||
+                    (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase)) && "0123456789¹²³".Contains(stem[3])))
                     throw new InvalidDataException("パッケージに予約済みの名前があります。");
             }
             if (!paths.Add(string.Join('/', parts))) throw new InvalidDataException("パッケージに重複したパスがあります。");
             if (!name.EndsWith('/')) files.Add(string.Join('/', parts));
-            if (((entry.ExternalAttributes >> 16) & 0xF000) == 0xA000) throw new InvalidDataException("リンク項目は展開できません。");
+            if (((entry.ExternalAttributes >> 16) & 0xF000) is not (0 or 0x8000 or 0x4000) ||
+                (entry.ExternalAttributes & (int)FileAttributes.ReparsePoint) != 0)
+                throw new InvalidDataException("リンク項目や特殊ファイルは展開できません。");
             if (entry.Length > maxTotalBytes - total) throw new InvalidDataException("パッケージの展開サイズが上限を超えます。");
             total += entry.Length;
         }
@@ -278,33 +258,6 @@ public sealed class YmmpxLibBridge
                 slash = path.IndexOf('/', slash + 1);
             }
         }
-    }
-
-    private static async Task ValidateCreatedPackageAsync(Stream stream, CancellationToken token)
-    {
-        ValidateArchiveForExtraction(stream, token);
-        stream.Position = 0;
-        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
-        var marker = archive.Entries.SingleOrDefault(entry => string.Equals(entry.FullName, "_ymmpx_project_path.txt", StringComparison.OrdinalIgnoreCase));
-        var links = archive.Entries.SingleOrDefault(entry => string.Equals(entry.FullName, "links.json", StringComparison.OrdinalIgnoreCase));
-        if (marker is null || links is null || marker.Length > 4096)
-            throw new InvalidDataException("パッケージに必要なプロジェクト情報がありません。");
-        var bytes = new byte[4097];
-        var count = 0;
-        await using (var source = marker.Open())
-        {
-            while (count < bytes.Length)
-            {
-                var read = await source.ReadAsync(bytes.AsMemory(count), token).ConfigureAwait(false);
-                if (read == 0) break;
-                count += read;
-            }
-        }
-        if (count > 4096) throw new InvalidDataException("プロジェクト情報が大きすぎます。");
-        var projectPath = new UTF8Encoding(false, true).GetString(bytes, 0, count).TrimStart('\uFEFF').Trim().Replace('\\', '/');
-        if (!projectPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase) ||
-            !archive.Entries.Any(entry => string.Equals(entry.FullName.Replace('\\', '/'), projectPath, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException("パッケージに対象のプロジェクトがありません。");
     }
 
     private Assembly? ResolveAssembly(out string? resolvedAssemblyPath)

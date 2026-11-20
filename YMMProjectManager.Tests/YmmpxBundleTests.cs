@@ -121,6 +121,7 @@ internal static class YmmpxBundleTests
             try { await duringDownload.DownloadAndLaunchInstallerAsync(interrupted.Token); throw new Exception("download cancellation ignored before launch"); }
             catch (OperationCanceledException) { }
             AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled download modified existing file or launched");
+            AssertTrue(Directory.GetFiles(Path.GetDirectoryName(existing)!).SequenceEqual(new[] { existing }), "cancelled or failed downloads left owned partial installers");
         }
         finally
         {
@@ -209,15 +210,6 @@ internal static class YmmpxBundleTests
 
         var extractRoot = Path.Combine(root, "extract");
         var extractResult = await service.ExtractPackageAsync(outputPath, extractRoot, CancellationToken.None);
-
-        if (!extractResult.Success)
-        {
-            AssertTrue(extractResult.ErrorMessage == "展開先の保護を検証中のため、ymmpx の展開は利用できません。", "unexpected extraction failure");
-            AssertTrue(!Directory.Exists(extractRoot), "disabled extraction created output");
-            Program.ReportConditionalSkip("product Ymmpx extraction success remains disabled");
-            await RealYmmpxR5Tests.RunAsync(workRoot);
-            return;
-        }
 
         AssertTrue(extractResult.Success, extractResult.ErrorMessage ?? "extract failed");
         AssertTrue(File.Exists(extractResult.RestoredProjectPath ?? string.Empty), "restored ymmp should exist");
