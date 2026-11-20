@@ -22,7 +22,7 @@
                 <Button Content="開く" Width="90" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
             </StackPanel>
 
-            <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
+            <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                 <TextBlock Text="一覧に未保存の変更があります。" VerticalAlignment="Center" Margin="0,0,8,0">
                     <TextBlock.Style>
                         <Style TargetType="TextBlock">
@@ -42,7 +42,8 @@
                 <Button Content="画面状態を退避" Command="{Binding ExportRecoveryScreenCommand}" Margin="4,0,0,0" />
                 <Button Content="前回の保存記録を確認" Command="{Binding ReviewDraftCommand}" Margin="4,0,0,0" />
                 <Button Content="一覧原本を退避" Command="{Binding ExportOriginalProjectListCommand}" Margin="4,0,0,0" />
-            </StackPanel>
+                <Button Content="重複 ID を確認・修復" Command="{Binding RepairDuplicateProjectIdsCommand}" Margin="4,0,0,0" />
+            </WrapPanel>
 
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
@@ -97,6 +98,7 @@
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}" Margin="0,0,4,0" />
+                <Button Content="Pull 前の状態を確認" Command="{Binding InspectGitPullCommand}" Margin="0,0,4,0" />
                 <Button Content="Push" Command="{Binding PushGitCommand}" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
@@ -139,6 +141,7 @@
                 <TextBlock Text="保管先からの相対パス" Margin="0,0,4,0" />
                 <TextBox Width="145" Text="{Binding AssetStoragePath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="外部素材を検査" Command="{Binding InspectExternalAssetCommand}" />
+                <Button Content="登録済み素材をまとめて照合" Command="{Binding VerifyStoredExternalAssetsCommand}" Margin="4,0,0,0" />
             </WrapPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding AssetStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
             <WrapPanel Margin="0,0,0,4">
@@ -147,6 +150,7 @@
                 <Button Content="旧メタデータ履歴を取り込む" Command="{Binding ImportMetadataSeriesCommand}" Margin="0,0,4,0" />
                 <Button Content="履歴の版を選択" Command="{Binding SelectMetadataSeriesCommand}" Margin="0,0,4,0" />
                 <Button Content="関連付けと素材を照合" Command="{Binding InspectMetadataSeriesCommand}" />
+                <Button Content="同じ履歴の移動先を指定" Command="{Binding RebindMetadataDirectoryCommand}" Margin="4,0,0,0" />
             </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>

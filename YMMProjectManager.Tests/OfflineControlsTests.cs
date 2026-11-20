@@ -24,12 +24,19 @@ internal static class OfflineControlsTests
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
             if (!vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) ||
-                !vm.PushGitCommand.CanExecute(null) || !vm.GitCloneCommand.CanExecute(null))
+                !vm.InspectGitPullCommand.CanExecute(null) || !vm.PushGitCommand.CanExecute(null) || !vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("trusted Git controls or Pull fail-closed gate are incorrect");
             if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
             if (!vm.GitStatus.Contains("Git:") || !vm.GitStatus.Contains("project.ymmp")) throw new Exception("Git status not displayed");
+            var nested = Path.Combine(root, "nested");
+            Directory.CreateDirectory(nested);
+            vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
+            await Invoke("InspectGitPullAsync");
+            if (!vm.GitStatus.Contains("通信や Pull は実行していません") || vm.PullGitCommand.CanExecute(null))
+                throw new Exception("nested project Pull assessment did not reach its containing repository");
+            vm.SelectedProject = new ProjectEntry { FullPath = project };
             await Invoke("FindAssetCandidatesAsync");
             if (!vm.AssetStatus.Contains("素材とは限りません") || !vm.AssetStatus.Contains("sample.png") || !vm.AssetStatus.Contains("note.txt")) throw new Exception("candidate labels missing");
             vm.AssetPath = "sample.png\nsample2.png\nsample.png";

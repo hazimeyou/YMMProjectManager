@@ -1,0 +1,115 @@
+using System.IO;
+using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace YMMProjectManager.Infrastructure;
+
+internal static class DuplicateProjectIdRecovery
+{
+    private const int MaximumBytes = 32 * 1024 * 1024;
+    private static readonly JsonSerializerOptions OutputOptions = new(JsonSerializerOptions.Default) { WriteIndented = true };
+
+    internal sealed record Entry(int Row, string Path, bool HasMetadata);
+    internal sealed record Conflict(Guid Id, IReadOnlyList<Entry> Entries);
+    internal sealed record Review(string Sha256, IReadOnlyList<Conflict> Conflicts);
+
+    internal static Review Inspect(byte[] bytes)
+    {
+        using var input = Load(bytes);
+        CheckProperties(input.RootElement);
+        if (input.RootElement.ValueKind != JsonValueKind.Object ||
+            !input.RootElement.TryGetProperty("Projects", out var projects) || projects.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("一覧の Projects 配列を確認できません。");
+
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var byId = new Dictionary<Guid, List<Entry>>();
+        var row = 0;
+        foreach (var project in projects.EnumerateArray())
+        {
+            if (project.ValueKind != JsonValueKind.Object ||
+                !project.TryGetProperty("FullPath", out var pathValue) || pathValue.ValueKind != JsonValueKind.String ||
+                pathValue.GetString() is not { } path || !Path.IsPathFullyQualified(path) || !paths.Add(Path.GetFullPath(path)))
+                throw new InvalidDataException("無効または重複するパスがあり、一覧項目を識別できません。");
+
+            var index = row++;
+            if (!project.TryGetProperty("ProjectId", out var value) || value.ValueKind == JsonValueKind.Null)
+                continue;
+            if (value.ValueKind != JsonValueKind.String || !value.TryGetGuid(out var id) || id == Guid.Empty)
+                throw new InvalidDataException("不正なプロジェクト ID があります。");
+            if (!byId.TryGetValue(id, out var group)) byId.Add(id, group = []);
+            group.Add(new Entry(index, path,
+                project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null));
+        }
+        return new Review(Convert.ToHexString(SHA256.HashData(bytes)),
+            byId.Where(pair => pair.Value.Count > 1).Select(pair => new Conflict(pair.Key, pair.Value.AsReadOnly())).ToArray());
+    }
+
+    internal static byte[] Repair(byte[] confirmedBytes, Review review, IReadOnlyDictionary<Guid, int> keepers)
+    {
+        // Recompute rather than trusting row indexes or groups supplied by the screen.
+        var current = Inspect(confirmedBytes);
+        if (current.Sha256 != review.Sha256 || current.Conflicts.Count == 0 ||
+            keepers.Count != current.Conflicts.Count ||
+            current.Conflicts.Any(group => !keepers.TryGetValue(group.Id, out var row) || !group.Entries.Any(entry => entry.Row == row)))
+            throw new InvalidDataException("選択内容が確認した一覧と一致しません。");
+
+        using var input = Load(confirmedBytes);
+        var root = JsonNode.Parse(input.RootElement.GetRawText())!.AsObject();
+        var projects = root["Projects"]!.AsArray();
+        var used = projects.Select(node => node!["ProjectId"]).Where(node => node is not null)
+            .Select(node => Guid.Parse(node!.GetValue<string>())).ToHashSet();
+        foreach (var group in current.Conflicts)
+        {
+            foreach (var entry in group.Entries.Where(entry => entry.Row != keepers[group.Id]))
+            {
+                var project = projects[entry.Row]!.AsObject();
+                Guid replacement;
+                do { replacement = Guid.NewGuid(); } while (!used.Add(replacement));
+                project["ProjectId"] = replacement.ToString("D");
+                // The old association belongs to the retained logical project. Keep it in the untouched source list.
+                if (entry.HasMetadata) project.Remove("MetadataAssociation");
+            }
+        }
+
+        var result = JsonSerializer.SerializeToUtf8Bytes(root, OutputOptions);
+        if (Inspect(result).Conflicts.Count != 0) throw new InvalidDataException("修復したコピーに重複 ID が残っています。");
+        return result;
+    }
+
+    internal static async Task ApplyAsync(JsonProjectRepository repository, Review review, IReadOnlyDictionary<Guid, int> keepers,
+        string backup, CancellationToken token)
+    {
+        var current = await repository.ReadOriginalAsync(token).ConfigureAwait(false);
+        var repaired = await Task.Run(() => JsonProjectRepository.DeserializeStore(Repair(current, review, keepers)), token).ConfigureAwait(false);
+        if (!repaired.IsRecoverySafe || repaired.Revision is null)
+            throw new InvalidDataException("修復した一覧に、このバージョンで安全に保存できない情報が含まれています。修復版のコピーを作成できます。");
+
+        // The normal repository CAS still applies to the exact reviewed bytes, even though the original could not be loaded.
+        repaired.Revision = repaired.Revision with { Sha256 = review.Sha256 };
+        await JsonProjectRepository.WriteNewCopyAsync(backup, current, token).ConfigureAwait(false);
+        await repository.SaveAsync(repaired, token).ConfigureAwait(false);
+    }
+
+    private static JsonDocument Load(byte[] bytes)
+    {
+        if (bytes.Length > MaximumBytes) throw new InvalidDataException("一覧が大きすぎるため、修復できません。");
+        var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
+        return JsonDocument.Parse(bytes.AsMemory(offset));
+    }
+
+    private static void CheckProperties(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+        {
+            var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (!names.Add(property.Name)) throw new InvalidDataException("大文字小文字を除いて同名の JSON 項目があります。");
+                CheckProperties(property.Value);
+            }
+        }
+        else if (element.ValueKind == JsonValueKind.Array)
+            foreach (var item in element.EnumerateArray()) CheckProperties(item);
+    }
+}

@@ -78,6 +78,22 @@ internal static class RelinkAssociationTests
             saved.LinkedYmmpFiles.Single(link => link.FilePath == source).Role != YmmpRole.Backup ||
             !(await File.ReadAllBytesAsync(source)).SequenceEqual(originalBytes))
             throw new Exception("Association retry lost source bytes, identity, or revision.");
+        var expected = saved.MetadataAssociation!;
+        var otherSeries = Path.Combine(root, "other-series");
+        Directory.CreateDirectory(otherSeries);
+        await AssetRevisionSeries.InitializeAsync(otherSeries, AssetManifestStore.Create(output, [], DateTimeOffset.UtcNow, projectId: projectId));
+        try
+        {
+            await view.ApplyMetadataDirectoryAsync(registered, expected, otherSeries, default);
+            throw new Exception("A different series with the same project ID was accepted as moved.");
+        }
+        catch (InvalidDataException) { }
+        var movedSeries = Path.Combine(root, "moved-series");
+        Directory.Move(series, movedSeries);
+        await view.ApplyMetadataDirectoryAsync(registered, expected, movedSeries, default);
+        var rebound = (await repo.LoadAsync()).Projects.Single().MetadataAssociation;
+        if (rebound != (expected with { Directory = movedSeries }))
+            throw new Exception("Rebinding a moved series altered its identity or selected revision.");
         return true;
     });
 }

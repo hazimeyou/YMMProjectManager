@@ -198,6 +198,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         SwitchGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-switch"), () => !IsBusy && SelectedProject is not null);
         FetchGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Fetch), () => !IsBusy && SelectedProject is not null);
         PullGitCommand = new AsyncRelayCommand(() => ChangeGitAsync("pull"), () => false);
+        InspectGitPullCommand = new AsyncRelayCommand(InspectGitPullAsync, () => !IsBusy && SelectedProject is not null);
         PushGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Push), () => !IsBusy && SelectedProject is not null);
         GitHistoryCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(false), () => !IsBusy && SelectedProject is not null);
         GitOriginCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(true), () => !IsBusy && SelectedProject is not null);
@@ -205,17 +206,23 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         FindAssetCandidatesCommand = new AsyncRelayCommand(FindAssetCandidatesAsync, () => !IsBusy && SelectedProject is not null);
         InspectAssetCommand = new AsyncRelayCommand(InspectAssetAsync, () => !IsBusy && SelectedProject is not null);
         InspectExternalAssetCommand = new AsyncRelayCommand(InspectExternalAssetAsync, () => !IsBusy && SelectedProject is not null);
+        VerifyStoredExternalAssetsCommand = new AsyncRelayCommand(VerifyStoredExternalAssetsAsync,
+            () => !IsBusy && SelectedProject?.MetadataAssociation is not null);
         ExportAssetMetadataCommand = new AsyncRelayCommand(ExportAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         UpdateAssetMetadataCommand = new AsyncRelayCommand(() => SaveAssetMetadataAsync(true), () => !IsBusy && SelectedProject is not null);
         VerifyAssetMetadataCommand = new AsyncRelayCommand(VerifyAssetMetadataAsync, () => !IsBusy && SelectedProject is not null);
         SelectMetadataSeriesCommand = new AsyncRelayCommand(SelectMetadataSeriesAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         ImportMetadataSeriesCommand = new AsyncRelayCommand(ImportMetadataSeriesAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         InspectMetadataSeriesCommand = new AsyncRelayCommand(InspectMetadataSeriesAsync, () => !IsBusy && SelectedProject?.MetadataAssociation is not null);
+        RebindMetadataDirectoryCommand = new AsyncRelayCommand(RebindMetadataDirectoryAsync,
+            () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.MetadataAssociation is not null);
         ReassociateProjectCommand = new AsyncRelayCommand(ReassociateProjectAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         VerifyProjectIdentityCommand = new AsyncRelayCommand(VerifyProjectIdentityAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         ReviewDraftCommand = new AsyncRelayCommand(ReviewDraftAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository);
         ExportOriginalProjectListCommand = new AsyncRelayCommand(ExportOriginalProjectListAsync,
             () => !IsBusy && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
+        RepairDuplicateProjectIdsCommand = new AsyncRelayCommand(RepairDuplicateProjectIdsAsync,
+            () => !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
         CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
     }
 
@@ -232,6 +239,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 var recovery = ex.Data["CloneRecoveryPath"] as string;
                 var message = "中止しました。ディスクやリモートの状態を確認してください。";
                 if (recovery is not null) message += " 残存 clone: " + recovery;
+                if (ex.Data["YmmpxRetainedStagingPath"] is string staging) message += $" 展開一時フォルダー: {staging}";
                 if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
                 else if (name.StartsWith("Bundle", StringComparison.Ordinal)) BundleStatus = message;
                 else GitStatus = message;
@@ -290,20 +298,22 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     {
         var project = SelectedProject;
         if (project is null) return;
-        var directory = Path.GetDirectoryName(Path.GetFullPath(project.FullPath))!;
-        var git = new GitRepository(directory);
+        var located = await LocateProjectGitRootAsync(project, token);
+        if (located is null) { GitStatus = "このプロジェクトの Git ルートを確認できません。"; return; }
+        var (git, directory) = located.Value;
         var inspected = await git.InspectRemoteAsync(operation, token);
         if (!inspected.Success) { GitStatus = DescribeRemoteFailure(inspected); return; }
-        var target = inspected.PushTarget;
-        if (operation == GitRemoteOperation.Push && target is null) throw new InvalidDataException("送信対象のブランチを確認できません。");
-        var details = target is null ? inspected.StandardOutput :
-            $"{target.Endpoint}\n対象 {target.BranchRef}\nコミット {target.ObjectId}";
-        if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), target?.RepositoryRoot ?? directory, details)) return;
+        var push = inspected.PushTarget;
+        var fetch = inspected.FetchTarget;
+        if (push is null && fetch is null) throw new InvalidDataException("承認対象のリポジトリと接続先を確認できません。");
+        var details = push is null ? fetch!.Endpoint :
+            $"{push.Endpoint}\n対象 {push.BranchRef}\nコミット {push.ObjectId}";
+        if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), directory, details)) return;
         token.ThrowIfCancellationRequested();
         GitStatus = $"{operation} を実行中です。";
-        var result = target is null
-            ? await git.FetchTrustedAsync(inspected.StandardOutput, token)
-            : await git.PushTrustedAsync(target, token);
+        var result = push is null
+            ? await git.FetchTrustedAsync(fetch!, token)
+            : await git.PushTrustedAsync(push, token);
         GitStatus = result.Success ? $"{operation} が完了しました。" : DescribeRemoteFailure(result);
     });
 
@@ -313,7 +323,18 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
     private static string DescribeRemoteFailure(GitResult result)
     {
-        var message = $"Git 操作を完了できませんでした（{result.Failure}）。接続先、権限、Git 設定またはブランチを確認してください。";
+        var action = result.Failure switch
+        {
+            GitFailure.Authentication => "認証の有効期限、使用するアカウント、認証ヘルパーを確認してください。",
+            GitFailure.Permission => "接続先と、対象リポジトリへの権限を確認してください。",
+            GitFailure.Network => "接続先、ネットワーク、TLS 設定を確認してください。",
+            GitFailure.Divergence => "送信先の履歴が変更されています。Fetch してブランチの状態を確認してください。",
+            GitFailure.Timeout => "制限時間に達しました。接続状況と操作結果を確認してください。",
+            GitFailure.PathTooLong => "より短い親フォルダーを選んでください。",
+            GitFailure.UnsafeOperation => "接続先・ブランチ・リポジトリの状態または Git 設定を確認し、再度承認してください。",
+            _ => "接続先、Git 設定またはブランチを確認してください。",
+        };
+        var message = $"Git 操作を完了できませんでした。{action}";
         return result.RecoveryPath is { } path ? $"{message}\n残存フォルダー {path}" : message;
     }
 
@@ -365,14 +386,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            Func<CancellationToken, Task<AssetRevisionSeries.Selection>>? resolve = null;
+            Func<CancellationToken, Task<AssetRevisionSeries.BranchSelection>>? resolve = null;
             string? seriesDirectory = null;
             if (selected.ProjectId is Guid id && selected.MetadataAssociation is { } association)
             {
                 if (selected.FileIdentity is { } observed && !observed.IsSameFile(await ProjectFileEvidence.ReadAsync(projectPath)))
                     throw new InvalidDataException("登録時と異なるファイルです。「識別情報を照合」から確認してください。");
                 seriesDirectory = association.Directory;
-                resolve = token => ResolveMetadataAsync(id, association, token);
+                resolve = token => ResolveMetadataBranchAsync(id, association, token);
             }
             OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId, resolve, seriesDirectory)
             {
@@ -918,18 +939,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         await PackageProjectAsync(currentProjectPath).ConfigureAwait(true);
     }
 
-    private async Task PackageProjectAsync(string sourcePath)
+    private Task PackageProjectAsync(string sourcePath) => ExecuteToolAsync("Bundle creation", async token =>
     {
-        if (!await EnsureYmmpxLibAvailableAsync(interactive: true).ConfigureAwait(true))
-        {
-            return;
-        }
-
         if (!TryGetOpenableProjectPath(sourcePath, out var ymmpPath, out var reason))
         {
             MessageBox.Show(reason, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
             return;
         }
+        if (!await EnsureYmmpxLibAvailableAsync(token)) return;
 
         var defaultOutput = Path.ChangeExtension(ymmpPath, ".ymmpx");
         var dialog = new SaveFileDialog
@@ -945,33 +962,26 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             return;
         }
 
-        await ExecuteToolAsync("Bundle creation", async token =>
+        BundleStatus = "ymmpx を作成中...";
+        BundleProgress = 0;
+        var progress = new Progress<double>(value => BundleProgress = value * 100d);
+        var result = await bundleService.CreatePackageAsync(ymmpPath, dialog.FileName, token, progress);
+        if (!result.Success)
         {
-            BundleStatus = "ymmpx を作成中...";
-            BundleProgress = 0;
-
-            var progress = new Progress<double>(value => BundleProgress = value * 100d);
-            var result = await bundleService
-                .CreatePackageAsync(ymmpPath, dialog.FileName, token, progress)
-                .ConfigureAwait(true);
-            if (!result.Success)
+            if (IsYmmpxLibMissing(result.ErrorMessage))
             {
-                if (IsYmmpxLibMissing(result.ErrorMessage))
-                {
-                    await ShowYmmpxLibInstallGuideAsync().ConfigureAwait(true);
-                    return;
-                }
-
-                BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った同梱に失敗しました。";
-                MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
+                await ShowYmmpxLibInstallGuideAsync(token);
                 return;
             }
 
-            BundleProgress = 100;
-            BundleStatus = $"作成完了: {result.OutputPath}\n検出: {result.DetectedMaterialCount} 件 / 同梱: {result.PackagedMaterialCount} 件 / 不足: {result.MissingMaterialCount} 件";
-            MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Information);
-        }).ConfigureAwait(true);
-    }
+            BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った同梱に失敗しました。";
+            MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        BundleProgress = 100;
+        BundleStatus = $"作成完了: {result.OutputPath}\n検出: {result.DetectedMaterialCount} 件 / 同梱: {result.PackagedMaterialCount} 件 / 不足: {result.MissingMaterialCount} 件";
+        MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Information);
+    });
 
     private Task ExtractBundleAsync() => ExecuteToolAsync("Bundle extraction", async token =>
     {
@@ -1059,7 +1069,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
     }
 
-    private async Task<bool> EnsureYmmpxLibAvailableAsync(bool interactive)
+    private async Task<bool> EnsureYmmpxLibAvailableAsync(CancellationToken token)
     {
         if (bundleService.TryEnsureAvailable(out _))
         {
@@ -1069,15 +1079,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         logger.Info($"YmmpxLibPlugin 未導入を検出しました。探索パス={string.Join(" | ", bundleService.SearchedPaths)}");
         logger.Flush();
         BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
-        if (interactive)
-        {
-            await ShowYmmpxLibInstallGuideAsync().ConfigureAwait(true);
-        }
+        await ShowYmmpxLibInstallGuideAsync(token);
 
         return false;
     }
 
-    private async Task ShowYmmpxLibInstallGuideAsync()
+    private async Task ShowYmmpxLibInstallGuideAsync(CancellationToken token)
     {
         var legacyPaths = ymmpxLibInstallGuide.FindLegacyFolders(AppContext.BaseDirectory);
         var message = ymmpxLibInstallGuide.BuildMissingPluginMessage(bundleService.SearchedPaths, legacyPaths);
@@ -1090,7 +1097,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             "ymmpx",
             MessageBoxButton.YesNo,
             MessageBoxImage.Information,
-            MessageBoxResult.Yes);
+            MessageBoxResult.No);
 
         if (answer is not MessageBoxResult.Yes)
         {
@@ -1102,7 +1109,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         logger.Info("YmmpxLibPlugin の導入案内でユーザーがダウンロードを選びました。");
         logger.Flush();
 
-        var installResult = await ymmpxLibInstallGuide.DownloadAndLaunchInstallerAsync().ConfigureAwait(true);
+        BundleStatus = "YmmpxLibPlugin のインストーラーをダウンロード中です。";
+        var installResult = await ymmpxLibInstallGuide.DownloadAndLaunchInstallerAsync(token);
         if (!installResult.Success)
         {
             MessageBox.Show(
@@ -1375,26 +1383,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             if (plan.Conflicts.Count != 0) throw new InvalidDataException(string.Join("\n", plan.Conflicts.Take(20)) + (plan.Conflicts.Count > 20 ? "\n他にも競合があります。" : ""));
             if (plan.Changes.Count == 0) throw new InvalidDataException("再適用する変更がありません。ID 設定は専用の回復操作を使用してください。");
             if (plan.Changes.Count > 20) throw new InvalidDataException("変更が20件を超えています。すべてを表示できないため再適用を中止しました。");
-            var basePaths = baseline.Projects.Select(p => p.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var additions = local.Projects.Where(p => !basePaths.Contains(p.FullPath)).ToArray();
-            async Task VerifyAdditionsAsync()
-            {
-                foreach (var item in additions)
-                {
-                    if (!pendingAdditionEvidence.TryGetValue(item.FullPath, out var expected) || item.ProjectId != expected.Id ||
-                        await HashRecoveryFileAsync(item.FullPath).ConfigureAwait(true) != expected.Hash)
-                        throw new InvalidDataException("追加 project の元の内容を確認できません。自動再適用を中止しました。");
-                }
-            }
-            await VerifyAdditionsAsync().ConfigureAwait(true);
+            var merged = plan.Store!;
+            using var verifiedFiles = await ProjectListRecoveryFiles.OpenAsync(merged, latest,
+                path => pendingAdditionEvidence.TryGetValue(path, out var evidence) ? evidence : null);
             var summary = string.Join("\n", plan.Changes);
             if (summary.Length > 12000) throw new InvalidDataException("変更内容が大きすぎて確認できないため再適用を中止しました。");
             var confirm = MessageBox.Show($"最新一覧を保持し、次の未保存変更を再適用します。最新側の属性変更は表示されません。\n{summary}\n続行しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
             if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
-            await VerifyAdditionsAsync().ConfigureAwait(true);
-            if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
-            var merged = plan.Store!;
             await SaveRepositoryWithPendingDraftAsync(merged);
             if (CurrentStoreFingerprint() != fingerprint)
             {

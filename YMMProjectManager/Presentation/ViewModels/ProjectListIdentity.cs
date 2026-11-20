@@ -11,9 +11,11 @@ public sealed partial class ProjectListViewModel
     public System.Windows.Input.ICommand SelectMetadataSeriesCommand { get; }
     public System.Windows.Input.ICommand ImportMetadataSeriesCommand { get; }
     public System.Windows.Input.ICommand InspectMetadataSeriesCommand { get; }
+    public System.Windows.Input.ICommand RebindMetadataDirectoryCommand { get; }
     public System.Windows.Input.ICommand ReassociateProjectCommand { get; }
     public System.Windows.Input.ICommand VerifyProjectIdentityCommand { get; }
     public System.Windows.Input.ICommand InspectExternalAssetCommand { get; }
+    public System.Windows.Input.ICommand VerifyStoredExternalAssetsCommand { get; }
     private string assetStorageName = string.Empty;
     private string assetStoragePath = string.Empty;
     public string AssetStorageName { get => assetStorageName; set { if (SetProperty(ref assetStorageName, value)) inspectedAssets = null; } }
@@ -44,6 +46,43 @@ public sealed partial class ProjectListViewModel
         externalRoot is not null && asset.ExternalLocation is not null
             ? AssetInventory.VerifyExternalAsync(externalRoot, asset, token)
             : AssetInventory.VerifyAsync(projectRoot, asset, token);
+
+    private Task VerifyStoredExternalAssetsAsync() => ExecuteToolAsync("Asset stored external locations", async token =>
+    {
+        var project = SelectedProject;
+        if (project?.ProjectId is not Guid id || project.MetadataAssociation is not { } association) return;
+        var storageName = AssetStorageName.Trim();
+        var revision = await ResolveMetadataBranchAsync(id, association, token);
+        var locations = revision.Selected.Manifest.Assets
+            .Where(asset => string.Equals(asset.ExternalLocation?.StorageName, storageName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (locations.Length == 0)
+        {
+            var available = revision.Selected.Manifest.Assets.Select(asset => asset.ExternalLocation?.StorageName)
+                .OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            AssetStatus = available.Length == 0 ? "選択した版に外部保管先の記録がありません。" :
+                $"照合する保管先名を入力してください。\n{string.Join("\n", available)}";
+            return;
+        }
+        var picker = new OpenFolderDialog { Title = $"保管先「{storageName}」のフォルダーを指定" };
+        if (picker.ShowDialog() != true) return;
+        var results = new List<string>(locations.Length);
+        foreach (var asset in locations)
+        {
+            token.ThrowIfCancellationRequested();
+            var status = await AssetInventory.VerifyExternalAsync(picker.FolderName, asset, token);
+            var text = status switch
+            {
+                AssetVerification.Valid => "一致",
+                AssetVerification.Missing => "見つかりません",
+                AssetVerification.SizeMismatch => "サイズが異なります",
+                AssetVerification.HashMismatch => "内容が異なります",
+                _ => "確認できません",
+            };
+            results.Add($"{asset.ExternalLocation!.RelativePath}  {text}");
+        }
+        if (ReferenceEquals(project, SelectedProject) && project.MetadataAssociation == association)
+            AssetStatus = $"{storageName} の照合結果\n{string.Join("\n", results)}";
+    });
 
     private Task VerifyProjectIdentityAsync() => ExecuteToolAsync("Asset project identity", async token =>
     {
@@ -81,22 +120,29 @@ public sealed partial class ProjectListViewModel
         if (files.ShowDialog() != true) return;
         var parent = new OpenFolderDialog { Title = "新しい履歴フォルダーを作成する場所を選択" };
         if (parent.ShowDialog() != true) return;
-        var directory = Path.Combine(parent.FolderName, $"{Path.GetFileNameWithoutExtension(project.FullPath)}-asset-history");
+        var projectPath = project.FullPath;
+        var directory = Path.Combine(parent.FolderName, $"{Path.GetFileNameWithoutExtension(projectPath)}-asset-history");
         if (MessageBox.Show($"既存ファイルを保持したまま、履歴を次の場所に複製します。\n{directory}",
             "メタデータの取り込み", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-        var imported = await AssetRevisionSeries.ImportLegacyAsync(directory, id, files.FileNames, token);
-        AssetStatus = $"履歴 {imported.Revisions.Count} 版を取り込みました。関連付けは「履歴の版を選択」から行えます。\n{directory}";
+        if (!ReferenceEquals(project, SelectedProject) || project.ProjectId != id || project.FullPath != projectPath)
+            throw new InvalidDataException("取り込み対象のプロジェクトが変更されました。");
+        var imported = await AssetRevisionSeries.ImportLegacyGraphAsync(directory, id, files.FileNames, token);
+        AssetStatus = $"履歴 {imported.Revisions.Count} 版、先端 {imported.Heads.Count} 件を取り込みました。関連付けは「履歴の版を選択」から行えます。\n{directory}";
     });
 
     private Task SelectMetadataSeriesAsync() => ExecuteToolAsync("Asset revision selection", async token =>
     {
         var project = SelectedProject;
         if (project?.ProjectId is not Guid projectId || HasUnsavedProjectList || !isProjectListLossless) return;
+        var previous = project.MetadataAssociation;
         var picker = new OpenFolderDialog { Title = "メタデータ履歴フォルダーを選択" };
         if (picker.ShowDialog() != true) return;
         var directory = Path.GetFullPath(picker.FolderName);
         var inspection = await AssetRevisionSeries.InspectGraphAsync(directory, token);
         if (inspection.Root.ProjectId != projectId) throw new InvalidDataException("別のプロジェクト ID の履歴です。");
+        if (previous is not null && (inspection.Root.RevisionId != previous.RootRevisionId || inspection.Root.Sha256 != previous.RootSha256) &&
+            MessageBox.Show($"同じプロジェクト ID に別の履歴があります。\n現在のルート {previous.RootRevisionId}\n選択したルート {inspection.Root.RevisionId}\n\n履歴ファイルを保持したまま関連付けを変更しますか？",
+                "メタデータ履歴の切り替え", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         var list = new System.Windows.Controls.ListBox { Margin = new Thickness(8) };
         foreach (var item in inspection.Revisions.Reverse())
             list.Items.Add(new System.Windows.Controls.ListBoxItem
@@ -120,13 +166,42 @@ public sealed partial class ProjectListViewModel
         var resolved = await ResolveMetadataBranchAsync(projectId, candidate, token);
         if (!resolved.Graph.Heads.ToHashSet().SetEquals(inspection.Heads))
             throw new InvalidDataException("確認中にメタデータ履歴の先端が変更されました。");
-        if (!ReferenceEquals(project, SelectedProject) || project.ProjectId != projectId || HasUnsavedProjectList)
+        if (!ReferenceEquals(project, SelectedProject) || project.ProjectId != projectId || project.MetadataAssociation != previous || HasUnsavedProjectList)
             throw new InvalidDataException("選択中のプロジェクトが変更されました。");
         token.ThrowIfCancellationRequested();
         project.MetadataAssociation = candidate;
         await SaveAsync();
         AssetStatus = "メタデータの関連付けを保存しました。";
     });
+
+    private Task RebindMetadataDirectoryAsync() => ExecuteToolAsync("Asset series relocation", async token =>
+    {
+        var project = SelectedProject;
+        if (project?.ProjectId is not Guid id || project.MetadataAssociation is not { } association || HasUnsavedProjectList) return;
+        var picker = new OpenFolderDialog { Title = "同じメタデータ履歴の移動先を指定" };
+        if (picker.ShowDialog() != true) return;
+        var candidate = association with { Directory = Path.GetFullPath(picker.FolderName) };
+        await ResolveMetadataBranchAsync(id, candidate, token);
+        if (MessageBox.Show($"移動先\n{candidate.Directory}\n確認した選択版 {candidate.SelectedRevisionId}\n\n選択版を維持して場所だけ更新しますか？",
+            "メタデータ履歴の移動", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        if (!ReferenceEquals(project, SelectedProject)) return;
+        await ApplyMetadataDirectoryAsync(project, association, candidate.Directory, token);
+    });
+
+    internal async Task ApplyMetadataDirectoryAsync(ProjectEntry project, ProjectMetadataAssociation expected,
+        string directory, CancellationToken token)
+    {
+        if (project.ProjectId is not Guid id) throw new InvalidDataException("プロジェクト ID を確認できません。");
+        var candidate = expected with { Directory = Path.GetFullPath(directory) };
+        await ResolveMetadataBranchAsync(id, candidate, token);
+        if (!Projects.Contains(project) || project.ProjectId != id || project.MetadataAssociation != expected ||
+            HasUnsavedProjectList || !isProjectListLossless || retainedRecoverySnapshot is not null)
+            throw new InvalidDataException("対象のプロジェクトまたは関連付けが変わりました。");
+        token.ThrowIfCancellationRequested();
+        project.MetadataAssociation = candidate;
+        await SaveAsync();
+        AssetStatus = $"メタデータの場所を更新しました。\n{candidate.Directory}";
+    }
 
     private Task InspectMetadataSeriesAsync() => ExecuteToolAsync("Asset revision verification", async token =>
     {
@@ -145,10 +220,6 @@ public sealed partial class ProjectListViewModel
         }
         if (ReferenceEquals(project, SelectedProject)) AssetStatus = string.Join("\n", lines);
     });
-
-    private static Task<AssetRevisionSeries.Selection> ResolveMetadataAsync(Guid id, ProjectMetadataAssociation association, CancellationToken token) =>
-        AssetRevisionSeries.ResolveAsync(association.Directory, id, association.RootRevisionId, association.RootSha256,
-            association.SelectedRevisionId, association.SelectedSha256, token);
 
     private static Task<AssetRevisionSeries.BranchSelection> ResolveMetadataBranchAsync(Guid id, ProjectMetadataAssociation association, CancellationToken token) =>
         AssetRevisionSeries.ResolveBranchAsync(association.Directory, id, association.RootRevisionId, association.RootSha256,
