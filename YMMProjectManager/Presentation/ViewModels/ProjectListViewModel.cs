@@ -241,7 +241,9 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 var message = "中止しました。ディスクやリモートの状態を確認してください。";
                 if (recovery is not null) message += " 残存 clone: " + recovery;
                 if (ex.Data["YmmpxRetainedStagingPath"] is string staging) message += $" 展開一時フォルダー: {staging}";
-                if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
+                if (name == InspectListPublicationOperation)
+                    ProjectListPublicationStatus = "中止しました。保存記録を確認するには、もう一度実行してください。";
+                else if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
                 else if (name.StartsWith("Bundle", StringComparison.Ordinal)) BundleStatus = message;
                 else GitStatus = message;
                 throw;

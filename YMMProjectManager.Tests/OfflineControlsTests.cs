@@ -67,6 +67,19 @@ internal static class OfflineControlsTests
             vm.CancelToolCommand.Execute(null);
             await cancelled;
             if (!vm.AssetStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancellation status missing");
+            await Program.RunNamedCaseAsync("List publication cancellation is shown in the recovery panel", async () =>
+            {
+                var operation = (string)typeof(ProjectListViewModel).GetField("InspectListPublicationOperation",
+                    BindingFlags.Static | BindingFlags.NonPublic)!.GetRawConstantValue()!;
+                var priorAsset = vm.AssetStatus;
+                var priorGit = vm.GitStatus;
+                var interrupted = Invoke("ExecuteToolAsync", operation, pending);
+                vm.CancelToolCommand.Execute(null);
+                await interrupted;
+                if (!vm.ProjectListPublicationStatus.Contains("中止しました") ||
+                    vm.AssetStatus != priorAsset || vm.GitStatus != priorGit || vm.CancelToolCommand.CanExecute(null))
+                    throw new InvalidOperationException("list publication cancellation reached the wrong panel");
+            });
             vm.SelectedProject = null;
             if (vm.AssetStatus != string.Empty || vm.GitStatus != string.Empty) throw new Exception("stale status after selection");
             if (vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("relink enabled without selection");

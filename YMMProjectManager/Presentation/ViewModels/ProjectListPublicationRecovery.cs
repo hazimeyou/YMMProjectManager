@@ -8,6 +8,7 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed partial class ProjectListViewModel
 {
+    private const string InspectListPublicationOperation = "Inspect interrupted list publication";
     public ICommand RecoverProjectListPublicationCommand { get; }
 
     private string projectListPublicationStatus = string.Empty;
@@ -20,7 +21,7 @@ public sealed partial class ProjectListViewModel
     private async Task RecoverProjectListPublicationAsync()
     {
         var reload = false;
-        await ExecuteToolAsync("Asset interrupted list publication", async token =>
+        await ExecuteToolAsync(InspectListPublicationOperation, async token =>
         {
             if (repository is not JsonProjectRepository json) return;
             ProjectListReplacement.Recovery? review;
