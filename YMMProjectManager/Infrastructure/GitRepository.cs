@@ -167,12 +167,12 @@ public sealed class GitRepository
         {
             // A literal origin is the approval target. Refuse configured rewrites, including
             // push-only rewrites that ls-remote cannot establish for the push operation.
-            var rewrites = await RunAsync(["config", "--name-only", "--get-regexp", @"^url\..*\.(insteadof|pushinsteadof)$"], token, protocol).ConfigureAwait(false);
+            var rewrites = await RunAsync(["config", "--name-only", "--get-regexp", @"^url\..*\.(insteadof|pushinsteadof)$"], token, trustedProcess: true).ConfigureAwait(false);
             if (rewrites.ExitCode != 1 || !string.IsNullOrWhiteSpace(rewrites.StandardOutput))
                 return UnsafeRemote("Git URL rewrites are configured. The approved endpoint cannot be verified.");
         }
 
-        var effective = await RunAsync(["ls-remote", "--get-url", "--", url], token, protocol).ConfigureAwait(false);
+        var effective = await RunAsync(["ls-remote", "--get-url", "--", url], token, trustedProcess: true).ConfigureAwait(false);
         if (!effective.Success || !string.Equals(effective.StandardOutput.TrimEnd('\r', '\n'), url, StringComparison.Ordinal))
             return UnsafeRemote("Git rewrites the selected remote. Confirm the repository configuration before retrying.");
 
@@ -430,6 +430,17 @@ public sealed class GitRepository
         throw new InvalidOperationException("Git was not found in an absolute PATH directory outside the working repository.");
     }
 
+    internal static void SetTransportEnvironment(IDictionary<string, string?> environment, string? allowedProtocol)
+    {
+        // Partial clones can fetch missing objects even during object lookups such as
+        // rev-parse. A local read or consent preview must not initiate network access.
+        environment["GIT_NO_LAZY_FETCH"] = "1";
+        environment.TryGetValue("GIT_ALLOW_PROTOCOL", out var parentProtocols);
+        environment["GIT_ALLOW_PROTOCOL"] = allowedProtocol is not null &&
+            (parentProtocols is null || parentProtocols.Split(':').Contains(allowedProtocol, StringComparer.Ordinal))
+            ? allowedProtocol : string.Empty;
+    }
+
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false)
     {
         token.ThrowIfCancellationRequested();
@@ -459,6 +470,7 @@ public sealed class GitRepository
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
+        SetTransportEnvironment(start.Environment, allowedProtocol);
         if (allowedProtocol is not null || trustedProcess)
         {
             foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase) ||
@@ -470,9 +482,6 @@ public sealed class GitRepository
         }
         if (allowedProtocol is not null)
         {
-            var parentProtocols = start.Environment.TryGetValue("GIT_ALLOW_PROTOCOL", out var value) ? value : null;
-            start.Environment["GIT_ALLOW_PROTOCOL"] = parentProtocols is null || parentProtocols.Split(':').Contains(allowedProtocol, StringComparer.Ordinal)
-                ? allowedProtocol : string.Empty;
             start.Environment.Remove("GIT_EXEC_PATH");
             start.Environment.Remove("GIT_SSL_NO_VERIFY");
             start.Environment.Remove("GIT_ASKPASS");

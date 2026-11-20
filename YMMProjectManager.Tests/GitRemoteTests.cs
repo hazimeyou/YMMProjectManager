@@ -14,6 +14,23 @@ internal static class GitRemoteTests
         try
         {
             static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+            var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["GIT_ALLOW_PROTOCOL"] = "file:https",
+                ["GIT_NO_LAZY_FETCH"] = "0",
+            };
+            GitRepository.SetTransportEnvironment(environment, allowedProtocol: null);
+            Check(environment["GIT_ALLOW_PROTOCOL"] == "" && environment["GIT_NO_LAZY_FETCH"] == "1",
+                "preview kept an inherited permission for implicit transport");
+            GitRepository.SetTransportEnvironment(environment, "https");
+            Check(environment["GIT_ALLOW_PROTOCOL"] == "", "explicit operation widened an inherited deny-all policy");
+            environment["GIT_ALLOW_PROTOCOL"] = "file";
+            GitRepository.SetTransportEnvironment(environment, "https");
+            Check(environment["GIT_ALLOW_PROTOCOL"] == "", "explicit operation widened an inherited allowlist");
+            environment["GIT_ALLOW_PROTOCOL"] = "file:https";
+            GitRepository.SetTransportEnvironment(environment, "https");
+            Check(environment["GIT_ALLOW_PROTOCOL"] == "https" && environment["GIT_NO_LAZY_FETCH"] == "1",
+                "explicit operation lost its approved protocol or allowed lazy fetching");
             async Task<string> Command(string cwd, params string[] args)
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
