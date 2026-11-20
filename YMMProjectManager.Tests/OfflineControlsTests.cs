@@ -243,6 +243,34 @@ internal static class OfflineControlsTests
                 await RunGitFixtureAsync(checkout, "status", "--porcelain") != "" ||
                 await File.ReadAllTextAsync(project) != newJson)
                 throw new InvalidOperationException($"WPF did not report a verified ref, index and worktree. {vm.GitStatus}");
+
+            await Program.RunNamedCaseAsync("WPF keeps interrupted Pull evidence and refuses a second approval", async () =>
+            {
+                var marker = GitPullOperationJournal.GetPath(checkout);
+                using (GitPullOperationJournal.Create(checkout,
+                    new GitPullOperationJournal.ApprovalEvidence("refs/heads/main", before, "origin", "refs/heads/main", after)))
+                {
+                    // A disposed marker with no verified outcome represents an interrupted Pull.
+                }
+                var record = await File.ReadAllBytesAsync(marker);
+                var indexPath = Path.Combine(checkout, ".git", "index");
+                var index = await File.ReadAllBytesAsync(indexPath);
+                for (var attempt = 0; attempt < 2; attempt++)
+                {
+                    await vm.RunConfirmedGitPullAsync(
+                        (_, _) => throw new InvalidOperationException("Pull prompted for transport with unresolved evidence."),
+                        _ => throw new InvalidOperationException("Pull prompted for mutation with unresolved evidence."));
+                    if (!vm.GitStatus.Contains("確定できません") || !vm.GitStatus.Contains(marker) ||
+                        !vm.GitStatus.Contains("回復記録が残っている間は Pull を開始できません"))
+                        throw new InvalidOperationException("WPF did not report the unresolved operation and its recovery record.");
+                }
+
+                var finalRecord = await File.ReadAllBytesAsync(marker);
+                var finalIndex = await File.ReadAllBytesAsync(indexPath);
+                if (!record.SequenceEqual(finalRecord) || !index.SequenceEqual(finalIndex) ||
+                    await File.ReadAllTextAsync(project) != newJson || await RunGitFixtureAsync(checkout, "rev-parse", "HEAD") != after)
+                    throw new InvalidOperationException("Retry changed the worktree, ref, index, or recovery record.");
+            });
         }
         finally
         {
@@ -334,6 +362,10 @@ internal static class OfflineControlsTests
             if (vm.PullGitCommand.CanExecute(null) || !vm.CancelToolCommand.CanExecute(null) ||
                 !vm.GitStatus.Contains("更新先コミットを確認中"))
                 throw new InvalidOperationException("Pull lookup did not expose cancellable progress.");
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+            var dispatched = await dispatcher.InvokeAsync(() => vm.CancelToolCommand.CanExecute(null));
+            if (!dispatched || pending.IsCompleted)
+                throw new InvalidOperationException("The WPF dispatcher could not process a callback during the pending Pull.");
             vm.CancelToolCommand.Execute(null);
             await pending;
             if (unexpectedCallback || executions != 1 || !vm.GitStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null))
