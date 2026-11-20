@@ -144,6 +144,10 @@ internal static class ProjectListRecoveryTests
             var localFile = Path.Combine(root, "local-add.ymmp"); await File.WriteAllTextAsync(localFile, "{}");
             timer.Start(); try { await generalVm.AddProjectsAsync([localFile]); } finally { timer.Stop(); }
             if (!generalVm.HasUnsavedProjectList || (await generalRepo.LoadAsync()).Projects.Count != 2) throw new Exception("general recovery setup failed");
+            var readyDraft = Directory.GetFiles(generalRepo.RecoveryDirectory).Single(file => file.EndsWith(".draft.json", StringComparison.Ordinal));
+            var afterRestart = await new ProjectListDrafts(generalRepo.RecoveryDirectory).ReadAsync(readyDraft);
+            if (!afterRestart.Local.Projects.Any(item => item.FullPath == localFile))
+                throw new Exception("known prepublication conflict did not preserve a restart recovery candidate");
             async Task RecoverGeneral() => await (Task)typeof(ProjectListViewModel).GetMethod("RecoverProjectListAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(generalVm, null)!;
             dialogReply = 7; confirmTimer.Start(); try { await RecoverGeneral(); } finally { confirmTimer.Stop(); }
             if (!generalVm.HasUnsavedProjectList || (await generalRepo.LoadAsync()).Projects.Count != 2) throw new Exception("cancelled general recovery changed disk");
@@ -155,6 +159,8 @@ internal static class ProjectListRecoveryTests
             var generalResult = await generalRepo.LoadAsync();
             if (generalVm.HasUnsavedProjectList || generalResult.Projects.Count != 3 || !generalResult.Projects.Any(x => x.FullPath == localFile) || !generalResult.Projects.Any(x => x.FullPath == extracted))
                 throw new Exception("general recovery failed to preserve independent changes");
+            if (File.Exists(readyDraft) || !File.Exists(readyDraft + ".closed"))
+                throw new Exception("direct recovery left a published draft eligible for reapplication");
             var reentrantPath = Path.Combine(root, "reentrant-recovery.json"); var reentrantRepo = new JsonProjectRepository(logger, reentrantPath);
             var reentrantSeed = await reentrantRepo.LoadAsync(); reentrantSeed.Projects.Add(Entry(project, Guid.NewGuid())); await reentrantRepo.SaveAsync(reentrantSeed);
             var reentrantVm = new ProjectListViewModel(logger, reentrantRepo); await reentrantVm.InitializeAsync();

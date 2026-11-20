@@ -1285,7 +1285,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             if (confirm != MessageBoxResult.Yes) return;
             if (CurrentStoreFingerprint() != pending.Fingerprint || await HashProjectAsync(pending.Path).ConfigureAwait(true) != pending.ProjectHash) throw new InvalidDataException("未保存の一覧または project が変更されました。");
             var retained = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless });
-            await repository.SaveAsync(latest).ConfigureAwait(true);
+            await SaveRepositoryWithPendingDraftAsync(latest);
             projectListRevision = latest.Revision;
             isProjectListLossless = latest.IsRecoverySafe;
             if (CurrentStoreFingerprint() != pending.Fingerprint)
@@ -1337,7 +1337,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             await VerifyAdditionsAsync().ConfigureAwait(true);
             if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
             var merged = plan.Store!;
-            await repository.SaveAsync(merged).ConfigureAwait(true);
+            await SaveRepositoryWithPendingDraftAsync(merged);
             if (CurrentStoreFingerprint() != fingerprint)
             {
                 FreezePartialRecovery(local, "保存中に未保存の一覧が変わりました。");
@@ -1431,8 +1431,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             });
             var expectedFingerprint = ProjectListRecovery.Fingerprint(store);
             await SavePendingDraftAsync(store);
-            await repository.SaveAsync(store).ConfigureAwait(true);
-            ClosePendingDraft();
+            await SaveRepositoryWithPendingDraftAsync(store);
             projectListRevision = store.Revision;
             isProjectListLossless = store.IsRecoverySafe;
             lastSavedFingerprint = CurrentStoreFingerprint() == expectedFingerprint ? expectedFingerprint : null;

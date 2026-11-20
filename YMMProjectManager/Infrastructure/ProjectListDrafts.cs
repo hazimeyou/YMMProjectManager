@@ -91,6 +91,14 @@ internal sealed class ProjectListDrafts(string directory)
         return claimed;
     }
 
+    internal string ReleaseUnpublishedClaim(string path)
+    {
+        CheckPath(path, claimed: true);
+        var ready = path[..^7];
+        File.Move(path, ready, overwrite: false);
+        return ready;
+    }
+
     internal void Retire(string path, bool claimed = false)
     {
         CheckPath(path, claimed);

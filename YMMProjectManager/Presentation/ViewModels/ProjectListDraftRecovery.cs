@@ -19,9 +19,44 @@ public sealed partial class ProjectListViewModel
         var drafts = new ProjectListDrafts(json.RecoveryDirectory);
         var evidence = pendingAdditionEvidence.ToDictionary(pair => pair.Key,
             pair => new ProjectListDrafts.Evidence(pair.Value.Id, pair.Value.Hash), StringComparer.OrdinalIgnoreCase);
+        if (pendingDraftPath is { } previous && !IsClaimedDraft(previous))
+        {
+            drafts.Retire(previous);
+            pendingDraftPath = null;
+        }
         var next = await drafts.WriteAsync(baseline, local, evidence);
-        pendingDraftPath = drafts.Claim(next);
+        pendingDraftPath = next;
     }
+
+    private async Task SaveRepositoryWithPendingDraftAsync(ProjectStore store)
+    {
+        if (pendingDraftPath is not { } pending || repository is not JsonProjectRepository json)
+        {
+            await repository.SaveAsync(store);
+            return;
+        }
+        var drafts = new ProjectListDrafts(json.RecoveryDirectory);
+        if (!IsClaimedDraft(pending)) pendingDraftPath = drafts.Claim(pending);
+        try { await repository.SaveAsync(store); }
+        catch (Exception ex) when (ex is ProjectListConflictException or ProjectListBusyException)
+        {
+            pendingDraftPath = ReleaseUnpublishedClaim(drafts, pendingDraftPath);
+            throw;
+        }
+        ClosePendingDraft();
+    }
+
+    private string ReleaseUnpublishedClaim(ProjectListDrafts drafts, string path)
+    {
+        try { return drafts.ReleaseUnpublishedClaim(path); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.Error(ex, "Recovery record remains available for export.");
+            return path;
+        }
+    }
+
+    private static bool IsClaimedDraft(string path) => path.EndsWith(".saving", StringComparison.Ordinal);
 
     private void ClosePendingDraft()
     {
@@ -39,7 +74,7 @@ public sealed partial class ProjectListViewModel
         var picker = new OpenFileDialog { InitialDirectory = drafts.DirectoryPath,
             Filter = "一覧の保存記録 (*.draft.json;*.saving)|*.draft.json;*.saving" };
         if (picker.ShowDialog() != true) return;
-        var claimed = picker.FileName.EndsWith(".saving", StringComparison.Ordinal);
+        var claimed = IsClaimedDraft(picker.FileName);
         var draft = await drafts.ReadAsync(picker.FileName, claimed);
         if (claimed)
         {
@@ -83,7 +118,12 @@ public sealed partial class ProjectListViewModel
             throw new InvalidDataException("画面上の一覧が変更されました。");
         var screen = CurrentStoreFingerprint();
         var claim = drafts.Claim(picker.FileName);
-        await repository.SaveAsync(plan.Store);
+        try { await repository.SaveAsync(plan.Store); }
+        catch (Exception ex) when (ex is ProjectListConflictException or ProjectListBusyException)
+        {
+            ReleaseUnpublishedClaim(drafts, claim);
+            throw;
+        }
         if (screen != CurrentStoreFingerprint())
         {
             FreezePartialRecovery(draft.Local, "再適用の保存中に画面の一覧が変わりました。");
@@ -94,7 +134,9 @@ public sealed partial class ProjectListViewModel
         projectListRevision = plan.Store.Revision;
         isProjectListLossless = plan.Store.IsRecoverySafe;
         lastSavedFingerprint = CurrentStoreFingerprint();
-        drafts.Retire(claim, claimed: true);
+        try { drafts.Retire(claim, claimed: true); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { logger.Error(ex, "Recovery draft retirement deferred."); }
         PrepareThumbnailMetadata(Projects.ToList());
         AssetStatus = "前回の保存記録から一覧を回復しました。";
     });
