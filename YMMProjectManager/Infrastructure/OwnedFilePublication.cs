@@ -8,16 +8,16 @@ namespace YMMProjectManager.Infrastructure;
 
 internal static class OwnedFilePublication
 {
-    internal sealed class DirectoryFence : IDisposable
+    internal sealed class DirectoryFence(bool enforceShare = false) : IDisposable
     {
         private readonly List<SafeFileHandle> handles = [];
 
-        public static DirectoryFence Open(string path)
+        public static DirectoryFence Open(string path, bool enforceShare = false)
         {
             var ancestors = new Stack<string>();
             for (var cursor = new DirectoryInfo(path); cursor is not null; cursor = cursor.Parent)
                 ancestors.Push(cursor.FullName);
-            var fence = new DirectoryFence();
+            var fence = new DirectoryFence(enforceShare);
             try
             {
                 while (ancestors.TryPop(out var directory)) fence.Add(directory);
@@ -32,7 +32,10 @@ internal static class OwnedFilePublication
 
         public SafeFileHandle Add(string path)
         {
-            var handle = OpenOrdinaryPath(path, expectDirectory: true, allowRename: false);
+            // Child publication needs a writable directory handle. Deny delete access to the
+            // directory itself while permitting those creates and renames of owned children.
+            var share = enforceShare ? FileShare.ReadWrite : FileShare.Read;
+            var handle = OpenOrdinaryPath(path, expectDirectory: true, allowRename: false, share, enforceDirectoryShare: enforceShare);
             handles.Add(handle);
             return handle;
         }
@@ -70,16 +73,20 @@ internal static class OwnedFilePublication
         throw new IOException("一時ファイルを作成できません。", new Win32Exception(error));
     }
 
-    internal static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename, FileShare share = FileShare.Read)
+    internal static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename, FileShare share = FileShare.Read,
+        bool enforceDirectoryShare = false)
     {
+        const uint listDirectory = 1;
         const uint readAttributes = 0x80;
         const uint genericRead = 0x80000000;
         const uint delete = 0x10000;
         const uint openExisting = 3;
         const uint openDirectoryWithoutFollowingLink = 0x02200000;
         const int fileAttributeTagInfo = 9;
-        // Deny writable and delete handles while using a directory as an output boundary.
-        var access = (expectDirectory ? readAttributes : genericRead) | (allowRename ? delete : 0);
+        // Attribute-only access does not enforce a handle's sharing mode. Listing access is needed
+        // when a caller must prevent the directory itself from being deleted or renamed.
+        var access = (expectDirectory ? readAttributes | (enforceDirectoryShare ? listDirectory : 0) : genericRead) |
+            (allowRename ? delete : 0);
         var handle = OpenPath(ExtendedPath(path), access, share,
             IntPtr.Zero, openExisting, openDirectoryWithoutFollowingLink, IntPtr.Zero);
         if (handle.IsInvalid)

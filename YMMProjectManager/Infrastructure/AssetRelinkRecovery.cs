@@ -84,10 +84,10 @@ internal static partial class AssetRelinkRecovery
             selected, confirmedProjectAssociation: true, confirmedHashChanges: confirmedMismatches, projectId: root.ProjectId);
         await using var sourceLease = OpenVerifiedPath(source);
         var sourceHash = Hash(original);
-        if (await HashAsync(sourceLease, token).ConfigureAwait(false) != sourceHash)
+        if (await HashAsync(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
         var intent = new Intent(version, next.RevisionId, source, sourceHash, output, Hash(RelinkJsonUpdate.Apply(original, rows)),
-            root, parent, next, review, expectedTips, GetPhysicalId(sourceLease));
+            root, parent, next, review, expectedTips, GetPhysicalId(sourceLease.Stream));
         var evidence = EvidencePath(source, intent.OperationId);
         await WriteEvidenceAsync(evidence, intent, MaxIntentBytes, token).ConfigureAwait(false);
         return evidence;
@@ -104,7 +104,7 @@ internal static partial class AssetRelinkRecovery
     }
 
     private static async Task<(Comparison[], AssetMetadata[])> InspectRowsAsync(string sourceDirectory, AssetManifest manifest,
-        List<RelinkRow> rows, CancellationToken token, List<FileStream>? heldCandidates = null)
+        List<RelinkRow> rows, CancellationToken token, List<VerifiedFileLease>? heldCandidates = null)
     {
         if (rows.Count is 0 or > 10) throw new InvalidDataException("A managed relink must have between one and ten candidate rows.");
         var expectedPaths = manifest.Assets.ToDictionary(
@@ -128,7 +128,7 @@ internal static partial class AssetRelinkRecovery
                     var path = AssetInventory.ResolveRelativePath(sourceDirectory, relative);
                     var lease = OpenVerifiedPath(path);
                     heldCandidates.Add(lease);
-                    actual = new AssetMetadata(relative, lease.Length, await HashAsync(lease, token).ConfigureAwait(false), prior?.DownloadUrl);
+                    actual = new AssetMetadata(relative, lease.Stream.Length, await HashAsync(lease.Stream, token).ConfigureAwait(false), prior?.DownloadUrl);
                 }
                 candidates.Add(candidate, actual);
             }
@@ -147,13 +147,14 @@ internal static partial class AssetRelinkRecovery
     {
         var evidencePath = Path.GetFullPath(evidence);
         await using var intentStream = OpenVerifiedPath(evidencePath);
-        var intent = await ReadIntentAsync(intentStream, evidencePath, expectedSource, token).ConfigureAwait(false);
+        var intent = await ReadIntentAsync(intentStream.Stream, evidencePath, expectedSource, token).ConfigureAwait(false);
         if (intent.Root != associatedRoot)
             throw new InvalidDataException("The relink recovery record belongs to a different project.");
 
         var history = await AssetRevisionSeries.ResolveBranchAsync(seriesDirectory, associatedRoot.ProjectId, associatedRoot.RevisionId,
             associatedRoot.Sha256, intent.Parent.RevisionId, intent.Parent.Sha256, token).ConfigureAwait(false);
-        await using var source = OpenVerifiedPath(intent.Source);
+        await using var sourceLease = OpenVerifiedPath(intent.Source);
+        var source = sourceLease.Stream;
         var sourceIdentity = GetPhysicalId(source);
         if (intent.SourceIdentity is not null && sourceIdentity != intent.SourceIdentity)
             throw new InvalidDataException("The source project was replaced after relink preparation.");
@@ -170,16 +171,15 @@ internal static partial class AssetRelinkRecovery
         var expectedOutput = RelinkJsonUpdate.Apply(original, rows);
         if (Hash(expectedOutput) != intent.OutputSha256)
             throw new InvalidDataException("The source project or relink recovery evidence changed.");
-        using var outputFence = intent.Version == 4
-            ? OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(intent.Output)!) : null;
         var (openedOutput, needsPublication) = await OpenOutputAsync(intent, evidencePath, resumePreparedOutput, token).ConfigureAwait(false);
-        await using var output = openedOutput;
+        await using var outputLease = openedOutput;
+        var output = outputLease.Stream;
         var outputIdentity = GetPhysicalId(output);
         if (outputIdentity == sourceIdentity || output.Length != expectedOutput.Length ||
             await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
             throw new InvalidDataException("The relink output differs from its saved recovery evidence.");
 
-        var leases = new List<FileStream>();
+        var leases = new List<VerifiedFileLease>();
         try
         {
             var directory = Path.GetDirectoryName(intent.Output)!;
@@ -250,8 +250,10 @@ internal static partial class AssetRelinkRecovery
         ArgumentNullException.ThrowIfNull(persist);
         token.ThrowIfCancellationRequested();
         ValidatePaths(receipt.Source, receipt.Output);
-        await using var source = OpenVerifiedPath(receipt.Source);
-        await using var output = OpenVerifiedPath(receipt.Output);
+        await using var sourceLease = OpenVerifiedPath(receipt.Source);
+        await using var outputLease = OpenVerifiedPath(receipt.Output);
+        var source = sourceLease.Stream;
+        var output = outputLease.Stream;
         if (source.Length > MaxSourceBytes || output.Length > MaxSourceBytes + MaxIntentBytes ||
             GetPhysicalId(source) != receipt.SourceIdentity || GetPhysicalId(output) != receipt.OutputIdentity ||
             await HashAsync(source, token).ConfigureAwait(false) != receipt.SourceSha256 ||
@@ -281,13 +283,36 @@ internal static partial class AssetRelinkRecovery
     private static string EvidencePath(string source, Guid operationId)
         => Path.Combine(Path.GetDirectoryName(source)!, $".ymmpm-relink-{operationId:N}.json");
 
-    private static FileStream OpenVerifiedPath(string path)
+    private sealed class VerifiedFileLease(OwnedFilePublication.DirectoryFence fence, FileStream stream) : IAsyncDisposable
     {
-        for (var directory = new DirectoryInfo(Path.GetDirectoryName(path)!); directory is not null; directory = directory.Parent)
-            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("A relink path traverses a reparse point.");
-        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-            throw new IOException("A relink path is not a regular file.");
-        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        public FileStream Stream { get; } = stream;
+
+        public async ValueTask DisposeAsync()
+        {
+            try { await Stream.DisposeAsync().ConfigureAwait(false); }
+            finally { fence.Dispose(); }
+        }
+    }
+
+    private static VerifiedFileLease OpenVerifiedPath(string path, bool allowRename = false)
+    {
+        var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
+        try
+        {
+            var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename);
+            try { return new VerifiedFileLease(fence, new FileStream(handle, FileAccess.Read)); }
+            catch { handle.Dispose(); throw; }
+        }
+        catch (IOException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 2 })
+        {
+            fence.Dispose();
+            throw new FileNotFoundException("The relink file was not found.", path, ex);
+        }
+        catch
+        {
+            fence.Dispose();
+            throw;
+        }
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));

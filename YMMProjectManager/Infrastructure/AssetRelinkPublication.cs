@@ -15,18 +15,18 @@ internal static partial class AssetRelinkRecovery
     {
         var evidencePath = Path.GetFullPath(evidence);
         await using var stream = OpenVerifiedPath(evidencePath);
-        var intent = await ReadIntentAsync(stream, evidencePath, context.YmmpPath, token).ConfigureAwait(false);
+        var intent = await ReadIntentAsync(stream.Stream, evidencePath, context.YmmpPath, token).ConfigureAwait(false);
         if (intent.Version != 4 || context.OriginalBytes is not { } original || original.Length > MaxSourceBytes ||
             Hash(original) != intent.SourceSha256)
             throw new InvalidDataException("The managed relink save does not match its prepared source.");
 
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(intent.Source)!);
-        await using var source = OpenVerifiedPath(intent.Source);
+        await using var sourceLease = OpenVerifiedPath(intent.Source);
+        var source = sourceLease.Stream;
         if (GetPhysicalId(source) != intent.SourceIdentity || source.Length != original.Length ||
             await HashAsync(source, token).ConfigureAwait(false) != intent.SourceSha256)
             throw new InvalidDataException("The source project changed after relink preparation.");
 
-        var candidates = new List<FileStream>();
+        var candidates = new List<VerifiedFileLease>();
         try
         {
             foreach (var comparison in intent.Approved.DistinctBy(item => item.CandidatePath, StringComparer.OrdinalIgnoreCase))
@@ -34,7 +34,7 @@ internal static partial class AssetRelinkRecovery
                 token.ThrowIfCancellationRequested();
                 var candidate = OpenVerifiedPath(comparison.CandidatePath);
                 candidates.Add(candidate);
-                if (await HashAsync(candidate, token).ConfigureAwait(false) != comparison.CandidateSha256)
+                if (await HashAsync(candidate.Stream, token).ConfigureAwait(false) != comparison.CandidateSha256)
                     throw new InvalidDataException("A candidate changed after relink preparation.");
             }
             return await saver.StagePreparedAsync(context, intent.Output, StagedOutputPath(evidencePath),
@@ -52,12 +52,13 @@ internal static partial class AssetRelinkRecovery
         }
     }
 
-    private static async Task<(FileStream Stream, bool NeedsPublication)> OpenOutputAsync(Intent intent, string evidencePath,
+    private static async Task<(VerifiedFileLease Lease, bool NeedsPublication)> OpenOutputAsync(Intent intent, string evidencePath,
         bool resume, CancellationToken token)
     {
         if (intent.Version != 4) return (OpenVerifiedPath(intent.Output), false);
 
-        await using var proof = OpenVerifiedPath(PublicationPath(evidencePath));
+        await using var proofLease = OpenVerifiedPath(PublicationPath(evidencePath));
+        var proof = proofLease.Stream;
         if (proof.Length > MaxPublicationBytes) throw new InvalidDataException("The relink publication record is too large.");
         var publication = await JsonSerializer.DeserializeAsync<OutputPublication>(proof, JsonOptions, token).ConfigureAwait(false);
         if (publication is not { Version: 1 } || publication.OperationId != intent.OperationId ||
@@ -65,18 +66,16 @@ internal static partial class AssetRelinkRecovery
             throw new InvalidDataException("The relink publication record does not match the managed output.");
 
         var pending = false;
-        FileStream output;
+        VerifiedFileLease output;
         try { output = OpenVerifiedPath(intent.Output); }
         catch (FileNotFoundException) when (resume)
         {
-            var handle = OwnedFilePublication.OpenOrdinaryPath(StagedOutputPath(evidencePath), expectDirectory: false, allowRename: true);
-            try { output = new FileStream(handle, FileAccess.Read); }
-            catch { handle.Dispose(); throw; }
+            output = OpenVerifiedPath(StagedOutputPath(evidencePath), allowRename: true);
             pending = true;
         }
         try
         {
-            if (GetPhysicalId(output) != publication.Identity)
+            if (GetPhysicalId(output.Stream) != publication.Identity)
                 throw new InvalidDataException("The relink output was replaced or does not match the prepared publication.");
             return (output, pending);
         }

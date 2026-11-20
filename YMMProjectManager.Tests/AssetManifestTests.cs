@@ -105,6 +105,7 @@ internal static class AssetManifestTests
         void CheckHistorySharing()
         {
             checkpoints++;
+            AssertDirectoryPinned(directory);
             foreach (var path in paths)
             {
                 try { using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read); }
@@ -126,6 +127,22 @@ internal static class AssetManifestTests
                 throw new Exception("historical revision bytes changed");
             using var writer = new FileStream(paths[i], FileMode.Open, FileAccess.Write, FileShare.Read);
         }
+        using (OwnedFilePublication.OpenOrdinaryPath(directory, expectDirectory: true, allowRename: true,
+            FileShare.ReadWrite | FileShare.Delete)) { }
+    }
+
+    private static void AssertDirectoryPinned(string directory)
+    {
+        try
+        {
+            using var directoryWrite = OwnedFilePublication.OpenOrdinaryPath(directory, expectDirectory: true, allowRename: true,
+                FileShare.ReadWrite | FileShare.Delete);
+        }
+        catch (IOException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 32 })
+        {
+            return;
+        }
+        throw new Exception("the operation did not hold the verified directory path");
     }
 
     private static async Task TestRelinkRecoveryAsync(string root)
@@ -202,6 +219,7 @@ internal static class AssetManifestTests
         var persisted = false;
         await AssetRelinkRecovery.WithVerifiedProjectsAsync(transfer, _ =>
         {
+            AssertDirectoryPinned(folder);
             foreach (var path in new[] { source, output })
             {
                 try
@@ -215,6 +233,8 @@ internal static class AssetManifestTests
             return Task.CompletedTask;
         }, default);
         if (!persisted) throw new Exception("association transfer did not run with valid files");
+        using (OwnedFilePublication.OpenOrdinaryPath(folder, expectDirectory: true, allowRename: true,
+            FileShare.ReadWrite | FileShare.Delete)) { }
 
         // This operation treats equally hashed bytes in a different physical file as a replacement.
         foreach (var path in new[] { source, output })

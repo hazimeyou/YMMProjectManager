@@ -58,7 +58,7 @@ public static class AssetRevisionSeries
             token.ThrowIfCancellationRequested();
             if (history.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
             var full = Path.GetFullPath(file);
-            ValidateDirectory(Path.GetDirectoryName(full)!);
+            using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true);
             var bytes = await ReadRegularFileAsync(full, remainingBytes, token).ConfigureAwait(false);
             remainingBytes -= bytes.Length;
             var node = ParseNode(bytes);
@@ -123,7 +123,7 @@ public static class AssetRevisionSeries
         if (root.ParentRevisionId is not null) throw new InvalidDataException("A series must start with an actual root revision.");
         root = Snapshot(root);
         var full = ValidateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
         await using var gate = AcquireLock(full);
         if ((await ReadNodesAsync(full, token).ConfigureAwait(false)).Count != 0)
             throw new InvalidDataException("The revision series already contains history.");
@@ -142,7 +142,7 @@ public static class AssetRevisionSeries
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
         await using var gate = AcquireLock(full);
         return await InspectCoreAsync(full, token).ConfigureAwait(false);
     }
@@ -152,7 +152,7 @@ public static class AssetRevisionSeries
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
         await using var gate = AcquireLock(full);
         return InspectGraph(await ReadNodesAsync(full, token).ConfigureAwait(false));
     }
@@ -219,7 +219,7 @@ public static class AssetRevisionSeries
         if (next.ProjectId != expected.ProjectId || next.ParentRevisionId != expected.RevisionId)
             throw new InvalidDataException("The new revision does not reference the expected project and parent.");
         var full = ValidateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
         await using var gate = AcquireLock(full);
         using var history = new RevisionReadPins();
         var nodes = await ReadNodesAsync(full, token, history).ConfigureAwait(false);
@@ -351,9 +351,9 @@ public static class AssetRevisionSeries
 
     private static FileStream OpenRegularRevision(string path, int bufferSize = 81920)
     {
-        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-            throw new InvalidDataException("A revision entry is not a regular file.");
-        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, true);
+        var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
+        try { return new FileStream(handle, FileAccess.Read, bufferSize); }
+        catch { handle.Dispose(); throw; }
     }
 
     private static async Task<byte[]> ReadRevisionBytesAsync(FileStream stream, int remainingBytes, CancellationToken token)
