@@ -292,13 +292,17 @@ public sealed class JsonProjectRepository : IProjectRepository
 
     internal async Task ExportOriginalAsync(string destination, CancellationToken token = default)
     {
-        var bytes = await File.ReadAllBytesAsync(jsonPath, token).ConfigureAwait(false);
+        var bytes = await ReadOriginalAsync(token).ConfigureAwait(false);
         await WriteNewCopyAsync(Path.GetFullPath(destination), bytes, token).ConfigureAwait(false);
     }
 
-    private static async Task WriteNewCopyAsync(string destination, byte[] bytes, CancellationToken token)
+    internal Task<byte[]> ReadOriginalAsync(CancellationToken token = default) =>
+        File.ReadAllBytesAsync(jsonPath, token);
+
+    internal static async Task WriteNewCopyAsync(string destination, byte[] bytes, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        destination = Path.GetFullPath(destination);
         var directory = Path.GetDirectoryName(destination)!;
         var candidate = Path.Combine(directory, $"{Path.GetFileName(destination)}.tmp-{Guid.NewGuid():N}");
         var owned = false;
