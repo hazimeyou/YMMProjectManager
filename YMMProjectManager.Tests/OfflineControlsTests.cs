@@ -36,7 +36,8 @@ internal static class OfflineControlsTests
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
             await Invoke("InspectGitPullAsync");
-            if (!vm.GitStatus.Contains("通信や Pull は実行していません") || vm.PullGitCommand.CanExecute(null))
+            if (!vm.GitStatus.Contains("ローカルの追跡情報を確認しました") ||
+                !vm.GitStatus.Contains("更新を伴う Pull は無効です") || vm.PullGitCommand.CanExecute(null))
                 throw new Exception("nested project Pull assessment did not reach its containing repository");
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             await Invoke("FindAssetCandidatesAsync");
