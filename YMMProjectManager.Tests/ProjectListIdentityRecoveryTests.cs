@@ -170,6 +170,28 @@ internal static class ProjectListIdentityRecoveryTests
         var unresolved = await ProjectListIdentityRecovery.InspectPhysicalAsync(recordedOnly);
         if (unresolved.Conflicts.Count != 0 || unresolved.UnverifiedRecordedDuplicates.Single().Entries.Count != 2)
             throw new Exception("Stored duplicate evidence was treated as a live physical duplicate.");
+
+        var samePath = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Projects = new[]
+            {
+                new { FullPath = source, ProjectId = firstId, FutureRow = "first" },
+                new { FullPath = Path.Combine(root, ".", "source.ymmp"), ProjectId = keeperId, FutureRow = "keep this row" },
+            },
+            Folders = Array.Empty<object>(),
+        });
+        ExpectInvalid(() => ProjectListIdentityRecovery.Inspect(samePath));
+        await File.WriteAllBytesAsync(active, samePath);
+        var samePathReview = await ProjectListIdentityRecovery.InspectPhysicalAsync(samePath);
+        var repeatedRows = samePathReview.Conflicts.Single();
+        if (repeatedRows.Entries.Count != 2) throw new Exception("Repeated normalized path was not reviewed as two registrations.");
+        var samePathBackup = Path.Combine(root, "same-path-original.json");
+        await ProjectListIdentityRecovery.ApplyPhysicalAsync(repository, samePathReview,
+            new Dictionary<(ulong, Guid), int> { [(repeatedRows.Volume, repeatedRows.FileId)] = 1 }, samePathBackup, default);
+        var samePathResult = await repository.LoadAsync();
+        var samePathOriginal = await File.ReadAllBytesAsync(samePathBackup);
+        if (samePathResult.Projects.Single().ProjectId != keeperId || !samePath.SequenceEqual(samePathOriginal))
+            throw new Exception("Repeated path repair did not use the selected registration or archive the exact original.");
     }
 
     [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]

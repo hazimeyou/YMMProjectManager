@@ -17,10 +17,7 @@ internal static partial class ProjectListIdentityRecovery
     internal static Review Inspect(byte[] bytes)
     {
         using var input = Load(bytes);
-        CheckProperties(input.RootElement);
-        if (input.RootElement.ValueKind != JsonValueKind.Object ||
-            !input.RootElement.TryGetProperty("Projects", out var projects) || projects.ValueKind != JsonValueKind.Array)
-            throw new InvalidDataException("一覧の Projects 配列を確認できません。");
+        var projects = ReadProjects(input);
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byId = new Dictionary<Guid, List<Entry>>();
@@ -28,21 +25,18 @@ internal static partial class ProjectListIdentityRecovery
         var row = 0;
         foreach (var project in projects.EnumerateArray())
         {
-            if (project.ValueKind != JsonValueKind.Object ||
-                !project.TryGetProperty("FullPath", out var pathValue) || pathValue.ValueKind != JsonValueKind.String ||
-                pathValue.GetString() is not { } path || !Path.IsPathFullyQualified(path) || !paths.Add(Path.GetFullPath(path)))
-                throw new InvalidDataException("無効または重複するパスがあり、一覧項目を識別できません。");
+            var path = ReadProjectPath(project);
+            if (!paths.Add(Path.GetFullPath(path)))
+                throw new InvalidDataException("重複するパスがあります。先に同じファイルの重複登録を確認してください。");
 
             var index = row++;
             var entry = new Entry(index, path,
                 project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null);
-            if (!project.TryGetProperty("ProjectId", out var value) || value.ValueKind == JsonValueKind.Null)
+            if (ReadProjectId(project) is not Guid id)
             {
                 legacy.Add(entry);
                 continue;
             }
-            if (value.ValueKind != JsonValueKind.String || !value.TryGetGuid(out var id) || id == Guid.Empty)
-                throw new InvalidDataException("不正なプロジェクト ID があります。");
             if (!byId.TryGetValue(id, out var group)) byId.Add(id, group = []);
             group.Add(entry);
         }
@@ -121,6 +115,33 @@ internal static partial class ProjectListIdentityRecovery
         if (bytes.Length > MaximumBytes) throw new InvalidDataException("一覧が大きすぎるため、修復できません。");
         var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
         return JsonDocument.Parse(bytes.AsMemory(offset));
+    }
+
+    private static JsonElement ReadProjects(JsonDocument input)
+    {
+        CheckProperties(input.RootElement);
+        if (input.RootElement.ValueKind != JsonValueKind.Object ||
+            !input.RootElement.TryGetProperty("Projects", out var projects) || projects.ValueKind != JsonValueKind.Array)
+            throw new InvalidDataException("一覧の Projects 配列を確認できません。");
+        return projects;
+    }
+
+    private static string ReadProjectPath(JsonElement project)
+    {
+        if (project.ValueKind != JsonValueKind.Object ||
+            !project.TryGetProperty("FullPath", out var value) || value.ValueKind != JsonValueKind.String ||
+            value.GetString() is not { } path || !Path.IsPathFullyQualified(path))
+            throw new InvalidDataException("無効なプロジェクトのパスがあります。");
+        return path;
+    }
+
+    private static Guid? ReadProjectId(JsonElement project)
+    {
+        if (!project.TryGetProperty("ProjectId", out var value) || value.ValueKind == JsonValueKind.Null)
+            return null;
+        if (value.ValueKind != JsonValueKind.String || !value.TryGetGuid(out var id) || id == Guid.Empty)
+            throw new InvalidDataException("不正なプロジェクト ID があります。");
+        return id;
     }
 
     private static void CheckProperties(JsonElement element)

@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -19,15 +20,14 @@ internal static partial class ProjectListIdentityRecovery
 
     private static PhysicalReview InspectPhysical(byte[] bytes, CancellationToken token)
     {
-        var original = Inspect(bytes);
         using var input = Load(bytes);
         var observations = new List<PhysicalObservation>();
-        foreach (var project in input.RootElement.GetProperty("Projects").EnumerateArray())
+        foreach (var project in ReadProjects(input).EnumerateArray())
         {
             token.ThrowIfCancellationRequested();
-            var path = project.GetProperty("FullPath").GetString()!;
+            var path = ReadProjectPath(project);
             var entry = new PhysicalEntry(observations.Count, path,
-                project.TryGetProperty("ProjectId", out var id) && id.ValueKind == JsonValueKind.String ? id.GetGuid() : null,
+                ReadProjectId(project),
                 project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null,
                 project.TryGetProperty("LinkedYmmpFiles", out var links) && links.ValueKind == JsonValueKind.Array ? links.GetArrayLength() : 0);
             observations.Add(new PhysicalObservation(entry, GetRecordedPhysicalId(project), TryObservePhysicalId(path)));
@@ -50,7 +50,7 @@ internal static partial class ProjectListIdentityRecovery
             if (!unresolved.TryGetValue(group.Key, out var rows)) unresolved.Add(group.Key, rows = []);
             rows.UnionWith(group.Select(item => item.Entry));
         }
-        return new PhysicalReview(original.Sha256, conflicts,
+        return new PhysicalReview(Convert.ToHexString(SHA256.HashData(bytes)), conflicts,
             unresolved.Select(pair => new PhysicalConflict(pair.Key.Volume, pair.Key.FileId, pair.Value.OrderBy(entry => entry.Row).ToArray())).ToArray(),
             observations.Count(item => !item.Observed.HasValue));
     }
