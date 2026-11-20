@@ -52,15 +52,15 @@ public sealed class GitRepository
         WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
         {
             if (!HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
-            using var lease = operation == GitRemoteOperation.Fetch ? GitRepositoryLease.TryOpen(directory) : null;
-            if (operation == GitRemoteOperation.Fetch && lease is null)
+            using var lease = GitRepositoryLease.TryOpen(directory);
+            if (lease is null)
                 return UnsafeRemote("Could not verify the repository and its Git directory identity.");
             var (url, error) = await ResolveOriginAsync(operation == GitRemoteOperation.Push, deadline, literal: true).ConfigureAwait(false);
             if (error is not null) return error;
             var result = new GitResult(0, url!, "");
             if (operation == GitRemoteOperation.Fetch)
-                return result with { FetchTarget = new GitFetchTarget(directory, url!, lease!.Identity) };
-            var (target, tipError) = await ReadPushTargetAsync(url!, trusted: true, deadline).ConfigureAwait(false);
+                return result with { FetchTarget = new GitFetchTarget(directory, url!, lease.Identity) };
+            var (target, tipError) = await ReadPushTargetAsync(url!, trusted: true, deadline, lease.Identity).ConfigureAwait(false);
             return tipError ?? result with { PushTarget = target };
         }, token, RemoteTimeout);
 
@@ -113,6 +113,9 @@ public sealed class GitRepository
         token.ThrowIfCancellationRequested();
         if (!HasDirectRepository())
             return new GitPullAssessment(GitPullState.Unavailable, Message: "Select the main repository root on a regular filesystem path.");
+        using var lease = GitRepositoryLease.TryOpen(directory);
+        if (lease is null)
+            return new GitPullAssessment(GitPullState.Unavailable, Message: "Could not verify the repository and its Git directory identity.");
         var (branch, error) = await ReadBranchTipAsync(trusted: true, token).ConfigureAwait(false);
         if (error is not null) return new GitPullAssessment(GitPullState.Unavailable, Message: error.StandardError);
         var tracking = "refs/remotes/origin/" + branch!.BranchRef[BranchRefPrefix.Length..];
@@ -193,12 +196,15 @@ public sealed class GitRepository
     {
         var trusted = expectedRemote is not null;
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+        if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
+            return UnsafeRemote("This push approval belongs to a different repository.");
+        using var lease = approvedTarget is null ? null : GitRepositoryLease.TryOpen(directory);
+        if (approvedTarget is not null && (lease is null || lease.Identity != approvedTarget.Identity))
+            return UnsafeRemote("The approved repository or its Git directory changed. Review the push target again.");
         var (url, error) = await ResolveOriginAsync(push: true, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
         if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
-        if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
-            return UnsafeRemote("This push approval belongs to a different repository.");
-        var (current, tipError) = await ReadPushTargetAsync(url!, trusted, token).ConfigureAwait(false);
+        var (current, tipError) = await ReadPushTargetAsync(url!, trusted, token, lease?.Identity).ConfigureAwait(false);
         if (tipError is not null) return tipError;
         if (approvedTarget is not null && approvedTarget != current)
             return UnsafeRemote("The branch or commit changed since approval. Review the push target again.");
@@ -206,7 +212,7 @@ public sealed class GitRepository
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before push.");
         if (approvedTarget is not null)
         {
-            var (lastTarget, _) = await ReadPushTargetAsync(url!, trusted: true, token).ConfigureAwait(false);
+            var (lastTarget, _) = await ReadPushTargetAsync(url!, trusted: true, token, lease!.Identity).ConfigureAwait(false);
             if (approvedTarget != lastTarget)
                 return UnsafeRemote("The branch or commit changed before push. Review the push target again.");
         }
@@ -219,10 +225,11 @@ public sealed class GitRepository
              "--", target.Endpoint, target.ObjectId + ":" + target.BranchRef], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
     }
 
-    private async Task<(GitPushTarget? Target, GitResult? Error)> ReadPushTargetAsync(string url, bool trusted, CancellationToken token)
+    private async Task<(GitPushTarget? Target, GitResult? Error)> ReadPushTargetAsync(string url, bool trusted, CancellationToken token,
+        GitRepositoryIdentity? identity)
     {
         var (branch, error) = await ReadBranchTipAsync(trusted, token).ConfigureAwait(false);
-        return error is not null ? (null, error) : (new GitPushTarget(directory, url, branch!.BranchRef, branch.ObjectId), null);
+        return error is not null ? (null, error) : (new GitPushTarget(directory, url, branch!.BranchRef, branch.ObjectId, identity), null);
     }
 
     private sealed record BranchTip(string BranchRef, string ObjectId);
@@ -623,18 +630,20 @@ public sealed class GitFetchTarget
 
 public sealed record GitPushTarget
 {
-    internal GitPushTarget(string repositoryRoot, string endpoint, string branchRef, string objectId)
+    internal GitPushTarget(string repositoryRoot, string endpoint, string branchRef, string objectId, GitRepositoryIdentity? identity)
     {
         RepositoryRoot = repositoryRoot;
         Endpoint = endpoint;
         BranchRef = branchRef;
         ObjectId = objectId;
+        Identity = identity;
     }
 
     public string RepositoryRoot { get; }
     public string Endpoint { get; }
     public string BranchRef { get; }
     public string ObjectId { get; }
+    internal GitRepositoryIdentity? Identity { get; }
 }
 
 public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError, GitFailure Failure = GitFailure.None)

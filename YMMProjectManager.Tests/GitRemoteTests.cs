@@ -236,6 +236,26 @@ internal static class GitRemoteTests
                 approval.ObjectId == cloneTip && approval.RepositoryRoot == clone, "push inspection identified the wrong target");
             Check((await one.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push approval reused for another repository");
 
+            var originalPushCheckout = Path.Combine(root, "push-identity");
+            var retainedPushCheckout = Path.Combine(root, "push-retained");
+            var alternatePushCheckout = Path.Combine(root, "push-other");
+            Check((await GitRepository.CloneTrustedAsync(bare, originalPushCheckout)).Success, "first push identity checkout");
+            Check((await GitRepository.CloneTrustedAsync(bare, alternatePushCheckout)).Success, "second push identity checkout");
+            var identityPushRepository = new GitRepository(originalPushCheckout);
+            var oldPushTarget = (await identityPushRepository.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
+                ?? throw new InvalidOperationException("missing approved push identity");
+            Directory.Move(originalPushCheckout, retainedPushCheckout);
+            Directory.Move(alternatePushCheckout, originalPushCheckout);
+            var currentPushTarget = (await identityPushRepository.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
+                ?? throw new InvalidOperationException("missing replacement push identity");
+            Check(currentPushTarget.RepositoryRoot == oldPushTarget.RepositoryRoot && currentPushTarget.Endpoint == oldPushTarget.Endpoint &&
+                currentPushTarget.BranchRef == oldPushTarget.BranchRef && currentPushTarget.ObjectId == oldPushTarget.ObjectId,
+                "replacement checkout differed in visible approval values");
+            Check((await identityPushRepository.PushTrustedAsync(oldPushTarget)).Failure == GitFailure.UnsafeOperation,
+                "stale push approval reused against a replacement repository");
+            Check((await identityPushRepository.PushTrustedAsync(currentPushTarget)).Success,
+                "fresh approval for a stable replacement was rejected");
+
             const string approvedBranch = "approval-fixture";
             var approvedRef = "refs/heads/" + approvedBranch;
             await Command(clone, "switch", "-c", approvedBranch);
