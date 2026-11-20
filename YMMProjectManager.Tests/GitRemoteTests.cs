@@ -23,7 +23,8 @@ internal static class GitRemoteTests
                 await process.WaitForExitAsync(); var stdout = await output; var stderr = await error;
                 Check(process.ExitCode == 0, "fixture git: " + stderr); return stdout.Trim();
             }
-            var source = Path.Combine(root, "source"); var bare = Path.Combine(root, "remote.git"); var clone = Path.Combine(root, "clone");
+            // A number embedded in a destination path must not be mistaken for an HTTP error.
+            var source = Path.Combine(root, "source"); var bare = Path.Combine(root, "remote-403.git"); var clone = Path.Combine(root, "clone");
             Directory.CreateDirectory(source); var one = new GitRepository(source); Check((await one.InitializeAsync()).Success, "init");
             Check(!(await one.FetchAsync()).Success, "missing remote accepted");
             await Command(source, "config", "user.name", "Synthetic Tester"); await Command(source, "config", "user.email", "synthetic@example.invalid");
@@ -73,6 +74,7 @@ internal static class GitRemoteTests
             await Command(source, "remote", "set-url", "origin", bare);
             Check((await GitRepository.CloneAsync(bare, clone)).Success, "clone"); var two = new GitRepository(clone);
             await Command(clone, "config", "user.name", "Synthetic Tester"); await Command(clone, "config", "user.email", "synthetic@example.invalid");
+            await Command(clone, "tag", branch);
             await File.WriteAllTextAsync(Path.Combine(clone, "two.txt"), "two");
             Check((await two.StageAsync(["two.txt"])).Success && (await two.CommitAsync("second")).Success && (await two.PushAsync()).Success, "clone push");
             await Command(source, "branch", "race-side");
@@ -107,11 +109,13 @@ internal static class GitRemoteTests
             await File.WriteAllTextAsync(Path.Combine(clone, "remote.txt"), "remote");
             Check((await two.StageAsync(["remote.txt"])).Success && (await two.CommitAsync("remote")).Success && (await two.PushAsync()).Success, "remote commit");
             var prior = await Command(source, "rev-parse", "HEAD");
+            var remoteBeforeRejectedPush = await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch);
             var rejectedPush = await one.PushAsync(); var rejectedPull = await one.PullAsync();
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
             Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, $"failure classification: push={rejectedPush.Failure}, pull={rejectedPull.Failure}");
             Program.ReportConditionalSkip("product pull divergence classification disabled pending safe pull implementation");
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
+            Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == remoteBeforeRejectedPush, "divergence changed remote head");
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");
             var unsafeOrigin = await one.OriginAsync();
             Check(!unsafeOrigin.Success && !unsafeOrigin.StandardOutput.Contains("secret") && !unsafeOrigin.StandardError.Contains("secret"), "credential disclosure");
@@ -121,6 +125,8 @@ internal static class GitRemoteTests
             var once = await Command(source, "remote", "get-url", "origin");
             var twice = await Command(source, "ls-remote", "--get-url", once);
             Check(once == "https://beta.invalid/repo" && twice == "https://gamma.invalid/repo", "rewrite fixture changed");
+            var rejectedRewrite = await one.FetchAsync();
+            Check(!rejectedRewrite.Success && rejectedRewrite.Failure == GitFailure.UnsafeOperation, "fetch should refuse a second URL rewrite before remote execution");
             await Command(source, "remote", "set-url", "origin", bare);
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
@@ -136,6 +142,20 @@ internal static class GitRemoteTests
             var race = await GitRepository.CloneCoreAsync(bare, raced, () => { Directory.CreateDirectory(raced); File.WriteAllText(Path.Combine(raced, "sentinel"), "keep"); }, CancellationToken.None);
             Check(!race.Success && race.RecoveryPath is not null && Directory.Exists(race.RecoveryPath), "race clone recovery");
             Check(File.ReadAllText(Path.Combine(raced, "sentinel")) == "keep", "race overwrote destination");
+            using (var publicationCancellation = new CancellationTokenSource())
+            {
+                var destination = Path.Combine(root, "cancel-at-publication");
+                try
+                {
+                    await GitRepository.CloneCoreAsync(bare, destination, publicationCancellation.Cancel, publicationCancellation.Token);
+                    throw new InvalidOperationException("cancelled clone published its destination");
+                }
+                catch (OperationCanceledException exception)
+                {
+                    Check(!Directory.Exists(destination) && exception.Data["CloneRecoveryPath"] is string recovery && Directory.Exists(recovery),
+                        "cancelled clone did not retain recoverable staging");
+                }
+            }
             var deep = root;
             while (deep.Length < 225) deep = Path.Combine(deep, "abcdefghij");
             if (deep.Length >= 248) Program.ReportConditionalSkip("long-path clone fixture parent exceeds Windows process working-directory limits");

@@ -9,6 +9,7 @@ namespace YMMProjectManager.Infrastructure.Git;
 public sealed class GitRepository
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
+    private const string BranchRefPrefix = "refs/heads/";
     private readonly string directory;
     internal Action? BeforeRemoteExecution { get; set; }
 
@@ -50,12 +51,12 @@ public sealed class GitRepository
         var (url, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
         if (error is not null) return error;
         BeforeRemoteExecution?.Invoke();
-        return SanitizeRemote(await RunAsync(["fetch", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token).ConfigureAwait(false));
+        return await RunRemoteAsync(url!, ["fetch", "--no-recurse-submodules", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token).ConfigureAwait(false);
     }
 
     public async Task<GitResult> PullAsync(CancellationToken token = default)
     {
-        var (url, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
+        var (_, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
         if (error is not null) return error;
         var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
         if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pulling.");
@@ -73,17 +74,28 @@ public sealed class GitRepository
     {
         var (url, error) = await ResolveOriginAsync(push: true, token).ConfigureAwait(false);
         if (error is not null) return error;
-        var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
+        var branch = await RunAsync(["symbolic-ref", "--quiet", "HEAD"], token).ConfigureAwait(false);
         if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing.");
         var name = branch.StandardOutput.Trim();
-        if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
+        if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
-        var commit = await RunAsync(["rev-parse", "--verify", "refs/heads/" + name + "^{commit}"], token).ConfigureAwait(false);
+        var commit = await RunAsync(["rev-parse", "--verify", name + "^{commit}"], token).ConfigureAwait(false);
         var objectId = commit.StandardOutput.Trim();
         if (!commit.Success || (objectId.Length != 40 && objectId.Length != 64) || !objectId.All(Uri.IsHexDigit))
             return new GitResult(1, "", "Could not determine the branch commit.");
         BeforeRemoteExecution?.Invoke();
-        return SanitizeRemote(await RunAsync(["-c", "push.followTags=false", "push", "--no-follow-tags", "--", url!, objectId + ":refs/heads/" + name], token).ConfigureAwait(false));
+        return await RunRemoteAsync(url!, ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "--", url!, objectId + ":" + name], token, classifyPushStatus: true).ConfigureAwait(false);
+    }
+
+    private async Task<GitResult> RunRemoteAsync(string url, string[] arguments, CancellationToken token, bool classifyPushStatus = false)
+    {
+        // Git may apply insteadOf again when executing a command with an already resolved URL.
+        // This preflight catches a stable rewrite, while protocol limits also apply at execution.
+        var protocol = Path.IsPathFullyQualified(url) ? "file" : "https";
+        var effective = await RunAsync(["ls-remote", "--get-url", "--", url], token, protocol).ConfigureAwait(false);
+        if (!effective.Success || !string.Equals(effective.StandardOutput.TrimEnd('\r', '\n'), url, StringComparison.Ordinal))
+            return new GitResult(1, "", "Git rewrites the selected remote. Confirm the repository configuration before retrying.", GitFailure.UnsafeOperation);
+        return SanitizeRemote(await RunAsync(arguments, token, protocol).ConfigureAwait(false), classifyPushStatus);
     }
 
     public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>
@@ -102,7 +114,7 @@ public sealed class GitRepository
         var temporary = Path.Combine(parent, ".ymmpm-clone-" + Guid.NewGuid().ToString("N"));
         if (!CreateDirectory(ToNativePath(temporary), IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
         GitResult result;
-        try { result = SanitizeRemote(await repository.RunAsync(["clone", "--", remote, temporary], token).ConfigureAwait(false)); }
+        try { result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, temporary], token).ConfigureAwait(false); }
         catch (Exception ex)
         {
             ex.Data["CloneRecoveryPath"] = temporary;
@@ -112,6 +124,7 @@ public sealed class GitRepository
         try
         {
             beforeMove?.Invoke();
+            token.ThrowIfCancellationRequested();
             Directory.Move(temporary, full);
             return result;
         }
@@ -159,20 +172,33 @@ public sealed class GitRepository
     }
 
     // Git, credential helpers and hooks can emit arbitrary secrets; do not return their output for remote operations.
-    private static GitResult SanitizeRemote(GitResult result)
+    private static GitResult SanitizeRemote(GitResult result, bool classifyPushStatus)
     {
         if (result.Success) return new GitResult(result.ExitCode, "", "");
-        var error = result.StandardError;
-        var category = error.Contains("authentication failed", StringComparison.OrdinalIgnoreCase) || error.Contains("could not read Username", StringComparison.OrdinalIgnoreCase)
-            ? GitFailure.Authentication
-            : error.Contains("permission denied", StringComparison.OrdinalIgnoreCase) || error.Contains("403", StringComparison.OrdinalIgnoreCase)
-                ? GitFailure.Permission
-                : error.Contains("non-fast-forward", StringComparison.OrdinalIgnoreCase) || error.Contains("not possible to fast-forward", StringComparison.OrdinalIgnoreCase) || error.Contains("fetch first", StringComparison.OrdinalIgnoreCase)
-                    ? GitFailure.Divergence
-                    : error.Contains("could not resolve host", StringComparison.OrdinalIgnoreCase) || error.Contains("couldn't connect", StringComparison.OrdinalIgnoreCase)
-                        ? GitFailure.Network
-                        : GitFailure.Unknown;
+        var category = classifyPushStatus && HasNonFastForwardRejection(result.StandardOutput)
+            ? GitFailure.Divergence : ClassifyRemoteError(result.StandardError);
         return new GitResult(result.ExitCode, "", "Remote operation failed. Check authentication, connectivity and branch state.", category);
+    }
+
+    private static GitFailure ClassifyRemoteError(string error)
+    {
+        bool Contains(string value) => error.Contains(value, StringComparison.OrdinalIgnoreCase);
+        if (Contains("authentication failed") || Contains("could not read Username")) return GitFailure.Authentication;
+        if (Contains("permission denied") || Contains("requested URL returned error: 403")) return GitFailure.Permission;
+        if (Contains("could not resolve host") || Contains("couldn't connect")) return GitFailure.Network;
+        return GitFailure.Unknown;
+    }
+
+    private static bool HasNonFastForwardRejection(string porcelain)
+    {
+        foreach (var line in porcelain.Split('\n'))
+        {
+            if (!line.StartsWith("!\t", StringComparison.Ordinal)) continue;
+            var separator = line.LastIndexOf('\t');
+            var status = line[(separator + 1)..].TrimEnd('\r');
+            if (status is "[rejected] (non-fast-forward)" or "[rejected] (fetch first)") return true;
+        }
+        return false;
     }
 
     private Task<GitResult> RunBranchAsync(string command, string name, CancellationToken token)
@@ -199,7 +225,7 @@ public sealed class GitRepository
         return RunAsync(args, token);
     }
 
-    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token)
+    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo("git")
@@ -222,6 +248,14 @@ public sealed class GitRepository
             start.Environment.Remove(name);
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
+        start.Environment["LC_ALL"] = "C";
+        if (allowedProtocol is not null)
+        {
+            var parentProtocols = start.Environment.TryGetValue("GIT_ALLOW_PROTOCOL", out var value) ? value : null;
+            start.Environment["GIT_ALLOW_PROTOCOL"] = parentProtocols is null || parentProtocols.Split(':').Contains(allowedProtocol, StringComparer.Ordinal)
+                ? allowedProtocol : string.Empty;
+            start.Environment.Remove("GIT_EXEC_PATH");
+        }
         // Status refresh must not silently start a repository-configured fsmonitor process.
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add("core.fsmonitor=false");
@@ -229,13 +263,16 @@ public sealed class GitRepository
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync();
-        var error = process.StandardError.ReadToEndAsync();
-        try { await process.WaitForExitAsync(deadline.Token).ConfigureAwait(false); }
+        var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
+        var error = process.StandardError.ReadToEndAsync(deadline.Token);
+        try { await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error).ConfigureAwait(false); }
         catch (OperationCanceledException)
         {
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch (InvalidOperationException) { }
-            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            catch (Win32Exception) { }
+            using var shutdown = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+            try { await process.WaitForExitAsync(shutdown.Token).ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
             if (token.IsCancellationRequested) throw;
             throw new TimeoutException("Git operation timed out.");
         }
