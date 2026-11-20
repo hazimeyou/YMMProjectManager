@@ -146,13 +146,20 @@ public static class AssetRevisionSeries
 
     /// <summary>Publishes a new revision only if the expected head identity and bytes still match.</summary>
     public static Task<Head> AppendAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
-        => AppendCoreAsync(directory, expected, next, acceptCommittedRevision: false, token);
+        => AppendCoreAsync(directory, null, expected, next, acceptCommittedRevision: false, token);
+
+    public static Task<Head> AppendAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token = default)
+        => AppendCoreAsync(directory, expectedRoot, expected, next, acceptCommittedRevision: false, token);
 
     /// <summary>Retries a fixed revision without creating another if the exact expected revision was already published.</summary>
     public static Task<Head> AppendOrVerifyAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
-        => AppendCoreAsync(directory, expected, next, acceptCommittedRevision: true, token);
+        => AppendCoreAsync(directory, null, expected, next, acceptCommittedRevision: true, token);
 
-    private static async Task<Head> AppendCoreAsync(string directory, Head expected, AssetManifest next, bool acceptCommittedRevision, CancellationToken token)
+    internal static Task<Head> AppendOrVerifyAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token)
+        => AppendCoreAsync(directory, expectedRoot, expected, next, acceptCommittedRevision: true, token);
+
+    private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head expected, AssetManifest next,
+        bool acceptCommittedRevision, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(expected);
         token.ThrowIfCancellationRequested();
@@ -163,6 +170,8 @@ public static class AssetRevisionSeries
         await using var gate = AcquireLock(full);
         var nodes = await ReadNodesAsync(full, token).ConfigureAwait(false);
         var inspection = InspectNodes(nodes);
+        if (expectedRoot is not null && inspection.Root != expectedRoot)
+            throw new InvalidDataException("The associated metadata series changed; reload before updating.");
         var head = MakeHead(next);
         if (acceptCommittedRevision && inspection.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
         {

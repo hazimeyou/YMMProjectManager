@@ -133,6 +133,17 @@ internal static class AssetManifestTests
         if (await AssetRevisionSeries.ReadHeadAsync(seriesDirectory) != head) throw new Exception("a failed relink changed the metadata head");
         var completed = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
         var repeated = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+        var rootFile = Path.Combine(seriesDirectory, $"revision-{head.RevisionId:N}.json");
+        var rootBytes = await File.ReadAllBytesAsync(rootFile);
+        await File.AppendAllTextAsync(rootFile, " ");
+        var observed = await AssetRevisionSeries.InspectAsync(seriesDirectory);
+        if (observed.Head != completed || observed.Root == head)
+            throw new Exception("the fixture must change only the root receipt");
+        var uncommitted = AssetManifestStore.Create(output, [], DateTimeOffset.UtcNow,
+            observed.Revisions[^1].Manifest, true, projectId: head.ProjectId);
+        await RejectAsync(() => AssetRevisionSeries.AppendAsync(seriesDirectory, head, completed, uncommitted));
+        await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default));
+        await File.WriteAllBytesAsync(rootFile, rootBytes);
         var pendingOutput = Path.Combine(folder, "pending.ymmp");
         var pendingReview = await AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, completed, default);
         var pending = await AssetRelinkRecovery.PrepareAsync(context, pendingOutput, seriesDirectory, head, completed, pendingReview, true, default);

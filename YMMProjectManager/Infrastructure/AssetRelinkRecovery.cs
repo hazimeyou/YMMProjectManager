@@ -156,7 +156,7 @@ internal static class AssetRelinkRecovery
             if (!review.SequenceEqual(intent.Approved) ||
                 !JsonSerializer.SerializeToUtf8Bytes(derived).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(intent.Next)))
                 throw new InvalidDataException("The pending metadata does not match the relink evidence.");
-            return await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, intent.Parent, intent.Next, token).ConfigureAwait(false);
+            return await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
         }
         finally
         {
