@@ -75,6 +75,24 @@ internal static class RealYmmpxR5Tests
             if (!retried.Success || !File.Exists(retried.RestoredProjectPath) || !bytes.SequenceEqual(packageAfter))
                 throw new InvalidOperationException("Retry could not publish without changing the original package.");
         });
+        await Program.RunNamedCaseAsync("Real YMMPX preserves Unicode names and unrelated project fields", async () =>
+        {
+            var namedProject = Path.Combine(root, "場面 名前.ymmp");
+            var original = """{"Items":[{"FilePath":"asset.png","Caption":"日本語"}],"FutureData":{"Revision":7,"Labels":["alpha","絵"]}}""";
+            await File.WriteAllTextAsync(namedProject, original);
+            var namedPackage = Path.Combine(root, "別の出力.ymmpx");
+            var packageResult = await service.CreatePackageAsync(namedProject, namedPackage, default);
+            if (!packageResult.Success) throw new InvalidOperationException(packageResult.ErrorMessage);
+            var extraction = await service.ExtractPackageAsync(namedPackage, Path.Combine(root, "unicode-extract"), default);
+            if (!extraction.Success || Path.GetFileName(extraction.RestoredProjectPath) != "場面 名前.ymmp")
+                throw new InvalidOperationException("Package did not preserve the selected project name.");
+            using var restored = JsonDocument.Parse(await File.ReadAllTextAsync(extraction.RestoredProjectPath!));
+            using var source = JsonDocument.Parse(original);
+            if (!JsonElement.DeepEquals(source.RootElement.GetProperty("FutureData"), restored.RootElement.GetProperty("FutureData")) ||
+                restored.RootElement.GetProperty("Items")[0].GetProperty("Caption").GetString() != "日本語" ||
+                await File.ReadAllTextAsync(namedProject) != original)
+                throw new InvalidOperationException("Packaging changed the source or lost unrelated data.");
+        });
         Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
     }
 
