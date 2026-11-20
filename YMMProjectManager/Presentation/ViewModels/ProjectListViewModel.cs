@@ -639,6 +639,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             logger.Info("Load start.");
             ProjectStore store;
             try { store = await repository.LoadAsync().ConfigureAwait(true); }
+            catch (ProjectListBusyException ex)
+            {
+                logger.Error(ex, "Project list initialization was blocked by another operation.");
+                ProjectListPublicationStatus = "別の処理が一覧を使用中です。その処理が終わったら「中断された一覧保存を確認」から読み込みを再試行してください。";
+                return;
+            }
             catch (InvalidDataException ex) when (repository is JsonProjectRepository json && json.HasInterruptedPublication)
             {
                 logger.Error(ex, "Project list initialization requires publication recovery.");

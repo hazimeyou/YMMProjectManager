@@ -1,6 +1,7 @@
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using YMMProjectManager.Application;
 using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
@@ -24,6 +25,12 @@ public sealed partial class ProjectListViewModel
             if (repository is not JsonProjectRepository json) return;
             ProjectListReplacement.Recovery? review;
             try { review = await json.InspectInterruptedPublicationAsync(token); }
+            catch (ProjectListBusyException ex)
+            {
+                logger.Error(ex, "Another operation is using the project list.");
+                ProjectListPublicationStatus = "別の処理が一覧を使用中です。完了後にもう一度確認してください。";
+                return;
+            }
             catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or System.Text.Json.JsonException)
             {
                 logger.Error(ex, "The interrupted list publication could not be inspected.");
@@ -32,7 +39,10 @@ public sealed partial class ProjectListViewModel
             }
             if (review is null)
             {
-                ProjectListPublicationStatus = "未完了の一覧公開記録はありません。";
+                reload = !isInitialized && !HasUnsavedProjectList;
+                ProjectListPublicationStatus = reload
+                    ? "未完了の一覧公開記録がないため、現用一覧の読み込みを再試行します。"
+                    : "未完了の一覧公開記録はありません。";
                 return;
             }
 
@@ -70,6 +80,10 @@ public sealed partial class ProjectListViewModel
                 ? "公開記録を確認しました。未保存の画面変更は保持しています。「一覧変更の競合を確認」を使ってください。"
                 : "公開記録を確認しました。現用一覧を読み込みます。";
         });
-        if (reload) await InitializeAsync();
+        if (reload)
+        {
+            await InitializeAsync();
+            if (isInitialized) ProjectListPublicationStatus = "現用一覧を読み込みました。";
+        }
     }
 }

@@ -128,6 +128,34 @@ internal static class OfflineControlsTests
                     await File.ReadAllTextAsync(marker) != "invalid journal fixture" || File.Exists(listPath))
                     throw new InvalidOperationException("WPF hid or modified evidence it could not interpret.");
             });
+            await Program.RunNamedCaseAsync("List initialization can retry an earlier writer lock without reopening the UI", async () =>
+            {
+                var dataRoot = Path.Combine(root, "busy-list");
+                Directory.CreateDirectory(dataRoot);
+                var listPath = Path.Combine(dataRoot, "projects.json");
+                var repository = new JsonProjectRepository(logger, listPath);
+                var blockedVm = new ProjectListViewModel(logger, repository);
+                var retry = typeof(ProjectListViewModel).GetMethod("RecoverProjectListPublicationAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!;
+
+                using (new FileStream(listPath + ".lock", FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None))
+                {
+                    await blockedVm.InitializeAsync();
+                    if (!blockedVm.ProjectListPublicationStatus.Contains("使用中") || blockedVm.Projects.Count != 0)
+                        throw new InvalidOperationException("The UI hid its blocked load.");
+                    await (Task)retry.Invoke(blockedVm, null)!;
+                    if (!blockedVm.ProjectListPublicationStatus.Contains("使用中") || File.Exists(listPath))
+                        throw new InvalidOperationException("The UI did not preserve the busy list.");
+                }
+
+                var saved = await repository.LoadAsync();
+                saved.Projects.Add(new ProjectEntry { FullPath = project, ProjectId = Guid.NewGuid() });
+                await repository.SaveAsync(saved);
+                await (Task)retry.Invoke(blockedVm, null)!;
+                if (blockedVm.Projects.Single().FullPath != project ||
+                    !blockedVm.ProjectListPublicationStatus.Contains("読み込みました"))
+                    throw new InvalidOperationException("The UI could not load the completed save on retry.");
+            });
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
         });
