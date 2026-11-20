@@ -403,9 +403,10 @@ public sealed partial class GitRepository
     }
 
     private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false,
-        string[]? pullSettings = null, Action? afterStart = null) =>
+        string[]? pullSettings = null, Action? afterStart = null, string? standardInput = null, int? outputLimit = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
-            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart);
+            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart,
+            standardInput: standardInput, outputLimit: outputLimit);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -692,7 +693,8 @@ public sealed partial class GitRepository
     }
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
-        bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action? afterStart = null)
+        bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action? afterStart = null, string? standardInput = null,
+        int? outputLimit = null)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -700,6 +702,7 @@ public sealed partial class GitRepository
             WorkingDirectory = directory,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardInput = standardInput is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             // Git for Windows emits UTF-8 paths in NUL-terminated output.
@@ -771,12 +774,13 @@ public sealed partial class GitRepository
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(Timeout);
-        var output = process.StandardOutput.ReadToEndAsync(deadline.Token);
-        var error = process.StandardError.ReadToEndAsync(deadline.Token);
+        var output = ReadGitTextAsync(process.StandardOutput, outputLimit, deadline.Token);
+        var error = ReadGitTextAsync(process.StandardError, outputLimit, deadline.Token);
+        var input = standardInput is null ? Task.CompletedTask : WriteGitInputAsync(process, standardInput, deadline.Token);
         try
         {
             afterStart?.Invoke();
-            await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error).ConfigureAwait(false);
+            await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error, input).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -788,7 +792,36 @@ public sealed partial class GitRepository
             if (token.IsCancellationRequested) throw;
             throw new TimeoutException("Git operation timed out.");
         }
-        return new GitResult(process.ExitCode, await output.ConfigureAwait(false), await error.ConfigureAwait(false));
+        var stdout = await output.ConfigureAwait(false);
+        var stderr = await error.ConfigureAwait(false);
+        return stdout.Truncated || stderr.Truncated
+            ? UnsafeRemote("Git output exceeds the supported inspection size.")
+            : new GitResult(process.ExitCode, stdout.Text, stderr.Text);
+    }
+
+    private static async Task<(string Text, bool Truncated)> ReadGitTextAsync(StreamReader reader, int? limit,
+        CancellationToken token)
+    {
+        if (limit is null) return (await reader.ReadToEndAsync(token).ConfigureAwait(false), false);
+
+        var buffer = new char[8192];
+        var content = new StringBuilder();
+        var truncated = false;
+        int read;
+        while ((read = await reader.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false)) != 0)
+        {
+            var available = Math.Min(read, limit.Value - content.Length);
+            content.Append(buffer, 0, available);
+            // Drain the rest so Git can still exit. A truncated observation cannot authorize a write.
+            truncated |= available != read;
+        }
+        return (content.ToString(), truncated);
+    }
+
+    private static async Task WriteGitInputAsync(Process process, string input, CancellationToken token)
+    {
+        try { await process.StandardInput.BaseStream.WriteAsync(Encoding.UTF8.GetBytes(input), token).ConfigureAwait(false); }
+        finally { process.StandardInput.Close(); }
     }
 }
 

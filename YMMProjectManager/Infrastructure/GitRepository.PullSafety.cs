@@ -170,9 +170,14 @@ public sealed partial class GitRepository
 
     private async Task<GitResult?> VerifyIncomingPullPathsAsync(PullSession session, GitPullTarget approved, CancellationToken token)
     {
-        var incoming = await RunPullCommandAsync(session, ["ls-tree", "-r", "-t", "-z", "--full-tree", approved.TargetObjectId], token).ConfigureAwait(false);
-        if (!incoming.Success || incoming.StandardError.Length != 0 || !GitPullWindowsTree.CanApply(incoming.StandardOutput))
+        const int treeOutputLimit = 8 * 1024 * 1024;
+        var incoming = await RunDirectAsync(["ls-tree", "-r", "-t", "-z", "--full-tree", approved.TargetObjectId], token,
+            pullSettings: session.Settings, outputLimit: treeOutputLimit).ConfigureAwait(false);
+        if (!incoming.Success || incoming.StandardError.Length != 0 ||
+            !GitPullWindowsTree.TryReadFilePaths(incoming.StandardOutput, out var files))
             return UnsafeRemote("The approved tree contains paths or file types unsupported by Windows Pull.");
+        if (!await HasOrdinaryPullAttributesAsync(session, approved.TargetObjectId, files, token).ConfigureAwait(false))
+            return UnsafeRemote("The approved tree needs an external checkout filter or its attributes could not be verified.");
 
         var changed = await RunPullCommandAsync(session,
             ["diff-tree", "-z", "--name-only", "--no-commit-id", "--no-renames", "--no-ext-diff", "--no-textconv", "-r",
@@ -196,5 +201,30 @@ public sealed partial class GitRepository
             }
         }
         return null;
+    }
+
+    private async Task<bool> HasOrdinaryPullAttributesAsync(PullSession session, string commit, List<string> files,
+        CancellationToken token)
+    {
+        if (files.Count == 0) return true;
+        const int attributeOutputLimit = 8 * 1024 * 1024;
+        GitResult result;
+        try
+        {
+            // --all omits truly unspecified attributes. A literal driver name like "unset"
+            // otherwise has the same displayed value as a disabled attribute.
+            result = await RunDirectAsync(["check-attr", "--source=" + commit, "--stdin", "-z", "--all"],
+                token, pullSettings: session.Settings, standardInput: string.Join('\0', files) + '\0',
+                outputLimit: attributeOutputLimit).ConfigureAwait(false);
+        }
+        catch (IOException) { return false; }
+        if (!result.Success || result.StandardError.Length != 0) return false;
+        var fields = result.StandardOutput.Split('\0');
+        if (fields.Length % 3 != 1 || fields[^1].Length != 0) return false;
+        var paths = files.ToHashSet(StringComparer.Ordinal);
+        for (var i = 0; i < fields.Length - 1; i += 3)
+            if (!paths.Contains(fields[i]) || fields[i + 1].Length == 0 || fields[i + 1] == "filter")
+                return false;
+        return true;
     }
 }

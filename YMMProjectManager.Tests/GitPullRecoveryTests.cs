@@ -8,6 +8,7 @@ using YMMProjectManager.Infrastructure.Git;
 internal static class GitPullRecoveryTests
 {
     internal const string ChildArgument = "--git-pull-recovery-child";
+    internal const string AppliedChildArgument = "--git-pull-applied-recovery-child";
     private const string FixtureDirectory = "git-pull-recovery";
     private const int InterruptedExitCode = 86;
     private const string HeadText = "ref: refs/heads/test-main\n";
@@ -22,6 +23,8 @@ internal static class GitPullRecoveryTests
         var root = Path.Combine(workRoot, FixtureDirectory);
         await Program.RunNamedCaseAsync("Pull recovery retains the mutation marker after child process termination",
             () => TestInterruptedChildAsync(CreateFixture(root, "interrupted")));
+        await Program.RunNamedCaseAsync("Pull restart preserves evidence after Git updated the checkout",
+            () => TestInterruptedAfterMergeAsync(root));
         await Program.RunNamedCaseAsync("Pull marker publishes at most one record and clears only the owned file",
             () => TestOwnedJournalAsync(CreateFixture(root, "owned")));
         await Program.RunNamedCaseAsync("Pull recovery preserves an unrecognized existing marker",
@@ -34,21 +37,23 @@ internal static class GitPullRecoveryTests
                 $"{mode} blob {new string('1', 40)}\t{path}\0";
             static string TreeEntry(string path) =>
                 $"040000 tree {new string('2', 40)}\t{path}\0";
-            Require(GitPullWindowsTree.CanApply(TreeEntry("素材") + FileEntry("素材/台本.ymmp", "100755")),
+            static bool CanApply(string tree) => GitPullWindowsTree.TryReadFilePaths(tree, out _);
+            Require(CanApply(TreeEntry("素材") + FileEntry("素材/台本.ymmp", "100755")),
                 "A normal Unicode tree cannot be checked out.");
-            Require(!GitPullWindowsTree.CanApply(FileEntry("Cover.txt") + FileEntry("cover.txt")) &&
-                !GitPullWindowsTree.CanApply(TreeEntry("Media") + TreeEntry("media")),
+            Require(!CanApply(FileEntry("Cover.txt") + FileEntry("cover.txt")) &&
+                !CanApply(TreeEntry("Media") + TreeEntry("media")),
                 "A case-distinct path collision was accepted.");
-            Require(!GitPullWindowsTree.CanApply(FileEntry("media/COM¹.wav")) &&
-                !GitPullWindowsTree.CanApply(TreeEntry(".Git")) &&
-                !GitPullWindowsTree.CanApply(FileEntry("media/name.")) &&
-                !GitPullWindowsTree.CanApply(FileEntry("media/name ", "120000")) &&
-                !GitPullWindowsTree.CanApply(FileEntry("media/submodule", "160000")) &&
-                !GitPullWindowsTree.CanApply(FileEntry("unterminated")[..^1]),
+            Require(!CanApply(FileEntry("media/COM¹.wav")) &&
+                !CanApply(TreeEntry(".Git")) &&
+                !CanApply(FileEntry("media/name.")) &&
+                !CanApply(FileEntry("media/invalid\uFFFD.wav")) &&
+                !CanApply(FileEntry("media/name ", "120000")) &&
+                !CanApply(FileEntry("media/submodule", "160000")) &&
+                !CanApply(FileEntry("unterminated")[..^1]),
                 "An unsupported Win32 path, mode or malformed tree was accepted.");
             return Task.CompletedTask;
         });
-        await Program.RunNamedCaseAsync("Confirmed Pull refuses a target that contains case-colliding files",
+        await Program.RunNamedCaseAsync("Confirmed Pull refuses case collisions and targets that require checkout filters",
             () => TestCaseCollidingTargetAsync(root));
         await Program.RunNamedCaseAsync("Pull rejects UNC endpoint syntax before any filesystem lookup", () =>
         {
@@ -78,11 +83,12 @@ internal static class GitPullRecoveryTests
         });
     }
 
-    private static async Task TestCaseCollidingTargetAsync(string root)
+    private static async Task<(string Seed, string Remote, string Worktree, string Base)> CreatePullFixtureAsync(
+        string root, string name)
     {
-        var seed = Directory.CreateDirectory(Path.Combine(root, "case-seed")).FullName;
-        var remote = Path.Combine(root, "case-remote.git");
-        var worktree = Path.Combine(root, "case-作業コピー");
+        var seed = Directory.CreateDirectory(Path.Combine(root, name + "-seed")).FullName;
+        var remote = Path.Combine(root, name + "-remote.git");
+        var worktree = Path.Combine(root, name);
         await GitAsync(seed, ["init", "-b", "main"]);
         await GitAsync(seed, ["config", "user.name", "Synthetic Git Fixture"]);
         await GitAsync(seed, ["config", "user.email", "fixture@example.invalid"]);
@@ -93,6 +99,12 @@ internal static class GitPullRecoveryTests
         await GitAsync(seed, ["init", "--bare", "-b", "main", remote]);
         await GitAsync(seed, ["push", "--", remote, "main"]);
         await GitAsync(seed, ["clone", "--", remote, worktree]);
+        return (seed, remote, worktree, starting);
+    }
+
+    private static async Task TestCaseCollidingTargetAsync(string root)
+    {
+        var (seed, remote, worktree, starting) = await CreatePullFixtureAsync(root, "case-作業コピー");
         var indexPath = Path.Combine(worktree, ".git", "index");
         var index = await File.ReadAllBytesAsync(indexPath);
         var original = await File.ReadAllBytesAsync(Path.Combine(worktree, "keep.ymmp"));
@@ -124,6 +136,24 @@ internal static class GitPullRecoveryTests
             await GitAsync(worktree, ["symbolic-ref", "HEAD"]) == "refs/heads/main" &&
             index.SequenceEqual(finalIndex) && original.SequenceEqual(finalOriginal) &&
             !File.Exists(Path.Combine(worktree, "Cover.txt")), "A rejected target changed the branch, index or worktree.");
+
+        await File.WriteAllTextAsync(Path.Combine(seed, ".gitattributes"), "*.wav filter=unspecified\n");
+        await File.WriteAllTextAsync(Path.Combine(seed, "素材.wav"), "synthetic material");
+        await GitAsync(seed, ["add", "--", ".gitattributes", "素材.wav"]);
+        await GitAsync(seed, ["commit", "-m", "declare an external filter without configuring a program"]);
+        await GitAsync(seed, ["push", "--", remote, "HEAD:refs/heads/fixture-filter"]);
+        await GitAsync(worktree, ["config", "branch.main.merge", "refs/heads/fixture-filter"]);
+        remotePreview = await service.InspectPullRemoteAsync();
+        Require(remotePreview.Success && remotePreview.PullRemote is not null, "Cannot bind the filter fixture upstream.");
+        preview = await service.InspectPullTargetAsync(remotePreview.PullRemote!);
+        Require(preview.Success && preview.PullTarget is not null, "Cannot preview the filter fixture commit.");
+        result = await service.PullTrustedAsync(preview.PullTarget!);
+        finalIndex = await File.ReadAllBytesAsync(indexPath);
+        Require(!result.Success && result.Failure == GitFailure.UnsafeOperation &&
+            result.StandardError.Contains("external checkout filter", StringComparison.Ordinal) &&
+            await GitAsync(worktree, ["rev-parse", "HEAD"]) == starting && index.SequenceEqual(finalIndex) &&
+            !File.Exists(Path.Combine(worktree, "素材.wav")) && !GitPullOperationJournal.Exists(worktree),
+            $"A filter-dependent tree reached checkout or failed with an unrelated reason ({result.Failure}, {result.StandardError}).");
     }
 
     private static async Task AssertMetadataJunctionRejectedAsync(string root, string worktree, GitRepository repository)
@@ -188,34 +218,87 @@ internal static class GitPullRecoveryTests
         }
     }
 
-    internal static void RunInterruptedChild(string repository)
+    private static string RequireIsolatedRepository(string repository, string name)
     {
         var full = Path.GetFullPath(repository);
         var allowed = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests"));
         var relative = Path.GetRelativePath(allowed, full).Split(Path.DirectorySeparatorChar);
         if (relative.Length != 3 || !Guid.TryParseExact(relative[0], "N", out _) ||
-            relative[1] != FixtureDirectory || relative[2] != "interrupted")
+            relative[1] != FixtureDirectory || relative[2] != name)
             throw new InvalidOperationException("Pull interruption requires the isolated fixture root.");
+        return full;
+    }
 
+    internal static void RunInterruptedChild(string repository)
+    {
+        var full = RequireIsolatedRepository(repository, "interrupted");
         using var fence = OwnedFilePublication.DirectoryFence.Open(Path.Combine(full, ".git"), enforceShare: true);
         using var journal = GitPullOperationJournal.Create(full, Approved);
         // Exit from the owned test process without running the normal completion or cleanup path.
         Environment.Exit(InterruptedExitCode);
     }
 
-    private static async Task TestInterruptedChildAsync(string repository)
+    internal static async Task RunInterruptedAfterMergeAsync(string repository)
+    {
+        var full = RequireIsolatedRepository(repository, "interrupted-applied");
+        var remotePath = Path.Combine(Path.GetDirectoryName(full)!, "interrupted-applied-remote.git");
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.Combine(full, ".git"), enforceShare: true);
+        using var remoteFence = OwnedFilePublication.DirectoryFence.Open(remotePath, enforceShare: true);
+        var service = new GitRepository(full) { AfterPullProcessExit = () => Environment.Exit(InterruptedExitCode) };
+        var endpoint = await service.InspectPullRemoteAsync();
+        Require(endpoint.PullRemote is { } remote && Path.IsPathFullyQualified(remote.Endpoint) &&
+            string.Equals(Path.GetFullPath(remote.Endpoint), remotePath, StringComparison.OrdinalIgnoreCase) &&
+            remote.BranchRef == "refs/heads/main" &&
+            remote.UpstreamRef == "refs/heads/main", "The child checkout must use only its isolated remote.");
+        var preview = await service.InspectPullTargetAsync(endpoint.PullRemote!);
+        Require(preview.PullTarget is { ChangesWorktree: true }, "The child requires a new approved commit.");
+        await service.PullTrustedAsync(preview.PullTarget!);
+        throw new InvalidOperationException("The child did not reach the post-merge checkpoint.");
+    }
+
+    private static async Task TestInterruptedAfterMergeAsync(string root)
+    {
+        var (seed, remote, worktree, _) = await CreatePullFixtureAsync(root, "interrupted-applied");
+        await File.WriteAllTextAsync(Path.Combine(seed, "keep.ymmp"), "{\"version\":2}");
+        await GitAsync(seed, ["add", "--", "keep.ymmp"]);
+        await GitAsync(seed, ["commit", "-m", "update"]);
+        await GitAsync(seed, ["push", "--", remote, "main"]);
+        var desired = await GitAsync(seed, ["rev-parse", "HEAD"]);
+
+        await RunChildProcessAsync(AppliedChildArgument, worktree);
+        var marker = GitPullOperationJournal.GetPath(worktree);
+        var bytes = await File.ReadAllBytesAsync(marker);
+        using var receipt = JsonDocument.Parse(bytes);
+        Require(receipt.RootElement.GetProperty("TargetObjectId").GetString() == desired &&
+            await GitAsync(worktree, ["rev-parse", "refs/heads/main"]) == desired &&
+            await GitAsync(worktree, ["diff-index", "--cached", "--quiet", desired, "--"]) == "" &&
+            await GitAsync(worktree, ["--no-optional-locks", "status", "--porcelain"]) == "" &&
+            await File.ReadAllTextAsync(Path.Combine(worktree, "keep.ymmp")) == "{\"version\":2}",
+            "The interrupted product process did not leave the observed updated ref, index and worktree.");
+        var restarted = new GitRepository(worktree);
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var result = await restarted.InspectPullRemoteAsync();
+            Require(result.Failure == GitFailure.OutcomeUnknown && result.RecoveryPath == marker,
+                "Restart approved a second Pull without verifying the previous outcome.");
+        }
+        var remaining = await File.ReadAllBytesAsync(marker);
+        Require(bytes.SequenceEqual(remaining), "Recovery did not preserve the original operation record.");
+    }
+
+    private static async Task RunChildProcessAsync(string argument, string repository)
     {
         var start = new ProcessStartInfo(Environment.ProcessPath!)
         {
             UseShellExecute = false,
             CreateNoWindow = true,
         };
-        start.ArgumentList.Add(ChildArgument);
+        start.ArgumentList.Add(argument);
         start.ArgumentList.Add(repository);
         using var child = Process.Start(start) ?? throw new InvalidOperationException("Could not start the Pull recovery fixture.");
         try
         {
-            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(60));
             await child.WaitForExitAsync(limit.Token);
         }
         finally
@@ -224,6 +307,11 @@ internal static class GitPullRecoveryTests
         }
 
         Require(child.ExitCode == InterruptedExitCode, "The fixture did not reach the interruption checkpoint.");
+    }
+
+    private static async Task TestInterruptedChildAsync(string repository)
+    {
+        await RunChildProcessAsync(ChildArgument, repository);
         var path = GitPullOperationJournal.GetPath(repository);
         var original = File.ReadAllBytes(path);
         using (var evidence = JsonDocument.Parse(original))

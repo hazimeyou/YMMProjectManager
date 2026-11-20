@@ -51,6 +51,11 @@ internal static class Program
             GitPullRecoveryTests.RunInterruptedChild(args[1]);
             return;
         }
+        if (args.Length == 2 && args[0] == GitPullRecoveryTests.AppliedChildArgument)
+        {
+            await GitPullRecoveryTests.RunInterruptedAfterMergeAsync(args[1]);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--list-publication-crash")
         {
             await ProjectListPublicationTests.CrashAsync(args[1], args[2]);

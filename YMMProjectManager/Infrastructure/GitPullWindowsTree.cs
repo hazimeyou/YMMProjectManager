@@ -7,8 +7,9 @@ internal static class GitPullWindowsTree
     private static readonly char[] InvalidNameCharacters = Path.GetInvalidFileNameChars();
 
     /// <summary>Checks NUL-delimited git ls-tree output, including directory entries from -r -t.</summary>
-    internal static bool CanApply(string entries)
+    internal static bool TryReadFilePaths(string entries, out List<string> files)
     {
+        files = [];
         // Git can report a successful fast-forward even when two case-distinct tree entries
         // occupy one file in the Windows worktree. Check directories as well as leaf names.
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -25,12 +26,14 @@ internal static class GitPullWindowsTree
                 return false;
 
             var path = entry[(separator + 1)..];
-            if (path.IsEmpty || !paths.Add(path.ToString())) return false;
+            var pathString = path.ToString();
+            if (path.IsEmpty || !paths.Add(pathString)) return false;
             foreach (var component in path.Split('/'))
             {
                 var name = path[component];
                 if (!IsOrdinaryWindowsName(name)) return false;
             }
+            if (entry[..6] is not "040000") files.Add(pathString);
         }
         return true;
     }
