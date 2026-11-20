@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -26,7 +27,8 @@ public static class AssetInventory
         var project = Path.GetFullPath(projectPath);
         var directory = Path.GetDirectoryName(project) ?? throw new InvalidDataException("The project has no containing directory.");
         var safeProject = ResolveRelativePath(directory, Path.GetFileName(project));
-        await using var stream = new FileStream(safeProject, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        await using var stream = OpenOrdinaryAsset(safeProject);
         if (stream.Length > 32 * 1024 * 1024) throw new InvalidDataException("The project is too large for inventory scanning.");
         using var reader = new StreamReader(stream);
         var json = await reader.ReadToEndAsync(token).ConfigureAwait(false);
@@ -87,9 +89,11 @@ public static class AssetInventory
 
     public static async Task<AssetMetadata> InspectAsync(string projectDirectory, string relativePath, string? downloadUrl = null, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         var path = ResolveRelativePath(projectDirectory, relativePath);
         ValidateUrl(downloadUrl);
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+        await using var stream = OpenOrdinaryAsset(path);
         var size = stream.Length;
         var hash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
         if (stream.Length != size) throw new IOException("Asset changed while being read.");
@@ -101,7 +105,7 @@ public static class AssetInventory
         token.ThrowIfCancellationRequested();
         ValidateMetadata(asset);
         if (asset.ExternalLocation is not null) return AssetVerification.ExternalUnverified;
-        return await VerifyFileAsync(ResolveRelativePath(projectDirectory, asset.RelativePath), asset, token).ConfigureAwait(false);
+        return await VerifyFileAsync(projectDirectory, asset.RelativePath, asset, token).ConfigureAwait(false);
     }
 
     public static async Task<AssetMetadata> InspectExternalAsync(string approvedStorageRoot, string projectRelativePath,
@@ -120,7 +124,7 @@ public static class AssetInventory
         token.ThrowIfCancellationRequested();
         ValidateMetadata(asset);
         if (asset.ExternalLocation is not { } location) throw new InvalidDataException("No external storage location is recorded.");
-        return await VerifyFileAsync(ResolveRelativePath(approvedStorageRoot, location.RelativePath), asset, token).ConfigureAwait(false);
+        return await VerifyFileAsync(approvedStorageRoot, location.RelativePath, asset, token).ConfigureAwait(false);
     }
 
     internal static Task<IReadOnlyList<AssetVerification>> VerifyExternalBatchAsync(
@@ -147,17 +151,37 @@ public static class AssetInventory
         }, token);
     }
 
-    private static async Task<AssetVerification> VerifyFileAsync(string path, AssetMetadata asset, CancellationToken token)
+    private static async Task<AssetVerification> VerifyFileAsync(
+        string directory, string relativePath, AssetMetadata asset, CancellationToken token)
     {
         try
         {
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+            var path = ResolveRelativePath(directory, relativePath);
+            using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+            await using var stream = OpenOrdinaryAsset(path);
             if (stream.Length != asset.Size) return AssetVerification.SizeMismatch;
             var hash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
+            if (stream.Length != asset.Size) return AssetVerification.SizeMismatch;
             return string.Equals(Convert.ToHexString(hash), asset.Sha256, StringComparison.OrdinalIgnoreCase) ? AssetVerification.Valid : AssetVerification.HashMismatch;
         }
         catch (FileNotFoundException) { return AssetVerification.Missing; }
         catch (DirectoryNotFoundException) { return AssetVerification.Missing; }
+        catch (IOException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: 2 or 3 })
+        { return AssetVerification.Missing; }
+    }
+
+    private static FileStream OpenOrdinaryAsset(string path)
+    {
+        try
+        {
+            var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
+            try { return new FileStream(handle, FileAccess.Read); }
+            catch { handle.Dispose(); throw; }
+        }
+        catch (IOException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: 2 or 3 })
+        {
+            throw new FileNotFoundException("Asset file was not found.", path, ex);
+        }
     }
 
     // Export is deliberately create-only: an existing manifest, including a corrupt one, is never overwritten.
@@ -226,7 +250,7 @@ public static class AssetInventory
         if (!full.StartsWith(Path.TrimEndingDirectorySeparator(root) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("Asset path escapes the project directory.", nameof(relativePath));
         for (var ancestor = new DirectoryInfo(root); ancestor is not null; ancestor = ancestor.Parent)
-            if ((ancestor.Attributes & FileAttributes.ReparsePoint) != 0)
+            if ((File.GetAttributes(ancestor.FullName) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Project path cannot traverse a reparse point.");
         var current = root;
         foreach (var segment in Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))

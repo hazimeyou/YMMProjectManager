@@ -70,6 +70,15 @@ internal static class AssetInventoryTests
             }
             catch (OperationCanceledException) { }
         });
+        await Program.RunNamedCaseAsync("External verification distinguishes missing directories from unreadable files", async () =>
+        {
+            var results = await AssetInventory.VerifyExternalBatchAsync(Path.Combine(root, "missing-root"), [external], default);
+            Check(results.Single() == AssetVerification.Missing, "missing approved root was not classified as missing");
+            var nested = external with { ExternalLocation = location with { RelativePath = "missing-folder/asset.wav" } };
+            results = await AssetInventory.VerifyExternalBatchAsync(storage, [nested, external], default);
+            Check(results.SequenceEqual(new[] { AssetVerification.Missing, AssetVerification.Valid }),
+                "missing asset parent changed the result of another asset");
+        });
         var withStorage = await AssetInventory.ScanProjectAsync(project, [external]);
         Check(withStorage.Single(item => item.Path == "missing.wav") is { Status: AssetReferenceStatus.External, Actual: null }
             && withStorage.Single(item => item.Path == "missing.wav").Expected == external, "scan did not expose configured external storage");
