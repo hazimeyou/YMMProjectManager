@@ -364,25 +364,30 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var selected = SelectedProject;
         var assets = inspectedAssets;
         if (selected is null || assets is null) { AssetStatus = "先に素材を検査してください。"; return; }
+        var association = update ? selected.MetadataAssociation : null;
+        var source = selected.FullPath;
         string? parentPath = null;
-        if (update)
+        if (update && association is null)
         {
             var existing = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "更新元の素材メタデータを選択", CheckFileExists = true };
             if (existing.ShowDialog() != true) return;
             parentPath = existing.FileName;
         }
         var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを新しいファイルに保存", OverwritePrompt = false };
-        if (dialog.ShowDialog() != true) return;
+        if (association is null && dialog.ShowDialog() != true) return;
         await ExecuteToolAsync("Asset metadata export", async token =>
         {
             if (HasUnsavedProjectList) { AssetStatus = "プロジェクト一覧に未保存の変更があります。先に一覧を保存してください。"; return; }
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
+            var directory = Path.GetDirectoryName(Path.GetFullPath(source)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
             foreach (var asset in assets)
                 if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid) { AssetStatus = $"素材が変更されたか見つかりません: {asset.RelativePath}"; return; }
             var verifiedAtUtc = DateTimeOffset.UtcNow;
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
-            var parent = parentPath is null ? null : await AssetManifestStore.LoadAsync(parentPath, token);
+            var managed = association is not null && selected.ProjectId is Guid id ? await ResolveMetadataAsync(id, association, token) : null;
+            if (association is not null && (managed is null || managed.Selected.Receipt != managed.Head))
+                throw new InvalidDataException("現在の head を選択し直してから版を追加してください。");
+            var parent = managed?.Selected.Manifest ?? (parentPath is null ? null : await AssetManifestStore.LoadAsync(parentPath, token));
             if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets)) { AssetStatus = "選択が変わりました。再検査してください。"; return; }
             if (parent is not null && MessageBox.Show($"更新元のプロジェクト名: {parent.ProjectFileName}\n選択中: {selected.FullPath}\n同名でも別プロジェクトの可能性があります。同一プロジェクトの版として作成しますか？", "素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var changes = parent is null ? [] : AssetManifestStore.FindChangedPaths(parent, assets);
@@ -398,7 +403,19 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 });
                 if (MessageBox.Show($"サイズまたは SHA-256 が以前と異なります:\n{string.Join("\n", details)}\n変更 {changes.Count} 件を新しい版に記録しますか？", "素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             }
-            var manifest = AssetManifestStore.Create(selected.FullPath, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0, projectId: selected.ProjectId);
+            if (!ReferenceEquals(selected, SelectedProject) || !ReferenceEquals(assets, inspectedAssets) ||
+                selected.FullPath != source || HasUnsavedProjectList || (association is not null && selected.MetadataAssociation != association))
+                throw new InvalidDataException("素材またはプロジェクトの選択が変更されました。");
+            foreach (var asset in assets)
+                if (await AssetInventory.VerifyAsync(directory, asset, token) != AssetVerification.Valid)
+                    throw new InvalidDataException($"確認後に素材が変更されました。{asset.RelativePath}");
+            var manifest = AssetManifestStore.Create(source, assets, verifiedAtUtc, parent, confirmedProjectAssociation: parent is not null, confirmedHashChanges: changes.Count > 0, projectId: selected.ProjectId);
+            if (association is not null && managed is not null)
+            {
+                var receipt = await AssetRevisionSeries.AppendAsync(association.Directory, managed.Root, managed.Head, manifest, token);
+                AssetStatus = $"履歴に版を追加しました。{receipt.RevisionId}\n使用する版は「履歴の版を選択」から変更できます。";
+                return;
+            }
             await AssetManifestStore.SaveNewAsync(dialog.FileName, manifest, token);
             AssetStatus = selected.ProjectId is null
                 ? "素材メタデータを保存しました。旧プロジェクトとの永続 ID 関連付けは未設定です。"
