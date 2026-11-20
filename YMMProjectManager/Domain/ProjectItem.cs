@@ -182,6 +182,7 @@ public sealed class ProjectEntry : INotifyPropertyChanged
     private Guid? projectId;
 
     public string FullPath { get; set; } = string.Empty;
+    public ProjectMetadataAssociation? MetadataAssociation { get; set; }
     public Guid? ProjectId
     {
         get => projectId;

@@ -5,6 +5,30 @@ namespace YMMProjectManager.Infrastructure.Relink;
 
 internal static class RelinkCandidateVerifier
 {
+    internal sealed class CandidateReadLocks : IDisposable
+    {
+        private readonly List<FileStream> files = [];
+
+        internal CandidateReadLocks(IEnumerable<RelinkRow> rows)
+        {
+            try
+            {
+                foreach (var row in rows.Where(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)))
+                    files.Add(new FileStream(row.SelectedCandidate!, FileMode.Open, FileAccess.Read, FileShare.Read));
+            }
+            catch
+            {
+                Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (var file in files) file.Dispose();
+        }
+    }
+
     public static List<RelinkRow> SnapshotRows(IEnumerable<RelinkRow> rows) => rows.Select(row => new RelinkRow
     {
         RowIndex = row.RowIndex,

@@ -36,47 +36,54 @@ public sealed class JsonProjectRepository : IProjectRepository
         this.beforeReplace = beforeReplace;
     }
 
+    internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
+
     public async Task<ProjectStore> LoadAsync(CancellationToken cancellationToken = default)
     {
         try
         {
             var content = await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false);
-            var jsonContent = StripUtf8Bom(content);
-            var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
-            if (dto is null) throw new InvalidDataException("Project list is null.");
-            var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))), IsRecoverySafe = IsSafeForRecovery(content) };
-            foreach (var f in dto.Folders ?? [])
-            {
-                if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
-                store.Folders.Add(new ProjectFolder { Id = f.Id.Value, Name = f.Name!, DisplayOrder = f.DisplayOrder ?? 0, CreatedAt = f.CreatedAt ?? DateTimeOffset.Now, UpdatedAt = f.UpdatedAt ?? DateTimeOffset.Now });
-            }
-            var projectIds = new HashSet<Guid>();
-            foreach (var x in dto.Projects ?? [])
-            {
-                if (string.IsNullOrWhiteSpace(x.FullPath))
-                {
-                    if (x.ProjectId is not null) throw new InvalidDataException("Identified project has no path.");
-                    continue;
-                }
-                if (x.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
-                var p = new ProjectEntry { FullPath = x.FullPath!, ProjectId = x.ProjectId, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ?? false, LastAccess = x.LastAccess, FolderId = x.FolderId };
-                foreach (var l in x.LinkedYmmpFiles ?? [])
-                {
-                    if (string.IsNullOrWhiteSpace(l.FilePath)) continue;
-                    p.LinkedYmmpFiles.Add(new LinkedYmmpFile { Id = l.Id ?? Guid.NewGuid(), FilePath = l.FilePath!, DisplayName = l.DisplayName, Role = Enum.TryParse<YmmpRole>(l.Role, true, out var role) ? role : YmmpRole.Unknown, Memo = l.Memo, RegisteredAt = l.RegisteredAt ?? DateTimeOffset.Now, UpdatedAt = l.UpdatedAt ?? DateTimeOffset.Now, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists ?? File.Exists(l.FilePath!) });
-                }
-                if (p.LinkedYmmpFiles.Count == 0 && p.FullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
-                {
-                    p.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = p.FullPath, DisplayName = p.DisplayName, Role = YmmpRole.Main, Exists = File.Exists(p.FullPath), LastCheckedAt = DateTimeOffset.Now });
-                }
-                store.Projects.Add(p);
-            }
-            return store;
+            return DeserializeStore(content);
         }
         catch (FileNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
         catch (DirectoryNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.Error("Failed to load projects.json", ex); throw; }
+    }
+
+    internal static ProjectStore DeserializeStore(byte[] content)
+    {
+        var jsonContent = StripUtf8Bom(content);
+        var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
+        if (dto is null) throw new InvalidDataException("Project list is null.");
+        var store = new ProjectStore { Revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content))), IsRecoverySafe = IsSafeForRecovery(content) };
+        foreach (var f in dto.Folders ?? [])
+        {
+            if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
+            store.Folders.Add(new ProjectFolder { Id = f.Id.Value, Name = f.Name!, DisplayOrder = f.DisplayOrder ?? 0, CreatedAt = f.CreatedAt ?? DateTimeOffset.Now, UpdatedAt = f.UpdatedAt ?? DateTimeOffset.Now });
+        }
+        var projectIds = new HashSet<Guid>();
+        foreach (var x in dto.Projects ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(x.FullPath))
+            {
+                if (x.ProjectId is not null) throw new InvalidDataException("Identified project has no path.");
+                continue;
+            }
+            if (x.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
+            var p = new ProjectEntry { FullPath = x.FullPath!, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ?? false, LastAccess = x.LastAccess, FolderId = x.FolderId };
+            foreach (var l in x.LinkedYmmpFiles ?? [])
+            {
+                if (string.IsNullOrWhiteSpace(l.FilePath)) continue;
+                p.LinkedYmmpFiles.Add(new LinkedYmmpFile { Id = l.Id ?? Guid.NewGuid(), FilePath = l.FilePath!, DisplayName = l.DisplayName, Role = Enum.TryParse<YmmpRole>(l.Role, true, out var role) ? role : YmmpRole.Unknown, Memo = l.Memo, RegisteredAt = l.RegisteredAt ?? DateTimeOffset.Now, UpdatedAt = l.UpdatedAt ?? DateTimeOffset.Now, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists ?? File.Exists(l.FilePath!) });
+            }
+            if (p.LinkedYmmpFiles.Count == 0 && p.FullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
+            {
+                p.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = p.FullPath, DisplayName = p.DisplayName, Role = YmmpRole.Main, Exists = File.Exists(p.FullPath), LastCheckedAt = DateTimeOffset.Now });
+            }
+            store.Projects.Add(p);
+        }
+        return store;
     }
 
     private static bool IsSafeForRecovery(byte[] content)
@@ -91,6 +98,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
+                if (project.MetadataAssociation is { } metadata && (!ValidMetadata(metadata) || project.ProjectId is null)) return false;
                 if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) ||
                     (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;
             }
@@ -99,6 +107,14 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
         catch (JsonException) { return false; }
     }
+
+    private static bool ValidMetadata(ProjectMetadataAssociation value) =>
+        !string.IsNullOrWhiteSpace(value.Directory) && Path.IsPathFullyQualified(value.Directory) &&
+        value.RootRevisionId != Guid.Empty && value.SelectedRevisionId != Guid.Empty &&
+        value.ObservedHeadRevisionId != Guid.Empty && IsHash(value.RootSha256) &&
+        IsHash(value.SelectedSha256) && IsHash(value.ObservedHeadSha256);
+
+    private static bool IsHash(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
     private static ReadOnlyMemory<byte> StripUtf8Bom(byte[] content) =>
         content.Length >= 3 && content[0] == 0xEF && content[1] == 0xBB && content[2] == 0xBF
@@ -153,7 +169,8 @@ public sealed class JsonProjectRepository : IProjectRepository
             catch (DirectoryNotFoundException) { currentHash = null; }
             if (!string.Equals(currentHash, store.Revision.Sha256, StringComparison.Ordinal))
                 throw new ProjectListConflictException();
-            if (File.Exists(jsonPath))
+            cancellationToken.ThrowIfCancellationRequested();
+            if (currentHash is not null)
                 File.Replace(tempPath, jsonPath, null);
             else
                 File.Move(tempPath, jsonPath);
@@ -183,7 +200,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
     }
 
-    private static byte[] SerializeStore(ProjectStore store)
+    internal static byte[] SerializeStore(ProjectStore store)
     {
         if (!store.IsRecoverySafe) throw new InvalidDataException("Project list contains data that cannot be safely preserved.");
         var projectIds = new HashSet<Guid>();
@@ -197,7 +214,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             Folders = store.Folders.Select(x => new ProjectFolderDto { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt }).ToList(),
             Projects = store.Projects.Select(x => new ProjectRecordDto
             {
-                FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
+                FullPath = x.FullPath, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ? true : null, LastAccess = x.LastAccess, FolderId = x.FolderId,
                 LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
             }).ToList(),
         };
@@ -233,7 +250,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     private static string ResolvePath(){ var runtimeYmmDir = Environment.GetEnvironmentVariable("YMM4DirPath"); if (!string.IsNullOrWhiteSpace(runtimeYmmDir)) return Path.Combine(runtimeYmmDir, "user", "plugin", PluginDirectoryName, "data", "projects.json"); var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData); return Path.Combine(appData, "YMMProjectManager", "plugin", PluginDirectoryName, "data", "projects.json"); }
 
     private sealed class ProjectListFileDto { public List<ProjectRecordDto> Projects { get; set; } = []; public List<ProjectFolderDto> Folders { get; set; } = []; }
-    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }
+    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectMetadataAssociation? MetadataAssociation { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }
     private sealed class LinkedYmmpFileDto { public Guid? Id { get; set; } public string? FilePath { get; set; } public string? DisplayName { get; set; } public string? Role { get; set; } public string? Memo { get; set; } public DateTimeOffset? RegisteredAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } public DateTimeOffset? LastCheckedAt { get; set; } public bool? Exists { get; set; } }
     private sealed class ProjectFolderDto { public Guid? Id { get; set; } public string? Name { get; set; } public int? DisplayOrder { get; set; } public DateTimeOffset? CreatedAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } }
 }

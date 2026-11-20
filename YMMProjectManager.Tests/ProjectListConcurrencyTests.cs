@@ -124,9 +124,17 @@ internal static class ProjectListConcurrencyTests
         orderBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "second-order.ymmp"), ProjectId = Guid.NewGuid() });
         var orderLocal = ProjectListMerge.Snapshot(orderBase); var orderRemote = ProjectListMerge.Snapshot(orderBase);
         orderLocal.Projects.Reverse(); orderLocal.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "third-order.ymmp"), ProjectId = Guid.NewGuid() });
-        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("local reorder was silently lost");
+        orderRemote.Projects[0].Pinned = true;
+        var reordered = ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store;
+        if (reordered is null || !reordered.Projects.Select(p => p.FullPath).SequenceEqual(orderLocal.Projects.Select(p => p.FullPath)) ||
+            !reordered.Projects.Single(p => p.FullPath == orderBase.Projects[0].FullPath).Pinned)
+            throw new Exception("reorder or independent remote attribute edit was lost");
+        orderRemote.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "remote-order.ymmp"), ProjectId = Guid.NewGuid() });
+        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("incompatible order changes were accepted");
+        orderRemote = ProjectListMerge.Snapshot(orderBase);
         orderLocal = ProjectListMerge.Snapshot(orderBase); orderLocal.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "inserted.ymmp"), ProjectId = Guid.NewGuid() });
-        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store is not null) throw new Exception("local insertion order was silently lost");
+        if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store?.Projects[0].FullPath != orderLocal.Projects[0].FullPath)
+            throw new Exception("local insertion order was lost");
         var mergePath = Path.Combine(root, "merge-failure.json"); var mergeRepo = new JsonProjectRepository(logger, mergePath);
         var mergeSeed = await mergeRepo.LoadAsync(); mergeSeed.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "seed.ymmp"), ProjectId = Guid.NewGuid() }); await mergeRepo.SaveAsync(mergeSeed);
         var mergeBaseline = await mergeRepo.LoadAsync(); var mergeLocal = ProjectListMerge.Snapshot(mergeBaseline);

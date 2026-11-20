@@ -40,6 +40,7 @@
                 <Button Content="一覧変更の競合を確認" Command="{Binding RecoverProjectListCommand}" Margin="4,0,0,0" />
                 <Button Content="退避一覧を保存" Command="{Binding ExportRecoverySnapshotCommand}" Margin="4,0,0,0" />
                 <Button Content="画面状態を退避" Command="{Binding ExportRecoveryScreenCommand}" Margin="4,0,0,0" />
+                <Button Content="前回の保存記録を確認" Command="{Binding ReviewDraftCommand}" Margin="4,0,0,0" />
             </StackPanel>
 
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->
@@ -73,12 +74,11 @@
                     Command="{Binding PackageOpenedProjectCommand}" />
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding BundleStatus}" Margin="0,0,0,6" />
-            <TextBlock DockPanel.Dock="Top" Text="ymmpx 展開は保存先保護の検証中です。" Margin="0,0,0,6" TextWrapping="Wrap" />
             <ProgressBar DockPanel.Dock="Top" Height="20" Minimum="0" Maximum="100" Value="{Binding BundleProgress}" />
+            <Button DockPanel.Dock="Top" Content="処理を中止" HorizontalAlignment="Left" Command="{Binding CancelToolCommand}" Margin="0,4,0,4" />
             <Expander DockPanel.Dock="Top" Header="Git と素材" Margin="0,4,0,4">
                 <ScrollViewer MaxHeight="220" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
                     <StackPanel>
-            <Button Content="Git / 素材処理を中止" HorizontalAlignment="Left" Command="{Binding CancelToolCommand}" Margin="0,0,0,4" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="ブランチ" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitBranch, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
@@ -133,6 +133,12 @@
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedProject.ProjectId, StringFormat='Project ID: {0}', TargetNullValue='Project ID: 未設定'}" Margin="0,4,0,0" />
             <TextBlock DockPanel.Dock="Top" Text="{Binding AssetStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
+            <WrapPanel Margin="0,0,0,4">
+                <Button Content="移動・改名先を指定" Command="{Binding ReassociateProjectCommand}" Margin="0,0,4,0" />
+                <Button Content="旧メタデータ履歴を取り込む" Command="{Binding ImportMetadataSeriesCommand}" Margin="0,0,4,0" />
+                <Button Content="履歴の版を選択" Command="{Binding SelectMetadataSeriesCommand}" Margin="0,0,4,0" />
+                <Button Content="関連付けと素材を照合" Command="{Binding InspectMetadataSeriesCommand}" />
+            </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
             </Expander>

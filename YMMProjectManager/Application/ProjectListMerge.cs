@@ -25,9 +25,6 @@ internal static class ProjectListMerge
             return new(null, changes, ["一覧に未知・不正な項目があるか、最新の版がありません。"]);
         if (!Valid(baseline) || !Valid(local) || !Valid(remote))
             return new(null, changes, ["パス、project ID、folder ID の重複または不正があります。"]);
-        if (!OrderIsAppendOnly(baseline.Projects.Select(p => p.FullPath), local.Projects.Select(p => p.FullPath), StringComparer.OrdinalIgnoreCase) ||
-            !OrderIsAppendOnly(baseline.Folders.Select(f => f.Id), local.Folders.Select(f => f.Id), EqualityComparer<Guid>.Default))
-            return new(null, changes, ["未保存の並べ替えまたは途中への挿入は自動再適用できません。"]);
         foreach (var original in baseline.Projects.Where(p => p.ProjectId is not null))
         {
             var localIdentity = local.Projects.SingleOrDefault(p => p.ProjectId == original.ProjectId);
@@ -77,6 +74,7 @@ internal static class ProjectListMerge
             target.Pinned = Field(b.Pinned, l.Pinned, r.Pinned, key, "Pinned", conflicts);
             target.LastAccess = Field(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", conflicts);
             target.FolderId = Field(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", conflicts);
+            target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts);
             var bLinks = LinksFingerprint(b); var lLinks = LinksFingerprint(l); var rLinks = LinksFingerprint(r);
             var selected = Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts);
             if (selected == lLinks && lLinks != rLinks) { target.LinkedYmmpFiles.Clear(); foreach (var link in l.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link)); }
@@ -87,10 +85,15 @@ internal static class ProjectListMerge
                 Describe(b.Pinned, l.Pinned, r.Pinned, key, "Pinned", changes);
                 Describe(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", changes);
                 Describe(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", changes);
+                Describe(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", changes);
                 Describe(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", changes);
             }
         }
         MergeFolders(baseline, local, remote, merged, changes, conflicts);
+        MergeOrder(baseline.Projects, local.Projects, remote.Projects, merged.Projects,
+            p => p.FullPath, StringComparer.OrdinalIgnoreCase, "プロジェクト", changes, conflicts);
+        MergeOrder(baseline.Folders, local.Folders, remote.Folders, merged.Folders,
+            f => f.Id, EqualityComparer<Guid>.Default, "フォルダー", changes, conflicts);
         if (!Valid(merged)) conflicts.Add("再適用により project ID、パスまたは folder ID が重複します。");
         return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts);
     }
@@ -111,18 +114,42 @@ internal static class ProjectListMerge
     private static bool Equal<T>(T left, T right) => left is DateTimeOffset a && right is DateTimeOffset b
         ? a.EqualsExact(b) : EqualityComparer<T>.Default.Equals(left, right);
 
-    private static bool OrderIsAppendOnly<T>(IEnumerable<T> baseline, IEnumerable<T> local, IEqualityComparer<T> comparer)
+    private static void MergeOrder<T, TKey>(List<T> baseline, List<T> local, List<T> remote, List<T> merged,
+        Func<T, TKey> key, IEqualityComparer<TKey> comparer, string label, List<string> changes, List<string> conflicts)
+        where TKey : notnull
     {
-        var baseArray = baseline.ToArray(); var localArray = local.ToArray();
+        var baseArray = baseline.Select(key).ToArray();
+        var localArray = local.Select(key).ToArray();
+        var remoteArray = remote.Select(key).ToArray();
         var baseSet = baseArray.ToHashSet(comparer); var localSet = localArray.ToHashSet(comparer);
-        if (!baseArray.Where(localSet.Contains).SequenceEqual(localArray.Where(baseSet.Contains), comparer)) return false;
+        if (localArray.SequenceEqual(remoteArray, comparer)) return;
+        if (baseArray.SequenceEqual(remoteArray, comparer))
+        {
+            // Remote may have field edits even when its sequence is unchanged.
+            var byKey = merged.ToDictionary(key, comparer);
+            if (localArray.Length != byKey.Count || !localArray.All(byKey.ContainsKey)) return;
+            var current = merged.Select(key).ToArray();
+            if (current.SequenceEqual(localArray, comparer)) return;
+            merged.Clear();
+            merged.AddRange(localArray.Select(id => byKey[id]));
+            changes.Add($"{label}の並び順を再適用:\n" + string.Join("\n", localArray));
+            return;
+        }
+        if (!baseArray.Where(localSet.Contains).SequenceEqual(localArray.Where(baseSet.Contains), comparer))
+        {
+            conflicts.Add($"{label}の並べ替えと外部の順序変更または追加・削除が競合しています。");
+            return;
+        }
         var seenNew = false;
         foreach (var item in localArray)
         {
             if (!baseSet.Contains(item)) seenNew = true;
-            else if (seenNew) return false;
+            else if (seenNew)
+            {
+                conflicts.Add($"{label}の途中への挿入と外部の順序変更または追加・削除が競合しています。");
+                return;
+            }
         }
-        return true;
     }
 
     private static void MergeFolders(ProjectStore baseline, ProjectStore local, ProjectStore remote, ProjectStore merged, List<string> changes, List<string> conflicts)
@@ -171,6 +198,7 @@ internal static class ProjectListMerge
     {
         var copy = new ProjectEntry { FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = x.DisplayName, Pinned = x.Pinned, LastAccess = x.LastAccess, FolderId = x.FolderId, ThumbnailCacheDirectory = x.ThumbnailCacheDirectory, ThumbnailSource = x.ThumbnailSource };
         foreach (var link in x.LinkedYmmpFiles) copy.LinkedYmmpFiles.Add(Clone(link));
+        copy.MetadataAssociation = x.MetadataAssociation;
         return copy;
     }
     private static LinkedYmmpFile Clone(LinkedYmmpFile x) => new() { Id = x.Id, FilePath = x.FilePath, DisplayName = x.DisplayName, Role = x.Role, Memo = x.Memo, RegisteredAt = x.RegisteredAt, LastCheckedAt = x.LastCheckedAt, Exists = x.Exists, UpdatedAt = x.UpdatedAt };

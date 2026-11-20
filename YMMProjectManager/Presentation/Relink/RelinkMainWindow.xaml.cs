@@ -22,17 +22,25 @@ public partial class RelinkMainWindow : Window
     private readonly ObservableCollection<RelinkRow> rows = [];
     private readonly TimelineToolInfo? timelineInfo;
     private readonly Guid? projectId;
+    private readonly Func<Task<AssetRevisionSeries.Selection>>? resolveMetadata;
+    private readonly string? metadataDirectory;
     private RelinkDocumentContext? context;
     private TimelineRelinkContext? timelineContext;
     private DateTimeOffset lastProgressUiUpdate = DateTimeOffset.MinValue;
     private CancellationTokenSource? searchCts;
     private bool isSearchRunning;
+    private bool isSaveRunning;
     private bool suppressUiAfterClose;
 
-    public RelinkMainWindow(string ymmpPath, FileLogger logger, Guid? projectId = null)
+    public RelinkMainWindow(string ymmpPath, FileLogger logger, Guid? projectId = null,
+        Func<Task<AssetRevisionSeries.Selection>>? resolveMetadata = null, string? metadataDirectory = null)
         : this(logger, null, ymmpPath)
     {
         this.projectId = projectId;
+        this.resolveMetadata = resolveMetadata;
+        this.metadataDirectory = metadataDirectory;
+        if (resolveMetadata is not null && metadataDirectory is not null)
+            RecoverMetadataButton.Visibility = Visibility.Visible;
     }
 
     public RelinkMainWindow(TimelineToolInfo timelineInfo, FileLogger logger, string? ymmpPath = null)
@@ -230,6 +238,8 @@ public partial class RelinkMainWindow : Window
 
     private async void OnSaveClick(object sender, RoutedEventArgs e)
     {
+        if (isSaveRunning) return;
+        isSaveRunning = true;
         try
         {
             if (context is null && timelineContext is null)
@@ -254,7 +264,15 @@ public partial class RelinkMainWindow : Window
             var fileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None);
             if (fileHashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
             AssetManifest? expectedManifest = null;
-            if (projectId is not null && MessageBox.Show("期待ハッシュを素材メタデータから照合しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+            var association = resolveMetadata is null ? null : await resolveMetadata();
+            if (association is not null && metadataDirectory is not null)
+            {
+                await SaveManagedRelinkAsync(snapshot, association);
+                return;
+            }
+            if (association is not null)
+                expectedManifest = association.Selected.Manifest;
+            else if (projectId is not null && MessageBox.Show("期待ハッシュを素材メタデータから照合しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 var metadataDialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを選択", CheckFileExists = true };
                 if (metadataDialog.ShowDialog() != true) return;
@@ -265,6 +283,16 @@ public partial class RelinkMainWindow : Window
             if (MessageBox.Show(notice + "\n" + string.Join("\n\n", comparison) + "\n別名で保存しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             var dialog = new SaveFileDialog { Filter = "YMM Project (*.ymmp)|*.ymmp", Title = "再リンク結果を新しいファイルに保存", OverwritePrompt = false };
             if (dialog.ShowDialog() != true) return;
+            if (association is not null)
+            {
+                var current = await resolveMetadata!();
+                if (current.Selected.Receipt != association.Selected.Receipt || current.Head != association.Head)
+                {
+                    SetSummaryText("メタデータの履歴が変更されました。候補を再確認してください。");
+                    return;
+                }
+            }
+            using var candidateLocks = new RelinkCandidateVerifier.CandidateReadLocks(snapshot.Rows);
             var checkedComparison = expectedManifest is null
                 ? await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, CancellationToken.None)
                 : await RelinkCandidateVerifier.CompareExpectedAsync(snapshot.Rows, snapshot.YmmpPath, projectId!.Value, expectedManifest, CancellationToken.None);
@@ -294,6 +322,63 @@ public partial class RelinkMainWindow : Window
                 MessageBox.Show("保存中にエラーが発生しました。ログを確認してください。", "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
             }
         }
+        finally { isSaveRunning = false; }
+    }
+
+    private async Task SaveManagedRelinkAsync(RelinkDocumentContext snapshot, AssetRevisionSeries.Selection history)
+    {
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+        var token = cancellation.Token;
+        var review = await AssetRelinkRecovery.ReviewAsync(snapshot, metadataDirectory!, history.Root, history.Selected.Receipt, token);
+        var details = string.Join("\n\n", review.Select(item =>
+            $"{item.OriginalPath}\n候補 {item.CandidatePath}\n期待 {item.ExpectedSha256 ?? "未登録"}\n実測 {item.CandidateSha256}"));
+        var mismatches = review.Any(item => item.RequiresConfirmation);
+        if (MessageBox.Show($"{details}\n\n{(mismatches ? "不一致または期待値のない候補を承認して続けますか？" : "候補は期待値と一致しました。続けますか？")}",
+            "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+        var dialog = new SaveFileDialog { Filter = "YMM Project (*.ymmp)|*.ymmp", OverwritePrompt = false,
+            Title = "元のプロジェクトと同じフォルダーに別名で保存", InitialDirectory = Path.GetDirectoryName(snapshot.YmmpPath) };
+        if (dialog.ShowDialog() != true) return;
+        using var candidateLocks = new RelinkCandidateVerifier.CandidateReadLocks(snapshot.Rows);
+        var evidence = await AssetRelinkRecovery.PrepareAsync(snapshot, dialog.FileName, metadataDirectory!, history.Root,
+            history.Selected.Receipt, review, mismatches, token);
+        var (saved, error) = await saveService.SaveAsAsync(snapshot, dialog.FileName, token);
+        if (!saved)
+        {
+            SetSummaryText($"別名保存を完了できませんでした。{error}");
+            return;
+        }
+        try
+        {
+            var receipt = await AssetRelinkRecovery.CompleteAsync(evidence, metadataDirectory!, history.Root, token, snapshot.YmmpPath);
+            SetSummaryText($"別名保存とメタデータ版の追加が完了しました。\n{dialog.FileName}\n版 {receipt.RevisionId}。一覧の選択版は以前のままです。");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Managed relink metadata update failed after SaveAs.");
+            SetSummaryText($"別名保存済みです。メタデータ更新は完了確認できませんでした。「メタデータ更新を再開」で次の記録を選んでください。\n{evidence}");
+        }
+    }
+
+    private async void OnRecoverMetadataClick(object sender, RoutedEventArgs e)
+    {
+        if (isSaveRunning || resolveMetadata is null || metadataDirectory is null || YmmpPath is not { } source) return;
+        isSaveRunning = true;
+        try
+        {
+            var dialog = new OpenFileDialog { Filter = "素材再リンクの回復記録 (.ymmpm-relink-*.json)|.ymmpm-relink-*.json",
+                InitialDirectory = Path.GetDirectoryName(source) };
+            if (dialog.ShowDialog() != true) return;
+            var selection = await resolveMetadata();
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            var receipt = await AssetRelinkRecovery.CompleteAsync(dialog.FileName, metadataDirectory, selection.Root, cancellation.Token, source);
+            SetSummaryText($"メタデータ版を確認しました。版 {receipt.RevisionId}。");
+        }
+        catch (Exception ex)
+        {
+            logger.Error(ex, "Managed relink recovery failed.");
+            SetSummaryText("回復できませんでした。元のプロジェクト、出力、候補とメタデータの現在版を確認してください。");
+        }
+        finally { isSaveRunning = false; }
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e)

@@ -25,7 +25,7 @@ internal static class OfflineControlsTests
             if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
             if (vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) || vm.PushGitCommand.CanExecute(null) || vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("unfenced remote commands must remain disabled");
-            if (vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("unverified extraction must remain disabled");
+            if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
             if (!vm.GitStatus.Contains("Git:") || !vm.GitStatus.Contains("project.ymmp")) throw new Exception("Git status not displayed");

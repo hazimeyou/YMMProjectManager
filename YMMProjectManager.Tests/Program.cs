@@ -56,7 +56,7 @@ internal static class Program
         try
         {
             await RunAllAsync(workRoot);
-            Console.WriteLine("All generation management tests passed.");
+            if (groupsFailed > 0) Environment.ExitCode = 1;
         }
         finally
         {
@@ -131,6 +131,7 @@ internal static class Program
         await RunGroupAsync("TestLegacyProjectStoreCompatibilityAsync", () => TestLegacyProjectStoreCompatibilityAsync(workRoot));
         await RunGroupAsync("ProjectListSaveTests.RunAsync", () => ProjectListSaveTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListConcurrencyTests.RunAsync", () => ProjectListConcurrencyTests.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListDraftTests.RunAsync", () => ProjectListDraftTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListRecoveryTests.RunAsync(workRoot));
         await RunGroupAsync("TestProjectEntryThumbnailCacheDirectoryNotificationAsync", () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync());
         await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));
@@ -146,8 +147,13 @@ internal static class Program
 
     private static async Task RunGroupAsync(string name, Func<Task> run)
     {
-        try { await run(); groupsPassed++; Console.WriteLine($"PASS group: {name}"); }
-        catch { groupsFailed++; Console.WriteLine($"FAIL group: {name}"); throw; }
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        try { await run(); groupsPassed++; Console.WriteLine($"PASS group: {name} ({timer.Elapsed})"); }
+        catch (Exception ex)
+        {
+            groupsFailed++;
+            Console.Error.WriteLine($"FAIL group: {name} ({timer.Elapsed})\n{ex}");
+        }
     }
 
     private static async Task RunFilteredAsync(string workRoot, string filter)

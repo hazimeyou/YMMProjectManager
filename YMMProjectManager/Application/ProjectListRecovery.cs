@@ -17,6 +17,7 @@ internal static class ProjectListRecovery
             Projects = store.Projects.Select(p => new
             {
                 p.FullPath, ProjectId = string.Equals(p.FullPath, ignoreIdentityAtPath, StringComparison.OrdinalIgnoreCase) ? null : p.ProjectId, p.DisplayName, p.Pinned, p.LastAccess, p.FolderId,
+                p.MetadataAssociation,
                 Links = p.LinkedYmmpFiles.Select(l => new { l.Id, l.FilePath, l.DisplayName, l.Role, l.Memo, l.RegisteredAt, l.UpdatedAt, l.LastCheckedAt, l.Exists }).ToArray(),
             }).ToArray(),
         };

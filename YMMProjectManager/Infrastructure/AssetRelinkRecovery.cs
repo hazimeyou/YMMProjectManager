@@ -93,7 +93,7 @@ internal static class AssetRelinkRecovery
     }
 
     internal static async Task<AssetRevisionSeries.Head> CompleteAsync(string evidence, string seriesDirectory, AssetRevisionSeries.Head associatedRoot,
-        CancellationToken token)
+        CancellationToken token, string? expectedSource = null)
     {
         var evidencePath = Path.GetFullPath(evidence);
         await using var intentStream = OpenVerifiedPath(evidencePath);
@@ -107,6 +107,8 @@ internal static class AssetRelinkRecovery
                 item.TypeHint is null || !IsHash(item.CandidateSha256)) || !IsHash(intent.SourceSha256) || !IsHash(intent.OutputSha256))
             throw new InvalidDataException("The relink recovery record is invalid or belongs to a different project.");
         ValidatePaths(intent.Source, intent.Output);
+        if (expectedSource is not null && !string.Equals(Path.GetFullPath(expectedSource), intent.Source, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("This recovery record belongs to a different source project file.");
         AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(intent.Next));
         if (!string.Equals(evidencePath, EvidencePath(intent.Source, intent.OperationId), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The relink recovery record was moved or renamed.");
