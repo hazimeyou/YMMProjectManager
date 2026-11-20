@@ -41,6 +41,11 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        if (args.Length == 2 && args[0] is ProjectListWpfFixtureProcess.ChildArgument or ProjectListWpfFixtureProcess.StalledChildArgument)
+        {
+            await ProjectListWpfFixtureProcess.RunChildAsync(args[1], stalled: args[0] == ProjectListWpfFixtureProcess.StalledChildArgument);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--list-publication-crash")
         {
             await ProjectListPublicationTests.CrashAsync(args[1], args[2]);
@@ -158,7 +163,9 @@ internal static class Program
             RunNamedCaseAsync("Three-way recovery verifies the selected file and holds its lease", () => ProjectListRecoveryFilesTests.RunAsync(workRoot)));
         await RunGroupAsync("RelinkAssociationTests.RunAsync", () =>
             RunNamedCaseAsync("Relink SaveAs, revision and WPF association retry", () => RelinkAssociationTests.RunAsync(workRoot)));
-        await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListRecoveryTests.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListRecoveryTests.RunAsync", () => ProjectListWpfFixtureProcess.RunAsync(workRoot));
+        await RunGroupAsync("ProjectListWpfFixtureProcess.VerifyTimeoutAsync", () =>
+            RunNamedCaseAsync("WPF watchdog stops only the owned child", () => ProjectListWpfFixtureProcess.VerifyTimeoutAsync(workRoot)));
         await RunGroupAsync("TestProjectEntryThumbnailCacheDirectoryNotificationAsync", () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync());
         await RunGroupAsync("TestProjectGenerationStorageReplaceAsync", () => TestProjectGenerationStorageReplaceAsync(workRoot));
         await RunGroupAsync("YmmpxBundleTests.RunAsync", () => YmmpxBundleTests.RunAsync(workRoot));
@@ -195,10 +202,16 @@ internal static class Program
                     await ProjectListIdentityRecoveryTests.RunAsync(workRoot);
                     break;
                 case nameof(ProjectListRecoveryTests):
-                    await ProjectListRecoveryTests.RunAsync(workRoot);
+                    await ProjectListWpfFixtureProcess.RunAsync(workRoot);
                     break;
                 case nameof(ProjectListRecoveryFilesTests):
                     await ProjectListRecoveryFilesTests.RunAsync(workRoot);
+                    break;
+                case nameof(ProjectListPublicationTests):
+                    await ProjectListPublicationTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitRemoteTests):
+                    await GitRemoteTests.RunAsync(workRoot);
                     break;
                 case nameof(TestSeekAdapterReflectionFailureAsync):
                     await TestSeekAdapterReflectionFailureAsync();
