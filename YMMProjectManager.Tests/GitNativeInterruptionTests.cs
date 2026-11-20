@@ -23,6 +23,10 @@ internal static class GitNativeInterruptionTests
 
     private static async Task InterruptDuringUpdateAsync(string workRoot)
     {
+        var allowed = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests"));
+        if (!Guid.TryParseExact(Path.GetRelativePath(allowed, workRoot), "N", out _))
+            throw new InvalidOperationException("Native Pull setup requires the isolated test run directory.");
+        using var fixtureFence = OwnedFilePublication.DirectoryFence.Open(workRoot, enforceShare: true);
         var root = Directory.CreateDirectory(Path.Combine(workRoot, FixtureDirectory)).FullName;
         var seed = Directory.CreateDirectory(Path.Combine(root, "seed")).FullName;
         var bare = Path.Combine(root, "remote.git");
@@ -239,6 +243,8 @@ internal static class GitNativeInterruptionTests
             RedirectStandardInput = input is not null, RedirectStandardOutput = true, RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
         };
+        foreach (var name in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(name);
         start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
         start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
         start.Environment["GIT_ALLOW_PROTOCOL"] = "file";
