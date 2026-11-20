@@ -15,6 +15,10 @@ internal static class GitConfirmedPullTests
         await Program.RunNamedCaseAsync("Confirmed Pull refuses concurrent app writes", () => ConcurrentWritesAsync(workRoot));
         await Program.RunNamedCaseAsync("Confirmed Pull honors cancellation before launch and verifies after launch", () => CancelAsync(workRoot));
         await Program.RunNamedCaseAsync("Confirmed Pull retains ambiguous evidence across repository instances", () => RecoveryAsync(workRoot));
+        await Program.RunNamedCaseAsync("Confirmed Pull detects another branch changing during publication", () => RefInterferenceAsync(workRoot));
+        await Program.RunNamedCaseAsync("Confirmed Pull verifies native failure while the branch ref is held", () => RefSharingFailureAsync(workRoot));
+        await Program.RunNamedCaseAsync("Confirmed Pull rejects unsupported worktrees and inaccessible configuration", () => UnsupportedStateAsync(workRoot));
+        await Program.RunNamedCaseAsync("Confirmed Pull preparation timeout preserves the checkout", () => DeadlineAsync(workRoot));
     }
 
     private const string Incoming = "素材.txt";
@@ -223,6 +227,7 @@ internal static class GitConfirmedPullTests
         var result = await fixture.Repository.PullTrustedAsync(target);
         Check(result.Failure == GitFailure.OutcomeUnknown && result.RecoveryPath is { } evidence && File.Exists(evidence),
             "concurrent edit allowed success or lost the durable record: " + result.StandardError);
+        await GitAsync(fixture.Local, "config", "merge.verifySignatures", "true");
         var restarted = new GitRepository(fixture.Local);
         for (var attempt = 0; attempt < 2; attempt++)
         {
@@ -231,6 +236,92 @@ internal static class GitConfirmedPullTests
         }
         Check(await File.ReadAllTextAsync(Path.Combine(fixture.Local, Incoming)) == "external concurrent edits" &&
             await GitAsync(fixture.Local, "rev-parse", "HEAD") == fixture.Target, "automatic recovery reverted external edits or checkout");
+    }
+
+    private static async Task RefInterferenceAsync(string workRoot)
+    {
+        var fixture = await CreateAsync(workRoot, "ref-race");
+        await GitAsync(fixture.Local, "branch", "side");
+        var target = await ApproveAsync(fixture);
+        fixture.Repository.AfterPullProcessExit = () =>
+            GitAsync(fixture.Local, "update-ref", "refs/heads/side", fixture.Target, fixture.Start).GetAwaiter().GetResult();
+        var result = await fixture.Repository.PullTrustedAsync(target);
+        Check(result.Failure == GitFailure.OutcomeUnknown && GitPullOperationJournal.Exists(fixture.Local),
+            "another branch change was ignored or lost the durable journal");
+        await VerifyUpdatedAsync(fixture);
+        Check(await GitAsync(fixture.Local, "rev-parse", "refs/heads/side") == fixture.Target,
+            "recovery rewrote the externally changed branch");
+    }
+
+    private static async Task RefSharingFailureAsync(string workRoot)
+    {
+        var fixture = await CreateAsync(workRoot, "ref-share");
+        var target = await ApproveAsync(fixture);
+        FileStream? external = null;
+        var launched = false;
+        fixture.Repository.AfterPullJournalCreated = () =>
+            external = new FileStream(Path.Combine(fixture.Local, ".git", "refs", "heads", "main"),
+                FileMode.Open, FileAccess.Read, FileShare.Read);
+        fixture.Repository.AfterPullProcessStarted = () => launched = true;
+        GitResult result;
+        try { result = await fixture.Repository.PullTrustedAsync(target); }
+        finally { external?.Dispose(); }
+        Check(launched && !result.Success, "the fixture did not exercise the native ref sharing failure");
+        var head = await GitAsync(fixture.Local, "rev-parse", "HEAD");
+        var indexTree = await GitAsync(fixture.Local, "write-tree");
+        var oldTree = await GitAsync(fixture.Local, "rev-parse", fixture.Start + "^{tree}");
+        Check(head == fixture.Start && await GitAsync(fixture.Local, "show", fixture.Start + ":existing.txt") == "base",
+            "ref sharing failure changed the held ref or lost original committed contents");
+        if (result.Failure == GitFailure.OutcomeUnknown)
+            Check(GitPullOperationJournal.Exists(fixture.Local), "partial native failure lost its recovery record");
+        else
+            Check(indexTree == oldTree && await File.ReadAllTextAsync(Path.Combine(fixture.Local, "existing.txt")) == "base" &&
+                !File.Exists(Path.Combine(fixture.Local, Incoming)) && !GitPullOperationJournal.Exists(fixture.Local),
+                "native failure reported no change without preserving the checkout");
+    }
+
+    private static async Task UnsupportedStateAsync(string workRoot)
+    {
+        var fixture = await CreateAsync(workRoot, "limits");
+        var target = await ApproveAsync(fixture);
+        await GitAsync(fixture.Local, "config", "merge.verifySignatures", "true");
+        Check(!(await fixture.Repository.PullTrustedAsync(target)).Success, "required signing policy was bypassed");
+        await GitAsync(fixture.Local, "config", "--unset", "merge.verifySignatures");
+
+        await GitAsync(fixture.Local, "config", "core.sparseCheckout", "true");
+        Check(!(await fixture.Repository.PullTrustedAsync(target)).Success, "sparse checkout policy was ignored");
+        await GitAsync(fixture.Local, "config", "--unset", "core.sparseCheckout");
+
+        using (var config = new FileStream(Path.Combine(fixture.Local, ".git", "config"), FileMode.Open, FileAccess.Read, FileShare.None))
+            Check(!(await fixture.Repository.PullTrustedAsync(target)).Success, "unavailable config was treated as verified");
+
+        var linked = Path.Combine(fixture.FixtureRoot, "w");
+        await GitAsync(fixture.Local, "worktree", "add", "-b", "linked", linked);
+        Check(!(await new GitRepository(linked).InspectPullRemoteAsync()).Success, "a linked checkout was admitted");
+        Check(await GitAsync(fixture.Local, "rev-parse", "HEAD") == fixture.Start &&
+            await GitAsync(linked, "rev-parse", "HEAD") == fixture.Start &&
+            !File.Exists(Path.Combine(fixture.Local, Incoming)) && !GitPullOperationJournal.Exists(fixture.Local),
+            "rejected operation changed ref, checkout or journal");
+    }
+
+    private static async Task DeadlineAsync(string workRoot)
+    {
+        var fixture = await CreateAsync(workRoot, "deadline");
+        var target = await ApproveAsync(fixture);
+        var repository = new GitRepository(fixture.Local) { RemoteTimeout = TimeSpan.FromSeconds(6) };
+        var reachedGate = false;
+        repository.BeforePullExecutionRecheck = deadline =>
+        {
+            reachedGate = true;
+            Check(deadline.WaitHandle.WaitOne(TimeSpan.FromSeconds(10)), "the operation-wide deadline did not fire");
+        };
+        var result = await repository.PullTrustedAsync(target);
+        Check(reachedGate && result.Failure == GitFailure.Timeout && result.RemoteDiagnostic is { Operation: "Pull" },
+            $"preparation deadline not reported: {result.Failure} {result.StandardError}");
+        Check(await GitAsync(fixture.Local, "rev-parse", "HEAD") == fixture.Start &&
+            await GitAsync(fixture.Local, "status", "--porcelain") == "" &&
+            !File.Exists(Path.Combine(fixture.Local, Incoming)) && !GitPullOperationJournal.Exists(fixture.Local),
+            "preparation timeout changed the checkout or left a mutation journal");
     }
 
     private static async Task<string> GitAsync(string directory, params string[] arguments)
