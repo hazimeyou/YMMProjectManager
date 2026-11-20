@@ -61,7 +61,7 @@ public sealed class YmmpxLibBridge
         }
 
         string? temporaryPath = null;
-        var temporaryOwned = false;
+        (ulong Volume, Guid FileId)? temporaryIdentity = null;
         FileStream? validatedPackage = null;
         try
         {
@@ -85,7 +85,8 @@ public sealed class YmmpxLibBridge
             }
             catch (JsonException) { return InvalidProject(); }
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
-            using (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { temporaryOwned = true; }
+            using (var reserved = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                temporaryIdentity = ProjectFileEvidence.ReadPhysicalIdentity(reserved);
             var scan = ScanProjectForLogging(ymmpPath);
             token.ThrowIfCancellationRequested();
             logger.Info(
@@ -157,7 +158,7 @@ public sealed class YmmpxLibBridge
             {
                 return new YmmpxPackageResult { Success = false, ErrorMessage = "出力中に同じ名前のファイルが作成されました。別の名前で保存してください。" };
             }
-            temporaryOwned = false;
+            temporaryIdentity = null;
             packagedOutputPath = destination;
 
             logger.Info(
@@ -193,12 +194,10 @@ public sealed class YmmpxLibBridge
         }
         finally
         {
-            if (temporaryOwned && validatedPackage is not null)
-                YmmpxPackageReader.TryDeleteOpenedPath(validatedPackage.SafeFileHandle);
-            else if (temporaryOwned && temporaryPath is not null)
-            {
-                try { File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-            }
+            // The library can replace its output during creation. On failure, neither the
+            // path nor a library result proves that a file with a different identity is ours.
+            if (temporaryIdentity is { } owned && temporaryPath is not null)
+                TryDeleteOwnedPackage(temporaryPath, owned, validatedPackage);
             validatedPackage?.Dispose();
         }
 
@@ -207,6 +206,24 @@ public sealed class YmmpxLibBridge
             Success = false,
             ErrorMessage = "有効な .ymmp プロジェクトを指定してください。プロジェクトの JSON とファイルサイズを確認してください。",
         };
+    }
+
+    private void TryDeleteOwnedPackage(string path, (ulong Volume, Guid FileId) identity, FileStream? validatedPackage)
+    {
+        try
+        {
+            using var reopened = validatedPackage is null
+                ? new FileStream(YmmpxPackageReader.OpenPackageForPublication(path), FileAccess.Read)
+                : null;
+            var package = validatedPackage ?? reopened!;
+            if (ProjectFileEvidence.ReadPhysicalIdentity(package) == identity &&
+                YmmpxPackageReader.TryDeleteOpenedPath(package.SafeFileHandle)) return;
+            logger.Info($"同梱の一時出力の所有を確認できないか削除できないため保持しました。path={path}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.Info($"同梱の一時出力を後始末できませんでした。path={path}, error={ex.GetType().Name}");
+        }
     }
 
     public async Task<YmmpxExtractResult> ExtractPackageAsync(

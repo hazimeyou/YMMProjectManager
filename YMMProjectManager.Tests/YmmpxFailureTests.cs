@@ -86,6 +86,37 @@ internal static class YmmpxFailureTests
                 await File.ReadAllTextAsync(output) != "original package")
                 throw new Exception("cancelled creation left partial output or changed an existing file");
         }
+        await Program.RunNamedCaseAsync("Cancelled packaging preserves a replacement at its temporary name", async () =>
+        {
+            var isolated = Path.Combine(root, "retained-replacement");
+            Directory.CreateDirectory(isolated);
+            var destination = Path.Combine(isolated, "cancel-replaced.ymmpx");
+            var movedOriginal = Path.Combine(isolated, "moved-partial.ymmpx");
+            string? replacedPath = null;
+            using var cancelled = new CancellationTokenSource();
+            YmmpxLib.YmmpxPackageService.Mode = "cancel-after-write";
+            YmmpxLib.YmmpxPackageService.AfterPartialWrite = () =>
+            {
+                replacedPath = Directory.EnumerateFiles(isolated, ".cancel-replaced.*.tmp.ymmpx").Single();
+                File.Move(replacedPath, movedOriginal);
+                File.WriteAllText(replacedPath, "separate file");
+                cancelled.Cancel();
+            };
+            try
+            {
+                await bridge.CreatePackageAsync(project, destination, cancelled.Token);
+                throw new InvalidOperationException("Expected the packaging attempt to be cancelled.");
+            }
+            catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+            finally
+            {
+                YmmpxLib.YmmpxPackageService.AfterPartialWrite = null;
+                YmmpxLib.YmmpxPackageService.Mode = "success";
+            }
+            if (replacedPath is null || await File.ReadAllTextAsync(replacedPath) != "separate file" ||
+                await File.ReadAllTextAsync(movedOriginal) != "partial" || File.Exists(destination))
+                throw new InvalidOperationException("Cancellation removed a file that the active operation did not own.");
+        });
         YmmpxLib.YmmpxPackageService.ExternalPath = newPath;
         var conflict = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (conflict.Success || await File.ReadAllTextAsync(newPath) != "external edit")
