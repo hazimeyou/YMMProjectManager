@@ -137,6 +137,10 @@ public sealed class GitRepository
         var state = worktree.Status!.Length != 0 ? GitPullState.Dirty : tracking.ObjectId is null
             ? GitPullState.TrackingUnavailable : await ClassifyPullAsync(branch.ObjectId, tracking.ObjectId, token).ConfigureAwait(false);
 
+        var checkIgnoredPaths = state == GitPullState.FastForwardCandidate;
+        if (checkIgnoredPaths)
+            state = await InspectIgnoredPathsAsync(branch.ObjectId, tracking.ObjectId!, token).ConfigureAwait(false);
+
         // The result describes these observations only; no ref or index transaction is held.
         BeforePullInspectionRecheck?.Invoke();
         var (latestBranch, _) = await ReadBranchTipAsync(trusted: true, token).ConfigureAwait(false);
@@ -145,7 +149,43 @@ public sealed class GitRepository
         if (!HasDirectRepository() || latestBranch != branch || latestTracking != tracking || latestWorktree != worktree)
             return new GitPullAssessment(GitPullState.Changed, Message: "The repository changed during inspection. Refresh the assessment.");
 
-        return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking.Ref, tracking.ObjectId, tracking.Message);
+        if (checkIgnoredPaths && await InspectIgnoredPathsAsync(branch.ObjectId, tracking.ObjectId!, token).ConfigureAwait(false) != state)
+            return new GitPullAssessment(GitPullState.Changed, Message: "Ignored paths changed during inspection. Refresh the assessment.");
+
+        var message = state == GitPullState.IgnoredPathCollision
+            ? "An ignored path overlaps a path in the incoming changes."
+            : tracking.Message;
+        return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking.Ref, tracking.ObjectId, message);
+    }
+
+    private async Task<GitPullState> InspectIgnoredPathsAsync(string local, string upstream, CancellationToken token)
+    {
+        // Normal porcelain omits ignored local files. Compare incoming changes with the ignored
+        // paths themselves rather than treating all ignored files as a checkout obstruction.
+        var ignored = await RunDirectAsync(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], token).ConfigureAwait(false);
+        if (!ignored.Success || ignored.StandardError.Length != 0) return GitPullState.Unavailable;
+        if (ignored.StandardOutput.Length == 0) return GitPullState.FastForwardCandidate;
+
+        var changed = await RunDirectAsync(["diff-tree", "-z", "--name-only", "--no-commit-id", "--no-renames",
+            "--no-ext-diff", "--no-textconv", "--diff-filter=AMT", "-r", local, upstream, "--"], token).ConfigureAwait(false);
+        if (!changed.Success || changed.StandardError.Length != 0) return GitPullState.Unavailable;
+
+        var incoming = changed.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var incomingParents = incoming.SelectMany(ParentPaths).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in ignored.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries))
+        {
+            token.ThrowIfCancellationRequested();
+            var file = path.TrimEnd('/');
+            if (incoming.Contains(file) || incomingParents.Contains(file) || ParentPaths(file).Any(incoming.Contains))
+                return GitPullState.IgnoredPathCollision;
+        }
+        return GitPullState.FastForwardCandidate;
+
+        static IEnumerable<string> ParentPaths(string path)
+        {
+            for (var slash = path.IndexOf('/'); slash >= 0; slash = path.IndexOf('/', slash + 1))
+                yield return path[..slash];
+        }
     }
 
     private sealed record PullTrackingObservation(string? Ref = null, string? ObjectId = null,
@@ -702,7 +742,7 @@ public sealed class GitRepository
 
 public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong }
 public enum GitRemoteOperation { Fetch, Push }
-public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable }
+public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,
     string? TrackingRef = null, string? TrackingObjectId = null, string? Message = null);
 public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);

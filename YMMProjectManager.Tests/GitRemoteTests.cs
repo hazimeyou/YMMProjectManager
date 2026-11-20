@@ -292,6 +292,50 @@ internal static class GitRemoteTests
                     await File.ReadAllTextAsync(candidatePath) == "keep untracked collision", "untracked collision was ignored or lost");
                 File.Delete(candidatePath);
             });
+            await Program.RunNamedCaseAsync("Pull inspection protects ignored paths that overlap the incoming tree", async () =>
+            {
+                var exclude = Path.Combine(source, ".git", "info", "exclude");
+                var priorExclude = await File.ReadAllBytesAsync(exclude);
+                var collision = Path.Combine(source, "two.txt");
+                var nested = Path.Combine(collision, "keep.txt");
+                var unrelated = Path.Combine(source, "notes.txt");
+                const string contents = "user-owned synthetic content";
+                try
+                {
+                    await File.AppendAllTextAsync(exclude, "\n/two.txt\n/notes.txt\n");
+                    await File.WriteAllTextAsync(unrelated, contents);
+                    Check((await one.InspectPullAsync()).State == GitPullState.FastForwardCandidate,
+                        "unrelated ignored file prevented assessment");
+
+                    await File.WriteAllTextAsync(collision, contents);
+                    Check((await one.InspectPullAsync()).State == GitPullState.IgnoredPathCollision &&
+                        await File.ReadAllTextAsync(collision) == contents,
+                        "ignored incoming file collision was accepted or changed");
+                    File.Delete(collision);
+
+                    Directory.CreateDirectory(collision);
+                    await File.WriteAllTextAsync(nested, contents);
+                    Check((await one.InspectPullAsync()).State == GitPullState.IgnoredPathCollision &&
+                        await File.ReadAllTextAsync(nested) == contents,
+                        "ignored directory overlapping an incoming file was accepted or changed");
+                    File.Delete(nested);
+                    Directory.Delete(collision);
+
+                    one.BeforePullInspectionRecheck = () => File.WriteAllText(collision, contents);
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed &&
+                        await File.ReadAllTextAsync(collision) == contents,
+                        "ignored collision created during inspection was missed");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    if (File.Exists(nested)) File.Delete(nested);
+                    if (Directory.Exists(collision)) Directory.Delete(collision);
+                    if (File.Exists(collision)) File.Delete(collision);
+                    File.Delete(unrelated);
+                    await File.WriteAllBytesAsync(exclude, priorExclude);
+                }
+            });
             var disabledPull = await one.PullAsync();
             Check(!disabledPull.Success && disabledPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
             Program.ReportConditionalSkip("product fast-forward pull disabled pending cross-process branch protection");
