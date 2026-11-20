@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Git;
@@ -316,45 +315,41 @@ public sealed class GitRepository
         if (Directory.Exists(full) || File.Exists(full)) throw new IOException("Clone destination already exists.");
         var parent = Path.GetDirectoryName(full) ?? throw new ArgumentException("Invalid clone destination.", nameof(destination));
         if (!trusted && !Path.IsPathFullyQualified(remote)) return UnsafeRemote("Cloning an HTTPS origin requires explicit trust.");
-        if (trusted && !IsOrdinaryDirectory(parent)) return UnsafeRemote("Select a clone destination under a regular filesystem directory.");
+        GitCloneDirectory reserved;
+        try { reserved = GitCloneDirectory.Reserve(parent); }
+        catch (IOException)
+        { return UnsafeRemote("Could not safely reserve a clone directory under the selected parent."); }
+        using var staging = reserved;
         var repository = new GitRepository(parent);
-        // Reserve an owned sibling with an exclusive OS create before Git can write to it.
-        var temporary = Path.Combine(parent, ".ymmpm-clone-" + Guid.NewGuid().ToString("N"));
-        if (!CreateDirectory(ToNativePath(temporary), IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
         GitResult result;
-        try { result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, temporary], token, trusted, cloneStage: temporary).ConfigureAwait(false); }
+        try
+        {
+            result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, staging.Path],
+                token, trusted, cloneStage: staging.Path).ConfigureAwait(false);
+        }
         catch (Exception ex)
         {
-            ex.Data["CloneRecoveryPath"] = temporary;
+            ex.Data["CloneRecoveryPath"] = staging.CheckRecoveryPath();
             throw;
         }
-        if (!result.Success) return result with { RecoveryPath = temporary };
+        if (!result.Success) return result with { RecoveryPath = staging.CheckRecoveryPath() };
         try
         {
             beforeMove?.Invoke();
-            token.ThrowIfCancellationRequested();
-            Directory.Move(temporary, full);
+            staging.Publish(full, token);
             return result;
         }
         catch (IOException)
         {
-            // The completed clone remains in the owned temporary directory for the caller to inspect.
-            return new GitResult(1, "", "Clone destination became unavailable.", GitFailure.Unknown) { RecoveryPath = temporary };
+            return new GitResult(1, "", "Clone could not be safely published. Check the destination and staging directory.",
+                GitFailure.UnsafeOperation) { RecoveryPath = staging.CheckRecoveryPath() };
         }
         catch (Exception ex)
         {
-            ex.Data["CloneRecoveryPath"] = temporary;
+            ex.Data["CloneRecoveryPath"] = staging.CheckRecoveryPath();
             throw;
         }
     }
-
-    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
-
-    private static string ToNativePath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
-        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
-        : @"\\?\" + path;
 
     private async Task<(string? Url, GitResult? Error)> ResolveOriginAsync(bool push, CancellationToken token, bool literal = false)
     {

@@ -48,15 +48,18 @@ internal sealed class GitRepositoryLease(SafeFileHandle worktree, SafeFileHandle
         worktree.Dispose();
     }
 
-    private static SafeFileHandle OpenDirectory(string path)
+    internal static SafeFileHandle OpenDirectory(string path, FileShare share = FileShare.ReadWrite, bool allowRename = false)
     {
-        var nativePath = path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path :
-            path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
-        return CreateFile(nativePath, ReadAttributes, FileShare.ReadWrite, IntPtr.Zero,
+        const uint delete = 0x10000;
+        var access = ReadAttributes | (allowRename ? delete : 0);
+        return CreateFile(ExtendedPath(path), access, share, IntPtr.Zero,
             OpenExisting, BackupSemantics | OpenReparsePoint, IntPtr.Zero);
     }
 
-    private static GitDirectoryIdentity? ReadIdentity(SafeFileHandle handle)
+    internal static string ExtendedPath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path :
+        path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+
+    internal static GitDirectoryIdentity? ReadIdentity(SafeFileHandle handle)
     {
         if (handle.IsInvalid || !ReadAttributesByHandle(handle, FileAttributeTagInfo, out var attributes, 8) ||
             (attributes.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory ||

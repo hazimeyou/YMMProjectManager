@@ -323,9 +323,29 @@ internal static class GitRemoteTests
                 try { await GitRepository.CloneAsync(bare, cancelledDestination, cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
                 Check(!Directory.Exists(cancelledDestination) && countBefore == Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Count(), "cancelled clone created files");
             }
+            var ownedDestination = Path.Combine(root, "owned-clone");
+            var existingStages = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").ToHashSet(StringComparer.OrdinalIgnoreCase);
+            string? observedStage = null;
+            GitDirectoryIdentity? observedIdentity = null;
+            var ownedClone = await GitRepository.CloneCoreAsync(bare, ownedDestination, () =>
+            {
+                observedStage = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Single(path => !existingStages.Contains(path));
+                using var witness = GitRepositoryLease.OpenDirectory(observedStage, FileShare.ReadWrite | FileShare.Delete);
+                observedIdentity = GitRepositoryLease.ReadIdentity(witness);
+                Check(observedIdentity.HasValue && File.Exists(Path.Combine(observedStage, ".git", "HEAD")),
+                    "clone staging did not contain a complete repository");
+            }, CancellationToken.None);
+            Check(ownedClone.Success && observedIdentity.HasValue && !Directory.Exists(observedStage) &&
+                existingStages.All(Directory.Exists), "exact clone failed or affected other staging paths");
+            using (var published = GitRepositoryLease.OpenDirectory(ownedDestination))
+                Check(GitRepositoryLease.ReadIdentity(published) == observedIdentity,
+                    "published directory was not the owned Git staging directory");
+            Check(await Command(ownedDestination, "rev-parse", "HEAD") == remoteBeforeRejectedPush,
+                "identity-preserving clone differs from the source branch");
             var raced = Path.Combine(root, "raced");
             var race = await GitRepository.CloneCoreAsync(bare, raced, () => { Directory.CreateDirectory(raced); File.WriteAllText(Path.Combine(raced, "sentinel"), "keep"); }, CancellationToken.None);
-            Check(!race.Success && race.RecoveryPath is not null && Directory.Exists(race.RecoveryPath), "race clone recovery");
+            Check(!race.Success && race.Failure == GitFailure.UnsafeOperation &&
+                race.RecoveryPath is not null && File.Exists(Path.Combine(race.RecoveryPath, ".git", "HEAD")), "race clone recovery");
             Check(File.ReadAllText(Path.Combine(raced, "sentinel")) == "keep", "race overwrote destination");
             using (var publicationCancellation = new CancellationTokenSource())
             {
