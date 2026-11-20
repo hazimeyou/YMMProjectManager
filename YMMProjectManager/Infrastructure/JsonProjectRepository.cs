@@ -345,6 +345,9 @@ public sealed class JsonProjectRepository : IProjectRepository
         var (id, operation) = drafts.GetClaimedIdentity(claimedDraft);
         await drafts.ReadAsync(claimedDraft, claimed: true).ConfigureAwait(false);
         replacement.RequireNoPending();
+        // Keeping or restoring an explicitly chosen external version must not release the superseded local claim.
+        if (operation is Guid known && replacement.HasExternalResolution(known))
+            return ProjectListPublications.Outcome.Unknown;
         var content = await TryReadListAsync(token).ConfigureAwait(false);
         var store = content is null ? new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true } : DeserializeStore(content);
         var revision = store.Revision!;
@@ -412,8 +415,11 @@ public sealed class JsonProjectRepository : IProjectRepository
             verifiedOriginal = await ProjectListReplacement.MatchesAsync(parked, original, token).ConfigureAwait(false);
             if (!verifiedOriginal)
                 throw new ProjectListConflictException();
+            ProjectListReplacement.VerifyCompatibleFileMetadata(parked, candidate, parkedPath);
             token.ThrowIfCancellationRequested();
-            OwnedFilePublication.RenameOpenedPath(candidate.SafeFileHandle, jsonPath);
+            try { OwnedFilePublication.RenameOpenedPath(candidate.SafeFileHandle, jsonPath); }
+            catch (IOException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 80 or 183 })
+            { throw new ProjectListConflictException(); }
             didPublish = true;
             beforeJournalCleanup?.Invoke();
             if (!OwnedFilePublication.TryDeleteOpenedPath(parked.SafeFileHandle))
@@ -457,6 +463,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             var bytes = SerializeStore(store, operationId);
             var expectedResult = Convert.ToHexString(SHA256.HashData(bytes));
             cancellationToken.ThrowIfCancellationRequested();
+            replacement.RequireLocalNtfs();
             var directory = Path.GetDirectoryName(jsonPath)!;
             Directory.CreateDirectory(directory);
             stage = "inter-process lock";
@@ -487,9 +494,15 @@ public sealed class JsonProjectRepository : IProjectRepository
             var candidatePath = CandidatePath(operationId);
             stage = "write temporary file";
             candidate = OwnedFilePublication.CreateOwnedOutputFile(candidatePath, readBack: true);
-            await writeTemporaryFile(candidate, bytes, cancellationToken).ConfigureAwait(false);
-            await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
-            candidate.Flush(flushToDisk: true);
+            using (var aclBaseline = ProjectListReplacement.TryOpen(jsonPath))
+            {
+                if ((aclBaseline is null) != (baseline.Sha256 is null))
+                    throw new ProjectListConflictException();
+                if (aclBaseline is not null) ProjectListReplacement.VerifyCompatibleFileMetadata(aclBaseline, candidate, jsonPath);
+                await writeTemporaryFile(candidate, bytes, cancellationToken).ConfigureAwait(false);
+                await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
+                candidate.Flush(flushToDisk: true);
+            }
             var candidateVersion = await ProjectListReplacement.ReadFileVersionAsync(candidate, cancellationToken).ConfigureAwait(false);
             if (candidateVersion.Sha256 != expectedResult)
                 throw new IOException("The staged project list bytes do not match the publication receipt.");

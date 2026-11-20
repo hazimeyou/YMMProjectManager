@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Security.AccessControl;
 using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
@@ -23,8 +24,13 @@ internal static class ProjectListPublicationTests
             () => TestListLeaseDuringPublicationAsync(workRoot));
         foreach (var point in new[] { "before-park", "parked", "before-cleanup" })
             await Program.RunNamedCaseAsync($"Interrupted list replacement: {point}", () => TestInterruptedReplacementAsync(workRoot, point));
-        foreach (var point in new[] { "external-before-park", "external-after-park" })
+        foreach (var point in new[] { "external-before-park", "external-after-park", "external-before-park-crash",
+            "external-after-park-crash", "external-identical-before-park" })
             await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
+        await Program.RunNamedCaseAsync("Corrupted replacement journal cannot authorize recovery",
+            () => TestCorruptReplacementJournalAsync(workRoot));
+        foreach (var option in new[] { "protected-acl", "hidden", "named-stream" })
+            await Program.RunNamedCaseAsync($"List file metadata is preserved by refusal: {option}", () => TestCustomListMetadataAsync(workRoot, option));
     }
 
     private static async Task TestInterruptedReplacementAsync(string workRoot, string point)
@@ -73,43 +79,135 @@ internal static class ProjectListPublicationTests
     private static async Task TestExternalReplacementAsync(string workRoot, string point)
     {
         var root = Path.Combine(workRoot, "list-external-replacement", point);
-        var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
-        var external = """{"Projects":[],"Folders":[],"UnrecognizedExternalField":{"keep":42}}""";
-        await File.WriteAllTextAsync(Path.Combine(root, "synthetic-foreign.json"), external);
-        var local = await repository.LoadAsync();
-        local.Projects.Single().DisplayName = "local";
-        var replaced = point == "external-before-park";
-        Action externalWrite = () => RunReplacementChildAsync(root, point, 0).GetAwaiter().GetResult();
-        var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "publisher.log")), path,
-            afterRevisionCheck: replaced ? externalWrite : null, afterParking: replaced ? null : externalWrite);
-        try { await publisher.SaveAsync(local); throw new Exception("Publication accepted an externally replaced active list."); }
-        catch (IOException) { }
+        var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        var identical = point == "external-identical-before-park";
+        var externalBytes = identical ? originalBytes :
+            System.Text.Encoding.UTF8.GetBytes("""{"Projects":[],"Folders":[],"UnrecognizedExternalField":{"keep":42}}""");
+        await File.WriteAllBytesAsync(Path.Combine(root, "synthetic-foreign.json"), externalBytes);
+        var replacedBeforeParking = point is "external-before-park" or "external-before-park-crash" or "external-identical-before-park";
+        if (point.EndsWith("-crash", StringComparison.Ordinal))
+        {
+            await RunReplacementChildAsync(root, point, 86);
+        }
+        else
+        {
+            var local = await repository.LoadAsync();
+            local.Projects.Single().DisplayName = "local";
+            var ready = await repository.WritePendingDraftAsync(original, local, [], null);
+            Action externalWrite = () => RunReplacementChildAsync(root,
+                replacedBeforeParking ? "external-before-park" : "external-after-park", 0).GetAwaiter().GetResult();
+            var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "publisher.log")), path,
+                afterRevisionCheck: replacedBeforeParking ? externalWrite : null,
+                afterParking: replacedBeforeParking ? null : externalWrite);
+            try
+            {
+                await publisher.SaveReadyDraftAsync(local, ready);
+                throw new Exception("Publication accepted an externally replaced active list.");
+            }
+            catch (ProjectListConflictException) { }
+        }
 
         var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing collision evidence.");
+        var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
+        await ExpectRejectedAsync(() => repository.ReconcileDraftAsync(claim));
         Require(File.Exists(evidence.CandidatePath), "Unpublished application version was discarded.");
         var candidate = JsonProjectRepository.DeserializeStore(await File.ReadAllBytesAsync(evidence.CandidatePath));
-        Require(candidate.Projects.Single().DisplayName == "local", "Application candidate contents changed.");
-        if (replaced)
+        Require(candidate.Projects.Single().DisplayName is "local" or "after", "Application candidate contents changed.");
+        if (replacedBeforeParking)
         {
-            Require(evidence.State == ProjectListReplacement.RecoveryState.Unverifiable && !File.Exists(path),
+            Require(evidence.State == ProjectListReplacement.RecoveryState.CanRestoreExternal && !File.Exists(path),
                 "The externally replaced file was treated as the checked original.");
-            Require(await File.ReadAllTextAsync(evidence.ParkedPath) == external, "The exact external bytes were not saved.");
-            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(Path.Combine(root, "synthetic-prior.json"))),
+            Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(evidence.ParkedPath), externalBytes),
+                "The exact external bytes were not saved.");
+            Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(Path.Combine(root, "synthetic-prior.json")), originalBytes),
                 "Original source was changed.");
-            await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
             await ExpectRejectedAsync(() => repository.LoadAsync());
-            return;
+            await repository.RecoverInterruptedPublicationAsync(evidence);
+            Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(path), externalBytes) && File.Exists(evidence.CandidatePath),
+                "Explicit external restore changed or lost a version.");
         }
-        Require(evidence.State == ProjectListReplacement.RecoveryState.Conflict && await File.ReadAllTextAsync(path) == external,
-            "The newly created external active list was overwritten.");
-        Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(evidence.ParkedPath)), "The original parked bytes were lost.");
-        await File.WriteAllTextAsync(path, external.Replace("42", "43", StringComparison.Ordinal));
+        else
+        {
+            Require(evidence.State == ProjectListReplacement.RecoveryState.Conflict &&
+                Enumerable.SequenceEqual(await File.ReadAllBytesAsync(path), externalBytes),
+                "The newly created external active list was overwritten.");
+            Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(evidence.ParkedPath), originalBytes),
+                "The original parked bytes were lost.");
+            await File.WriteAllBytesAsync(path, originalBytes);
+            await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
+            var latest = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Collision evidence was not retained.");
+            await repository.RecoverInterruptedPublicationAsync(latest);
+            Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(path), originalBytes) &&
+                File.Exists(latest.CandidatePath) && File.Exists(latest.ParkedPath),
+                "Explicit conflict acknowledgment changed a version or discarded evidence.");
+        }
+        Require(await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown && File.Exists(claim),
+            "The competing version allowed stale draft replay.");
+    }
+
+    private static async Task TestCorruptReplacementJournalAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-replacement-crash", "corrupt-journal");
+        var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
+        await RunReplacementChildAsync(root, "parked", 86);
+        var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
+        await File.WriteAllTextAsync(evidence.JournalPath, """{"Payload":"b3BhcXVl","Sha256":"unknown"}""");
+        await ExpectRejectedAsync(() => repository.InspectInterruptedPublicationAsync());
         await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
-        var latest = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Collision evidence was not retained.");
-        await repository.RecoverInterruptedPublicationAsync(latest);
-        Require(await File.ReadAllTextAsync(path) == external.Replace("42", "43", StringComparison.Ordinal) &&
-            File.Exists(latest.CandidatePath) && File.Exists(latest.ParkedPath),
-            "Explicit conflict acknowledgment changed a version or discarded evidence.");
+        await ExpectRejectedAsync(() => repository.LoadAsync());
+        Require(!File.Exists(path) && File.Exists(evidence.CandidatePath) &&
+            Enumerable.SequenceEqual(await File.ReadAllBytesAsync(evidence.ParkedPath), originalBytes),
+            "A corrupt journal caused publication or lost evidence.");
+    }
+
+    private static async Task TestCustomListMetadataAsync(string workRoot, string mode)
+    {
+        var root = Path.Combine(workRoot, "list-replacement-metadata", mode);
+        var (repository, path, pending, originalBytes) = await ReplacementFixtureAsync(root);
+        var info = new FileInfo(path);
+        var originalSecurity = info.GetAccessControl();
+        var originalAttributes = File.GetAttributes(path);
+        const string streamContent = "synthetic content outside the primary list stream";
+        const AccessControlSections sections = AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group;
+        switch (mode)
+        {
+            case "protected-acl":
+                var custom = info.GetAccessControl();
+                custom.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+                info.SetAccessControl(custom);
+                break;
+            case "hidden":
+                File.SetAttributes(path, originalAttributes | FileAttributes.Hidden);
+                break;
+            case "named-stream":
+                await File.WriteAllTextAsync(path + ":r17-synthetic-stream", streamContent);
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(mode));
+        }
+        var expectedAttributes = File.GetAttributes(path);
+        var expectedSecurity = info.GetAccessControl().GetSecurityDescriptorSddlForm(sections);
+        try
+        {
+            var writeCalled = false;
+            var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "metadata.log")), path,
+                writeTemporaryFile: (_, _, _) => { writeCalled = true; return Task.CompletedTask; });
+            pending.Projects.Single().DisplayName = "should not be written";
+            await ExpectRejectedAsync(() => publisher.SaveAsync(pending));
+            Require(!writeCalled && !repository.HasInterruptedPublication &&
+                !Directory.EnumerateFiles(root, "projects.json.tmp-*").Any(), "A metadata refusal staged any list bytes.");
+            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)) &&
+                File.GetAttributes(path) == expectedAttributes &&
+                info.GetAccessControl().GetSecurityDescriptorSddlForm(sections) == expectedSecurity,
+                "Metadata refusal changed the active list or security.");
+            if (mode == "named-stream")
+                Require(await File.ReadAllTextAsync(path + ":r17-synthetic-stream") == streamContent, "Opaque alternate data was lost.");
+        }
+        finally
+        {
+            if (mode == "protected-acl") info.SetAccessControl(originalSecurity);
+            if (mode == "hidden") File.SetAttributes(path, originalAttributes);
+        }
     }
 
     private static async Task<(JsonProjectRepository Repository, string Path, ProjectStore Store, byte[] Bytes)> ReplacementFixtureAsync(string root)
@@ -463,8 +561,22 @@ internal static class ProjectListPublicationTests
             afterReceipt: point == "after-receipt" ? () => Environment.Exit(86) : null,
             afterDraftClaim: point is "after-claim" or "fresh-attempt" or "staged-then-external-edit" ? () => Environment.Exit(86) : null,
             duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null,
-            afterRevisionCheck: point == "before-park" ? () => Environment.Exit(86) : null,
-            afterParking: point == "parked" ? () => Environment.Exit(86) : null,
+            afterRevisionCheck: point switch
+            {
+                "before-park" => () => Environment.Exit(86),
+                "external-before-park-crash" => () => RunReplacementChildAsync(root, "external-before-park", 0).GetAwaiter().GetResult(),
+                _ => null,
+            },
+            afterParking: point switch
+            {
+                "parked" or "external-before-park-crash" => () => Environment.Exit(86),
+                "external-after-park-crash" => () =>
+                {
+                    RunReplacementChildAsync(root, "external-after-park", 0).GetAwaiter().GetResult();
+                    Environment.Exit(86);
+                },
+                _ => null,
+            },
             beforeJournalCleanup: point == "before-cleanup" ? () => Environment.Exit(86) : null);
         if (point == "legacy-claim")
         {
