@@ -122,7 +122,9 @@ internal static class ProjectListSaveTests
         await Expect<JsonException>(() => Repo().LoadAsync()); Check(Hash()==corruptHash, "corrupt input changed");
         var rawCopy = Path.Combine(root, "original-raw.json");
         await Repo().ExportOriginalAsync(rawCopy);
-        Check((await File.ReadAllBytesAsync(rawCopy)).SequenceEqual(await File.ReadAllBytesAsync(path)), "raw recovery export altered original bytes");
+        var rawExport = await File.ReadAllBytesAsync(rawCopy);
+        var originalRaw = await File.ReadAllBytesAsync(path);
+        Check(rawExport.SequenceEqual(originalRaw), "raw recovery export altered original bytes");
         await Expect<IOException>(() => Repo().ExportOriginalAsync(rawCopy));
         Check(Hash() == corruptHash, "raw recovery export changed original file");
         Console.WriteLine("Project list save regression checks passed.");
