@@ -51,6 +51,11 @@ internal static class Program
             await ProjectListPublicationTests.CrashAsync(args[1], args[2]);
             return;
         }
+        if (args.Length == 2 && args[0] == "--r16-relink-publication-child")
+        {
+            await AssetManifestTests.InterruptPreparedOutputAsync(args[1]);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--project-list-worker")
         {
             await ProjectListConcurrencyTests.RunWorkerAsync(args[1], args[2]);

@@ -126,7 +126,7 @@ public sealed partial class ProjectListViewModel
             var decision = MessageBox.Show($"安全に再適用できない競合があります。\n{conflict}\n\n「はい」で未保存の一覧を別名退避し、「いいえ」で記録を閉じます。「キャンセル」で記録を保持します。",
                 "前回の保存記録", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
             if (decision == MessageBoxResult.Yes) await ExportDraftCopyAsync(draft.Local, "未保存の一覧を別ファイルに退避");
-            if (decision == MessageBoxResult.No) drafts.Retire(path);
+            if (decision == MessageBoxResult.No) await json.RetireReadyDraftAsync(path);
             return;
         }
         var hasChanges = ProjectListRecovery.Fingerprint(plan.Store) != ProjectListRecovery.Fingerprint(latest);
@@ -136,7 +136,7 @@ public sealed partial class ProjectListViewModel
             ? $"次の保存記録を再適用しますか？\n{summary}\n\n「いいえ」で記録を閉じ、「キャンセル」で保持します。"
             : "再適用が必要な変更はありません。「いいえ」で記録を閉じ、「キャンセル」で保持します。",
             "前回の保存記録", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-        if (choice == MessageBoxResult.No) { drafts.Retire(path); return; }
+        if (choice == MessageBoxResult.No) { await json.RetireReadyDraftAsync(path); return; }
         if (choice != MessageBoxResult.Yes || !hasChanges) return;
 
         using var verifiedFiles = await ProjectListRecoveryFiles.OpenAsync(plan.Store, latest,
