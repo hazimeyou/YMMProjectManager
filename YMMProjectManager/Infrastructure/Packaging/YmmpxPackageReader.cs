@@ -22,11 +22,11 @@ internal static class YmmpxPackageReader
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
     private sealed record OwnedPath(string Path, FileIdentity? Identity);
 
-    internal static async Task ValidateAsync(Stream source, CancellationToken token, string? expectedProjectName = null)
+    internal static async Task ValidateAsync(Stream source, string expectedProjectName, JsonElement expectedProject, CancellationToken token)
     {
         using var archive = OpenValidated(source, token);
-        var package = await ReadPackageAsync(archive, token).ConfigureAwait(false);
-        if (expectedProjectName is not null && !string.Equals(package.ProjectName, expectedProjectName, StringComparison.OrdinalIgnoreCase))
+        var package = await ReadPackageAsync(archive, token, expectedProject).ConfigureAwait(false);
+        if (!string.Equals(package.ProjectName, expectedProjectName, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("同梱したプロジェクト名が選択したプロジェクトと一致しません。");
         foreach (var resource in package.Resources)
         {
@@ -139,7 +139,7 @@ internal static class YmmpxPackageReader
         }
     }
 
-    private static async Task<Package> ReadPackageAsync(ZipArchive archive, CancellationToken token)
+    private static async Task<Package> ReadPackageAsync(ZipArchive archive, CancellationToken token, JsonElement? expectedProject = null)
     {
         var files = archive.Entries.Where(entry => !Normalize(entry.FullName).EndsWith('/'))
             .ToDictionary(entry => Normalize(entry.FullName), StringComparer.Ordinal);
@@ -171,9 +171,53 @@ internal static class YmmpxPackageReader
         var projectBytes = await ReadBoundedAsync(projectEntry, MaxProjectBytes, token).ConfigureAwait(false);
         using var projectDocument = JsonDocument.Parse(WithoutBom(projectBytes));
         ValidateProjectJson(projectDocument.RootElement, resources, token);
+        if (expectedProject is { } original && !SamePackagedProject(original, projectDocument.RootElement, resources, token))
+            throw new InvalidDataException("同梱したプロジェクトの内容が選択したプロジェクトと一致しません。");
         var project = JsonNode.Parse(WithoutBom(projectBytes).Span) as JsonObject
             ?? throw new InvalidDataException("プロジェクトが JSON オブジェクトではありません。");
         return new Package(files, projectName, project, resources);
+    }
+
+    private static bool SamePackagedProject(JsonElement original, JsonElement packaged, HashSet<string> resources, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        if (original.ValueKind != packaged.ValueKind) return false;
+
+        switch (original.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var remaining = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                foreach (var property in original.EnumerateObject())
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!remaining.TryAdd(property.Name, property.Value)) return false;
+                }
+                foreach (var property in packaged.EnumerateObject())
+                {
+                    token.ThrowIfCancellationRequested();
+                    if (!remaining.Remove(property.Name, out var previous)) return false;
+                    // Current YMMPX rewrites nonempty FilePath strings to members of its resource map.
+                    if (property.Name == "FilePath" && previous.ValueKind == JsonValueKind.String &&
+                        !string.IsNullOrWhiteSpace(previous.GetString()) && property.Value.ValueKind == JsonValueKind.String &&
+                        TryGetInternalPath(property.Value.GetString()!, out var member) && resources.Contains(member))
+                        continue;
+                    if (!SamePackagedProject(previous, property.Value, resources, token)) return false;
+                }
+                return remaining.Count == 0;
+
+            case JsonValueKind.Array:
+                if (original.GetArrayLength() != packaged.GetArrayLength()) return false;
+                using (var after = packaged.EnumerateArray())
+                    foreach (var item in original.EnumerateArray())
+                    {
+                        after.MoveNext();
+                        if (!SamePackagedProject(item, after.Current, resources, token)) return false;
+                    }
+                return true;
+
+            default:
+                return JsonElement.DeepEquals(original, packaged);
+        }
     }
 
     private static void ValidateProjectJson(JsonElement element, HashSet<string> resources, CancellationToken token)

@@ -65,6 +65,21 @@ internal static class YmmpxFailureTests
             if (wrongProject.Success || File.Exists(newPath))
                 throw new InvalidOperationException("Published an archive for a different project.");
         });
+        await Program.RunNamedCaseAsync("Packaging refuses a different project with the same name", async () =>
+        {
+            var selected = Path.Combine(root, "same.ymmp");
+            const string original = """{"Title":"Selected","Items":[{"FilePath":"original.wav"}]}""";
+            await File.WriteAllTextAsync(selected, original);
+            var destination = Path.Combine(root, "same-name-output.ymmpx");
+            YmmpxLib.YmmpxPackageService.Mode = "same-name-other-project";
+            try
+            {
+                var other = await bridge.CreatePackageAsync(selected, destination, default);
+                if (other.Success || File.Exists(destination) || await File.ReadAllTextAsync(selected) != original)
+                    throw new InvalidOperationException("Same-name archive changed the selected project or reached the destination.");
+            }
+            finally { YmmpxLib.YmmpxPackageService.Mode = "success"; }
+        });
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -227,7 +242,16 @@ namespace YmmpxLib
                 if (Mode != "missing-marker")
                     using (var writer = new StreamWriter(archive.CreateEntry("_ymmpx_project_path.txt").Open())) await writer.WriteAsync(Mode == "oversized-marker" ? new string('x', 4097) : projectName);
                 if (Mode != "missing-project")
-                    using (var writer = new StreamWriter(archive.CreateEntry(projectName).Open())) await writer.WriteAsync(Mode == "invalid-project-json" ? "{" : """{"FilePath":"resources/synthetic.txt"}""");
+                {
+                    var document = Mode switch
+                    {
+                        "invalid-project-json" => "{",
+                        "same-name-other-project" => """{"Title":"Different","Items":[{"FilePath":"resources/synthetic.txt"}]}""",
+                        _ => await File.ReadAllTextAsync(project, token),
+                    };
+                    using var writer = new StreamWriter(archive.CreateEntry(projectName).Open());
+                    await writer.WriteAsync(document.AsMemory(), token);
+                }
                 if (Mode != "missing-links")
                     using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync(Mode == "invalid-links-json" ? "[]" : """{"resources/synthetic.txt":"resources/synthetic.txt"}""");
             }

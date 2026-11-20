@@ -77,14 +77,15 @@ public sealed class YmmpxLibBridge
             if (!Path.GetExtension(ymmpPath).Equals(".ymmp", StringComparison.OrdinalIgnoreCase) ||
                 sourceGuard.Length > YmmpxPackageReader.MaxProjectBytes)
                 return InvalidProject();
+            JsonDocument sourceSnapshot;
             try
             {
                 using var reader = new StreamReader(sourceGuard, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
-                var sourceText = await reader.ReadToEndAsync(token).ConfigureAwait(false);
-                using var source = JsonDocument.Parse(sourceText);
-                if (source.RootElement.ValueKind != JsonValueKind.Object) return InvalidProject();
+                sourceSnapshot = JsonDocument.Parse(await reader.ReadToEndAsync(token).ConfigureAwait(false));
             }
             catch (JsonException) { return InvalidProject(); }
+            using var source = sourceSnapshot;
+            if (source.RootElement.ValueKind != JsonValueKind.Object) return InvalidProject();
             staging = OwnedStagingDirectory.Reserve(Path.GetDirectoryName(destination)!, ".ymmpm-package-");
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(Path.Combine(staging.Path, Path.GetFileName(destination)));
             using (var reserved = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
@@ -143,7 +144,7 @@ public sealed class YmmpxLibBridge
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
-            await YmmpxPackageReader.ValidateAsync(validatedPackage, token, Path.GetFileName(ymmpPath)).ConfigureAwait(false);
+            await YmmpxPackageReader.ValidateAsync(validatedPackage, Path.GetFileName(ymmpPath), source.RootElement, token).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink

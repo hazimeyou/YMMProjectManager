@@ -93,6 +93,51 @@ internal static class RealYmmpxR5Tests
                 await File.ReadAllTextAsync(namedProject) != original)
                 throw new InvalidOperationException("Packaging changed the source or lost unrelated data.");
         });
+        await Program.RunNamedCaseAsync("Real YMMPX keeps project shape while rewriting material paths", async () =>
+        {
+            var nested = Path.Combine(root, "nested");
+            Directory.CreateDirectory(nested);
+            await File.WriteAllTextAsync(Path.Combine(nested, "asset.png"), "nested media");
+            var pathProject = Path.Combine(root, "path-kinds.ymmp");
+            var original = JsonSerializer.Serialize(new
+            {
+                Items = new object[]
+                {
+                    new { FilePath = "asset.png", Volume = 1 },
+                    new { FilePath = "nested/asset.png", Volume = 2 },
+                    new { FilePath = new Uri(asset).AbsoluteUri, Volume = 3 },
+                    new { FilePath = "missing.png", Volume = 4 },
+                    new { FilePath = asset, Volume = 5 },
+                    new { FilePath = "", Volume = 6 },
+                    new { FilePath = (string?)null, Volume = 7 },
+                },
+                Unrelated = new { Rate = 100.0, Enabled = true },
+            });
+            await File.WriteAllTextAsync(pathProject, original);
+            var destination = Path.Combine(root, "paths.ymmpx");
+            var result = await service.CreatePackageAsync(pathProject, destination, default);
+            if (!result.Success) throw new InvalidOperationException(result.ErrorMessage);
+            using var archive = ZipFile.OpenRead(destination);
+            using var reader = new StreamReader(archive.GetEntry("path-kinds.ymmp")!.Open());
+            using var packaged = JsonDocument.Parse(await reader.ReadToEndAsync());
+            using var source = JsonDocument.Parse(original);
+            var projectItems = packaged.RootElement.GetProperty("Items");
+            var sourceItems = source.RootElement.GetProperty("Items");
+            var sharedResource = projectItems[0].GetProperty("FilePath").GetString();
+            var nestedResource = projectItems[1].GetProperty("FilePath").GetString();
+            if (!JsonElement.DeepEquals(source.RootElement.GetProperty("Unrelated"), packaged.RootElement.GetProperty("Unrelated")) ||
+                projectItems.GetArrayLength() != sourceItems.GetArrayLength() ||
+                Enumerable.Range(0, sourceItems.GetArrayLength()).Any(index =>
+                    projectItems[index].GetProperty("Volume").GetInt32() != sourceItems[index].GetProperty("Volume").GetInt32()) ||
+                sharedResource is null || nestedResource is null || sharedResource == nestedResource ||
+                archive.GetEntry(sharedResource) is null || archive.GetEntry(nestedResource) is null ||
+                projectItems[2].GetProperty("FilePath").GetString() != sharedResource ||
+                projectItems[4].GetProperty("FilePath").GetString() != sharedResource ||
+                projectItems[3].GetProperty("FilePath").GetString() != "missing.png" ||
+                projectItems[5].GetProperty("FilePath").GetString() != "" ||
+                projectItems[6].GetProperty("FilePath").ValueKind != JsonValueKind.Null)
+                throw new InvalidOperationException("Current-form packaging did not preserve non-resource values or expected material links.");
+        });
         Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
     }
 
