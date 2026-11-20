@@ -172,6 +172,46 @@ internal static class GitRemoteTests
                     await Command(source, "config", "--remove-section", "remote." + alternateRemote);
                 }
             });
+            await Program.RunNamedCaseAsync("Pull inspection rejects a moved or deleted local tracking ref", async () =>
+            {
+                var trackingRef = "refs/remotes/origin/" + branch;
+                var upstreamRef = "refs/heads/" + branch;
+
+                try
+                {
+                    await Command(root, "--git-dir", bare, "update-ref", upstreamRef, currentLocal, currentUpstream);
+                    var cached = await one.InspectPullAsync();
+                    Check(cached.State == GitPullState.FastForwardCandidate && cached.TrackingObjectId == currentUpstream,
+                        "inspection unexpectedly contacted the remote or changed the cached ref");
+
+                    one.BeforePullInspectionRecheck = () =>
+                        Command(source, "update-ref", trackingRef, currentLocal, currentUpstream).GetAwaiter().GetResult();
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed &&
+                        await Command(source, "rev-parse", trackingRef) == currentLocal,
+                        "inspection missed or overwrote a moved tracking ref");
+                    one.BeforePullInspectionRecheck = null;
+                    Check((await one.InspectPullAsync()).State == GitPullState.UpToDate, "next inspection ignored moved tracking ref");
+
+                    await Command(root, "--git-dir", bare, "update-ref", "-d", upstreamRef, currentLocal);
+                    one.BeforePullInspectionRecheck = () =>
+                        Command(source, "update-ref", "-d", trackingRef, currentLocal).GetAwaiter().GetResult();
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed, "inspection missed a deleted tracking ref");
+                    one.BeforePullInspectionRecheck = null;
+                    Check((await one.InspectPullAsync()).State == GitPullState.TrackingUnavailable &&
+                        await Command(source, "for-each-ref", "--format=%(refname)", trackingRef) == "",
+                        "inspection recreated or ignored the deletion");
+
+                    Check(await Command(source, "rev-parse", "HEAD") == currentLocal &&
+                        SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(source, ".git", "index"))).SequenceEqual(originalIndex) &&
+                        !File.Exists(Path.Combine(source, "two.txt")), "tracking change inspection modified HEAD, index or working tree");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    await Command(root, "--git-dir", bare, "update-ref", upstreamRef, currentUpstream);
+                    await Command(source, "update-ref", trackingRef, currentUpstream);
+                }
+            });
             one.BeforePullInspectionRecheck = () =>
             {
                 File.WriteAllText(Path.Combine(source, ".git", "HEAD"), "ref: refs/heads/race-side\n");
