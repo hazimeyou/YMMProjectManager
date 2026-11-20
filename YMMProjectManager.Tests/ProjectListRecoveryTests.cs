@@ -243,7 +243,7 @@ internal static class ProjectListRecoveryTests
                 copyEvidence.IsSameFile(replacementFile) || copyEvidence.Sha256 != replacementFile.Sha256)
                 throw new Exception("independent copy reused the source identity or changed its contents");
             var unsafeListPath = Path.Combine(root, "unknown-list.json");
-            var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"FutureField\":\"keep\"}";
+            var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"SchemaVersion\":99}";
             await File.WriteAllTextAsync(unsafeListPath, unknownJson);
             var unsafeRepo = new JsonProjectRepository(logger, unsafeListPath); var unsafeVm = new ProjectListViewModel(logger, unsafeRepo);
             await unsafeVm.InitializeAsync(); unsafeVm.SelectedProject = unsafeVm.Projects.Single();

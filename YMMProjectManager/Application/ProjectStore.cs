@@ -11,4 +11,8 @@ public sealed class ProjectStore
     public bool IsRecoverySafe { get; set; }
 }
 
-public sealed record ProjectListRevision(string? Sha256, Guid? OperationId = null);
+public sealed record ProjectListRevision(string? Sha256, Guid? OperationId = null)
+{
+    // Opaque persistence data for forward-compatible root properties.
+    internal string? PreservedRootFieldsJson { get; init; }
+}

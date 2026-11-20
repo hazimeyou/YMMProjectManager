@@ -88,8 +88,8 @@ internal sealed class ProjectListDrafts(string directory)
             (document.BaseRevision is null && (baseline.Projects.Count != 0 || baseline.Folders.Count != 0)) ||
             document.Additions.Any(pair => pair.Value is null || pair.Value.Id == Guid.Empty || !IsHash(pair.Value.Hash)))
             throw new InvalidDataException("Recovery draft contains unsupported data.");
-        baseline.Revision = new ProjectListRevision(document.BaseRevision);
-        local.Revision = baseline.Revision;
+        baseline.Revision = baseline.Revision! with { Sha256 = document.BaseRevision };
+        local.Revision = local.Revision! with { Sha256 = document.BaseRevision };
         return new Draft(baseline, local, document.Additions);
     }
 

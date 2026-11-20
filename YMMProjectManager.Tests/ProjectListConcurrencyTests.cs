@@ -63,7 +63,8 @@ internal static class ProjectListConcurrencyTests
         try { ProjectListRecovery.ApplyIdentity(candidate, testPath, id); throw new Exception("duplicate identity accepted"); } catch (InvalidDataException) { }
         var unsafeInputs = new[]
         {
-            "{\"Projects\":[],\"Extra\":\"preserve\"}",
+            "{\"Projects\":[],\"SchemaVersion\":99}",
+            "{\"projects\":[],\"Extra\":\"preserve\"}",
             "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"FutureField\":\"preserve\"}]}",
             "{\"Projects\":[{\"FullPath\":\"\",\"DisplayName\":\"preserve\"}]}",
             "{\"Projects\":[],\"Folders\":[{\"Name\":\"preserve\"}]}",

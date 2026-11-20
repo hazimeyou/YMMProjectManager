@@ -129,6 +129,34 @@ internal static class ProjectListSaveTests
         firstLegacy.Projects.Single().Pinned = true;
         await Repo().SaveAsync(firstLegacy);
         Check((await Repo().LoadAsync()).Projects.Single().LinkedYmmpFiles.Single().Id == inferredLink.Id, "legacy child identity changed on save");
+        var rootExtraPath = Path.Combine(root, "future-root.json");
+        var rootExtraRepo = new JsonProjectRepository(logger, rootExtraPath);
+        var stableId = Guid.NewGuid();
+        var rootFixture = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new
+        {
+            Projects = new[] { new { FullPath = defaultLinkPath, ProjectId = stableId } },
+            Folders = Array.Empty<object>(),
+            ForwardData = new { Value = "base", Numbers = new[] { 1, 2 }, Empty = (string?)null },
+        }))!;
+        await File.WriteAllTextAsync(rootExtraPath, rootFixture.ToJsonString());
+        var rootBaseline = await rootExtraRepo.LoadAsync();
+        Check(rootBaseline.IsRecoverySafe, "ordinary root extension was rejected");
+        var rootLocal = ProjectListMerge.Snapshot(rootBaseline);
+        rootLocal.Projects.Single().Pinned = true;
+        var drafts = new ProjectListDrafts(rootExtraRepo.RecoveryDirectory);
+        var rootDraft = await drafts.ReadAsync(await drafts.WriteAsync(rootBaseline, rootLocal, []));
+        Check(rootDraft.Local.Revision?.PreservedRootFieldsJson == rootLocal.Revision?.PreservedRootFieldsJson,
+            "draft roundtrip lost preserved root fields");
+        rootFixture["ForwardData"]!["Value"] = "remote";
+        await File.WriteAllTextAsync(rootExtraPath, rootFixture.ToJsonString());
+        await Expect<ProjectListConflictException>(() => rootExtraRepo.SaveAsync(rootDraft.Local));
+        var mergedRoot = ProjectListMerge.Merge(rootDraft.Baseline, rootDraft.Local, await rootExtraRepo.LoadAsync());
+        Check(mergedRoot.Store is not null, "remote extension-only change conflicted with an independent typed edit");
+        await rootExtraRepo.SaveAsync(mergedRoot.Store!);
+        var mergedDocument = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(rootExtraPath))!;
+        Check(mergedDocument["Projects"]![0]!["Pinned"]!.GetValue<bool>() &&
+            System.Text.Json.Nodes.JsonNode.DeepEquals(rootFixture["ForwardData"], mergedDocument["ForwardData"]),
+            "local typed change or newest unknown root data was lost");
         var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
         await File.WriteAllTextAsync(copyPath, "existing synthetic data");
         await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));
