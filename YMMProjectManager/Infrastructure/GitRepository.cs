@@ -11,7 +11,8 @@ public sealed class GitRepository
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
     private const string BranchRefPrefix = "refs/heads/";
     private readonly string directory;
-    internal Action? BeforeRemoteExecution { get; set; }
+    internal Action<CancellationToken>? BeforeRemoteExecution { get; set; }
+    internal TimeSpan RemoteTimeout { get; init; } = Timeout;
 
     public GitRepository(string directory)
     {
@@ -46,12 +47,33 @@ public sealed class GitRepository
     public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("branch", name, token);
     public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("switch", name, token);
 
-    public async Task<GitResult> FetchAsync(CancellationToken token = default)
+    public Task<GitResult> InspectRemoteAsync(GitRemoteOperation operation, CancellationToken token = default) =>
+        WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
+        {
+            if (!HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+            var (url, error) = await ResolveOriginAsync(operation == GitRemoteOperation.Push, deadline, literal: true).ConfigureAwait(false);
+            return error ?? new GitResult(0, url!, "");
+        }, token, RemoteTimeout);
+
+    public Task<GitResult> FetchAsync(CancellationToken token = default) =>
+        WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(null, deadline), token, RemoteTimeout);
+
+    public Task<GitResult> FetchTrustedAsync(string expectedRemote, CancellationToken token = default)
     {
-        var (url, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
+        ValidateRemote(expectedRemote);
+        return WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
+    }
+
+    private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token)
+    {
+        var trusted = expectedRemote is not null;
+        if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+        var (url, error) = await ResolveOriginAsync(push: false, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
-        BeforeRemoteExecution?.Invoke();
-        return await RunRemoteAsync(url!, ["fetch", "--no-recurse-submodules", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token).ConfigureAwait(false);
+        if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
+        BeforeRemoteExecution?.Invoke(token);
+        if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before fetch.");
+        return await RunRemoteAsync(url!, ["fetch", "--no-recurse-submodules", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token, trusted).ConfigureAwait(false);
     }
 
     public async Task<GitResult> PullAsync(CancellationToken token = default)
@@ -63,45 +85,85 @@ public sealed class GitRepository
         var name = branch.StandardOutput.Trim();
         if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
-        BeforeRemoteExecution?.Invoke();
+        BeforeRemoteExecution?.Invoke(token);
         token.ThrowIfCancellationRequested();
         // Git pull updates the branch checked out when it executes, not necessarily the
         // one observed above. Another process can switch HEAD even after a recheck.
         return new GitResult(1, "", "Pull is disabled because the checked-out branch can change concurrently.", GitFailure.UnsafeOperation);
     }
 
-    public async Task<GitResult> PushAsync(CancellationToken token = default)
+    public Task<GitResult> PushAsync(CancellationToken token = default) =>
+        WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(null, deadline), token, RemoteTimeout);
+
+    public Task<GitResult> PushTrustedAsync(string expectedRemote, CancellationToken token = default)
     {
-        var (url, error) = await ResolveOriginAsync(push: true, token).ConfigureAwait(false);
+        ValidateRemote(expectedRemote);
+        return WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
+    }
+
+    private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token)
+    {
+        var trusted = expectedRemote is not null;
+        if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+        var (url, error) = await ResolveOriginAsync(push: true, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
-        var branch = await RunAsync(["symbolic-ref", "--quiet", "HEAD"], token).ConfigureAwait(false);
+        if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
+        var branch = await RunAsync(["symbolic-ref", "--quiet", "HEAD"], token, trustedProcess: trusted).ConfigureAwait(false);
         if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing.");
         var name = branch.StandardOutput.Trim();
         if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || name.Contains('\n') || name.Contains('\r'))
             return new GitResult(1, "", "Invalid branch name.");
-        var commit = await RunAsync(["rev-parse", "--verify", name + "^{commit}"], token).ConfigureAwait(false);
+        var commit = await RunAsync(["rev-parse", "--verify", name + "^{commit}"], token, trustedProcess: trusted).ConfigureAwait(false);
         var objectId = commit.StandardOutput.Trim();
         if (!commit.Success || (objectId.Length != 40 && objectId.Length != 64) || !objectId.All(Uri.IsHexDigit))
             return new GitResult(1, "", "Could not determine the branch commit.");
-        BeforeRemoteExecution?.Invoke();
-        return await RunRemoteAsync(url!, ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "--", url!, objectId + ":" + name], token, classifyPushStatus: true).ConfigureAwait(false);
+        BeforeRemoteExecution?.Invoke(token);
+        if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before push.");
+        return await RunRemoteAsync(url!, ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "--", url!, objectId + ":" + name], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
     }
 
-    private async Task<GitResult> RunRemoteAsync(string url, string[] arguments, CancellationToken token, bool classifyPushStatus = false)
+    private async Task<GitResult> RunRemoteAsync(string url, string[] arguments, CancellationToken token,
+        bool trusted, bool classifyPushStatus = false, string? cloneStage = null)
     {
-        // Git may apply insteadOf again when executing a command with an already resolved URL.
-        // This preflight catches a stable rewrite, while protocol limits also apply at execution.
         var protocol = Path.IsPathFullyQualified(url) ? "file" : "https";
+        if (trusted)
+        {
+            // A literal origin is the approval target. Refuse configured rewrites, including
+            // push-only rewrites that ls-remote cannot establish for the push operation.
+            var rewrites = await RunAsync(["config", "--name-only", "--get-regexp", @"^url\..*\.(insteadof|pushinsteadof)$"], token, protocol).ConfigureAwait(false);
+            if (rewrites.ExitCode != 1 || !string.IsNullOrWhiteSpace(rewrites.StandardOutput))
+                return UnsafeRemote("Git URL rewrites are configured. The approved endpoint cannot be verified.");
+        }
+
         var effective = await RunAsync(["ls-remote", "--get-url", "--", url], token, protocol).ConfigureAwait(false);
         if (!effective.Success || !string.Equals(effective.StandardOutput.TrimEnd('\r', '\n'), url, StringComparison.Ordinal))
-            return new GitResult(1, "", "Git rewrites the selected remote. Confirm the repository configuration before retrying.", GitFailure.UnsafeOperation);
-        return SanitizeRemote(await RunAsync(arguments, token, protocol).ConfigureAwait(false), classifyPushStatus);
+            return UnsafeRemote("Git rewrites the selected remote. Confirm the repository configuration before retrying.");
+
+        if (protocol == "https")
+        {
+            // Scoped settings take precedence over less-specific HTTP configuration.
+            arguments = ["-c", "http.followRedirects=false", "-c", $"http.{url}.followRedirects=false",
+                "-c", $"http.{url}.sslVerify=true", .. arguments];
+        }
+
+        if (trusted && cloneStage is null)
+        {
+            if (!HasDirectRepository()) return UnsafeRemote("Repository path changed before execution.");
+            arguments = [$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. arguments];
+        }
+        return SanitizeRemote(await RunAsync(arguments, token, protocol).ConfigureAwait(false), classifyPushStatus, cloneStage);
     }
 
     public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>
         CloneCoreAsync(remote, destination, null, token);
 
-    internal static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token)
+    public static Task<GitResult> CloneTrustedAsync(string remote, string destination, CancellationToken token = default) =>
+        WithinRemoteDeadlineAsync("Clone", deadline => CloneCoreAsync(remote, destination, null, deadline, trusted: true), token, Timeout);
+
+    internal static Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token) =>
+        WithinRemoteDeadlineAsync("Clone", deadline => CloneCoreAsync(remote, destination, beforeMove, deadline, trusted: false), token, Timeout);
+
+    private static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token, bool trusted)
     {
         token.ThrowIfCancellationRequested();
         ValidateRemote(remote);
@@ -109,12 +171,14 @@ public sealed class GitRepository
         var full = Path.GetFullPath(destination);
         if (Directory.Exists(full) || File.Exists(full)) throw new IOException("Clone destination already exists.");
         var parent = Path.GetDirectoryName(full) ?? throw new ArgumentException("Invalid clone destination.", nameof(destination));
+        if (!trusted && !Path.IsPathFullyQualified(remote)) return UnsafeRemote("Cloning an HTTPS origin requires explicit trust.");
+        if (trusted && !IsOrdinaryDirectory(parent)) return UnsafeRemote("Select a clone destination under a regular filesystem directory.");
         var repository = new GitRepository(parent);
         // Reserve an owned sibling with an exclusive OS create before Git can write to it.
         var temporary = Path.Combine(parent, ".ymmpm-clone-" + Guid.NewGuid().ToString("N"));
         if (!CreateDirectory(ToNativePath(temporary), IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
         GitResult result;
-        try { result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, temporary], token).ConfigureAwait(false); }
+        try { result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, temporary], token, trusted, cloneStage: temporary).ConfigureAwait(false); }
         catch (Exception ex)
         {
             ex.Data["CloneRecoveryPath"] = temporary;
@@ -148,16 +212,90 @@ public sealed class GitRepository
         : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..]
         : @"\\?\" + path;
 
-    private async Task<(string? Url, GitResult? Error)> ResolveOriginAsync(bool push, CancellationToken token)
+    private async Task<(string? Url, GitResult? Error)> ResolveOriginAsync(bool push, CancellationToken token, bool literal = false)
     {
-        var args = push ? new[] { "remote", "get-url", "--push", "--all", "origin" } : new[] { "remote", "get-url", "--all", "origin" };
-        var result = await RunAsync(args, token).ConfigureAwait(false);
+        GitResult result;
+        if (literal)
+        {
+            result = await ReadLocalSettingAsync(push ? "remote.origin.pushurl" : "remote.origin.url").ConfigureAwait(false);
+            if (push && result.ExitCode == 1)
+                result = await ReadLocalSettingAsync("remote.origin.url").ConfigureAwait(false);
+        }
+        else
+        {
+            var args = push ? new[] { "remote", "get-url", "--push", "--all", "origin" } : new[] { "remote", "get-url", "--all", "origin" };
+            result = await RunAsync(args, token).ConfigureAwait(false);
+        }
         if (!result.Success) return (null, new GitResult(result.ExitCode, "", "Remote origin is unavailable."));
-        var urls = result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var urls = literal ? result.StandardOutput.Split('\0')[..^1] :
+            result.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         if (urls.Length != 1) return (null, new GitResult(1, "", "Exactly one origin URL is required."));
         try { ValidateRemote(urls[0]); }
         catch (ArgumentException) { return (null, new GitResult(1, "", "Remote URL is unsupported or contains credentials.")); }
         return (urls[0], null);
+
+        Task<GitResult> ReadLocalSettingAsync(string key) =>
+            RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", "config", "--local", "--no-includes", "-z", "--get-all", key], token, trustedProcess: true);
+    }
+
+    private static GitResult UnsafeRemote(string message) => new(1, "", message, GitFailure.UnsafeOperation);
+
+    private static bool CanUseRemote(string url, string? expectedRemote) => expectedRemote is null
+        ? Path.IsPathFullyQualified(url)
+        : string.Equals(url, expectedRemote, StringComparison.Ordinal);
+
+    private bool HasDirectRepository()
+    {
+        var gitDirectory = Path.Combine(directory, ".git");
+        return IsOrdinaryDirectory(gitDirectory) && IsOrdinaryDirectory(Path.Combine(gitDirectory, "objects")) &&
+            IsRegularFile(Path.Combine(gitDirectory, "config")) && IsRegularFile(Path.Combine(gitDirectory, "HEAD")) &&
+            !Path.Exists(Path.Combine(gitDirectory, "commondir"));
+    }
+
+    private static bool IsOrdinaryDirectory(string path)
+    {
+        for (var directory = new DirectoryInfo(path); directory is not null; directory = directory.Parent)
+        {
+            if (!HasAttributes(directory.FullName, FileAttributes.Directory, FileAttributes.ReparsePoint)) return false;
+        }
+        return true;
+    }
+
+    private static bool IsRegularFile(string path) => HasAttributes(path, 0, FileAttributes.Directory | FileAttributes.ReparsePoint);
+
+    private static bool HasAttributes(string path, FileAttributes required, FileAttributes forbidden)
+    {
+        try
+        {
+            var attributes = File.GetAttributes(path);
+            return (attributes & required) == required && (attributes & forbidden) == 0;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    private static async Task<GitResult> WithinRemoteDeadlineAsync(string operation, Func<CancellationToken, Task<GitResult>> run,
+        CancellationToken token, TimeSpan timeout)
+    {
+        var clock = Stopwatch.StartNew();
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(timeout);
+        GitResult result;
+        try
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            result = await run(deadline.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException ex) when (!token.IsCancellationRequested && deadline.IsCancellationRequested)
+        {
+            result = new GitResult(1, "", "Git remote operation timed out. Refresh remote state before retrying.", GitFailure.Timeout)
+                { RecoveryPath = ex.Data["CloneRecoveryPath"] as string };
+        }
+        catch (TimeoutException)
+        {
+            result = new GitResult(1, "", "Git remote operation timed out. Refresh remote state before retrying.", GitFailure.Timeout);
+        }
+        return result with { RemoteDiagnostic = new GitRemoteDiagnostic(operation, clock.Elapsed) };
     }
 
     private static void ValidateRemote(string remote)
@@ -167,22 +305,32 @@ public sealed class GitRepository
             throw new ArgumentException("Invalid remote.", nameof(remote));
         if (Path.IsPathFullyQualified(remote) && !remote.StartsWith("\\\\", StringComparison.Ordinal)) return;
         if (!Uri.TryCreate(remote, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
-            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            string.IsNullOrEmpty(uri.Host) || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
+            !string.IsNullOrEmpty(uri.Fragment) || remote.Any(char.IsWhiteSpace) || remote.Contains('\\'))
             throw new ArgumentException("Only local paths and HTTPS URLs without credentials are supported.", nameof(remote));
     }
 
     // Git, credential helpers and hooks can emit arbitrary secrets; do not return their output for remote operations.
-    private static GitResult SanitizeRemote(GitResult result, bool classifyPushStatus)
+    private static GitResult SanitizeRemote(GitResult result, bool classifyPushStatus, string? cloneStage)
     {
         if (result.Success) return new GitResult(result.ExitCode, "", "");
         var category = classifyPushStatus && HasNonFastForwardRejection(result.StandardOutput)
-            ? GitFailure.Divergence : ClassifyRemoteError(result.StandardError);
-        return new GitResult(result.ExitCode, "", "Remote operation failed. Check authentication, connectivity and branch state.", category);
+            ? GitFailure.Divergence : ClassifyRemoteError(result.StandardError, cloneStage);
+        var message = category == GitFailure.PathTooLong
+            ? "Git could not represent a filesystem path. Use a shorter repository or clone destination path."
+            : "Remote operation failed. Check authentication, connectivity and branch state.";
+        return new GitResult(result.ExitCode, "", message, category);
     }
 
-    private static GitFailure ClassifyRemoteError(string error)
+    private static GitFailure ClassifyRemoteError(string error, string? cloneStage)
     {
         bool Contains(string value) => error.Contains(value, StringComparison.OrdinalIgnoreCase);
+        if (Contains("filename too long") || Contains("file name too long") || Contains("'$GIT_DIR' too big"))
+            return GitFailure.PathTooLong;
+        // Some versions can clone objects at these lengths and still fail to start checkout.
+        if (cloneStage is { Length: >= 260 } && Contains("Clone succeeded, but checkout failed") &&
+            Contains("this operation must be run in a work tree"))
+            return GitFailure.PathTooLong;
         if (Contains("authentication failed") || Contains("could not read Username")) return GitFailure.Authentication;
         if (Contains("permission denied") || Contains("requested URL returned error: 403")) return GitFailure.Permission;
         if (Contains("could not resolve host") || Contains("couldn't connect")) return GitFailure.Network;
@@ -225,10 +373,24 @@ public sealed class GitRepository
         return RunAsync(args, token);
     }
 
-    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null)
+    private string ResolveRemoteGitExecutable()
+    {
+        foreach (var entry in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var path = entry.Trim().Trim('"');
+            if (!Path.IsPathFullyQualified(path)) continue;
+            var candidate = Path.GetFullPath(Path.Combine(path, "git.exe"));
+            var relative = Path.GetRelativePath(directory, candidate);
+            if (!relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative)) continue;
+            if (IsOrdinaryDirectory(path) && IsRegularFile(candidate)) return candidate;
+        }
+        throw new InvalidOperationException("Git was not found in an absolute PATH directory outside the working repository.");
+    }
+
+    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false)
     {
         token.ThrowIfCancellationRequested();
-        var start = new ProcessStartInfo("git")
+        var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
         {
             WorkingDirectory = directory,
             UseShellExecute = false,
@@ -236,7 +398,12 @@ public sealed class GitRepository
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
-        foreach (var name in new[] { "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES" })
+        foreach (var name in new[]
+        {
+            "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_NAMESPACE", "GIT_REPLACE_REF_BASE",
+            "GIT_SHALLOW_FILE", "GIT_QUARANTINE_PATH", "GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE",
+        })
             start.Environment.Remove(name);
         // Inherited command-scoped config can inject hooks or rewrite a remote independently
         // of the repository and normal user Git configuration that the UI asks users to trust.
@@ -249,12 +416,24 @@ public sealed class GitRepository
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
+        if (allowedProtocol is not null || trustedProcess)
+        {
+            foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("GIT_CURL_VERBOSE", StringComparison.OrdinalIgnoreCase)).ToArray())
+                start.Environment.Remove(name);
+            start.Environment["GIT_NO_REPLACE_OBJECTS"] = "1";
+            start.ArgumentList.Add("-c");
+            start.ArgumentList.Add("core.longpaths=true");
+        }
         if (allowedProtocol is not null)
         {
             var parentProtocols = start.Environment.TryGetValue("GIT_ALLOW_PROTOCOL", out var value) ? value : null;
             start.Environment["GIT_ALLOW_PROTOCOL"] = parentProtocols is null || parentProtocols.Split(':').Contains(allowedProtocol, StringComparer.Ordinal)
                 ? allowedProtocol : string.Empty;
             start.Environment.Remove("GIT_EXEC_PATH");
+            start.Environment.Remove("GIT_SSL_NO_VERIFY");
+            start.Environment.Remove("GIT_ASKPASS");
+            start.Environment.Remove("SSH_ASKPASS");
         }
         // Status refresh must not silently start a repository-configured fsmonitor process.
         start.ArgumentList.Add("-c");
@@ -280,10 +459,13 @@ public sealed class GitRepository
     }
 }
 
-public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation }
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong }
+public enum GitRemoteOperation { Fetch, Push }
+public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);
 
 public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError, GitFailure Failure = GitFailure.None)
 {
     public bool Success => ExitCode == 0;
     public string? RecoveryPath { get; init; }
+    public GitRemoteDiagnostic? RemoteDiagnostic { get; init; }
 }

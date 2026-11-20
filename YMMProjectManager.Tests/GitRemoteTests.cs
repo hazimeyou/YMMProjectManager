@@ -55,7 +55,7 @@ internal static class GitRemoteTests
                 Environment.SetEnvironmentVariable("GIT_CONFIG_KEY_0", oldKey);
                 Environment.SetEnvironmentVariable("GIT_CONFIG_VALUE_0", oldValue);
             }
-            one.BeforeRemoteExecution = () =>
+            one.BeforeRemoteExecution = _ =>
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
                 foreach (var arg in new[] { "remote", "set-url", "origin", decoy }) start.ArgumentList.Add(arg);
@@ -72,14 +72,16 @@ internal static class GitRemoteTests
             await Command(source, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push followed changed origin");
             await Command(source, "remote", "set-url", "origin", bare);
-            Check((await GitRepository.CloneAsync(bare, clone)).Success, "clone"); var two = new GitRepository(clone);
+            var initialClone = await GitRepository.CloneAsync(bare, clone);
+            Check(initialClone.Success, $"clone failed ({initialClone.Failure}, exit {initialClone.ExitCode}): {initialClone.StandardError}");
+            var two = new GitRepository(clone);
             await Command(clone, "config", "user.name", "Synthetic Tester"); await Command(clone, "config", "user.email", "synthetic@example.invalid");
             await Command(clone, "tag", branch);
             await File.WriteAllTextAsync(Path.Combine(clone, "two.txt"), "two");
             Check((await two.StageAsync(["two.txt"])).Success && (await two.CommitAsync("second")).Success && (await two.PushAsync()).Success, "clone push");
             await Command(source, "branch", "race-side");
             var sideBefore = await Command(source, "rev-parse", "refs/heads/race-side");
-            one.BeforeRemoteExecution = () =>
+            one.BeforeRemoteExecution = _ =>
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
                 start.ArgumentList.Add("switch"); start.ArgumentList.Add("race-side");
@@ -128,6 +130,41 @@ internal static class GitRemoteTests
             var rejectedRewrite = await one.FetchAsync();
             Check(!rejectedRewrite.Success && rejectedRewrite.Failure == GitFailure.UnsafeOperation, "fetch should refuse a second URL rewrite before remote execution");
             await Command(source, "remote", "set-url", "origin", bare);
+            await Command(source, "config", "--local", "--remove-section", "url.https://beta.invalid/");
+            await Command(source, "config", "--local", "--remove-section", "url.https://gamma.invalid/");
+            var inspection = await one.InspectRemoteAsync(GitRemoteOperation.Fetch);
+            Check(inspection.Success && inspection.StandardOutput == bare, "trusted inspection did not read the literal local origin");
+            await Command(source, "remote", "set-url", "--push", "origin", decoy);
+            var pushInspection = await one.InspectRemoteAsync(GitRemoteOperation.Push);
+            Check(pushInspection.Success && pushInspection.StandardOutput == decoy, "trusted inspection did not distinguish push URL");
+            Check((await one.PushTrustedAsync(bare)).Failure == GitFailure.UnsafeOperation, "push accepted a different endpoint");
+            Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push mismatch updated unapproved remote");
+            await Command(source, "config", "--local", "--unset-all", "remote.origin.pushurl");
+            var trustedFetch = await one.FetchTrustedAsync(bare);
+            Check(trustedFetch.Success && trustedFetch.RemoteDiagnostic is { Operation: "Fetch" }, "trusted fetch did not complete or report diagnostics");
+            Check((await two.PushTrustedAsync(bare)).Success, "trusted non-force push");
+            var trustedClonePath = Path.Combine(root, "trusted-clone");
+            Check((await GitRepository.CloneTrustedAsync(bare, trustedClonePath)).Success && Directory.Exists(trustedClonePath), "trusted clone");
+            var nestedRoot = Path.Combine(source, "nested"); Directory.CreateDirectory(nestedRoot);
+            Check((await new GitRepository(nestedRoot).FetchTrustedAsync(bare)).Failure == GitFailure.UnsafeOperation, "parent repository used by trust operation");
+            await Command(source, "config", "--local", $"url.{decoy}.pushInsteadOf", bare);
+            Check((await one.PushTrustedAsync(bare)).Failure == GitFailure.UnsafeOperation, "push used configured rewrite despite literal approval");
+            await Command(source, "config", "--local", "--remove-section", $"url.{decoy}");
+            const string explicitEndpoint = "https://approved.invalid/repository";
+            await Command(source, "remote", "set-url", "origin", explicitEndpoint);
+            var unsignedInspection = await one.InspectRemoteAsync(GitRemoteOperation.Fetch);
+            Check(unsignedInspection.Success && unsignedInspection.StandardOutput == explicitEndpoint, "HTTPS preview was not literal");
+            Check((await one.FetchAsync()).Failure == GitFailure.UnsafeOperation, "HTTPS fetch accepted without explicit trust");
+            Check((await one.FetchTrustedAsync("https://other.invalid/repository")).Failure == GitFailure.UnsafeOperation, "trusted fetch accepted wrong HTTPS endpoint");
+            var unapprovedClone = Path.Combine(root, "unapproved-clone");
+            Check((await GitRepository.CloneAsync(explicitEndpoint, unapprovedClone)).Failure == GitFailure.UnsafeOperation &&
+                !Directory.Exists(unapprovedClone), "HTTPS clone accepted without explicit trust");
+            await Command(source, "remote", "set-url", "origin", bare);
+            var timeoutRepository = new GitRepository(source) { RemoteTimeout = TimeSpan.FromSeconds(2) };
+            var deadlineObserved = false;
+            timeoutRepository.BeforeRemoteExecution = deadline => deadlineObserved = deadline.WaitHandle.WaitOne(TimeSpan.FromSeconds(5));
+            var timedOut = await timeoutRepository.FetchTrustedAsync(bare);
+            Check(deadlineObserved && timedOut.Failure == GitFailure.Timeout && timedOut.RemoteDiagnostic is { Operation: "Fetch" }, "remote deadline was not operation-wide");
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
             using (var cancelled = new CancellationTokenSource())
@@ -164,8 +201,18 @@ internal static class GitRemoteTests
                 Directory.CreateDirectory(deep);
                 var deepDestination = Path.Combine(deep, "clone");
                 var deepResult = await GitRepository.CloneAsync(bare, deepDestination);
-                Check(deepResult.Success || (deepResult.RecoveryPath is not null && Directory.Exists(deepResult.RecoveryPath)), "long-path reservation failed without a recoverable owned directory");
-                Console.WriteLine(deepResult.Success ? "Long-path clone completed." : "Long-path clone failed with an owned recovery directory; Git filesystem limits remain.");
+                if (deepResult.Success)
+                {
+                    Check(Directory.Exists(deepDestination), "long-path clone did not publish its destination");
+                    Console.WriteLine("Long-path clone completed.");
+                }
+                else
+                {
+                    Check(deepResult.Failure == GitFailure.PathTooLong && !Directory.Exists(deepDestination) &&
+                        deepResult.RecoveryPath is not null && Directory.Exists(deepResult.RecoveryPath),
+                        $"unsafe or unclassified long-path failure ({deepResult.Failure}, exit {deepResult.ExitCode}): {deepResult.StandardError}");
+                    Console.WriteLine("Git filesystem limit reached; owned staging retained and destination unpublished.");
+                }
             }
             Console.WriteLine("Offline Git remote integration checks passed.");
         }
