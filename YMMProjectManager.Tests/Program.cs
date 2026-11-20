@@ -46,6 +46,11 @@ internal static class Program
             await ProjectListWpfFixtureProcess.RunChildAsync(args[1], stalled: args[0] == ProjectListWpfFixtureProcess.StalledChildArgument);
             return;
         }
+        if (args.Length == 2 && args[0] == GitPullRecoveryTests.ChildArgument)
+        {
+            GitPullRecoveryTests.RunInterruptedChild(args[1]);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--list-publication-crash")
         {
             await ProjectListPublicationTests.CrashAsync(args[1], args[2]);
@@ -177,7 +182,11 @@ internal static class Program
         await RunGroupAsync("YmmpxFailureTests.RunAsync", () => YmmpxFailureTests.RunAsync(workRoot));
         await RunGroupAsync("YmmpxArchiveValidationTests.RunAsync", () => YmmpxArchiveValidationTests.RunAsync(workRoot));
         await RunGroupAsync("GitRepositoryTests.RunAsync", () => GitRepositoryTests.RunAsync(workRoot));
-        await RunGroupAsync("GitRemoteTests.RunAsync", () => GitRemoteTests.RunAsync(workRoot));
+        await RunGroupAsync("GitRemoteTests.RunAsync", async () =>
+        {
+            await GitPullRecoveryTests.RunAsync(workRoot);
+            await GitRemoteTests.RunAsync(workRoot);
+        });
         await RunGroupAsync("OfflineControlsTests.RunAsync", () => OfflineControlsTests.RunAsync(workRoot));
         await RunGroupAsync("AssetInventoryTests.RunAsync", () => AssetInventoryTests.RunAsync(workRoot));
         await RunGroupAsync("AssetManifestTests.RunAsync", () => AssetManifestTests.RunAsync(workRoot));
@@ -232,6 +241,9 @@ internal static class Program
                     break;
                 case nameof(ProjectListPublicationTests):
                     await ProjectListPublicationTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitPullRecoveryTests):
+                    await GitPullRecoveryTests.RunAsync(workRoot);
                     break;
                 case nameof(GitRemoteTests):
                     await GitRemoteTests.RunAsync(workRoot);
