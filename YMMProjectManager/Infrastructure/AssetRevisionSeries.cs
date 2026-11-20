@@ -199,14 +199,14 @@ public static class AssetRevisionSeries
         => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: true, token);
 
     internal static Task<Head> AppendToBranchOrVerifyAsync(string directory, Head expectedRoot, IReadOnlyList<Head> observedTips,
-        Head expectedTip, AssetManifest next, CancellationToken token)
-        => AppendCoreAsync(directory, expectedRoot, observedTips.ToArray(), expectedTip, next, acceptCommittedRevision: true, token);
+        Head expectedTip, AssetManifest next, CancellationToken token, Action? publishPreparedOutput = null)
+        => AppendCoreAsync(directory, expectedRoot, observedTips.ToArray(), expectedTip, next, acceptCommittedRevision: true, token, publishPreparedOutput);
 
     internal static bool SameTips(IReadOnlyList<Head> current, IReadOnlyList<Head> expected)
         => current.Count == expected.Count && current.ToHashSet().SetEquals(expected);
 
     private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head[]? observedTips, Head expected, AssetManifest next,
-        bool acceptCommittedRevision, CancellationToken token)
+        bool acceptCommittedRevision, CancellationToken token, Action? publishPreparedOutput = null)
     {
         ArgumentNullException.ThrowIfNull(expected);
         token.ThrowIfCancellationRequested();
@@ -224,6 +224,8 @@ public static class AssetRevisionSeries
         {
             if (committed.Receipt != head || !graph.Revisions.Any(r => r.Receipt == expected))
                 throw new InvalidDataException("An existing revision or its parent does not match the pending operation.");
+            token.ThrowIfCancellationRequested();
+            publishPreparedOutput?.Invoke();
             return committed.Receipt;
         }
 
@@ -233,6 +235,10 @@ public static class AssetRevisionSeries
         if (!graph.Heads.Contains(expected)) throw new InvalidDataException("The selected revision is no longer a branch tip.");
         if (nodes.Count >= MaxRevisions || nodes.Values.Sum(node => node.ByteCount) + SerializeRevision(next).Length > MaxHistoryBytes)
             throw new InvalidDataException("The revision history exceeds the storage limit.");
+        token.ThrowIfCancellationRequested();
+        // A refused or busy series must leave a prepared output unpublished. If writing the revision fails,
+        // the output retains its durable proof and can be verified by a later recovery attempt.
+        publishPreparedOutput?.Invoke();
         await AssetManifestStore.SaveNewAsync(RevisionPath(full, next.RevisionId), next, token).ConfigureAwait(false);
         return head;
     }

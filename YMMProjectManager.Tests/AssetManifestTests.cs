@@ -76,6 +76,8 @@ internal static class AssetManifestTests
             () => TestRevisionSeriesAsync(root, project, item));
         await Program.RunNamedCaseAsync("Managed relink branch selection, version compatibility and retry",
             () => TestRelinkRecoveryAsync(root));
+        await Program.RunNamedCaseAsync("Managed relink recovery preserves an unpublished output when metadata advanced",
+            () => TestStalePreparedOutputRecoveryAsync(root));
         await Program.RunNamedCaseAsync("Managed relink durable output proof, cancellation and explicit retry",
             () => TestPreparedOutputRecoveryAsync(root));
         Console.WriteLine("Project asset immutable revision checks passed.");
@@ -267,6 +269,76 @@ internal static class AssetManifestTests
         {
             try { await run(); throw new Exception("invalid relink state accepted"); }
             catch (InvalidDataException) { }
+        }
+    }
+
+    private static async Task TestStalePreparedOutputRecoveryAsync(string parent)
+    {
+        var root = Path.Combine(parent, "stale-prepared-output");
+        var series = Path.Combine(root, "series");
+        Directory.CreateDirectory(series);
+        var source = Path.Combine(root, "source.ymmp");
+        var output = Path.Combine(root, "recovered.ymmp");
+        var candidate = Path.Combine(root, "candidate.wav");
+        var original = """{"Items":[{"FilePath":"original.wav"}]}"""u8.ToArray();
+        await File.WriteAllBytesAsync(source, original);
+        await File.WriteAllTextAsync(candidate, "synthetic candidate");
+        var baseRevision = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow);
+        var baseline = await AssetRevisionSeries.InitializeAsync(series, baseRevision);
+        var context = new RelinkDocumentContext
+        {
+            YmmpPath = source,
+            OriginalBytes = original,
+            Rows = [new RelinkRow { OriginalPath = "original.wav", SelectedCandidate = candidate, Status = RelinkStatus.Updated }],
+        };
+        var review = await AssetRelinkRecovery.ReviewAsync(context, series, baseline, baseline, default);
+        var evidence = await AssetRelinkRecovery.PrepareManagedOutputAsync(
+            context, output, series, baseline, baseline, [baseline], review, true, default);
+        var staged = evidence + ".output.tmp";
+        var proof = evidence + ".publish";
+        var logger = new FileLogger(Path.Combine(root, "test.log"));
+        using (var stopAfterProof = new CancellationTokenSource())
+        {
+            var interrupted = new RelinkSaveService(logger, null, null, stopAfterProof.Cancel);
+            try
+            {
+                await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token);
+                throw new Exception("Staged publication did not reach the interruption point.");
+            }
+            catch (OperationCanceledException) when (stopAfterProof.IsCancellationRequested) { }
+        }
+        var stagedBytes = await File.ReadAllBytesAsync(staged);
+        var proofBytes = await File.ReadAllBytesAsync(proof);
+        await using (var occupied = new FileStream(Path.Combine(series, ".asset-revisions.lock"),
+            FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            try
+            {
+                await AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true);
+                throw new Exception("An occupied metadata writer lock was ignored.");
+            }
+            catch (IOException) { }
+            if (File.Exists(output) || !File.Exists(staged))
+                throw new Exception("A busy metadata series consumed the prepared output.");
+        }
+        var followUp = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow, baseRevision, confirmedProjectAssociation: true);
+        var competing = await AssetRevisionSeries.AppendAsync(series, baseline, followUp);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            try
+            {
+                await AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true);
+                throw new Exception("A stale metadata branch was accepted for recovery.");
+            }
+            catch (InvalidDataException) { }
+            if (File.Exists(output)) throw new Exception("A stale metadata branch caused recovery to publish the prepared output.");
+            var stagedAfter = await File.ReadAllBytesAsync(staged);
+            var proofAfter = await File.ReadAllBytesAsync(proof);
+            var sourceAfter = await File.ReadAllBytesAsync(source);
+            if (!stagedBytes.SequenceEqual(stagedAfter) || !proofBytes.SequenceEqual(proofAfter) ||
+                !original.SequenceEqual(sourceAfter) || await AssetRevisionSeries.ReadHeadAsync(series) != competing)
+                throw new Exception("A refused recovery lost or changed an original or its evidence.");
         }
     }
 

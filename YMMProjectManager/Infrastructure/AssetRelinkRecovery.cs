@@ -192,9 +192,12 @@ internal static partial class AssetRelinkRecovery
                 !JsonSerializer.SerializeToUtf8Bytes(derived).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(intent.Next)))
                 throw new InvalidDataException("The pending metadata does not match the relink evidence.");
             token.ThrowIfCancellationRequested();
-            if (needsPublication) OwnedFilePublication.RenameOpenedPath(output.SafeFileHandle, intent.Output);
+            Action? publishPreparedOutput = needsPublication
+                ? () => OwnedFilePublication.RenameOpenedPath(output.SafeFileHandle, intent.Output)
+                : null;
             var revision = intent.ObservedTips is { } tips
-                ? await AssetRevisionSeries.AppendToBranchOrVerifyAsync(seriesDirectory, associatedRoot, tips, intent.Parent, intent.Next, token).ConfigureAwait(false)
+                ? await AssetRevisionSeries.AppendToBranchOrVerifyAsync(seriesDirectory, associatedRoot, tips, intent.Parent,
+                    intent.Next, token, publishPreparedOutput).ConfigureAwait(false)
                 : await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
             return new OutputReceipt(revision, intent.OperationId, intent.Source, intent.SourceSha256,
                 intent.Output, intent.OutputSha256, sourceIdentity, outputIdentity);
