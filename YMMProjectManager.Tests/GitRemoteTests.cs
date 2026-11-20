@@ -379,6 +379,41 @@ internal static class GitRemoteTests
             Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, $"failure classification: push={rejectedPush.Failure}, pull={rejectedPull.Failure}");
             Check((await one.FetchAsync()).Success, "offline divergence fetch");
             Check((await one.InspectPullAsync()).State == GitPullState.Diverged, "diverged branches classified as pull candidate");
+            await Program.RunNamedCaseAsync("Pull assessment refuses repository grafts and discards inherited ancestry overrides", async () =>
+            {
+                var remoteTip = await Command(source, "rev-parse", "refs/remotes/origin/" + branch);
+                var grafts = Path.Combine(source, ".git", "info", "grafts");
+                var inherited = Path.Combine(root, "inherited-grafts");
+                await File.WriteAllTextAsync(inherited, $"{remoteTip} {prior}\n");
+                var oldGraftPath = Environment.GetEnvironmentVariable("GIT_GRAFT_FILE");
+                try
+                {
+                    Environment.SetEnvironmentVariable("GIT_GRAFT_FILE", inherited);
+                    await Command(source, "-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", prior, remoteTip);
+                    Check((await one.InspectPullAsync()).State == GitPullState.Diverged,
+                        "inherited grafts reclassified diverged history");
+                    Environment.SetEnvironmentVariable("GIT_GRAFT_FILE", null);
+
+                    await File.WriteAllTextAsync(grafts, $"{remoteTip} {prior}\n");
+                    await Command(source, "-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", prior, remoteTip);
+                    Check((await one.InspectPullAsync()).State == GitPullState.HistoryNotVerifiable,
+                        "repository grafts reclassified diverged history");
+                    File.Delete(grafts);
+
+                    one.BeforePullInspectionRecheck = () => File.WriteAllText(grafts, $"{remoteTip} {prior}\n");
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed,
+                        "inspection accepted a graft added between observations");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    Environment.SetEnvironmentVariable("GIT_GRAFT_FILE", oldGraftPath);
+                    File.Delete(grafts);
+                }
+                Check(await Command(source, "rev-parse", "HEAD") == prior &&
+                    await Command(source, "rev-parse", "refs/remotes/origin/" + branch) == remoteTip,
+                    "graft inspection changed a ref");
+            });
             Check(await Command(source, "rev-parse", "HEAD") == prior, "divergence changed local head");
             Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == remoteBeforeRejectedPush, "divergence changed remote head");
             await Command(source, "remote", "set-url", "origin", "https://user:secret@example.invalid/repo");

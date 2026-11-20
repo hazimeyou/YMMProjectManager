@@ -250,16 +250,16 @@ public sealed class GitRepository
         try
         {
             var gitDirectory = Path.Combine(directory, ".git");
+            if (HasGitEntry(Path.Combine(gitDirectory, "info", "grafts")))
+                return new(GitPullState.HistoryNotVerifiable, "Legacy grafts can change the local view of commit ancestry.");
+
             var markers = PullOperationMarkers.Append(branch + ".lock");
             if (tracking is not null) markers = markers.Append(tracking + ".lock");
             foreach (var marker in markers)
             {
                 token.ThrowIfCancellationRequested();
-                try { File.GetAttributes(Path.Combine(gitDirectory, marker)); }
-                catch (FileNotFoundException) { continue; }
-                catch (DirectoryNotFoundException) { continue; }
-
-                return new(GitPullState.OperationInProgress, "A Git lock or unfinished operation is present.");
+                if (HasGitEntry(Path.Combine(gitDirectory, marker)))
+                    return new(GitPullState.OperationInProgress, "A Git lock or unfinished operation is present.");
             }
         }
         catch (IOException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
@@ -291,13 +291,22 @@ public sealed class GitRepository
             : new(GitPullState.Unavailable, "Could not inspect the worktree and index.");
     }
 
+    private static bool HasGitEntry(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
     private async Task<GitPullState> ClassifyPullAsync(string local, string upstream, CancellationToken token)
     {
         if (local == upstream) return GitPullState.UpToDate;
-        var forward = await RunDirectAsync(["merge-base", "--is-ancestor", local, upstream], token).ConfigureAwait(false);
+        var forward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", local, upstream], token, ignoreLegacyGrafts: true).ConfigureAwait(false);
+        if (forward.StandardError.Length != 0) return GitPullState.Unavailable;
         if (forward.Success) return GitPullState.FastForwardCandidate;
         if (forward.ExitCode != 1) return GitPullState.Unavailable;
-        var backward = await RunDirectAsync(["merge-base", "--is-ancestor", upstream, local], token).ConfigureAwait(false);
+        var backward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", upstream, local], token, ignoreLegacyGrafts: true).ConfigureAwait(false);
+        if (backward.StandardError.Length != 0) return GitPullState.Unavailable;
         if (backward.Success) return GitPullState.LocalAhead;
         if (backward.ExitCode != 1) return GitPullState.Unavailable;
         var shallow = await RunDirectAsync(["rev-parse", "--is-shallow-repository"], token).ConfigureAwait(false);
@@ -383,8 +392,9 @@ public sealed class GitRepository
         Task<GitResult> ReadGitAsync(string[] args) => trusted ? RunDirectAsync(args, token) : RunAsync(args, token);
     }
 
-    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token) =>
-        RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token, trustedProcess: true);
+    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false) =>
+        RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
+            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -670,7 +680,8 @@ public sealed class GitRepository
             ? allowedProtocol : string.Empty;
     }
 
-    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false)
+    private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
+        bool ignoreLegacyGrafts = false)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -688,7 +699,7 @@ public sealed class GitRepository
         {
             "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
             "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CONFIG", "GIT_NAMESPACE", "GIT_REPLACE_REF_BASE",
-            "GIT_SHALLOW_FILE", "GIT_QUARANTINE_PATH", "GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE",
+            "GIT_SHALLOW_FILE", "GIT_GRAFT_FILE", "GIT_QUARANTINE_PATH", "GIT_PREFIX", "GIT_IMPLICIT_WORK_TREE",
         })
             start.Environment.Remove(name);
         // Inherited command-scoped config can inject hooks or rewrite a remote independently
@@ -699,6 +710,9 @@ public sealed class GitRepository
             name.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase) ||
             name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)).ToArray())
             start.Environment.Remove(name);
+        // A graft can appear after the filesystem observation. Ancestry checks always use
+        // the real commit objects, even while that observation is being revalidated.
+        if (ignoreLegacyGrafts) start.Environment["GIT_GRAFT_FILE"] = "NUL";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
@@ -745,7 +759,7 @@ public sealed class GitRepository
 
 public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong }
 public enum GitRemoteOperation { Fetch, Push }
-public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision }
+public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision, HistoryNotVerifiable }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,
     string? TrackingRef = null, string? TrackingObjectId = null, string? Message = null);
 public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);
