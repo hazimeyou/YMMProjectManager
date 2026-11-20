@@ -270,6 +270,33 @@ internal static class AssetManifestTests
         var foreign = initial with { RevisionId = Guid.NewGuid(), ParentRevisionId = initial.RevisionId };
         await AssetManifestStore.SaveNewAsync(Path.Combine(directory, $"revision-{foreign.RevisionId:N}.json"), foreign);
         try { await AssetRevisionSeries.ReadHeadAsync(directory); throw new Exception("divergent head accepted"); } catch (InvalidDataException) { }
+        var graph = await AssetRevisionSeries.InspectGraphAsync(directory);
+        var secondTip = graph.Heads.Single(tip => tip.RevisionId == foreign.RevisionId);
+        if (graph.Root != head || graph.Revisions[0].Receipt != head || graph.Revisions.Count != 3 ||
+            graph.Heads.Count != 2 || !graph.Heads.Contains(current))
+            throw new Exception("divergent graph did not preserve both tips and their common root");
+        var branch = await AssetRevisionSeries.ResolveBranchAsync(directory, head.ProjectId, head.RevisionId, head.Sha256,
+            secondTip.RevisionId, secondTip.Sha256);
+        if (branch.Selected.Receipt != secondTip || branch.Graph.Heads.Count != 2)
+            throw new Exception("explicit branch selection was not resolved");
+        var branchUpdate = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, foreign, true, projectId: head.ProjectId);
+        var newTip = await AssetRevisionSeries.AppendToBranchAsync(directory, head, graph.Heads, secondTip, branchUpdate);
+        var updatedGraph = await AssetRevisionSeries.InspectGraphAsync(directory);
+        if (!updatedGraph.Heads.ToHashSet().SetEquals([current, newTip]) || updatedGraph.Revisions.Count != 4)
+            throw new Exception("extending one branch dropped or merged another branch");
+        var concurrentUpdate = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, committed, true, projectId: head.ProjectId);
+        try
+        {
+            await AssetRevisionSeries.AppendToBranchAsync(directory, head, graph.Heads, current, concurrentUpdate);
+            throw new Exception("branch append accepted a stale set of observed tips");
+        }
+        catch (InvalidDataException) { }
+        try
+        {
+            await AssetRevisionSeries.AppendToBranchAsync(directory, head, updatedGraph.Heads, secondTip, branchUpdate);
+            throw new Exception("branch append accepted an ambiguous historical selection");
+        }
+        catch (InvalidDataException) { }
         var firstAfterDivergence = await File.ReadAllBytesAsync(firstPath);
         if (!oldBytes.SequenceEqual(firstAfterDivergence)) throw new Exception("divergence changed historical revision");
 

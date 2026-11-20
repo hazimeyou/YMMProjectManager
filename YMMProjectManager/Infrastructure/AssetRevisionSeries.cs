@@ -17,6 +17,8 @@ public static class AssetRevisionSeries
     public sealed record Revision(Head Receipt, AssetManifest Manifest);
     public sealed record Inspection(Head Root, Head Head, IReadOnlyList<Revision> Revisions);
     public sealed record Selection(Head Root, Head Head, Revision Selected);
+    public sealed record GraphInspection(Head Root, IReadOnlyList<Head> Heads, IReadOnlyList<Revision> Revisions);
+    public sealed record BranchSelection(GraphInspection Graph, Revision Selected);
     private const string Prefix = "revision-";
     private const string LockFileName = ".asset-revisions.lock";
     private const int MaxManifestBytes = 4 * 1024 * 1024;
@@ -129,36 +131,62 @@ public static class AssetRevisionSeries
         return await InspectCoreAsync(full, token).ConfigureAwait(false);
     }
 
+    /// <summary>Reads a complete, validated history without choosing between multiple tips.</summary>
+    public static async Task<GraphInspection> InspectGraphAsync(string directory, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        var full = ValidateDirectory(directory);
+        await using var gate = AcquireLock(full);
+        return InspectGraph(await ReadNodesAsync(full, token).ConfigureAwait(false));
+    }
+
     /// <summary>Resolves an explicitly selected revision and verifies that the series and revision still match.</summary>
     public static async Task<Selection> ResolveAsync(string directory, Guid projectId, Guid rootRevisionId,
         string rootSha256, Guid selectedRevisionId, string selectedSha256, CancellationToken token = default)
     {
-        var inspection = await InspectAsync(directory, token).ConfigureAwait(false);
-        if (inspection.Root.ProjectId != projectId || inspection.Root.RevisionId != rootRevisionId ||
-            !string.Equals(inspection.Root.Sha256, rootSha256, StringComparison.OrdinalIgnoreCase))
+        var selected = await ResolveBranchAsync(directory, projectId, rootRevisionId, rootSha256,
+            selectedRevisionId, selectedSha256, token).ConfigureAwait(false);
+        return new Selection(selected.Graph.Root, RequireSingleHead(selected.Graph), selected.Selected);
+    }
+
+    public static async Task<BranchSelection> ResolveBranchAsync(string directory, Guid projectId, Guid rootRevisionId,
+        string rootSha256, Guid selectedRevisionId, string selectedSha256, CancellationToken token = default)
+    {
+        var graph = await InspectGraphAsync(directory, token).ConfigureAwait(false);
+        if (graph.Root.ProjectId != projectId || graph.Root.RevisionId != rootRevisionId ||
+            !string.Equals(graph.Root.Sha256, rootSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The associated metadata series was replaced or belongs to a different project.");
 
-        var selected = inspection.Revisions.SingleOrDefault(revision => revision.Receipt.RevisionId == selectedRevisionId);
+        var selected = graph.Revisions.SingleOrDefault(revision => revision.Receipt.RevisionId == selectedRevisionId);
         if (selected is null || !string.Equals(selected.Receipt.Sha256, selectedSha256, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The selected metadata revision is missing or has changed.");
-        return new Selection(inspection.Root, inspection.Head, selected);
+        return new BranchSelection(graph, selected);
     }
 
     /// <summary>Publishes a new revision only if the expected head identity and bytes still match.</summary>
     public static Task<Head> AppendAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
-        => AppendCoreAsync(directory, null, expected, next, acceptCommittedRevision: false, token);
+        => AppendCoreAsync(directory, null, null, expected, next, acceptCommittedRevision: false, token);
 
     public static Task<Head> AppendAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token = default)
-        => AppendCoreAsync(directory, expectedRoot, expected, next, acceptCommittedRevision: false, token);
+        => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: false, token);
+
+    /// <summary>Extends the selected branch tip while keeping every other branch intact.</summary>
+    public static Task<Head> AppendToBranchAsync(string directory, Head expectedRoot, IReadOnlyList<Head> observedTips, Head expectedTip,
+        AssetManifest next, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(expectedRoot);
+        ArgumentNullException.ThrowIfNull(observedTips);
+        return AppendCoreAsync(directory, expectedRoot, observedTips.ToArray(), expectedTip, next, acceptCommittedRevision: false, token);
+    }
 
     /// <summary>Retries a fixed revision without creating another if the exact expected revision was already published.</summary>
     public static Task<Head> AppendOrVerifyAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
-        => AppendCoreAsync(directory, null, expected, next, acceptCommittedRevision: true, token);
+        => AppendCoreAsync(directory, null, null, expected, next, acceptCommittedRevision: true, token);
 
     internal static Task<Head> AppendOrVerifyAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token)
-        => AppendCoreAsync(directory, expectedRoot, expected, next, acceptCommittedRevision: true, token);
+        => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: true, token);
 
-    private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head expected, AssetManifest next,
+    private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head[]? observedTips, Head expected, AssetManifest next,
         bool acceptCommittedRevision, CancellationToken token)
     {
         ArgumentNullException.ThrowIfNull(expected);
@@ -169,18 +197,22 @@ public static class AssetRevisionSeries
         var full = ValidateDirectory(directory);
         await using var gate = AcquireLock(full);
         var nodes = await ReadNodesAsync(full, token).ConfigureAwait(false);
-        var inspection = InspectNodes(nodes);
-        if (expectedRoot is not null && inspection.Root != expectedRoot)
+        var graph = InspectGraph(nodes);
+        if (expectedRoot is not null && graph.Root != expectedRoot)
             throw new InvalidDataException("The associated metadata series changed; reload before updating.");
+        if (observedTips is null)
+            RequireSingleHead(graph);
+        else if (observedTips.Length != graph.Heads.Count || !graph.Heads.ToHashSet().SetEquals(observedTips))
+            throw new InvalidDataException("The revision branches changed; inspect them before updating.");
         var head = MakeHead(next);
-        if (acceptCommittedRevision && inspection.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
+        if (acceptCommittedRevision && graph.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
         {
-            if (committed.Receipt != head || !inspection.Revisions.Any(r => r.Receipt == expected))
+            if (committed.Receipt != head || !graph.Revisions.Any(r => r.Receipt == expected))
                 throw new InvalidDataException("An existing revision or its parent does not match the pending operation.");
             return committed.Receipt;
         }
 
-        if (inspection.Head != expected) throw new InvalidDataException("The revision series changed; reload before updating.");
+        if (!graph.Heads.Contains(expected)) throw new InvalidDataException("The selected revision is no longer a branch tip.");
         if (nodes.Count >= MaxRevisions || nodes.Values.Sum(node => node.ByteCount) + SerializeRevision(next).Length > MaxHistoryBytes)
             throw new InvalidDataException("The revision history exceeds the storage limit.");
         await AssetManifestStore.SaveNewAsync(RevisionPath(full, next.RevisionId), next, token).ConfigureAwait(false);
@@ -282,30 +314,51 @@ public static class AssetRevisionSeries
 
     private static Inspection InspectNodes(Dictionary<Guid, Node> nodes)
     {
+        var graph = InspectGraph(nodes);
+        return new Inspection(graph.Root, RequireSingleHead(graph), graph.Revisions);
+    }
+
+    private static Head RequireSingleHead(GraphInspection graph)
+        => graph.Heads.Count == 1 ? graph.Heads[0] :
+            throw new InvalidDataException("Revision history is divergent. Select a branch explicitly.");
+
+    private static GraphInspection InspectGraph(Dictionary<Guid, Node> nodes)
+    {
         if (nodes.Count == 0) throw new InvalidDataException("The revision series is empty.");
         var projectId = nodes.Values.First().Manifest.ProjectId;
         if (nodes.Values.Any(n => n.Manifest.ProjectId != projectId)) throw new InvalidDataException("The revision series contains different projects.");
-        var parents = new HashSet<Guid>();
+        var children = new Dictionary<Guid, List<Guid>>();
+        Guid? root = null;
         foreach (var node in nodes.Values)
+        {
             if (node.Manifest.ParentRevisionId is Guid parent)
             {
                 if (!nodes.ContainsKey(parent)) throw new InvalidDataException("A parent revision is missing.");
-                parents.Add(parent);
+                if (!children.TryGetValue(parent, out var siblings))
+                    children.Add(parent, siblings = []);
+                siblings.Add(node.Manifest.RevisionId);
             }
-        var heads = nodes.Keys.Where(id => !parents.Contains(id)).ToArray();
-        if (heads.Length != 1) throw new InvalidDataException("Revision history is divergent or cyclic; select or repair it explicitly.");
-        var visited = new HashSet<Guid>();
-        var ordered = new List<Revision>(nodes.Count);
-        Guid? cursor = heads[0];
-        while (cursor is Guid id)
-        {
-            if (!visited.Add(id)) throw new InvalidDataException("Revision history contains a cycle.");
-            var node = nodes[id];
-            ordered.Add(new Revision(new Head(projectId, id, node.Hash), node.Manifest));
-            cursor = node.Manifest.ParentRevisionId;
+            else if (root is null) root = node.Manifest.RevisionId;
+            else throw new InvalidDataException("Revision history has several roots.");
         }
-        if (visited.Count != nodes.Count) throw new InvalidDataException("Revision history is disconnected.");
-        ordered.Reverse();
-        return new Inspection(ordered[0].Receipt, ordered[^1].Receipt, ordered.AsReadOnly());
+        if (root is null) throw new InvalidDataException("Revision history has no root.");
+        var heads = new List<Head>();
+        var ordered = new List<Revision>(nodes.Count);
+        var pending = new Queue<Guid>();
+        pending.Enqueue(root.Value);
+        while (pending.TryDequeue(out var id))
+        {
+            var node = nodes[id];
+            var receipt = new Head(projectId, id, node.Hash);
+            ordered.Add(new Revision(receipt, node.Manifest));
+            if (children.TryGetValue(id, out var next))
+            {
+                next.Sort();
+                foreach (var descendant in next) pending.Enqueue(descendant);
+            }
+            else heads.Add(receipt);
+        }
+        if (ordered.Count != nodes.Count) throw new InvalidDataException("Revision history is disconnected or cyclic.");
+        return new GraphInspection(ordered[0].Receipt, heads.AsReadOnly(), ordered.AsReadOnly());
     }
 }
