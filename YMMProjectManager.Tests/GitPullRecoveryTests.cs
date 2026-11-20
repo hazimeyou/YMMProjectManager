@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Git;
@@ -27,6 +28,110 @@ internal static class GitPullRecoveryTests
             () => TestUnrecognizedMarkerAsync(CreateFixture(root, "unrecognized")));
         await Program.RunNamedCaseAsync("App-owned Git writers cannot acquire a second lease",
             () => TestWriterLeaseAsync(CreateFixture(root, "writers")));
+        await Program.RunNamedCaseAsync("Pull checks Windows tree names and modes before native checkout", () =>
+        {
+            static string FileEntry(string path, string mode = "100644") =>
+                $"{mode} blob {new string('1', 40)}\t{path}\0";
+            static string TreeEntry(string path) =>
+                $"040000 tree {new string('2', 40)}\t{path}\0";
+            Require(GitPullWindowsTree.CanApply(TreeEntry("素材") + FileEntry("素材/台本.ymmp", "100755")),
+                "A normal Unicode tree cannot be checked out.");
+            Require(!GitPullWindowsTree.CanApply(FileEntry("Cover.txt") + FileEntry("cover.txt")) &&
+                !GitPullWindowsTree.CanApply(TreeEntry("Media") + TreeEntry("media")),
+                "A case-distinct path collision was accepted.");
+            Require(!GitPullWindowsTree.CanApply(FileEntry("media/COM¹.wav")) &&
+                !GitPullWindowsTree.CanApply(TreeEntry(".Git")) &&
+                !GitPullWindowsTree.CanApply(FileEntry("media/name.")) &&
+                !GitPullWindowsTree.CanApply(FileEntry("media/name ", "120000")) &&
+                !GitPullWindowsTree.CanApply(FileEntry("media/submodule", "160000")) &&
+                !GitPullWindowsTree.CanApply(FileEntry("unterminated")[..^1]),
+                "An unsupported Win32 path, mode or malformed tree was accepted.");
+            return Task.CompletedTask;
+        });
+        await Program.RunNamedCaseAsync("Confirmed Pull refuses a target that contains case-colliding files",
+            () => TestCaseCollidingTargetAsync(root));
+    }
+
+    private static async Task TestCaseCollidingTargetAsync(string root)
+    {
+        var seed = Directory.CreateDirectory(Path.Combine(root, "case-seed")).FullName;
+        var remote = Path.Combine(root, "case-remote.git");
+        var worktree = Path.Combine(root, "case-作業コピー");
+        await GitAsync(seed, ["init", "-b", "main"]);
+        await GitAsync(seed, ["config", "user.name", "Synthetic Git Fixture"]);
+        await GitAsync(seed, ["config", "user.email", "fixture@example.invalid"]);
+        await File.WriteAllTextAsync(Path.Combine(seed, "keep.ymmp"), "{}");
+        await GitAsync(seed, ["add", "--", "keep.ymmp"]);
+        await GitAsync(seed, ["commit", "-m", "baseline"]);
+        var starting = await GitAsync(seed, ["rev-parse", "HEAD"]);
+        await GitAsync(seed, ["init", "--bare", "-b", "main", remote]);
+        await GitAsync(seed, ["push", "--", remote, "main"]);
+        await GitAsync(seed, ["clone", "--", remote, worktree]);
+        var indexPath = Path.Combine(worktree, ".git", "index");
+        var index = await File.ReadAllBytesAsync(indexPath);
+        var original = await File.ReadAllBytesAsync(Path.Combine(worktree, "keep.ymmp"));
+
+        var first = await GitAsync(seed, ["hash-object", "-w", "--stdin"], "first");
+        var second = await GitAsync(seed, ["hash-object", "-w", "--stdin"], "second");
+        var originalBlob = await GitAsync(seed, ["rev-parse", "HEAD:keep.ymmp"]);
+        var tree = await GitAsync(seed, ["mktree", "-z"],
+            $"100644 blob {first}\tCover.txt\0" +
+            $"100644 blob {second}\tcover.txt\0" +
+            $"100644 blob {originalBlob}\tkeep.ymmp\0");
+        var target = await GitAsync(seed, ["commit-tree", tree, "-p", starting], "case-distinct synthetic files");
+        await GitAsync(seed, ["push", "--", remote, target + ":refs/heads/main"]);
+
+        var service = new GitRepository(worktree);
+        var remotePreview = await service.InspectPullRemoteAsync();
+        Require(remotePreview.Success && remotePreview.PullRemote is not null, "Cannot bind the isolated upstream.");
+        var preview = await service.InspectPullTargetAsync(remotePreview.PullRemote!);
+        Require(preview.Success && preview.PullTarget?.TargetObjectId == target, "The approved commit was not observed.");
+        var result = await service.PullTrustedAsync(preview.PullTarget!);
+        Require(!result.Success && result.Failure == GitFailure.UnsafeOperation &&
+            result.StandardError.Contains("paths or file types", StringComparison.Ordinal) &&
+            !GitPullOperationJournal.Exists(worktree),
+            $"The Windows tree guard did not reject the collision at preflight ({result.ExitCode}, {result.Failure}, {result.StandardError}).");
+        var finalIndex = await File.ReadAllBytesAsync(indexPath);
+        var finalOriginal = await File.ReadAllBytesAsync(Path.Combine(worktree, "keep.ymmp"));
+        Require(await GitAsync(worktree, ["rev-parse", "HEAD"]) == starting &&
+            await GitAsync(worktree, ["symbolic-ref", "HEAD"]) == "refs/heads/main" &&
+            index.SequenceEqual(finalIndex) && original.SequenceEqual(finalOriginal) &&
+            !File.Exists(Path.Combine(worktree, "Cover.txt")), "A rejected target changed the branch, index or worktree.");
+    }
+
+    private static async Task<string> GitAsync(string directory, string[] args, string? input = null)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = input is not null, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        start.Environment["GIT_ALLOW_PROTOCOL"] = "file";
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start synthetic Git.");
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        try
+        {
+            var output = process.StandardOutput.ReadToEndAsync(limit.Token);
+            var error = process.StandardError.ReadToEndAsync(limit.Token);
+            if (input is not null)
+            {
+                await process.StandardInput.BaseStream.WriteAsync(Encoding.UTF8.GetBytes(input), limit.Token);
+                process.StandardInput.Close();
+            }
+            await process.WaitForExitAsync(limit.Token);
+            var details = await error;
+            Require(process.ExitCode == 0, $"Synthetic Git {args[0]} failed. {details}");
+            return (await output).Trim();
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+        }
     }
 
     internal static void RunInterruptedChild(string repository)
