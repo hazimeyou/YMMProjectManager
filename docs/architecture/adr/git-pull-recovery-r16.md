@@ -6,7 +6,7 @@
 
 Pull を有効化する条件は、承認済みの物理リポジトリ、リモート、枝、開始コミットを固定し、fast-forward 以外の履歴を拒否した上で、ref・index・作業ツリーの状態を一体で回復できること。既存の変更や未追跡ファイルの退避を利用者の許可なしに行わない。中断後にどの段階まで更新したか判別できない場合は、後続の更新を起動せず復旧対象を示す。
 
-Git の個別のロック、ディレクトリの物理 ID、読み取り前後の比較だけでは外部 Git やエディターの操作と排他できない。現行の WPF コマンドはローカル保存済みの追跡 ref から状態を表示する。書き込み API は Git の起動前に明示エラーを返す。状態確認でロックや未完了操作、index が変更を隠す可能性、submodule、構成済みの filter が見つかった場合は作業ツリーの状態を推測しない。状態確認は特定時点の観測であり、将来の更新の許可には使用できない。
+Git の個別のロック、ディレクトリの物理 ID、読み取り前後の比較だけでは外部 Git やエディターの操作と排他できない。現行の WPF コマンドはローカル保存済みの追跡 ref から状態を表示する。枝に upstream が設定済みなら Git が解決した完全 ref を用い、設定の欠落や複数の merge 対象では停止する。設定がまったくない枝に限って既定の origin の同名 ref を参照する。書き込み API は Git の起動前に明示エラーを返す。状態確認でロックや未完了操作、index が変更を隠す可能性、submodule、構成済みの filter が見つかった場合は作業ツリーの状態を推測しない。状態確認は特定時点の観測であり、将来の更新の許可には使用できない。filter の確認から status 実行までは設定を固定できないため、外部プロセスとの設定競合まで隔離する機能には使用できない。
 
 ## 比較結果
 
@@ -20,6 +20,12 @@ Git for Windows 2.55.0.windows.5 と Windows の一時領域で、合成ファ�
 | Git のネイティブな ref トランザクション | Git の `update-ref --stdin` は ref を対象とする。R15 では HEAD のロックが `merge --ff-only` による index とファイルの先行更新を止めなかった。 | ref を単独で変更したり、ref のロックを全体の巻き戻し手段として使ったりしない。 |
 
 仕様資料として [Git read-tree](https://git-scm.com/docs/git-read-tree)、[Git update-ref](https://git-scm.com/docs/git-update-ref)、[Windows FILE_RENAME_INFORMATION](https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information) を参照。R15 の観測は [Git 操作の信頼境界](git-trust-model-r4.md) に記録。
+
+## 同じ tree の fast-forward
+
+先祖関係と tree ID の一致を検証した二つの合成コミットを用意した。最良の場合は index・作業ツリーを書き換える必要がないため、`update-ref --stdin` で `symref-verify HEAD refs/heads/main` と同じ枝への旧 OID 条件付き更新を一つのトランザクションに入れた。Git for Windows 2.55.0.windows.5 の files backend、reflog を無効にした files backend、reftable のすべてで `prepare` が終了コード128で拒否された。Git は HEAD とその参照先を同じトランザクションで複数扱うためと報告した。HEAD、index と作業ファイルが保持されたことを隔離 fixture で確認した。
+
+HEAD の検証を外して枝だけを条件付き更新すると、同じ開始 OID を指す別の枝に切り替えた後でも更新が成功した。tree の一致は作業ファイルの公開を省ける条件だが、現在の枝を固定する条件を満たさない。異なる tree では index と作業ファイルの更新契約も必要になるため、このケースを Pull の代替として提供しない。
 
 ## 復旧方針と再開地点
 

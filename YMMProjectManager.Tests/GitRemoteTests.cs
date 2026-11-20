@@ -128,6 +128,49 @@ internal static class GitRemoteTests
                 await Command(source, "rev-parse", "refs/remotes/origin/" + branch) == currentUpstream &&
                 SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(source, ".git", "index"))).SequenceEqual(originalIndex) &&
                 !File.Exists(Path.Combine(source, "two.txt")), "pull assessment modified refs, index or worktree");
+            await Program.RunNamedCaseAsync("Pull inspection follows the configured remote tracking branch", async () =>
+            {
+                const string alternateRemote = "r16-alternate";
+                const string firstTrackingRef = "refs/remotes/" + alternateRemote + "/server";
+                const string secondTrackingRef = "refs/remotes/" + alternateRemote + "/other";
+                var remoteSetting = $"branch.{branch}.remote";
+                var mergeSetting = $"branch.{branch}.merge";
+                await Command(source, "config", "remote." + alternateRemote + ".fetch", "+refs/heads/*:refs/remotes/" + alternateRemote + "/*");
+                await Command(source, "config", remoteSetting, alternateRemote);
+                await Command(source, "config", mergeSetting, "refs/heads/server");
+                await Command(source, "update-ref", firstTrackingRef, currentLocal);
+                await Command(source, "update-ref", secondTrackingRef, currentLocal);
+                try
+                {
+                    var configured = await one.InspectPullAsync();
+                    Check(configured.State == GitPullState.UpToDate &&
+                        configured.TrackingRef == firstTrackingRef && configured.TrackingObjectId == currentLocal,
+                        "inspection selected origin instead of the configured upstream");
+
+                    one.BeforePullInspectionRecheck = () =>
+                        Command(source, "config", mergeSetting, "refs/heads/other").GetAwaiter().GetResult();
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed,
+                        "inspection missed a configured reference change with the same commit id");
+                    one.BeforePullInspectionRecheck = null;
+
+                    await Command(source, "config", mergeSetting, "refs/heads/not-fetched");
+                    var missing = await one.InspectPullAsync();
+                    Check(missing.State == GitPullState.TrackingUnavailable &&
+                        missing.TrackingRef == "refs/remotes/" + alternateRemote + "/not-fetched",
+                        "missing configured tracking ref was replaced with origin fallback");
+
+                    await Command(source, "config", "--add", mergeSetting, "refs/heads/server");
+                    Check((await one.InspectPullAsync()).State == GitPullState.Unavailable,
+                        "inspection selected among multiple configured merge refs");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    await Command(source, "config", "--unset-all", mergeSetting);
+                    await Command(source, "config", "--unset-all", remoteSetting);
+                    await Command(source, "config", "--remove-section", "remote." + alternateRemote);
+                }
+            });
             one.BeforePullInspectionRecheck = () =>
             {
                 File.WriteAllText(Path.Combine(source, ".git", "HEAD"), "ref: refs/heads/race-side\n");

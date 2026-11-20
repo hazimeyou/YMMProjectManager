@@ -127,42 +127,91 @@ public sealed class GitRepository
             return new GitPullAssessment(GitPullState.Unavailable, Message: "Could not verify the repository and its Git directory identity.");
         var (branch, error) = await ReadBranchTipAsync(trusted: true, token).ConfigureAwait(false);
         if (error is not null) return new GitPullAssessment(GitPullState.Unavailable, Message: error.StandardError);
-        var tracking = "refs/remotes/origin/" + branch!.BranchRef[BranchRefPrefix.Length..];
-        var upstream = await ReadTrackingTipAsync().ConfigureAwait(false);
-        var worktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking, token).ConfigureAwait(false);
+        var tracking = await ReadPullTrackingAsync(branch!.BranchRef, token).ConfigureAwait(false);
+        if (tracking.Error is not null)
+            return new GitPullAssessment(GitPullState.Unavailable, branch.BranchRef, branch.ObjectId, Message: tracking.Error);
+        var worktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking.Ref, token).ConfigureAwait(false);
         if (worktree.Blocked is { } blocked)
-            return new GitPullAssessment(blocked, branch.BranchRef, branch.ObjectId, tracking, upstream, worktree.Message);
+            return new GitPullAssessment(blocked, branch.BranchRef, branch.ObjectId, tracking.Ref, tracking.ObjectId, worktree.Message);
 
-        var state = worktree.Status!.Length != 0 ? GitPullState.Dirty : upstream is null
-            ? GitPullState.TrackingUnavailable : await ClassifyPullAsync(branch.ObjectId, upstream, token).ConfigureAwait(false);
+        var state = worktree.Status!.Length != 0 ? GitPullState.Dirty : tracking.ObjectId is null
+            ? GitPullState.TrackingUnavailable : await ClassifyPullAsync(branch.ObjectId, tracking.ObjectId, token).ConfigureAwait(false);
 
         // The result describes these observations only; no ref or index transaction is held.
         BeforePullInspectionRecheck?.Invoke();
         var (latestBranch, _) = await ReadBranchTipAsync(trusted: true, token).ConfigureAwait(false);
-        var latestUpstream = await ReadTrackingTipAsync().ConfigureAwait(false);
-        var latestWorktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking, token).ConfigureAwait(false);
-        if (!HasDirectRepository() || latestBranch != branch || latestUpstream != upstream || latestWorktree != worktree)
+        var latestTracking = await ReadPullTrackingAsync(branch.BranchRef, token).ConfigureAwait(false);
+        var latestWorktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking.Ref, token).ConfigureAwait(false);
+        if (!HasDirectRepository() || latestBranch != branch || latestTracking != tracking || latestWorktree != worktree)
             return new GitPullAssessment(GitPullState.Changed, Message: "The repository changed during inspection. Refresh the assessment.");
 
-        return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking, upstream);
+        return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking.Ref, tracking.ObjectId, tracking.Message);
+    }
 
-        async Task<string?> ReadTrackingTipAsync()
+    private sealed record PullTrackingObservation(string? Ref = null, string? ObjectId = null,
+        string? Remote = null, string? RemoteRef = null, string? Error = null, string? Message = null);
+
+    private async Task<PullTrackingObservation> ReadPullTrackingAsync(string branchRef, CancellationToken token)
+    {
+        var branchName = branchRef[BranchRefPrefix.Length..];
+        var remoteSetting = await ReadSettingAsync("remote").ConfigureAwait(false);
+        var mergeSetting = await ReadSettingAsync("merge").ConfigureAwait(false);
+        if (remoteSetting is null || mergeSetting is null)
+            return new(Error: "Could not verify the branch tracking configuration.");
+
+        string trackingRef;
+        string? remote = null;
+        string? remoteRef = null;
+        if (remoteSetting.Length == 0 && mergeSetting.Length == 0)
         {
-            var result = await RunDirectAsync(["rev-parse", "--verify", "--quiet", tracking + "^{commit}"], token).ConfigureAwait(false);
-            var objectId = result.StandardOutput.Trim();
-            return result.Success && IsObjectId(objectId) ? objectId : null;
+            // Retain the convention used by this application's explicit origin fetch.
+            trackingRef = "refs/remotes/origin/" + branchName;
+        }
+        else
+        {
+            if (remoteSetting.Length != 1 || mergeSetting.Length != 1 || remoteSetting[0] is "" or "." ||
+                !mergeSetting[0].StartsWith(BranchRefPrefix, StringComparison.Ordinal))
+                return new(Error: "The branch does not have a single configured remote tracking branch.");
+
+            remote = remoteSetting[0];
+            remoteRef = mergeSetting[0];
+            var mapping = await RunDirectAsync(
+                ["for-each-ref", "--format=%(refname)%00%(upstream)%00%(upstream:remotename)%00%(upstream:remoteref)", "--", branchRef],
+                token).ConfigureAwait(false);
+            var fields = mapping.StandardOutput.TrimEnd('\r', '\n').Split('\0');
+            if (!mapping.Success || fields.Length != 4 || fields[0] != branchRef || fields[2] != remote ||
+                fields[3] != remoteRef || !fields[1].StartsWith("refs/remotes/", StringComparison.Ordinal) || HasHiddenText(fields[1]))
+                return new(Error: "Could not resolve the configured remote tracking branch.");
+            trackingRef = fields[1];
+        }
+
+        var result = await RunDirectAsync(["rev-parse", "--verify", "--quiet", trackingRef + "^{commit}"], token).ConfigureAwait(false);
+        var objectId = result.StandardOutput.Trim();
+        if (!result.Success && result.ExitCode == 1 && objectId.Length == 0 && result.StandardError.Length == 0)
+            return new(trackingRef, Remote: remote, RemoteRef: remoteRef, Message: "There is no locally saved commit for the tracking branch.");
+        if (!result.Success || !IsObjectId(objectId))
+            return new(Error: "Could not verify the locally saved tracking commit.");
+        return new(trackingRef, objectId, remote, remoteRef);
+
+        async Task<string[]?> ReadSettingAsync(string key)
+        {
+            var setting = await RunDirectAsync(["config", "--null", "--get-all", $"branch.{branchName}.{key}"], token).ConfigureAwait(false);
+            if (setting.Success && setting.StandardOutput.EndsWith('\0')) return setting.StandardOutput[..^1].Split('\0');
+            if (setting.ExitCode == 1 && setting.StandardOutput.Length == 0 && setting.StandardError.Length == 0) return [];
+            return null;
         }
     }
 
     private sealed record PullWorktreeObservation(
         GitPullState? Blocked = null, string? Message = null, string? Index = null, string? Status = null);
 
-    private async Task<PullWorktreeObservation> ReadPullWorktreeAsync(string branch, string tracking, CancellationToken token)
+    private async Task<PullWorktreeObservation> ReadPullWorktreeAsync(string branch, string? tracking, CancellationToken token)
     {
         try
         {
             var gitDirectory = Path.Combine(directory, ".git");
-            var markers = PullOperationMarkers.Concat([branch + ".lock", tracking + ".lock"]);
+            var markers = PullOperationMarkers.Append(branch + ".lock");
+            if (tracking is not null) markers = markers.Append(tracking + ".lock");
             foreach (var marker in markers)
             {
                 token.ThrowIfCancellationRequested();
