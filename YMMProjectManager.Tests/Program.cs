@@ -274,6 +274,9 @@ internal static class Program
                 case nameof(GitNativeInterruptionTests):
                     await GitNativeInterruptionTests.RunAsync(workRoot);
                     break;
+                case nameof(GitHttpsAcceptanceTests):
+                    await GitHttpsAcceptanceTests.RunAsync(workRoot);
+                    break;
                 case nameof(TestSeekAdapterReflectionFailureAsync):
                     await TestSeekAdapterReflectionFailureAsync();
                     break;
