@@ -162,6 +162,10 @@ public sealed partial class GitRepository
         var (branch, error) = await ReadBranchTipAsync(trusted: true, token, session.Settings).ConfigureAwait(false);
         if (branch is null || error is not null)
             return (null, UnsafeRemote("The repository must have a checked-out local branch and commit."));
+        var gitDirectory = Path.Combine(directory, ".git");
+        if (!CanUsePullMetadataFile(gitDirectory, branch.BranchRef) ||
+            !CanUsePullMetadataFile(gitDirectory, "logs/" + branch.BranchRef))
+            return (null, UnsafeRemote("The selected branch metadata or its reflog uses an unsupported path."));
         var name = branch.BranchRef[BranchRefPrefix.Length..];
         var remote = await ReadSinglePullSettingAsync(session, $"branch.{name}.remote", token).ConfigureAwait(false);
         var upstream = await ReadSinglePullSettingAsync(session, $"branch.{name}.merge", token).ConfigureAwait(false);

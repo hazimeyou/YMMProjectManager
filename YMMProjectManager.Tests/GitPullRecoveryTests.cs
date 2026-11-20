@@ -110,6 +110,7 @@ internal static class GitPullRecoveryTests
         var service = new GitRepository(worktree);
         var remotePreview = await service.InspectPullRemoteAsync();
         Require(remotePreview.Success && remotePreview.PullRemote is not null, "Cannot bind the isolated upstream.");
+        await AssertMetadataJunctionRejectedAsync(root, worktree, service);
         var preview = await service.InspectPullTargetAsync(remotePreview.PullRemote!);
         Require(preview.Success && preview.PullTarget?.TargetObjectId == target, "The approved commit was not observed.");
         var result = await service.PullTrustedAsync(preview.PullTarget!);
@@ -123,6 +124,32 @@ internal static class GitPullRecoveryTests
             await GitAsync(worktree, ["symbolic-ref", "HEAD"]) == "refs/heads/main" &&
             index.SequenceEqual(finalIndex) && original.SequenceEqual(finalOriginal) &&
             !File.Exists(Path.Combine(worktree, "Cover.txt")), "A rejected target changed the branch, index or worktree.");
+    }
+
+    private static async Task AssertMetadataJunctionRejectedAsync(string root, string worktree, GitRepository repository)
+    {
+        var target = Directory.CreateDirectory(Path.Combine(root, "junction-target")).FullName;
+        var link = Path.Combine(worktree, ".git", "objects", "reserved-fixture");
+        var start = new ProcessStartInfo("cmd.exe")
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var arg in new[] { "/d", "/c", "mklink", "/J", link, target }) start.ArgumentList.Add(arg);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start junction fixture.");
+        using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var output = process.StandardOutput.ReadToEndAsync(limit.Token);
+        var error = process.StandardError.ReadToEndAsync(limit.Token);
+        await process.WaitForExitAsync(limit.Token);
+        await output;
+        var details = await error;
+        Require(process.ExitCode == 0, $"Could not create a junction inside the synthetic checkout. {details}");
+        try
+        {
+            var blocked = await repository.InspectPullRemoteAsync();
+            Require(!blocked.Success && blocked.Failure == GitFailure.UnsafeOperation && blocked.PullRemote is null &&
+                !Directory.EnumerateFileSystemEntries(target).Any(), "Pull offered approval for unsupported Git metadata.");
+        }
+        finally { Directory.Delete(link); }
     }
 
     private static async Task<string> GitAsync(string directory, string[] args, string? input = null)

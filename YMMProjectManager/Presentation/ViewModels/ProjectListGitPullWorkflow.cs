@@ -11,7 +11,7 @@ public sealed partial class ProjectListViewModel
     internal static bool IsConfirmedPullEnabled => false;
 
     public string PullHelp => IsConfirmedPullEnabled
-        ? "現在のブランチとリモートの更新先を確認し、承認後に fast-forward のみ実行します。"
+        ? "現在のブランチとリモートの更新先を確認し、承認後に fast-forward のみ実行します。直接接続できる HTTPS（認証不要）と固定ローカル NTFS の Git リポジトリが対象です。"
         : "更新を伴う Pull は無効です。外部の操作や中断があっても、ブランチ・index・作業ファイルを一貫して保護できることを確認中です。";
 
     public string GitRemoteOperationsHelp => IsConfirmedPullEnabled
@@ -77,7 +77,7 @@ public sealed partial class ProjectListViewModel
     {
         var action = result.Failure switch
         {
-            GitFailure.OutcomeUnknown => "Pull の結果を確定できません。作業ファイルを退避し、Git の状態、現在のブランチ、HEAD、index を確認してください。確認が済むまで再実行や reset は行わないでください。",
+            GitFailure.OutcomeUnknown => "Pull の結果を確定できません。作業ファイルと回復記録を保全し、Git の状態、現在のブランチ、HEAD、index を確認してください。確認が済むまで再実行や reset は行わないでください。回復記録が残っている間は Pull を開始できません。",
             GitFailure.ConcurrentOperation => "別の Git 操作が進行中です。その操作が終了してから、状態を確認してください。",
             GitFailure.Divergence => "履歴が分岐しているため fast-forward できません。ローカルと追跡先の履歴を確認してください。",
             GitFailure.UnsafeOperation => "現在の状態では Pull できません。ブランチ、上流、未コミット・未追跡ファイル、Git 設定を確認してください。",
@@ -180,7 +180,7 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
-            GitStatus = "Pull を実行中です。操作結果を確認するまでお待ちください。";
+            GitStatus = "Pull を実行中です。作業ツリーの更新開始後は、結果を確認するまで待機します。";
             if (!StillSelected()) return;
             GitStatus = await execute(target, token);
         });

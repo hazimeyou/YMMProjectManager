@@ -133,6 +133,26 @@ public sealed partial class GitRepository
             if (!HasGitEntry(path)) continue;
             if (!IsOrdinaryDirectory(path)) return false;
         }
+        // Fetch can write loose objects or packs, and merge can append reflogs.
+        // A normal .git root does not prove those nested paths stay in it.
+        foreach (var path in Directory.EnumerateDirectories(Path.Combine(gitDirectory, "objects")))
+            if (!IsOrdinaryDirectory(path)) return false;
+        foreach (var file in new[] { "logs/HEAD", "ORIG_HEAD", "packed-refs" })
+            if (!CanUsePullMetadataFile(gitDirectory, file)) return false;
+        return true;
+    }
+
+    private static bool CanUsePullMetadataFile(string gitDirectory, string relativePath)
+    {
+        var components = relativePath.Split('/');
+        var current = gitDirectory;
+        for (var i = 0; i < components.Length; i++)
+        {
+            current = Path.Combine(current, components[i]);
+            if (!HasGitEntry(current)) return true;
+            if (i == components.Length - 1 ? !IsRegularFile(current) : !IsOrdinaryDirectory(current))
+                return false;
+        }
         return true;
     }
 

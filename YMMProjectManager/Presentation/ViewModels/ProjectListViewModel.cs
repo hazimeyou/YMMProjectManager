@@ -244,6 +244,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 if (name == InspectListPublicationOperation)
                     ProjectListPublicationStatus = "中止しました。保存記録を確認するには、もう一度実行してください。";
                 else if (name == PullWorkflowOperation)
+                    GitStatus = "作業ツリーの更新開始前に中止しました。再実行するには更新先を確認してください。";
+                else if (name == PullWorkflowOperation)
                     GitStatus = "Pull を中止しました。ブランチ、index、作業ファイルの更新は開始していません。";
                 else if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
                 else if (name.StartsWith("Bundle", StringComparison.Ordinal)) BundleStatus = message;
