@@ -28,6 +28,8 @@ internal static class OfflineControlsTests
             if (!vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) ||
                 !vm.InspectGitPullCommand.CanExecute(null) || !vm.PushGitCommand.CanExecute(null) || !vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("trusted Git controls or Pull fail-closed gate are incorrect");
+            if (!vm.RepairProjectListIdentitiesCommand.CanExecute(null))
+                throw new Exception("physical identity review is unavailable for a readable project list");
             if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
