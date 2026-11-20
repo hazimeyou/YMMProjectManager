@@ -340,7 +340,8 @@ public sealed class JsonProjectRepository : IProjectRepository
                 await drafts.ReadAsync(readyDraft).ConfigureAwait(false);
             }
             var publications = new ProjectListPublications(RecoveryDirectory);
-            var receipt = new ProjectListPublications.Receipt(1, operationId, draftId, baseline.Sha256, expectedResult, PublicationStarted: false);
+            var receipt = new ProjectListPublications.Receipt(2, operationId, draftId, baseline.Sha256, expectedResult,
+                PublicationStarted: false, ExpectedOperation: baseline.OperationId);
             beforeReceipt?.Invoke();
             await publications.WriteAsync(receipt, cancellationToken, duringReceipt).ConfigureAwait(false);
             afterReceipt?.Invoke();

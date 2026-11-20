@@ -10,7 +10,8 @@ internal static class ProjectListPublicationTests
         foreach (var point in new[]
         {
             "before-receipt", "during-receipt", "after-receipt", "after-claim", "before-candidate", "write", "flushed", "published",
-            "fresh-attempt", "externally-replaced", "externally-restored", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
+            "fresh-attempt", "later-saves", "staged-then-external-edit", "externally-restored", "raw-edit-after-later-save",
+            "missing-descendant", "corrupt-descendant", "duplicate-descendant", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
         })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
     }
@@ -57,11 +58,26 @@ internal static class ProjectListPublicationTests
         var receipt = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication.json")
             .Single(path => Path.GetFileName(path).StartsWith($"{draftId:N}-", StringComparison.Ordinal) &&
                 (operation is null || Path.GetFileName(path).Contains($"{operation:N}", StringComparison.Ordinal)));
-        if (point == "externally-replaced")
+        if (point is "later-saves" or "staged-then-external-edit" or "raw-edit-after-later-save" or
+            "missing-descendant" or "corrupt-descendant" or "duplicate-descendant")
         {
             var external = await repository.LoadAsync();
             external.Projects.Single().DisplayName = "external";
             await repository.SaveAsync(external);
+            external.Projects.Single().DisplayName = "second later save";
+            await repository.SaveAsync(external);
+            var latestReceipt = Path.Combine(repository.RecoveryDirectory, $"standalone-{external.Revision!.OperationId:N}.publication.json");
+            if (point == "missing-descendant") File.Move(latestReceipt, latestReceipt + ".fixture-hidden");
+            if (point == "corrupt-descendant") await File.WriteAllTextAsync(latestReceipt, "{}");
+            if (point == "duplicate-descendant")
+                File.Copy(latestReceipt, Path.Combine(repository.RecoveryDirectory, $"{Guid.NewGuid():N}-{external.Revision.OperationId:N}.publication.json"));
+            if (point == "raw-edit-after-later-save")
+            {
+                var destination = Path.Combine(root, "projects.json");
+                var raw = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(destination))!;
+                raw["ExternalExtra"] = "newer raw contents";
+                await File.WriteAllTextAsync(destination, raw.ToJsonString());
+            }
         }
         if (point == "externally-restored") await File.WriteAllBytesAsync(Path.Combine(root, "projects.json"), originalBytes);
         if (point == "missing-receipt") File.Move(receipt, receipt + ".fixture-hidden");
@@ -81,8 +97,9 @@ internal static class ProjectListPublicationTests
             var actual = await repository.ReconcileDraftAsync(claim);
             var expected = point switch
             {
-                "published" or "legacy-claim" => ProjectListPublications.Outcome.Committed,
-                "after-claim" or "fresh-attempt" or "before-candidate" or "write" or "flushed" => ProjectListPublications.Outcome.Unpublished,
+                "published" or "legacy-claim" or "later-saves" => ProjectListPublications.Outcome.Committed,
+                "after-claim" or "fresh-attempt" or "before-candidate" or "write" or "flushed" or
+                    "staged-then-external-edit" => ProjectListPublications.Outcome.Unpublished,
                 _ => ProjectListPublications.Outcome.Unknown,
             };
             Require(actual == expected, $"Unexpected outcome for {point}: {actual}.");
@@ -132,14 +149,22 @@ internal static class ProjectListPublicationTests
                 Environment.Exit(86);
             } : null,
             beforeReplace: point == "flushed" ? () => Environment.Exit(86) : null,
-            afterReplace: () => Environment.Exit(86),
+            afterReplace: point == "legacy-claim" ? null : () => Environment.Exit(86),
             beforeCandidate: point == "before-candidate" ? () => Environment.Exit(86) : null,
             beforeReceipt: point == "before-receipt" ? () => Environment.Exit(86) : null,
             afterReceipt: point == "after-receipt" ? () => Environment.Exit(86) : null,
-            afterDraftClaim: point is "after-claim" or "fresh-attempt" ? () => Environment.Exit(86) : null,
+            afterDraftClaim: point is "after-claim" or "fresh-attempt" or "staged-then-external-edit" ? () => Environment.Exit(86) : null,
             duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null);
-        if (point == "legacy-claim") await crash.SaveWithDraftAsync(candidate, drafts.Claim(ready));
-        else await crash.SaveReadyDraftAsync(candidate, ready);
+        if (point == "legacy-claim")
+        {
+            var legacyClaim = drafts.Claim(ready);
+            await crash.SaveWithDraftAsync(candidate, legacyClaim);
+            await new ProjectListPublications(repository.RecoveryDirectory).WriteAsync(new ProjectListPublications.Receipt(
+                1, candidate.Revision!.OperationId!.Value, drafts.GetClaimedIdentity(legacyClaim).Id,
+                baseline.Revision!.Sha256, candidate.Revision.Sha256!, PublicationStarted: true), default);
+            Environment.Exit(86);
+        }
+        await crash.SaveReadyDraftAsync(candidate, ready);
         throw new Exception("Crash hook was not executed.");
     }
 
