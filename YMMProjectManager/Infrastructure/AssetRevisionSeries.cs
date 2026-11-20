@@ -28,6 +28,17 @@ public static class AssetRevisionSeries
     /// <summary>Copies an explicitly selected legacy history to a new directory, preserving every source byte.</summary>
     public static async Task<Inspection> ImportLegacyAsync(string directory, Guid projectId, IEnumerable<string> files, CancellationToken token = default)
     {
+        var graph = await ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: true, token).ConfigureAwait(false);
+        return new Inspection(graph.Root, graph.Heads[0], graph.Revisions);
+    }
+
+    /// <summary>Imports every explicitly selected revision while retaining all branches.</summary>
+    public static Task<GraphInspection> ImportLegacyGraphAsync(string directory, Guid projectId, IEnumerable<string> files,
+        CancellationToken token = default) => ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: false, token);
+
+    private static async Task<GraphInspection> ImportLegacyCoreAsync(string directory, Guid projectId, IEnumerable<string> files,
+        bool requireSingleHead, CancellationToken token)
+    {
         ArgumentNullException.ThrowIfNull(files);
         token.ThrowIfCancellationRequested();
         if (projectId == Guid.Empty) throw new ArgumentException("The project identity is required.", nameof(projectId));
@@ -52,7 +63,8 @@ public static class AssetRevisionSeries
             contents.Add(node.Manifest.RevisionId, bytes);
         }
 
-        var inspection = InspectNodes(history);
+        var graph = InspectGraph(history);
+        if (requireSingleHead) RequireSingleHead(graph);
         token.ThrowIfCancellationRequested();
         var staging = Path.Combine(parent, $".asset-import-{Guid.NewGuid():N}");
         if (!CreateDirectory(ToExtendedPath(staging), IntPtr.Zero))
@@ -75,7 +87,7 @@ public static class AssetRevisionSeries
             ValidateDirectory(staging);
             Directory.Move(staging, destination);
             published = true;
-            return inspection;
+            return graph;
         }
         finally
         {

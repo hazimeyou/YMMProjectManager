@@ -300,6 +300,30 @@ internal static class AssetManifestTests
         if (graph.Root != head || graph.Revisions[0].Receipt != head || graph.Revisions.Count != 3 ||
             graph.Heads.Count != 2 || !graph.Heads.Contains(current))
             throw new Exception("divergent graph did not preserve both tips and their common root");
+        var divergentImport = Path.Combine(root, "imported-divergent-history");
+        var legacyPaths = graph.Revisions.Reverse().Select(revision =>
+            Path.Combine(directory, $"revision-{revision.Receipt.RevisionId:N}.json")).ToArray();
+        var legacyBytes = new Dictionary<string, byte[]>();
+        foreach (var file in legacyPaths) legacyBytes.Add(file, await File.ReadAllBytesAsync(file));
+        try
+        {
+            await AssetRevisionSeries.ImportLegacyAsync(divergentImport, head.ProjectId, legacyPaths);
+            throw new Exception("linear import exposed a divergent history");
+        }
+        catch (InvalidDataException) { }
+        if (Directory.Exists(divergentImport)) throw new Exception("a rejected import created the destination");
+        var importedGraph = await AssetRevisionSeries.ImportLegacyGraphAsync(divergentImport, head.ProjectId, legacyPaths);
+        var reopenedGraph = await AssetRevisionSeries.InspectGraphAsync(divergentImport);
+        if (importedGraph.Root != head || !graph.Heads.SequenceEqual(importedGraph.Heads) ||
+            !graph.Revisions.Select(revision => revision.Receipt).SequenceEqual(reopenedGraph.Revisions.Select(revision => revision.Receipt)))
+            throw new Exception("divergent import omitted a tip or changed the history");
+        foreach (var (file, originalBytes) in legacyBytes)
+        {
+            var original = await File.ReadAllBytesAsync(file);
+            var copied = await File.ReadAllBytesAsync(Path.Combine(divergentImport, Path.GetFileName(file)));
+            if (!originalBytes.SequenceEqual(original) || !originalBytes.SequenceEqual(copied))
+                throw new Exception("a divergent legacy import changed revision bytes");
+        }
         var branch = await AssetRevisionSeries.ResolveBranchAsync(directory, head.ProjectId, head.RevisionId, head.Sha256,
             secondTip.RevisionId, secondTip.Sha256);
         if (branch.Selected.Receipt != secondTip || branch.Graph.Heads.Count != 2)
