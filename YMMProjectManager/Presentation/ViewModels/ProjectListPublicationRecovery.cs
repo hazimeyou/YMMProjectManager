@@ -39,6 +39,7 @@ public sealed partial class ProjectListViewModel
             var action = review.State switch
             {
                 ProjectListReplacement.RecoveryState.CanRestore => "退避済みの元の一覧を、空いている現用パスへ戻します。",
+                ProjectListReplacement.RecoveryState.CanRestoreExternal => "外部版と確認した退避ファイルを、空いている現用パスへ戻します。保存候補は保全します。",
                 ProjectListReplacement.RecoveryState.Published => "保存済みの一覧を保ち、公開記録を閉じます。",
                 ProjectListReplacement.RecoveryState.ActivePreserved => "現用の元の一覧を保ち、公開記録を閉じます。",
                 ProjectListReplacement.RecoveryState.Conflict => "外部から置換された現用一覧を保ち、元の一覧と保存候補も残します。",

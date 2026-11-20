@@ -126,7 +126,14 @@ public sealed partial class ProjectListViewModel
             "メタデータの取り込み", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
         if (!ReferenceEquals(project, SelectedProject) || project.ProjectId != id || project.FullPath != projectPath)
             throw new InvalidDataException("取り込み対象のプロジェクトが変更されました。");
-        var imported = await AssetRevisionSeries.ImportLegacyGraphAsync(directory, id, files.FileNames, token);
+        AssetRevisionSeries.GraphInspection imported;
+        try { imported = await AssetRevisionSeries.ImportLegacyGraphAsync(directory, id, files.FileNames, token); }
+        catch (Exception ex) when (ex.Data[AssetRevisionSeries.RetainedImportPath] is string)
+        {
+            logger.Error(ex, "Legacy metadata import retained its staging directory.");
+            AssetStatus = $"履歴の移行を完了できませんでした。元の履歴と作業フォルダーを保全してください。\n{ex.Data[AssetRevisionSeries.RetainedImportPath]}";
+            return;
+        }
         AssetStatus = $"履歴 {imported.Revisions.Count} 版、先端 {imported.Heads.Count} 件を取り込みました。関連付けは「履歴の版を選択」から行えます。\n{directory}";
     });
 
