@@ -53,6 +53,7 @@ internal static class OfflineControlsTests
                     throw new InvalidOperationException("diagnostics hid the write gate when repository discovery failed");
             });
             vm.SelectedProject = new ProjectEntry { FullPath = project };
+            await TestPullPresentationAsync(vm, root);
             await Invoke("FindAssetCandidatesAsync");
             if (!vm.AssetStatus.Contains("素材とは限りません") || !vm.AssetStatus.Contains("sample.png") || !vm.AssetStatus.Contains("note.txt")) throw new Exception("candidate labels missing");
             vm.AssetPath = "sample.png\nsample2.png\nsample.png";
@@ -171,6 +172,88 @@ internal static class OfflineControlsTests
             });
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
+        });
+    }
+
+    private static async Task TestPullPresentationAsync(ProjectListViewModel vm, string root)
+    {
+        var remote = new object();
+        var target = new object();
+        var detections = 0;
+        var executions = 0;
+        var unexpectedCallback = false;
+        Task<object?> InspectRemote(ProjectEntry project, CancellationToken token) => Task.FromResult<object?>(remote);
+        Task<object?> InspectTarget(object approved, CancellationToken token)
+        {
+            if (!ReferenceEquals(approved, remote)) unexpectedCallback = true;
+            detections++;
+            return Task.FromResult<object?>(target);
+        }
+        Task<string> Execute(object approved, CancellationToken token)
+        {
+            if (!ReferenceEquals(approved, target) || !vm.GitStatus.Contains("実行中")) unexpectedCallback = true;
+            executions++;
+            return Task.FromResult("確定できません。対象を手動で確認してください。");
+        }
+
+        await Program.RunNamedCaseAsync("Pull presentation obtains trust consent before lookup and exact approval before execution", async () =>
+        {
+            await vm.RunGitPullWorkflowAsync(InspectRemote, _ => false, InspectTarget,
+                _ => { unexpectedCallback = true; return false; }, Execute);
+            if (unexpectedCallback || detections != 0 || executions != 0 || !vm.GitStatus.Contains("取り消しました"))
+                throw new InvalidOperationException("Transport denial started a connection.");
+            await vm.RunGitPullWorkflowAsync(InspectRemote, _ => true, InspectTarget, _ => false, Execute);
+            if (detections != 1 || executions != 0 || !vm.GitStatus.Contains("作業ツリーは更新していません"))
+                throw new InvalidOperationException("Pull denial started a write.");
+
+            await vm.RunGitPullWorkflowAsync(InspectRemote, _ => true, InspectTarget, _ => true, Execute);
+            if (unexpectedCallback || detections != 2 || executions != 1 || !vm.GitStatus.Contains("手動で確認") ||
+                vm.CancelToolCommand.CanExecute(null))
+                throw new InvalidOperationException("The ambiguous result was retried or not displayed.");
+        });
+
+        await Program.RunNamedCaseAsync("Pull presentation stops on selection path change and cancellation before write", async () =>
+        {
+            var project = vm.SelectedProject!;
+            var originalPath = project.FullPath;
+            try
+            {
+                await vm.RunGitPullWorkflowAsync(InspectRemote, _ => true, InspectTarget, _ =>
+                {
+                    project.FullPath = Path.Combine(root, "other.ymmp");
+                    return true;
+                }, Execute);
+            }
+            finally { project.FullPath = originalPath; }
+            if (executions != 1 || !vm.GitStatus.Contains("プロジェクトが変更"))
+                throw new InvalidOperationException("Stale approval was executed.");
+
+            var pending = vm.RunGitPullWorkflowAsync(InspectRemote, _ => true,
+                async (_, token) =>
+                {
+                    await Task.Delay(Timeout.Infinite, token);
+                    return target;
+                },
+                _ => { unexpectedCallback = true; return false; }, Execute);
+            if (!vm.CancelToolCommand.CanExecute(null) || !vm.GitStatus.Contains("更新先コミットを確認中"))
+                throw new InvalidOperationException("Pull lookup did not expose cancellable progress.");
+            vm.CancelToolCommand.Execute(null);
+            await pending;
+            if (unexpectedCallback || executions != 1 || !vm.GitStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null))
+                throw new InvalidOperationException("Cancelled Pull wrote repository data or left the cancellation command active.");
+        });
+
+        await Program.RunNamedCaseAsync("Pull confirmation identifies the exact operation and explains external interference", () =>
+        {
+            var details = new ProjectListViewModel.PullApprovalDetails(root, "refs/heads/main", "origin",
+                "refs/heads/upstream", "https://example.invalid/project", new string('a', 40), new string('b', 40), true);
+            var message = ProjectListViewModel.DescribePullApproval(details);
+            foreach (var field in new[] { root, details.BranchRef, details.RemoteName, details.UpstreamRef,
+                details.Endpoint, details.StartObjectId, details.TargetObjectId, "Fast-forward", "作業ファイルを更新", "完全には防止できません" })
+                if (!message.Contains(field, StringComparison.Ordinal)) throw new InvalidOperationException("Missing approval detail.");
+            if (!ProjectListViewModel.DescribePullApproval(details with { ChangesWorktree = false }).Contains("作業ファイルは更新しません"))
+                throw new InvalidOperationException("No-op Pull was presented as a write.");
+            return Task.CompletedTask;
         });
     }
 }
