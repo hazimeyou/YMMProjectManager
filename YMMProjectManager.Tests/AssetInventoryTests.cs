@@ -38,6 +38,34 @@ internal static class AssetInventoryTests
         Check(scan.Single(item => item.Path == "present.wav") is { Status: AssetReferenceStatus.Present, Actual.Size: 7 }, "present reference status");
         Check(scan.Single(item => item.Path == outside) is { Status: AssetReferenceStatus.External, Actual: null }, "external reference was opened");
         Check(scan.Count(item => item.Status == AssetReferenceStatus.Unavailable && item.Actual is null) == 2, "reserved path checks");
+        var storage = Path.Combine(root, "external-storage");
+        Directory.CreateDirectory(storage);
+        var externalName = "external.wav";
+        await File.WriteAllTextAsync(Path.Combine(storage, externalName), "external");
+        var location = new ExternalAssetLocation("Offline archive", externalName);
+        var external = await AssetInventory.InspectExternalAsync(storage, "missing.wav", location, "https://example.invalid/external");
+        Check(external.ExternalLocation == location && external.RelativePath == "missing.wav" && external.Size == 8, "external location inspection");
+        Check(await AssetInventory.VerifyAsync(root, external) == AssetVerification.ExternalUnverified, "normal verify opened an external asset");
+        Check(await AssetInventory.VerifyExternalAsync(storage, external) == AssetVerification.Valid, "approved external root verification");
+        Check(await AssetInventory.VerifyExternalAsync(root, external) == AssetVerification.Missing, "wrong external root verification");
+        await File.WriteAllTextAsync(Path.Combine(storage, externalName), "different");
+        Check(await AssetInventory.VerifyExternalAsync(storage, external) == AssetVerification.SizeMismatch, "external change verification");
+        var withStorage = await AssetInventory.ScanProjectAsync(project, [external]);
+        Check(withStorage.Single(item => item.Path == "missing.wav") is { Status: AssetReferenceStatus.External, Actual: null }
+            && withStorage.Single(item => item.Path == "missing.wav").Expected == external, "scan did not expose configured external storage");
+        var externalOutput = Path.Combine(root, "external-metadata.json");
+        await AssetInventory.ExportAsync(externalOutput, [external]);
+        var externalJson = await File.ReadAllTextAsync(externalOutput);
+        Check((await AssetInventory.LoadAsync(externalOutput)).Single() == external &&
+            !externalJson.Contains(storage, StringComparison.OrdinalIgnoreCase), "external metadata did not round-trip privately");
+        Check(!JsonSerializer.Serialize(asset).Contains(nameof(AssetMetadata.ExternalLocation), StringComparison.Ordinal),
+            "legacy local serialization changed");
+        try
+        {
+            await AssetInventory.InspectExternalAsync(storage, "missing.wav", new ExternalAssetLocation("Offline archive", "..\\outside-media.wav"));
+            throw new Exception("external storage path traversal accepted");
+        }
+        catch (InvalidDataException) { }
         File.Delete(Path.Combine(root, "asset.txt"));
         Check(await AssetInventory.VerifyAsync(root, asset) == AssetVerification.Missing, "missing asset");
         try { await AssetInventory.InspectAsync(root, "../outside"); throw new Exception("traversal accepted"); } catch (ArgumentException) { }

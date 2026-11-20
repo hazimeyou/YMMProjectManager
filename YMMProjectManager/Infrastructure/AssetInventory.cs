@@ -1,12 +1,18 @@
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using YMMProjectManager.Infrastructure.Packaging;
 
 namespace YMMProjectManager.Infrastructure;
 
-public sealed record AssetMetadata(string RelativePath, long Size, string Sha256, string? DownloadUrl);
-public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch }
+public sealed record ExternalAssetLocation(string StorageName, string RelativePath);
+public sealed record AssetMetadata(string RelativePath, long Size, string Sha256, string? DownloadUrl)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExternalAssetLocation? ExternalLocation { get; init; }
+}
+public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch, ExternalUnverified }
 public enum AssetReferenceStatus { Present, Missing, Changed, External, Unavailable }
 public sealed record AssetReference(string Path, AssetReferenceStatus Status, AssetMetadata? Actual, AssetMetadata? Expected);
 
@@ -57,6 +63,11 @@ public static class AssetInventory
             }
             var relative = Path.GetRelativePath(directory, path);
             expectedByPath.TryGetValue(path, out var prior);
+            if (prior?.ExternalLocation is not null)
+            {
+                results.Add(new AssetReference(relative, AssetReferenceStatus.External, null, prior));
+                continue;
+            }
             try
             {
                 var actual = await InspectAsync(directory, relative, prior?.DownloadUrl, token).ConfigureAwait(false);
@@ -87,11 +98,33 @@ public static class AssetInventory
 
     public static async Task<AssetVerification> VerifyAsync(string projectDirectory, AssetMetadata asset, CancellationToken token = default)
     {
-        ArgumentNullException.ThrowIfNull(asset);
-        var path = ResolveRelativePath(projectDirectory, asset.RelativePath);
-        ValidateUrl(asset.DownloadUrl);
-        if (asset.Size < 0 || asset.Sha256 is null || asset.Sha256.Length != 64 || !asset.Sha256.All(Uri.IsHexDigit))
-            throw new InvalidDataException("Invalid asset metadata.");
+        token.ThrowIfCancellationRequested();
+        ValidateMetadata(asset);
+        if (asset.ExternalLocation is not null) return AssetVerification.ExternalUnverified;
+        return await VerifyFileAsync(ResolveRelativePath(projectDirectory, asset.RelativePath), asset, token).ConfigureAwait(false);
+    }
+
+    public static async Task<AssetMetadata> InspectExternalAsync(string approvedStorageRoot, string projectRelativePath,
+        ExternalAssetLocation location, string? downloadUrl = null, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        ValidateExternalLocation(location);
+        var asset = await InspectAsync(approvedStorageRoot, location.RelativePath, downloadUrl, token).ConfigureAwait(false);
+        var result = asset with { RelativePath = projectRelativePath, ExternalLocation = location };
+        ValidateMetadata(result);
+        return result;
+    }
+
+    public static async Task<AssetVerification> VerifyExternalAsync(string approvedStorageRoot, AssetMetadata asset, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        ValidateMetadata(asset);
+        if (asset.ExternalLocation is not { } location) throw new InvalidDataException("No external storage location is recorded.");
+        return await VerifyFileAsync(ResolveRelativePath(approvedStorageRoot, location.RelativePath), asset, token).ConfigureAwait(false);
+    }
+
+    private static async Task<AssetVerification> VerifyFileAsync(string path, AssetMetadata asset, CancellationToken token)
+    {
         try
         {
             await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
@@ -146,6 +179,18 @@ public static class AssetInventory
             asset.Sha256 is null || asset.Sha256.Length != 64 || !asset.Sha256.All(Uri.IsHexDigit))
             throw new InvalidDataException("Invalid asset metadata.");
         ValidateUrl(asset.DownloadUrl);
+        if (asset.ExternalLocation is { } location) ValidateExternalLocation(location);
+    }
+
+    private static void ValidateExternalLocation(ExternalAssetLocation location)
+    {
+        ArgumentNullException.ThrowIfNull(location);
+        if (string.IsNullOrWhiteSpace(location.StorageName) || location.StorageName.Length > 128 ||
+            location.StorageName.Any(character => char.IsControl(character) || character is '/' or '\\' or ':') ||
+            string.IsNullOrWhiteSpace(location.RelativePath) || Path.IsPathRooted(location.RelativePath) ||
+            location.RelativePath.Split('/', '\\').Any(part => part is "" or "." or ".." ||
+                part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
+            throw new InvalidDataException("Invalid external asset location.");
     }
     internal static string ResolveRelativePath(string projectDirectory, string relativePath)
     {
