@@ -56,6 +56,11 @@ internal static class Program
             await GitPullRecoveryTests.RunInterruptedAfterMergeAsync(args[1]);
             return;
         }
+        if (args.Length == 2 && args[0] == GitNativeInterruptionTests.RestartArgument)
+        {
+            await GitNativeInterruptionTests.VerifyRestartAsync(args[1]);
+            return;
+        }
         if (args.Length == 3 && args[0] == "--list-publication-crash")
         {
             await ProjectListPublicationTests.CrashAsync(args[1], args[2]);
@@ -195,6 +200,7 @@ internal static class Program
             await GitPullRecoveryTests.RunAsync(workRoot);
             await GitRemoteTests.RunAsync(workRoot);
         });
+        await RunGroupAsync(nameof(GitNativeInterruptionTests), () => GitNativeInterruptionTests.RunAsync(workRoot));
         await RunGroupAsync("OfflineControlsTests.RunAsync", () => OfflineControlsTests.RunAsync(workRoot));
         await RunGroupAsync("AssetInventoryTests.RunAsync", () => AssetInventoryTests.RunAsync(workRoot));
         await RunGroupAsync("AssetManifestTests.RunAsync", () => AssetManifestTests.RunAsync(workRoot));
@@ -264,6 +270,9 @@ internal static class Program
                     break;
                 case nameof(GitRemoteTests):
                     await GitRemoteTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitNativeInterruptionTests):
+                    await GitNativeInterruptionTests.RunAsync(workRoot);
                     break;
                 case nameof(TestSeekAdapterReflectionFailureAsync):
                     await TestSeekAdapterReflectionFailureAsync();
