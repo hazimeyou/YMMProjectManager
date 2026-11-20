@@ -157,6 +157,51 @@ internal static class ProjectListSaveTests
         Check(mergedDocument["Projects"]![0]!["Pinned"]!.GetValue<bool>() &&
             System.Text.Json.Nodes.JsonNode.DeepEquals(rootFixture["ForwardData"], mergedDocument["ForwardData"]),
             "local typed change or newest unknown root data was lost");
+        var nestedPath = Path.Combine(root, "future-nested.json");
+        var nestedRepo = new JsonProjectRepository(logger, nestedPath);
+        var nestedLinkId = Guid.NewGuid();
+        var nestedFixture = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new
+        {
+            Projects = new[]
+            {
+                new
+                {
+                    FullPath = defaultLinkPath, ProjectId = stableId, FolderId = folderId, FutureProject = new { Color = "base" },
+                    LinkedYmmpFiles = new[] { new { Id = nestedLinkId, FilePath = defaultLinkPath, FutureLink = new[] { 1, 2 } } },
+                },
+            },
+            Folders = new[] { new { Id = folderId, Name = "family", FutureFolder = (string?)null } },
+        }))!;
+        await File.WriteAllTextAsync(nestedPath, nestedFixture.ToJsonString());
+        var nestedBaseline = await nestedRepo.LoadAsync();
+        Check(nestedBaseline.IsRecoverySafe, "stable nested extensions were rejected");
+        var nestedLocal = ProjectListMerge.Snapshot(nestedBaseline);
+        nestedLocal.Projects.Single().LinkedYmmpFiles.Single().Memo = "local";
+        var nestedDrafts = new ProjectListDrafts(nestedRepo.RecoveryDirectory);
+        var nestedDraft = await nestedDrafts.ReadAsync(await nestedDrafts.WriteAsync(nestedBaseline, nestedLocal, []));
+        Check(nestedDraft.Local.Revision?.PreservedNestedFieldsJson == nestedLocal.Revision?.PreservedNestedFieldsJson, "nested fields did not survive a draft");
+        nestedFixture["Projects"]![0]!["FutureProject"]!["Color"] = "remote";
+        await File.WriteAllTextAsync(nestedPath, nestedFixture.ToJsonString());
+        var nestedPlan = ProjectListMerge.Merge(nestedDraft.Baseline, nestedDraft.Local, await nestedRepo.LoadAsync());
+        Check(nestedPlan.Store is not null, "nested extension-only change conflicted with a typed link edit");
+        await nestedRepo.SaveAsync(nestedPlan.Store!);
+        var nestedBytes = await File.ReadAllBytesAsync(nestedPath);
+        var nestedResult = System.Text.Json.Nodes.JsonNode.Parse(nestedBytes)!;
+        Check(nestedResult["Projects"]![0]!["FutureProject"]!["Color"]!.GetValue<string>() == "remote" &&
+            nestedResult["Projects"]![0]!["LinkedYmmpFiles"]![0]!["Memo"]!.GetValue<string>() == "local" &&
+            nestedResult["Projects"]![0]!["LinkedYmmpFiles"]![0]!["FutureLink"]!.AsArray().Count == 2 &&
+            nestedResult["Folders"]![0]!.AsObject().ContainsKey("FutureFolder"), "typed save dropped a preserved nested value");
+        var orphanedLink = await nestedRepo.LoadAsync();
+        orphanedLink.Projects.Single().LinkedYmmpFiles.Clear();
+        await Expect<InvalidDataException>(() => nestedRepo.SaveAsync(orphanedLink));
+        var orphanedProject = await nestedRepo.LoadAsync();
+        orphanedProject.Projects.Single().ProjectId = Guid.NewGuid();
+        await Expect<InvalidDataException>(() => nestedRepo.SaveAsync(orphanedProject));
+        var orphanedFolder = await nestedRepo.LoadAsync();
+        orphanedFolder.Folders.Clear();
+        await Expect<InvalidDataException>(() => nestedRepo.SaveAsync(orphanedFolder));
+        var afterOrphanAttempts = await File.ReadAllBytesAsync(nestedPath);
+        Check(nestedBytes.SequenceEqual(afterOrphanAttempts), "refused orphan changes mutated project list bytes");
         var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
         await File.WriteAllTextAsync(copyPath, "existing synthetic data");
         await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));

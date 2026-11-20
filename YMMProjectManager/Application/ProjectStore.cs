@@ -15,4 +15,5 @@ public sealed record ProjectListRevision(string? Sha256, Guid? OperationId = nul
 {
     // Opaque persistence data for forward-compatible root properties.
     internal string? PreservedRootFieldsJson { get; init; }
+    internal string? PreservedNestedFieldsJson { get; init; }
 }

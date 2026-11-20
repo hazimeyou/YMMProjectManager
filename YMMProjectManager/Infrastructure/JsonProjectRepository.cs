@@ -18,10 +18,10 @@ public sealed class JsonProjectRepository : IProjectRepository
     private const string PluginDirectoryName = "YMMProjectManager";
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
     private static readonly JsonSerializerOptions StrictRecoveryOptions = new() { UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow };
-    private static readonly HashSet<string> ReservedRootNames = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "Projects", "Folders", "SaveOperationId", "Version", "SchemaVersion", "FormatVersion", "$schema",
-    };
+    private static readonly HashSet<string> ReservedRootNames = ReservedNames<ProjectListFileDto>();
+    private static readonly HashSet<string> ReservedProjectNames = ReservedNames<ProjectRecordDto>();
+    private static readonly HashSet<string> ReservedLinkNames = ReservedNames<LinkedYmmpFileDto>();
+    private static readonly HashSet<string> ReservedFolderNames = ReservedNames<ProjectFolderDto>();
     private static readonly SemaphoreSlim SaveGate = new(1, 1);
     private readonly string jsonPath;
     private readonly Func<Stream, byte[], CancellationToken, Task> writeTemporaryFile;
@@ -74,11 +74,13 @@ public sealed class JsonProjectRepository : IProjectRepository
         var jsonContent = StripUtf8Bom(content);
         var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
         if (dto is null) throw new InvalidDataException("Project list is null.");
+        var safe = IsSafeForRecovery(content);
         var revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content)), dto.SaveOperationId)
         {
             PreservedRootFieldsJson = dto.ExtensionData is { Count: > 0 } fields ? JsonSerializer.Serialize(fields) : null,
+            PreservedNestedFieldsJson = safe ? CaptureNestedFields(dto) : null,
         };
-        var store = new ProjectStore { Revision = revision, IsRecoverySafe = IsSafeForRecovery(content) };
+        var store = new ProjectStore { Revision = revision, IsRecoverySafe = safe };
         foreach (var f in dto.Folders ?? [])
         {
             if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
@@ -145,14 +147,20 @@ public sealed class JsonProjectRepository : IProjectRepository
             using var document = JsonDocument.Parse(jsonContent);
             if (dto.ExtensionData is { Count: > 0 } unknown &&
                 (!document.RootElement.TryGetProperty("Projects", out _) || unknown.Keys.Any(ReservedRootNames.Contains))) return false;
-            if (dto.Folders.Any(f => f is null || f.Id is null || string.IsNullOrWhiteSpace(f.Name))) return false;
+            if (dto.Folders.Any(f => f is null || f.Id is null || f.Id == Guid.Empty || string.IsNullOrWhiteSpace(f.Name) ||
+                !CanPreserve(f.ExtensionData, ReservedFolderNames, true))) return false;
+            if (dto.Folders.Select(f => f.Id).Distinct().Count() != dto.Folders.Count) return false;
+            var projectIds = new HashSet<Guid>();
             foreach (var project in dto.Projects)
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
+                if (project.ProjectId is { } id && (id == Guid.Empty || !projectIds.Add(id))) return false;
+                if (!CanPreserve(project.ExtensionData, ReservedProjectNames, project.ProjectId.HasValue)) return false;
                 if (project.MetadataAssociation is { } metadata && (!ValidMetadata(metadata) || project.ProjectId is null)) return false;
                 if (project.FileIdentity is { } identity && (identity.FileId == Guid.Empty || !IsHash(identity.Sha256) || project.ProjectId is null)) return false;
                 if (project.LinkedYmmpFiles.Any(l => l is null || l.Id == Guid.Empty || string.IsNullOrWhiteSpace(l.FilePath) ||
+                    !CanPreserve(l.ExtensionData, ReservedLinkNames, l.Id.HasValue && project.ProjectId.HasValue) ||
                     (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;
                 var ids = project.LinkedYmmpFiles.Where(l => l.Id.HasValue).Select(l => l.Id!.Value).ToArray();
                 if (ids.Distinct().Count() != ids.Length) return false;
@@ -160,6 +168,56 @@ public sealed class JsonProjectRepository : IProjectRepository
             return !HasDuplicateProperties(document.RootElement);
         }
         catch (JsonException) { return false; }
+    }
+
+    private static HashSet<string> ReservedNames<T>() => typeof(T).GetProperties()
+        .Where(property => !property.IsDefined(typeof(JsonExtensionDataAttribute), inherit: false))
+        .Select(property => property.Name)
+        .Concat(["Version", "SchemaVersion", "FormatVersion", "$schema"])
+        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private static bool CanPreserve(Dictionary<string, JsonElement>? fields, HashSet<string> reserved, bool hasAnchor) =>
+        fields is not { Count: > 0 } || (hasAnchor && !fields.Keys.Any(reserved.Contains));
+
+    private sealed record ProjectFields(Dictionary<string, JsonElement>? Fields, Dictionary<Guid, Dictionary<string, JsonElement>> Links);
+    private sealed record NestedFields(Dictionary<Guid, ProjectFields> Projects, Dictionary<Guid, Dictionary<string, JsonElement>> Folders);
+
+    private static string? CaptureNestedFields(ProjectListFileDto dto)
+    {
+        var projects = new Dictionary<Guid, ProjectFields>();
+        foreach (var project in dto.Projects.Where(item => item.ProjectId.HasValue))
+        {
+            var links = project.LinkedYmmpFiles.Where(link => link.ExtensionData is { Count: > 0 })
+                .ToDictionary(link => link.Id!.Value, link => link.ExtensionData!);
+            if (project.ExtensionData is { Count: > 0 } || links.Count != 0)
+                projects.Add(project.ProjectId!.Value, new ProjectFields(project.ExtensionData, links));
+        }
+        var folders = dto.Folders.Where(folder => folder.ExtensionData is { Count: > 0 })
+            .ToDictionary(folder => folder.Id!.Value, folder => folder.ExtensionData!);
+        return projects.Count == 0 && folders.Count == 0 ? null : JsonSerializer.Serialize(new NestedFields(projects, folders));
+    }
+
+    private static void RestoreNestedFields(ProjectListFileDto dto, string preserved)
+    {
+        var nested = JsonSerializer.Deserialize<NestedFields>(preserved) ?? throw new InvalidDataException("Preserved project list fields are invalid.");
+        foreach (var (id, fields) in nested.Projects)
+        {
+            var project = dto.Projects.SingleOrDefault(item => item.ProjectId == id)
+                ?? throw new InvalidDataException("This change would remove a project with unknown fields.");
+            project.ExtensionData = fields.Fields;
+            foreach (var (linkId, linkFields) in fields.Links)
+            {
+                var link = project.LinkedYmmpFiles.SingleOrDefault(item => item.Id == linkId)
+                    ?? throw new InvalidDataException("This change would remove a project link with unknown fields.");
+                link.ExtensionData = linkFields;
+            }
+        }
+        foreach (var (id, fields) in nested.Folders)
+        {
+            var folder = dto.Folders.SingleOrDefault(item => item.Id == id)
+                ?? throw new InvalidDataException("This change would remove a folder with unknown fields.");
+            folder.ExtensionData = fields;
+        }
     }
 
     private static bool ValidMetadata(ProjectMetadataAssociation value) =>
@@ -368,6 +426,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 LinkedYmmpFiles = x.LinkedYmmpFiles.Select(l => new LinkedYmmpFileDto { Id = l.Id, FilePath = l.FilePath, DisplayName = l.DisplayName, Role = l.Role.ToString(), Memo = l.Memo, RegisteredAt = l.RegisteredAt, UpdatedAt = l.UpdatedAt, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists }).ToList(),
             }).ToList(),
         };
+        if (store.Revision?.PreservedNestedFieldsJson is { } nested) RestoreNestedFields(dto, nested);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(dto, JsonOptions);
         if (!IsSafeForRecovery(bytes)) throw new InvalidDataException("Project list contains entries that cannot be safely reloaded.");
         return bytes;
@@ -423,7 +482,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         [JsonExtensionData]
         public Dictionary<string, JsonElement>? ExtensionData { get; set; }
     }
-    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectMetadataAssociation? MetadataAssociation { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectFileIdentity? FileIdentity { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; }
-    private sealed class LinkedYmmpFileDto { public Guid? Id { get; set; } public string? FilePath { get; set; } public string? DisplayName { get; set; } public string? Role { get; set; } public string? Memo { get; set; } public DateTimeOffset? RegisteredAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } public DateTimeOffset? LastCheckedAt { get; set; } public bool? Exists { get; set; } }
-    private sealed class ProjectFolderDto { public Guid? Id { get; set; } public string? Name { get; set; } public int? DisplayOrder { get; set; } public DateTimeOffset? CreatedAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } }
+    private sealed class ProjectRecordDto { public string? FullPath { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public Guid? ProjectId { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectMetadataAssociation? MetadataAssociation { get; set; } [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public ProjectFileIdentity? FileIdentity { get; set; } public string? DisplayName { get; set; } public bool? Pinned { get; set; } public DateTimeOffset? LastAccess { get; set; } public Guid? FolderId { get; set; } public List<LinkedYmmpFileDto> LinkedYmmpFiles { get; set; } = []; [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; } }
+    private sealed class LinkedYmmpFileDto { public Guid? Id { get; set; } public string? FilePath { get; set; } public string? DisplayName { get; set; } public string? Role { get; set; } public string? Memo { get; set; } public DateTimeOffset? RegisteredAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } public DateTimeOffset? LastCheckedAt { get; set; } public bool? Exists { get; set; } [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; } }
+    private sealed class ProjectFolderDto { public Guid? Id { get; set; } public string? Name { get; set; } public int? DisplayOrder { get; set; } public DateTimeOffset? CreatedAt { get; set; } public DateTimeOffset? UpdatedAt { get; set; } [JsonExtensionData] public Dictionary<string, JsonElement>? ExtensionData { get; set; } }
 }
