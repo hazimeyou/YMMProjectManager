@@ -56,25 +56,16 @@ internal static class YmmpxArchiveValidationTests
         var destination = Path.Combine(root, "restored");
         var unsupported = await bridge.ExtractPackageAsync(path, destination, CancellationToken.None);
         if (unsupported.Success || Directory.Exists(destination)) throw new Exception("unverified format was published");
-        using (var stream = new FileStream(path, FileMode.Create, FileAccess.Write))
-        using (var zip = new ZipArchive(stream, ZipArchiveMode.Create))
-        {
-            static void Write(ZipArchive zip, string name, string content)
-            {
-                using var writer = new StreamWriter(zip.CreateEntry(name).Open());
-                writer.Write(content);
-            }
-            Write(zip, "_ymmpx_project_path.txt", "project.ymmp");
-            Write(zip, "links.json", """{"resources/clip.txt":"resources/clip.txt"}""");
-            Write(zip, "project.ymmp", """{"Items":[{"FilePath":"resources/clip.txt"}],"Custom":42}""");
-            Write(zip, "resources/clip.txt", "synthetic asset");
-        }
+        WriteCurrentPackage(path, """{"Items":[{"FilePath":"./resources/clip.txt"},{"FilePath":"C:\\fixture\\missing.txt"}],"Custom":42}""");
+        var originalHash = await ReadHashAsync(path);
         var recovered = await bridge.ExtractPackageAsync(path, destination, CancellationToken.None);
         if (!recovered.Success || recovered.ReplacedPathCount != 1 || recovered.ExtractedResourceCount != 1)
             throw new Exception("managed extraction failed: " + recovered.ErrorMessage);
         using var project = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(recovered.RestoredProjectPath!));
-        var resource = project.RootElement.GetProperty("Items")[0].GetProperty("FilePath").GetString();
+        var items = project.RootElement.GetProperty("Items");
+        var resource = items[0].GetProperty("FilePath").GetString();
         if (resource != Path.Combine(destination, "resources", "clip.txt") || await File.ReadAllTextAsync(resource) != "synthetic asset" ||
+            items[1].GetProperty("FilePath").GetString() != @"C:\fixture\missing.txt" ||
             project.RootElement.GetProperty("Custom").GetInt32() != 42) throw new Exception("reference or project field mismatch");
         if ((await bridge.ExtractPackageAsync(path, destination, CancellationToken.None)).Success ||
             YmmpxLib.YmmpxPackageService.ExtractionCalls != before)
@@ -100,7 +91,63 @@ internal static class YmmpxArchiveValidationTests
         if (race.Success || await File.ReadAllTextAsync(Path.Combine(raced, "sentinel.txt")) != "existing" ||
             Directory.EnumerateDirectories(root, ".ymmpx-*").Any())
             throw new Exception("destination race did not preserve existing output");
+        var failed = Path.Combine(root, "failed-copy");
+        var failure = await bridge.ExtractPackageAsync(path, failed, CancellationToken.None,
+            new InlineProgress(() => throw new IOException("synthetic interruption after staging write")));
+        if (failure.Success || Directory.Exists(failed) || Directory.EnumerateDirectories(root, ".ymmpx-*").Any() ||
+            await ReadHashAsync(path) != originalHash)
+            throw new Exception("interrupted extraction left output or modified the archive");
+
+        var missingInternal = Path.Combine(root, "missing-internal.ymmpx");
+        WriteCurrentPackage(missingInternal, """{"Items":[{"FilePath":".\\resources\\missing.txt"}]}""");
+        var missingOutput = Path.Combine(root, "missing-internal-output");
+        if ((await bridge.ExtractPackageAsync(missingInternal, missingOutput, CancellationToken.None)).Success ||
+            Directory.Exists(missingOutput) || Directory.EnumerateDirectories(root, ".ymmpx-*").Any())
+            throw new Exception("missing internal resource was accepted");
+        await VerifyReparseParentRejectedAsync(bridge, path, root);
         Console.WriteLine("YMMPX archive safety preflight checks passed.");
+    }
+
+    private static async Task VerifyReparseParentRejectedAsync(YmmpxLibBridge bridge, string package, string root)
+    {
+        var target = Path.Combine(root, "reparse-target");
+        Directory.CreateDirectory(target);
+        var parent = Path.Combine(root, "reparse-parent");
+        try { Directory.CreateSymbolicLink(parent, target); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException { HResult: unchecked((int)0x80070522) })
+        {
+            Program.ReportConditionalSkip("YMMPX reparse-parent fixture requires permission to create a symbolic link");
+            return;
+        }
+        try
+        {
+            var outcome = await bridge.ExtractPackageAsync(package, Path.Combine(parent, "restored"), CancellationToken.None);
+            if (outcome.Success || Directory.EnumerateFileSystemEntries(target).Any())
+                throw new Exception("extraction wrote through a reparse parent");
+        }
+        finally { Directory.Delete(parent); }
+    }
+
+    private static async Task<string> ReadHashAsync(string path)
+    {
+        await using var stream = File.OpenRead(path);
+        return Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream));
+    }
+
+    private static void WriteCurrentPackage(string path, string projectJson)
+    {
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
+        using var zip = new ZipArchive(stream, ZipArchiveMode.Create);
+        Write("_ymmpx_project_path.txt", "project.ymmp");
+        Write("links.json", """{"resources/clip.txt":"resources/clip.txt"}""");
+        Write("project.ymmp", projectJson);
+        Write("resources/clip.txt", "synthetic asset");
+
+        void Write(string name, string content)
+        {
+            using var writer = new StreamWriter(zip.CreateEntry(name).Open());
+            writer.Write(content);
+        }
     }
 
     private sealed class InlineProgress(Action action) : IProgress<double>

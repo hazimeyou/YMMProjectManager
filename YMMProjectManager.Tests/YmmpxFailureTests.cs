@@ -9,7 +9,8 @@ internal static class YmmpxFailureTests
     {
         var root = Path.Combine(workRoot, "ymmpx-failure"); Directory.CreateDirectory(root);
         var project = Path.Combine(root, "sample.ymmp"); var output = Path.Combine(root, "sample.ymmpx");
-        await File.WriteAllTextAsync(project, "{}"); await File.WriteAllTextAsync(output, "original package");
+        await File.WriteAllTextAsync(project, "{}", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
+        await File.WriteAllTextAsync(output, "original package");
         var bridge = new YmmpxLibBridge(new FileLogger(Path.Combine(root, "test.log")), typeof(YmmpxLib.YmmpxPackageService).Assembly);
         var refusal = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
         if (refusal.Success || !refusal.ErrorMessage!.Contains("別の名前") || await File.ReadAllTextAsync(output) != "original package")
@@ -55,6 +56,36 @@ internal static class YmmpxFailureTests
         var missingOutput = Path.Combine(root, "missing-source.ymmpx");
         var missingSource = await bridge.CreatePackageAsync(Path.Combine(root, "missing.ymmp"), missingOutput, CancellationToken.None);
         if (missingSource.Success || File.Exists(missingOutput)) throw new Exception("package creation accepted missing project");
+        var malformedSource = Path.Combine(root, "malformed.ymmp");
+        var invocationCount = 0;
+        YmmpxLib.YmmpxPackageService.DuringPackaging = _ => invocationCount++;
+        foreach (var invalidJson in new[] { "{", "[]" })
+        {
+            await File.WriteAllTextAsync(malformedSource, invalidJson);
+            if ((await bridge.CreatePackageAsync(malformedSource, missingOutput, CancellationToken.None)).Success ||
+                File.Exists(missingOutput) || invocationCount != 0)
+                throw new Exception("malformed project reached the library or published output");
+        }
+        YmmpxLib.YmmpxPackageService.DuringPackaging = null;
+        using (var interrupted = new CancellationTokenSource())
+        {
+            YmmpxLib.YmmpxPackageService.Mode = "cancel-after-write";
+            YmmpxLib.YmmpxPackageService.AfterPartialWrite = interrupted.Cancel;
+            try
+            {
+                await bridge.CreatePackageAsync(project, missingOutput, interrupted.Token);
+                throw new Exception("packaging cancellation after partial output was ignored");
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                YmmpxLib.YmmpxPackageService.AfterPartialWrite = null;
+                YmmpxLib.YmmpxPackageService.Mode = "success";
+            }
+            if (File.Exists(missingOutput) || Directory.EnumerateFiles(root, ".*.tmp.ymmpx").Any() ||
+                await File.ReadAllTextAsync(output) != "original package")
+                throw new Exception("cancelled creation left partial output or changed an existing file");
+        }
         YmmpxLib.YmmpxPackageService.ExternalPath = newPath;
         var conflict = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (conflict.Success || await File.ReadAllTextAsync(newPath) != "external edit")
@@ -104,6 +135,7 @@ namespace YmmpxLib
         public static string Mode { get; set; } = "failure";
         public static string? ExternalPath { get; set; }
         public static Action<string>? DuringPackaging { get; set; }
+        public static Action? AfterPartialWrite { get; set; }
         public static int ExtractionCalls { get; private set; }
         public static string GetAvailableDirectoryPath(string path) => path;
         public static object ExtractAndRestoreProject(string path, string destination)
@@ -114,6 +146,13 @@ namespace YmmpxLib
         public static async Task<object> CreatePackageAsync(string project, string output, HashSet<string> ignored, YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token)
         {
             DuringPackaging?.Invoke(project);
+            if (Mode == "cancel-after-write")
+            {
+                await File.WriteAllTextAsync(output, "partial", token);
+                AfterPartialWrite?.Invoke();
+                token.ThrowIfCancellationRequested();
+                throw new InvalidOperationException("cancellation fixture was not configured");
+            }
             if (Mode == "failure")
             {
                 await File.WriteAllTextAsync(output, "partial", token);

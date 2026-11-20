@@ -13,7 +13,7 @@ namespace YMMProjectManager.Infrastructure.Packaging;
 internal static class YmmpxPackageReader
 {
     private const int MaxMetadataBytes = 16 * 1024 * 1024;
-    private const int MaxProjectBytes = 64 * 1024 * 1024;
+    internal const int MaxProjectBytes = 64 * 1024 * 1024;
     private static readonly uint[] CrcTable = MakeCrcTable();
 
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
@@ -34,7 +34,8 @@ internal static class YmmpxPackageReader
     {
         var final = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
         var parent = Path.GetDirectoryName(final);
-        if (parent is null || final.StartsWith(@"\\", StringComparison.Ordinal) || !Directory.Exists(parent))
+        if (parent is null || final.StartsWith(@"\\", StringComparison.Ordinal) || !Directory.Exists(parent) ||
+            new DriveInfo(Path.GetPathRoot(final)!).DriveType is not (DriveType.Fixed or DriveType.Removable))
             throw new IOException("展開先には、既存のローカル親フォルダーの直下に新しいフォルダーを指定してください。");
         using var parentFence = DirectoryFence.Open(parent);
         if (File.Exists(final) || Directory.Exists(final))
@@ -49,14 +50,14 @@ internal static class YmmpxPackageReader
         var files = new List<string>();
         var directories = new List<string>();
         var createdDirectories = new HashSet<string>(StringComparer.Ordinal);
-        using var stagingFence = new DirectoryFence();
+        using var subdirectoryFence = new DirectoryFence();
         token.ThrowIfCancellationRequested();
         RequireOrdinaryDirectory(parent);
         ReserveDirectory(staging);
-        directories.Add(staging);
+        SafeFileHandle? stagingHandle = null;
         try
         {
-            stagingFence.Add(staging);
+            stagingHandle = OpenOrdinaryDirectory(staging, allowRename: true);
             foreach (var (name, entry) in package.Files)
             {
                 token.ThrowIfCancellationRequested();
@@ -75,21 +76,23 @@ internal static class YmmpxPackageReader
                 progress?.Report((double)files.Count / package.Files.Count * 0.99);
             }
             token.ThrowIfCancellationRequested();
-            RequireOrdinaryDirectory(staging);
-            // References were formed using the final name. Publishing the directory must
-            // succeed as a no-overwrite rename or leave the existing destination alone.
-            stagingFence.Dispose();
-            Directory.Move(staging, final);
+            // Windows may require child directory handles to be closed before renaming.
+            // Keep the staging root open and publish that exact object without replacement.
+            subdirectoryFence.Dispose();
+            RenameDirectory(stagingHandle, final);
         }
         catch
         {
-            stagingFence.Dispose();
-            foreach (var path in files)
-                TryCleanup(path, isDirectory: false);
-            foreach (var path in directories.AsEnumerable().Reverse())
-                TryCleanup(path, isDirectory: true);
+            if (stagingHandle is not null)
+            {
+                foreach (var path in files) TryCleanup(path, isDirectory: false);
+                subdirectoryFence.Dispose();
+                foreach (var path in directories.AsEnumerable().Reverse()) TryCleanup(path, isDirectory: true);
+                TryDeleteEmptyDirectory(stagingHandle);
+            }
             throw;
         }
+        finally { stagingHandle?.Dispose(); }
 
         return new YmmpxExtractResult
         {
@@ -107,7 +110,7 @@ internal static class YmmpxPackageReader
             RequireOrdinaryDirectory(Path.GetDirectoryName(path)!);
             ReserveDirectory(path);
             directories.Add(path);
-            stagingFence.Add(path);
+            subdirectoryFence.Add(path);
             createdDirectories.Add(path);
         }
     }
@@ -151,7 +154,7 @@ internal static class YmmpxPackageReader
         var projectBytes = await ReadBoundedAsync(projectEntry, MaxProjectBytes, token).ConfigureAwait(false);
         using var projectDocument = JsonDocument.Parse(WithoutBom(projectBytes));
         ValidateProjectJson(projectDocument.RootElement, resources, token);
-        var project = JsonNode.Parse(projectDocument.RootElement.GetRawText()) as JsonObject
+        var project = JsonNode.Parse(WithoutBom(projectBytes).Span) as JsonObject
             ?? throw new InvalidDataException("プロジェクトが JSON オブジェクトではありません。");
         return new Package(files, projectName, project, resources);
     }
@@ -166,7 +169,7 @@ internal static class YmmpxPackageReader
             {
                 if (!names.Add(property.Name)) throw new InvalidDataException("プロジェクトに重複した JSON 名があります。");
                 if (property.Name == "FilePath" && property.Value.ValueKind == JsonValueKind.String &&
-                    Normalize(property.Value.GetString()!) is var path && path.StartsWith("resources/", StringComparison.OrdinalIgnoreCase) &&
+                    TryGetInternalPath(property.Value.GetString()!, out var path) &&
                     !resources.Contains(path))
                     throw new InvalidDataException("プロジェクトの同梱素材が不足しています。");
                 ValidateProjectJson(property.Value, resources, token);
@@ -182,9 +185,10 @@ internal static class YmmpxPackageReader
         var count = 0;
         if (node is JsonObject obj)
         {
-            if (obj["FilePath"] is JsonValue value && value.TryGetValue<string>(out var path) && resources.Contains(Normalize(path)))
+            if (obj["FilePath"] is JsonValue value && value.TryGetValue<string>(out var path) &&
+                TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath))
             {
-                obj["FilePath"] = Path.Combine(final, Normalize(path).Replace('/', Path.DirectorySeparatorChar));
+                obj["FilePath"] = Path.Combine(final, internalPath.Replace('/', Path.DirectorySeparatorChar));
                 count++;
             }
             foreach (var property in obj)
@@ -197,6 +201,15 @@ internal static class YmmpxPackageReader
     }
 
     private static string Normalize(string name) => name.Replace('\\', '/');
+
+    private static bool TryGetInternalPath(string reference, out string path)
+    {
+        path = Normalize(reference);
+        var start = 0;
+        while (path.AsSpan(start).StartsWith("./", StringComparison.Ordinal)) start += 2;
+        if (start > 0) path = path[start..];
+        return path.StartsWith("resources/", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static ReadOnlyMemory<byte> WithoutBom(byte[] data) => data.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF })
         ? data.AsMemory(3) : data.AsMemory();
@@ -296,18 +309,7 @@ internal static class YmmpxPackageReader
 
         public void Add(string path)
         {
-            const uint readAttributes = 0x80;
-            const uint openExisting = 3;
-            const uint openDirectoryWithoutFollowingLink = 0x02200000;
-            // Deny writable and delete handles while using a directory as an output boundary.
-            var handle = OpenDirectory(@"\\?\" + path, readAttributes, FileShare.Read, IntPtr.Zero, openExisting, openDirectoryWithoutFollowingLink, IntPtr.Zero);
-            if (handle.IsInvalid)
-            {
-                handle.Dispose();
-                throw new IOException("展開先フォルダーを保護できません。", new Win32Exception(Marshal.GetLastWin32Error()));
-            }
-            handles.Add(handle);
-            RequireOrdinaryDirectory(path);
+            handles.Add(OpenOrdinaryDirectory(path));
         }
 
         public void Dispose()
@@ -316,6 +318,68 @@ internal static class YmmpxPackageReader
             handles.Clear();
         }
     }
+
+    private static SafeFileHandle OpenOrdinaryDirectory(string path, bool allowRename = false)
+    {
+        const uint readAttributes = 0x80;
+        const uint delete = 0x10000;
+        const uint openExisting = 3;
+        const uint openDirectoryWithoutFollowingLink = 0x02200000;
+        const int fileAttributeTagInfo = 9;
+        // Deny writable and delete handles while using a directory as an output boundary.
+        var handle = OpenDirectory(@"\\?\" + path, readAttributes | (allowRename ? delete : 0), FileShare.Read,
+            IntPtr.Zero, openExisting, openDirectoryWithoutFollowingLink, IntPtr.Zero);
+        if (handle.IsInvalid)
+        {
+            var error = Marshal.GetLastWin32Error();
+            handle.Dispose();
+            throw new IOException("展開先フォルダーを保護できません。", new Win32Exception(error));
+        }
+        if (!GetFileInformationByHandleEx(handle, fileAttributeTagInfo, out var info, 8) ||
+            (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+        {
+            handle.Dispose();
+            throw new IOException("リンクまたはフォルダー以外のパスは展開先に使用できません。");
+        }
+        return handle;
+    }
+
+    private static void RenameDirectory(SafeFileHandle handle, string final)
+    {
+        const int fileRenameInfo = 3;
+        // FILE_RENAME_INFO has a native-sized RootDirectory and a trailing UTF-16 name.
+        // A null RootDirectory uses the complete destination path. ReplaceIfExists is false.
+        var name = Encoding.Unicode.GetBytes(@"\\?\" + final);
+        var nameLengthOffset = 2 * IntPtr.Size;
+        var nameOffset = nameLengthOffset + sizeof(int);
+        var data = new byte[nameOffset + name.Length + sizeof(char)];
+        BitConverter.TryWriteBytes(data.AsSpan(nameLengthOffset), name.Length);
+        name.CopyTo(data, nameOffset);
+        if (!SetFileInformationByHandle(handle, fileRenameInfo, data, (uint)data.Length))
+            throw new IOException("展開先フォルダーを公開できません。", new Win32Exception(Marshal.GetLastWin32Error()));
+    }
+
+    private static void TryDeleteEmptyDirectory(SafeFileHandle handle)
+    {
+        const int fileDispositionInfo = 4;
+        // This operation only marks the exact opened directory for non-recursive deletion.
+        _ = SetFileInformationByHandle(handle, fileDispositionInfo, [1], 1);
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FileAttributeTagInfo
+    {
+        public FileAttributes Attributes;
+        public uint ReparseTag;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FileAttributeTagInfo information, uint length);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, byte[] information, uint length);
 
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern SafeFileHandle OpenDirectory(string path, uint access, FileShare share, IntPtr securityAttributes,

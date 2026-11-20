@@ -26,7 +26,7 @@ public sealed class YmmpxLibBundleService
         CancellationToken token,
         IProgress<double>? progress = null)
     {
-        return bridge.CreatePackageAsync(ymmpPath, outputYmmpxPath, token, progress);
+        return Task.Run(() => bridge.CreatePackageAsync(ymmpPath, outputYmmpxPath, token, progress), token);
     }
 
     public Task<YmmpxExtractResult> ExtractPackageAsync(

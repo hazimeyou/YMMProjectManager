@@ -3,6 +3,7 @@ using System.Reflection;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.IO.Compression;
+using System.Text.Json;
 using YMMProjectManager.Domain.Packaging;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
@@ -71,9 +72,21 @@ public sealed class YmmpxLibBridge
                 return new YmmpxPackageResult { Success = false, ErrorMessage = "出力先は既に存在します。既存データを保護するため、別の名前で保存してください。" };
             // Keep the source readable but deny cooperating writers and replacement while packaging.
             await using var sourceGuard = new FileStream(ymmpPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, FileOptions.Asynchronous);
+            if (!Path.GetExtension(ymmpPath).Equals(".ymmp", StringComparison.OrdinalIgnoreCase) ||
+                sourceGuard.Length > YmmpxPackageReader.MaxProjectBytes)
+                return InvalidProject();
+            try
+            {
+                using var reader = new StreamReader(sourceGuard, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
+                var sourceText = await reader.ReadToEndAsync(token).ConfigureAwait(false);
+                using var source = JsonDocument.Parse(sourceText);
+                if (source.RootElement.ValueKind != JsonValueKind.Object) return InvalidProject();
+            }
+            catch (JsonException) { return InvalidProject(); }
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
             using (new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { temporaryOwned = true; }
             var scan = ScanProjectForLogging(ymmpPath);
+            token.ThrowIfCancellationRequested();
             logger.Info(
                 $"YmmpxLib 同梱開始。対象 ymmp={ymmpPath}, 出力 ymmpx={outputYmmpxPath}, 探索パス={string.Join(" | ", searchedPaths)}");
 
@@ -184,6 +197,12 @@ public sealed class YmmpxLibBridge
                 try { File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
         }
+
+        static YmmpxPackageResult InvalidProject() => new()
+        {
+            Success = false,
+            ErrorMessage = "有効な .ymmp プロジェクトを指定してください。プロジェクトの JSON とファイルサイズを確認してください。",
+        };
     }
 
     public async Task<YmmpxExtractResult> ExtractPackageAsync(
