@@ -63,7 +63,7 @@ public sealed partial class GitRepository
 
     private static bool UnsupportedPullSetting(string name)
     {
-        string[] unsupportedSections = ["include.", "includeif.", "filter.", "url.", "hook.", "http.", "uploadpack.", "credential.", "core.attributesfile", "core.askpass"];
+        string[] unsupportedSections = ["include.", "includeif.", "filter.", "url.", "hook.", "http.", "uploadpack.", "credential.", "core.attributesfile", "core.askpass", "core.sparsecheckout", "index.sparse"];
         return unsupportedSections.Any(section => name.StartsWith(section, StringComparison.OrdinalIgnoreCase)) ||
             name.Equals("extensions.worktreeconfig", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("extensions.partialclone", StringComparison.OrdinalIgnoreCase) ||

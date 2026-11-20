@@ -13,6 +13,7 @@ public sealed partial class GitRepository
     public Task<GitResult> InspectPullRemoteAsync(CancellationToken token = default) =>
         WithinRemoteDeadlineAsync("Pull preview", async deadline =>
         {
+            if (HasPendingPullEvidence()) return UnresolvedPull();
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -25,6 +26,7 @@ public sealed partial class GitRepository
         ArgumentNullException.ThrowIfNull(approvedRemote);
         return WithinRemoteDeadlineAsync("Pull preview", async deadline =>
         {
+            if (HasPendingPullEvidence()) return UnresolvedPull();
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -46,6 +48,7 @@ public sealed partial class GitRepository
 
     private async Task<GitResult> PullConfirmedCoreAsync(GitPullTarget approved, CancellationToken preparationToken)
     {
+        if (HasPendingPullEvidence()) return UnresolvedPull();
         using var session = await OpenPullSessionAsync(preparationToken).ConfigureAwait(false);
         if (session is null) return UnsupportedPullRepository();
         if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -223,7 +226,7 @@ public sealed partial class GitRepository
             !refs.StandardOutput.Split('\n').Contains(branch.BranchRef + "\t" + branch.ObjectId, StringComparer.Ordinal))
             return null;
         var (last, _) = await ReadBranchTipAsync(trusted: true, token, session.Settings).ConfigureAwait(false);
-        return last == branch ? new PullSnapshot(branch.ObjectId, worktree.Index!, refs.StandardOutput) : null;
+        return last == branch ? new PullSnapshot(branch.ObjectId, worktree.Index!, refs.StandardOutput.Replace("\r\n", "\n", StringComparison.Ordinal)) : null;
     }
 
     private static string ReplaceBranchObjectId(string branches, string reference, string objectId)
@@ -245,6 +248,9 @@ public sealed partial class GitRepository
     private static GitResult ChangedPull() =>
         UnsafeRemote("The approved repository, branch, configuration or remote commit changed. Inspect and confirm the Pull again.");
 
+    private bool HasPendingPullEvidence() =>
+        !HasHiddenText(directory) && IsOrdinaryDirectory(Path.Combine(directory, ".git")) &&
+        GitPullOperationJournal.Exists(directory);
     private GitResult UnresolvedPull() =>
         new GitResult(1, "", "The outcome could not be verified. Keep the operation record and review the repository before using Pull again.",
             GitFailure.OutcomeUnknown) { RecoveryPath = GitPullOperationJournal.GetPath(directory) };

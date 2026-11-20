@@ -102,10 +102,10 @@ internal static class GitRemoteTests
             await Command(source, "branch", "race-side");
             var pullReachedRemoteExecution = false;
             one.BeforeRemoteExecution = _ => pullReachedRemoteExecution = true;
-            var disabledBeforeInspection = await one.PullAsync();
+            var unapprovedBeforeInspection = await one.PullAsync();
             one.BeforeRemoteExecution = null;
-            Check(disabledBeforeInspection.Failure == GitFailure.UnsafeOperation && !pullReachedRemoteExecution,
-                "disabled pull reached remote preflight");
+            Check(unapprovedBeforeInspection.Failure == GitFailure.UnsafeOperation && !pullReachedRemoteExecution,
+                "unapproved pull reached remote preflight");
             await Command(source, "switch", "race-side");
             Check((await one.InspectPullAsync()).State == GitPullState.TrackingUnavailable, "unknown tracking ref treated as pull candidate");
             await Command(source, "switch", branch);
@@ -439,9 +439,8 @@ internal static class GitRemoteTests
                     File.Delete(path);
                 }
             });
-            var disabledPull = await one.PullAsync();
-            Check(!disabledPull.Success && disabledPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
-            Program.ReportConditionalSkip("product fast-forward pull disabled pending cross-process branch protection");
+            var unapprovedPull = await one.PullAsync();
+            Check(!unapprovedPull.Success && unapprovedPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
             await Command(source, "merge", "--ff-only", "refs/remotes/origin/" + branch);
             Check(await Command(source, "rev-parse", "HEAD") == await Command(clone, "rev-parse", "HEAD"), "heads differ");
             Check((await one.InspectPullAsync()).State == GitPullState.UpToDate, "matching branches classified as different");
@@ -712,6 +711,7 @@ internal static class GitRemoteTests
                     Console.WriteLine("Git filesystem limit reached; owned staging retained and destination unpublished.");
                 }
             }
+            await GitConfirmedPullTests.RunAsync(workRoot);
             Console.WriteLine("Offline Git remote integration checks passed.");
         }
         finally { Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", global); Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", system); }
