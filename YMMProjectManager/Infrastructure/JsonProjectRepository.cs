@@ -34,6 +34,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     private readonly Action? afterReceipt;
     private readonly Action? afterDraftClaim;
     private readonly Action? duringReceipt;
+    private readonly Action? afterRevisionCheck;
     private readonly FileLogger logger;
 
     public JsonProjectRepository(FileLogger logger) : this(logger, ResolvePath()) { }
@@ -42,7 +43,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     internal JsonProjectRepository(FileLogger logger, string path,
         Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null,
         Action? afterReplace = null, Action? beforeCandidate = null, Action? beforeReceipt = null,
-        Action? afterReceipt = null, Action? afterDraftClaim = null, Action? duringReceipt = null)
+        Action? afterReceipt = null, Action? afterDraftClaim = null, Action? duringReceipt = null, Action? afterRevisionCheck = null)
     {
         this.logger = logger;
         jsonPath = Path.GetFullPath(path);
@@ -54,6 +55,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         this.afterReceipt = afterReceipt;
         this.afterDraftClaim = afterDraftClaim;
         this.duringReceipt = duringReceipt;
+        this.afterRevisionCheck = afterRevisionCheck;
     }
 
     internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
@@ -343,6 +345,15 @@ public sealed class JsonProjectRepository : IProjectRepository
         catch (DirectoryNotFoundException) { return false; }
     }
 
+    private FileStream? OpenCurrentListForPublication()
+    {
+        // Delete sharing permits our atomic replacement. The lease blocks in-place writes, but another process
+        // with delete sharing can still replace the path. The process lock coordinates product writers.
+        try { return new FileStream(jsonPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 81920, useAsync: true); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
     private async Task SaveCoreAsync(ProjectStore store, string? readyDraft, CancellationToken cancellationToken)
     {
         string? tempPath = null;
@@ -400,12 +411,12 @@ public sealed class JsonProjectRepository : IProjectRepository
             beforeReplace?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
             await publications.WriteAsync(receipt with { PublicationStarted = true }, cancellationToken).ConfigureAwait(false);
-            string? currentHash;
-            try { currentHash = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false))); }
-            catch (FileNotFoundException) { currentHash = null; }
-            catch (DirectoryNotFoundException) { currentHash = null; }
+            await using var current = OpenCurrentListForPublication();
+            var currentHash = current is null ? null :
+                Convert.ToHexString(await SHA256.HashDataAsync(current, cancellationToken).ConfigureAwait(false));
             if (!string.Equals(currentHash, baseline.Sha256, StringComparison.Ordinal))
                 throw new ProjectListConflictException();
+            afterRevisionCheck?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
             publicationAttempted = true;
             if (currentHash is not null)

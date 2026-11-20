@@ -19,6 +19,31 @@ internal static class ProjectListPublicationTests
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
         await Program.RunNamedCaseAsync("List draft retirement cannot race a generation or list publication",
             () => TestRetirementDuringPublicationAsync(workRoot));
+        await Program.RunNamedCaseAsync("List publication holds an in-place write lease through replacement",
+            () => TestListLeaseDuringPublicationAsync(workRoot));
+    }
+
+    private static async Task TestListLeaseDuringPublicationAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-in-place-lease");
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "projects.json");
+        var repository = Open(root);
+        var store = await repository.LoadAsync();
+        store.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "original" });
+        await repository.SaveAsync(store);
+        var writerRefused = false;
+        var leasedPublisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "lease.log")), path,
+            afterRevisionCheck: () =>
+            {
+                try { File.WriteAllText(path, "competing in-place write"); }
+                catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { writerRefused = true; }
+            });
+
+        store.Projects.Single().DisplayName = "published";
+        await leasedPublisher.SaveAsync(store);
+        Require(writerRefused && (await repository.LoadAsync()).Projects.Single().DisplayName == "published",
+            "An in-place writer reached the checked list, or the lease prevented its legitimate replacement.");
     }
 
     private static async Task TestRetirementDuringPublicationAsync(string workRoot)
