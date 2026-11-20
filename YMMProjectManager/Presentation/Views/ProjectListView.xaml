@@ -22,6 +22,7 @@
                 <Button Content="開く" Width="90" Margin="0,0,8,0" Command="{Binding OpenCommand}" />
             </StackPanel>
 
+            <TextBlock DockPanel.Dock="Top" Text="{Binding ProjectListPublicationStatus}" TextWrapping="Wrap" />
             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,8">
                 <TextBlock Text="一覧に未保存の変更があります。" VerticalAlignment="Center" Margin="0,0,8,0">
                     <TextBlock.Style>
@@ -40,6 +41,7 @@
                 <Button Content="一覧変更の競合を確認" Command="{Binding RecoverProjectListCommand}" Margin="4,0,0,0" />
                 <Button Content="退避一覧を保存" Command="{Binding ExportRecoverySnapshotCommand}" Margin="4,0,0,0" />
                 <Button Content="画面状態を退避" Command="{Binding ExportRecoveryScreenCommand}" Margin="4,0,0,0" />
+                <Button Content="中断された一覧保存を確認" Command="{Binding RecoverProjectListPublicationCommand}" Margin="4,0,0,0" />
                 <Button Content="前回の保存記録を確認" Command="{Binding ReviewDraftCommand}" Margin="4,0,0,0" />
                 <Button Content="一覧原本を退避" Command="{Binding ExportOriginalProjectListCommand}" Margin="4,0,0,0" />
                 <Button Content="一覧の ID を確認・修復" Command="{Binding RepairProjectListIdentitiesCommand}" Margin="4,0,0,0" />

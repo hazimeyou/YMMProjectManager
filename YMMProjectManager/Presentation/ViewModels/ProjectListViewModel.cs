@@ -217,6 +217,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.MetadataAssociation is not null);
         ReassociateProjectCommand = new AsyncRelayCommand(ReassociateProjectAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
         VerifyProjectIdentityCommand = new AsyncRelayCommand(VerifyProjectIdentityAsync, () => !IsBusy && !HasUnsavedProjectList && SelectedProject?.ProjectId is not null);
+        RecoverProjectListPublicationCommand = new AsyncRelayCommand(RecoverProjectListPublicationAsync,
+            () => !IsBusy && repository is JsonProjectRepository);
         ReviewDraftCommand = new AsyncRelayCommand(ReviewDraftAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository);
         ExportOriginalProjectListCommand = new AsyncRelayCommand(ExportOriginalProjectListAsync,
             () => !IsBusy && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
@@ -635,7 +637,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         await ExecuteWithBusyAsync("Load", async () =>
         {
             logger.Info("Load start.");
-            var store = await repository.LoadAsync().ConfigureAwait(true);
+            ProjectStore store;
+            try { store = await repository.LoadAsync().ConfigureAwait(true); }
+            catch (InvalidDataException ex) when (repository is JsonProjectRepository json && json.HasInterruptedPublication)
+            {
+                logger.Error(ex, "Project list initialization requires publication recovery.");
+                ProjectListPublicationStatus = "中断された一覧保存があります。「中断された一覧保存を確認」を使ってください。";
+                return;
+            }
             projectListRevision = store.Revision;
             isProjectListLossless = store.IsRecoverySafe;
 
@@ -1489,6 +1498,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         catch
         {
             HasUnsavedProjectList = true;
+            if (repository is JsonProjectRepository json && json.HasInterruptedPublication)
+                ProjectListPublicationStatus = "中断された一覧保存があります。「中断された一覧保存を確認」を使ってください。";
             throw;
         }
     }

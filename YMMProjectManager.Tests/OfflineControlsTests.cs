@@ -97,6 +97,26 @@ internal static class OfflineControlsTests
                     newest.Draft.Local.Projects.Count != 0 || File.Exists(listPath))
                     throw new InvalidOperationException("The abandoned pending change remained replayable or modified the active list.");
             });
+            await Program.RunNamedCaseAsync("WPF preserves an unreadable interrupted list record", async () =>
+            {
+                var isolatedRoot = Path.Combine(root, "interrupted-list");
+                Directory.CreateDirectory(isolatedRoot);
+                var listPath = Path.Combine(isolatedRoot, "projects.json");
+                var repository = new JsonProjectRepository(logger, listPath);
+                var marker = repository.InterruptedPublicationPath;
+                await File.WriteAllTextAsync(marker, "invalid journal fixture");
+                var interrupted = new ProjectListViewModel(logger, repository);
+                await interrupted.InitializeAsync();
+                if (interrupted.Projects.Count != 0 || !interrupted.RecoverProjectListPublicationCommand.CanExecute(null) ||
+                    !interrupted.ProjectListPublicationStatus.Contains("中断された一覧保存"))
+                    throw new InvalidOperationException("WPF did not surface the pending record after load was refused.");
+
+                await (Task)typeof(ProjectListViewModel).GetMethod("RecoverProjectListPublicationAsync",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(interrupted, null)!;
+                if (!interrupted.ProjectListPublicationStatus.Contains(marker, StringComparison.Ordinal) ||
+                    await File.ReadAllTextAsync(marker) != "invalid journal fixture" || File.Exists(listPath))
+                    throw new InvalidOperationException("WPF hid or modified evidence it could not interpret.");
+            });
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
         });
