@@ -13,6 +13,7 @@
             <Button x:Name="CancelSearchButton" Content="探索キャンセル" Width="120" Margin="0,0,8,0" Click="OnCancelSearchClick" IsEnabled="False" />
             <Button Content="更新内容を保存" Width="140" Margin="0,0,8,0" Click="OnSaveClick" />
             <Button x:Name="RecoverMetadataButton" Content="メタデータ更新を再開" Margin="0,0,8,0" Padding="8,0" Click="OnRecoverMetadataClick" Visibility="Collapsed" />
+            <Button x:Name="CancelSaveButton" Content="保存を中止" Margin="0,0,8,0" Padding="8,0" Click="OnCancelSaveClick" IsEnabled="False" />
             <Button Content="閉じる" Width="90" Click="OnCloseClick" />
         </StackPanel>
 

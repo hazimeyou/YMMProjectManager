@@ -278,15 +278,28 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         if (selected is null) return;
         await ExecuteToolAsync("Asset candidates", async token =>
         {
-            var json = await File.ReadAllTextAsync(selected.FullPath, token);
-            var paths = await Task.Run(() =>
-            {
-                using var document = JsonDocument.Parse(json);
-                return PackagingDetector.FindFilePaths(json);
-            }, token);
+            var source = selected.FullPath;
+            var expected = selected.ProjectId is Guid id && selected.MetadataAssociation is { } association
+                ? (await ResolveMetadataAsync(id, association, token)).Selected.Manifest.Assets : null;
+            var references = await AssetInventory.ScanProjectAsync(source, expected, token);
             token.ThrowIfCancellationRequested();
-            if (!ReferenceEquals(selected, SelectedProject)) return;
-            AssetStatus = paths.Count == 0 ? "FilePath 候補はありません。" : "FilePath 候補（素材とは限りません）:\n" + string.Join("\n", paths);
+            if (!ReferenceEquals(selected, SelectedProject) || selected.FullPath != source) return;
+            var rows = references.Select(reference =>
+            {
+                var status = reference.Status switch
+                {
+                    AssetReferenceStatus.Present => "ファイルあり",
+                    AssetReferenceStatus.Missing => "不足",
+                    AssetReferenceStatus.Changed => "変更あり",
+                    AssetReferenceStatus.External => "プロジェクト外",
+                    _ => "検査できません",
+                };
+                var actual = reference.Actual is { } asset ? $" / {asset.Size} bytes / SHA-256 {asset.Sha256}" : "";
+                var prior = reference.Expected is { } known ? $" / 期待 {known.Size} bytes / SHA-256 {known.Sha256}" : "";
+                return $"{reference.Path}  {status}{actual}{prior}";
+            });
+            AssetStatus = references.Count == 0 ? "FilePath 候補はありません。" :
+                "FilePath 候補（素材とは限りません）\n" + string.Join("\n", rows);
         });
     }
 
@@ -306,12 +319,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return Task.CompletedTask;
             }
-            Func<Task<AssetRevisionSeries.Selection>>? resolve = null;
+            Func<CancellationToken, Task<AssetRevisionSeries.Selection>>? resolve = null;
             string? seriesDirectory = null;
             if (selected.ProjectId is Guid id && selected.MetadataAssociation is { } association)
             {
                 seriesDirectory = association.Directory;
-                resolve = () => ResolveMetadataAsync(id, association, CancellationToken.None);
+                resolve = token => ResolveMetadataAsync(id, association, token);
             }
             OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId, resolve, seriesDirectory));
             return Task.CompletedTask;

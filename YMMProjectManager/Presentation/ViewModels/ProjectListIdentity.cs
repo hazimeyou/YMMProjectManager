@@ -42,7 +42,7 @@ public sealed partial class ProjectListViewModel
         foreach (var item in inspection.Revisions.Reverse())
             list.Items.Add(new System.Windows.Controls.ListBoxItem
             {
-                Content = $"{item.Manifest.VerifiedAtUtc:g}  {item.Receipt.RevisionId}  素材 {item.Manifest.Assets.Count} 件",
+                Content = $"{(item.Receipt == inspection.Head ? "現在の head  " : "")}{item.Receipt.RevisionId}  素材 {item.Manifest.Assets.Count} 件",
                 Tag = item.Receipt,
             });
         var panel = new System.Windows.Controls.DockPanel();

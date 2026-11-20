@@ -201,6 +201,25 @@ internal static class ProjectListRecoveryTests
             await r9Vm.AssociateLegacyMetadataAsync(r9Vm.SelectedProject, r9Manifest);
             var r9After = await r9Repo.LoadAsync();
             if (r9After.Projects.Single().ProjectId != r9Manifest.ProjectId || r9After.Projects.Single().LinkedYmmpFiles.Count != 1) throw new Exception("R9 empty-links project was not safely migrated");
+            var movedPath = Path.Combine(root, "moved-original.ymmp");
+            var originalPath = Path.Combine(root, "move-source.ymmp");
+            await File.WriteAllTextAsync(originalPath, "{}");
+            await File.WriteAllTextAsync(movedPath, "{}");
+            var moveRepo = new JsonProjectRepository(logger, Path.Combine(root, "move-list.json"));
+            var moveStore = await moveRepo.LoadAsync();
+            var moveId = Guid.NewGuid();
+            moveStore.Projects.Add(Entry(originalPath, moveId));
+            await moveRepo.SaveAsync(moveStore);
+            var moveVm = new ProjectListViewModel(logger, moveRepo);
+            await moveVm.InitializeAsync();
+            var moving = moveVm.Projects.Single();
+            try { await moveVm.ApplyProjectRelocationAsync(moving, movedPath); throw new Exception("copy was treated as a move"); }
+            catch (InvalidDataException) { }
+            File.Delete(originalPath);
+            await moveVm.ApplyProjectRelocationAsync(moving, movedPath);
+            var moved = (await moveRepo.LoadAsync()).Projects.Single();
+            if (moved.ProjectId != moveId || moved.FullPath != movedPath || moved.LinkedYmmpFiles.All(link => link.FilePath != movedPath))
+                throw new Exception("explicit relocation did not preserve identity and update the main link");
             var unsafeListPath = Path.Combine(root, "unknown-list.json");
             var unknownJson = "{\"Projects\":[{\"FullPath\":" + System.Text.Json.JsonSerializer.Serialize(project) + "}],\"FutureField\":\"keep\"}";
             await File.WriteAllTextAsync(unsafeListPath, unknownJson);
