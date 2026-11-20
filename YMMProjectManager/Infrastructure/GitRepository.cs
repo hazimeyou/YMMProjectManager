@@ -7,7 +7,7 @@ using System.Text;
 namespace YMMProjectManager.Infrastructure.Git;
 
 /// <summary>Runs local Git operations without invoking a shell or changing the process working directory.</summary>
-public sealed class GitRepository
+public sealed partial class GitRepository
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
     private const string BranchRefPrefix = "refs/heads/";
@@ -30,9 +30,9 @@ public sealed class GitRepository
             throw new DirectoryNotFoundException(this.directory);
     }
 
-    public Task<GitResult> InitializeAsync(CancellationToken token = default) => RunAsync(["init"], token);
+    public Task<GitResult> InitializeAsync(CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunAsync(["init"], token), token);
     public Task<GitResult> DetectAsync(CancellationToken token = default) => RunAsync(["rev-parse", "--show-toplevel"], token);
-    public Task<GitResult> StatusAsync(CancellationToken token = default) => RunAsync(["status", "--porcelain=v1", "-z"], token);
+    public Task<GitResult> StatusAsync(CancellationToken token = default) => RunAsync(["--no-optional-locks", "status", "--porcelain=v1", "-z"], token);
     public Task<GitResult> HistoryAsync(CancellationToken token = default) => RunAsync(["log", "-n", "100", "--encoding=UTF-8", "--format=%H%x00%an%x00%aI%x00%s"], token);
     public Task<GitResult> BranchesAsync(CancellationToken token = default) => RunAsync(["branch", "--list", "--no-color"], token);
     public async Task<GitResult> OriginAsync(CancellationToken token = default)
@@ -45,15 +45,15 @@ public sealed class GitRepository
         catch (ArgumentException) { return new GitResult(1, "", "Remote URL is unsupported or contains credentials."); }
         return new GitResult(0, urls[0], "");
     }
-    public Task<GitResult> StageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => RunPathsAsync(["add", "--"], paths, token);
-    public Task<GitResult> UnstageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => RunPathsAsync(["restore", "--staged", "--"], paths, token);
+    public Task<GitResult> StageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunPathsAsync(["add", "--"], paths, token), token);
+    public Task<GitResult> UnstageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunPathsAsync(["restore", "--staged", "--"], paths, token), token);
     public Task<GitResult> CommitAsync(string message, CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        return RunAsync(["commit", "-m", message], token);
+        return WithAppWriteLeaseAsync(() => RunAsync(["commit", "-m", message], token), token);
     }
-    public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => RunBranchAsync(["branch"], name, token);
-    public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => RunBranchAsync(["switch", "--no-overwrite-ignore"], name, token);
+    public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunBranchAsync(["branch"], name, token), token);
+    public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunBranchAsync(["switch", "--no-overwrite-ignore"], name, token), token);
 
     public Task<GitResult> InspectRemoteAsync(GitRemoteOperation operation, CancellationToken token = default) =>
         WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
@@ -74,18 +74,18 @@ public sealed class GitRepository
         }, token, RemoteTimeout);
 
     public Task<GitResult> FetchAsync(CancellationToken token = default) =>
-        WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(null, deadline), token, RemoteTimeout);
+        WithinRemoteDeadlineAsync("Fetch", deadline => WithAppWriteLeaseAsync(() => FetchCoreAsync(null, deadline), deadline), token, RemoteTimeout);
 
     public Task<GitResult> FetchTrustedAsync(string expectedRemote, CancellationToken token = default)
     {
         ValidateRemote(expectedRemote);
-        return WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
+        return WithinRemoteDeadlineAsync("Fetch", deadline => WithAppWriteLeaseAsync(() => FetchCoreAsync(expectedRemote, deadline), deadline), token, RemoteTimeout);
     }
 
     public Task<GitResult> FetchTrustedAsync(GitFetchTarget target, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(target);
-        return WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(target.Endpoint, deadline, target), token, RemoteTimeout);
+        return WithinRemoteDeadlineAsync("Fetch", deadline => WithAppWriteLeaseAsync(() => FetchCoreAsync(target.Endpoint, deadline, target), deadline), token, RemoteTimeout);
     }
 
     private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token, GitFetchTarget? approvedTarget = null)
@@ -158,16 +158,16 @@ public sealed class GitRepository
         return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking.Ref, tracking.ObjectId, message);
     }
 
-    private async Task<GitPullState> InspectIgnoredPathsAsync(string local, string upstream, CancellationToken token)
+    private async Task<GitPullState> InspectIgnoredPathsAsync(string local, string upstream, CancellationToken token, string[]? pullSettings = null)
     {
         // Normal porcelain omits ignored local files. Compare incoming changes with the ignored
         // paths themselves rather than treating all ignored files as a checkout obstruction.
-        var ignored = await RunDirectAsync(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], token).ConfigureAwait(false);
+        var ignored = await RunDirectAsync(["ls-files", "-z", "--others", "--ignored", "--exclude-standard"], token, pullSettings: pullSettings).ConfigureAwait(false);
         if (!ignored.Success || ignored.StandardError.Length != 0) return GitPullState.Unavailable;
         if (ignored.StandardOutput.Length == 0) return GitPullState.FastForwardCandidate;
 
         var changed = await RunDirectAsync(["diff-tree", "-z", "--name-only", "--no-commit-id", "--no-renames",
-            "--no-ext-diff", "--no-textconv", "--diff-filter=AMT", "-r", local, upstream, "--"], token).ConfigureAwait(false);
+            "--no-ext-diff", "--no-textconv", "--diff-filter=AMT", "-r", local, upstream, "--"], token, pullSettings: pullSettings).ConfigureAwait(false);
         if (!changed.Success || changed.StandardError.Length != 0) return GitPullState.Unavailable;
 
         var incoming = changed.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -245,7 +245,7 @@ public sealed class GitRepository
     private sealed record PullWorktreeObservation(
         GitPullState? Blocked = null, string? Message = null, string? Index = null, string? Status = null);
 
-    private async Task<PullWorktreeObservation> ReadPullWorktreeAsync(string branch, string? tracking, CancellationToken token)
+    private async Task<PullWorktreeObservation> ReadPullWorktreeAsync(string branch, string? tracking, CancellationToken token, string[]? pullSettings = null)
     {
         try
         {
@@ -265,7 +265,7 @@ public sealed class GitRepository
         catch (IOException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
         catch (UnauthorizedAccessException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
 
-        var index = await RunDirectAsync(["ls-files", "--stage", "-v", "-z"], token).ConfigureAwait(false);
+        var index = await RunDirectAsync(["ls-files", "--stage", "-v", "-z"], token, pullSettings: pullSettings).ConfigureAwait(false);
         if (!index.Success)
             return new(GitPullState.Unavailable, "Could not inspect the Git index.");
         // Lowercase marks assume-unchanged entries. S marks skip-worktree, including sparse checkout.
@@ -278,14 +278,14 @@ public sealed class GitRepository
         // Configured clean/process filters can run while Git compares worktree contents.
         // Leave such worktrees unverified rather than requesting their status.
         var filters = await RunDirectAsync(
-            ["config", "--name-only", "--get-regexp", @"^filter\."], token).ConfigureAwait(false);
+            ["config", "--name-only", "--get-regexp", @"^filter\."], token, pullSettings: pullSettings).ConfigureAwait(false);
         if (filters.Success)
             return new(GitPullState.IndexNotVerifiable, "Configured Git filters prevent a read-only worktree assessment.");
         if (filters.ExitCode != 1 || filters.StandardOutput.Length != 0 || filters.StandardError.Length != 0)
             return new(GitPullState.Unavailable, "Could not verify Git filter configuration.");
 
         var status = await RunDirectAsync(
-            ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"], token).ConfigureAwait(false);
+            ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"], token, pullSettings: pullSettings).ConfigureAwait(false);
         return status.Success
             ? new(Index: index.StandardOutput, Status: status.StandardOutput)
             : new(GitPullState.Unavailable, "Could not inspect the worktree and index.");
@@ -298,40 +298,40 @@ public sealed class GitRepository
         catch (DirectoryNotFoundException) { return false; }
     }
 
-    private async Task<GitPullState> ClassifyPullAsync(string local, string upstream, CancellationToken token)
+    private async Task<GitPullState> ClassifyPullAsync(string local, string upstream, CancellationToken token, string[]? pullSettings = null)
     {
         if (local == upstream) return GitPullState.UpToDate;
-        var forward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", local, upstream], token, ignoreLegacyGrafts: true).ConfigureAwait(false);
+        var forward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", local, upstream], token, ignoreLegacyGrafts: true, pullSettings: pullSettings).ConfigureAwait(false);
         if (forward.StandardError.Length != 0) return GitPullState.Unavailable;
         if (forward.Success) return GitPullState.FastForwardCandidate;
         if (forward.ExitCode != 1) return GitPullState.Unavailable;
-        var backward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", upstream, local], token, ignoreLegacyGrafts: true).ConfigureAwait(false);
+        var backward = await RunDirectAsync(["-c", "advice.graftFileDeprecated=false", "merge-base", "--is-ancestor", upstream, local], token, ignoreLegacyGrafts: true, pullSettings: pullSettings).ConfigureAwait(false);
         if (backward.StandardError.Length != 0) return GitPullState.Unavailable;
         if (backward.Success) return GitPullState.LocalAhead;
         if (backward.ExitCode != 1) return GitPullState.Unavailable;
-        var shallow = await RunDirectAsync(["rev-parse", "--is-shallow-repository"], token).ConfigureAwait(false);
+        var shallow = await RunDirectAsync(["rev-parse", "--is-shallow-repository"], token, pullSettings: pullSettings).ConfigureAwait(false);
         return shallow.Success && shallow.StandardOutput.Trim() == "false" ? GitPullState.Diverged : GitPullState.Unavailable;
     }
 
     public Task<GitResult> PullAsync(CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
-        return Task.FromResult(UnsafeRemote("Pull is disabled pending recoverable updates across the branch, index and worktree."));
+        return Task.FromResult(UnsafeRemote("Pull requires an explicitly approved repository, branch and target commit."));
     }
 
     public Task<GitResult> PushAsync(CancellationToken token = default) =>
-        WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(null, deadline), token, RemoteTimeout);
+        WithinRemoteDeadlineAsync("Push", deadline => WithAppWriteLeaseAsync(() => PushCoreAsync(null, deadline), deadline), token, RemoteTimeout);
 
     public Task<GitResult> PushTrustedAsync(string expectedRemote, CancellationToken token = default)
     {
         ValidateRemote(expectedRemote);
-        return WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
+        return WithinRemoteDeadlineAsync("Push", deadline => WithAppWriteLeaseAsync(() => PushCoreAsync(expectedRemote, deadline), deadline), token, RemoteTimeout);
     }
 
     public Task<GitResult> PushTrustedAsync(GitPushTarget target, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(target);
-        return WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(target.Endpoint, deadline, target), token, RemoteTimeout);
+        return WithinRemoteDeadlineAsync("Push", deadline => WithAppWriteLeaseAsync(() => PushCoreAsync(target.Endpoint, deadline, target), deadline), token, RemoteTimeout);
     }
 
     private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token, GitPushTarget? approvedTarget = null)
@@ -376,7 +376,7 @@ public sealed class GitRepository
 
     private sealed record BranchTip(string BranchRef, string ObjectId);
 
-    private async Task<(BranchTip? Branch, GitResult? Error)> ReadBranchTipAsync(bool trusted, CancellationToken token)
+    private async Task<(BranchTip? Branch, GitResult? Error)> ReadBranchTipAsync(bool trusted, CancellationToken token, string[]? pullSettings = null)
     {
         var branch = await ReadGitAsync(["symbolic-ref", "--quiet", "HEAD"]).ConfigureAwait(false);
         if (!branch.Success) return (null, new GitResult(branch.ExitCode, "", "A branch must be checked out."));
@@ -389,12 +389,12 @@ public sealed class GitRepository
             return (null, new GitResult(1, "", "Could not determine the branch commit."));
         return (new BranchTip(name, objectId), null);
 
-        Task<GitResult> ReadGitAsync(string[] args) => trusted ? RunDirectAsync(args, token) : RunAsync(args, token);
+        Task<GitResult> ReadGitAsync(string[] args) => trusted ? RunDirectAsync(args, token, pullSettings: pullSettings) : RunAsync(args, token);
     }
 
-    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false) =>
+    private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false, string[]? pullSettings = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
-            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts);
+            trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -681,7 +681,7 @@ public sealed class GitRepository
     }
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
-        bool ignoreLegacyGrafts = false)
+        bool ignoreLegacyGrafts = false, string[]? pullSettings = null)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -710,9 +710,28 @@ public sealed class GitRepository
             name.StartsWith("GIT_CONFIG_KEY_", StringComparison.OrdinalIgnoreCase) ||
             name.StartsWith("GIT_CONFIG_VALUE_", StringComparison.OrdinalIgnoreCase)).ToArray())
             start.Environment.Remove(name);
+        if (pullSettings is not null)
+        {
+            foreach (var name in start.Environment.Keys.Where(name =>
+                (name.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase) &&
+                 !name.Equals("GIT_ALLOW_PROTOCOL", StringComparison.OrdinalIgnoreCase)) ||
+                name.Equals("HTTP_PROXY", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("HTTPS_PROXY", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("ALL_PROXY", StringComparison.OrdinalIgnoreCase)).ToArray())
+                start.Environment.Remove(name);
+            start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+            start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+            start.Environment["GIT_ATTR_NOSYSTEM"] = "1";
+            foreach (var argument in new[]
+            {
+                "--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=NUL", "-c", "core.askPass=", "-c", "credential.helper=",
+                "-c", "core.protectNTFS=true", "-c", "submodule.recurse=false", "-c", "gc.auto=0",
+            }.Concat(pullSettings))
+                start.ArgumentList.Add(argument);
+        }
         // A graft can appear after the filesystem observation. Ancestry checks always use
         // the real commit objects, even while that observation is being revalidated.
-        if (ignoreLegacyGrafts) start.Environment["GIT_GRAFT_FILE"] = "NUL";
+        if (ignoreLegacyGrafts || pullSettings is not null) start.Environment["GIT_GRAFT_FILE"] = "NUL";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
@@ -757,7 +776,7 @@ public sealed class GitRepository
     }
 }
 
-public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong }
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong, ConcurrentOperation, OutcomeUnknown }
 public enum GitRemoteOperation { Fetch, Push }
 public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision, HistoryNotVerifiable }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,
@@ -803,4 +822,6 @@ public sealed record GitResult(int ExitCode, string StandardOutput, string Stand
     public GitRemoteDiagnostic? RemoteDiagnostic { get; init; }
     public GitPushTarget? PushTarget { get; init; }
     public GitFetchTarget? FetchTarget { get; init; }
+    public GitPullRemote? PullRemote { get; init; }
+    public GitPullTarget? PullTarget { get; init; }
 }
