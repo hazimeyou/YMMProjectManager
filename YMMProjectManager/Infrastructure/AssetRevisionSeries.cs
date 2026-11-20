@@ -1,4 +1,6 @@
 using System.IO;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -18,6 +20,84 @@ public static class AssetRevisionSeries
     private const string Prefix = "revision-";
     private const string LockFileName = ".asset-revisions.lock";
     private const int MaxManifestBytes = 4 * 1024 * 1024;
+    private const int MaxHistoryBytes = 64 * 1024 * 1024;
+    private const int MaxRevisions = 4096;
+
+    /// <summary>Copies an explicitly selected legacy history to a new directory, preserving every source byte.</summary>
+    public static async Task<Inspection> ImportLegacyAsync(string directory, Guid projectId, IEnumerable<string> files, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(files);
+        token.ThrowIfCancellationRequested();
+        if (projectId == Guid.Empty) throw new ArgumentException("The project identity is required.", nameof(projectId));
+        var destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
+        var parent = ValidateDirectory(Path.GetDirectoryName(destination) ?? throw new ArgumentException("A new series directory is required.", nameof(directory)));
+        if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("The import destination already exists.");
+
+        var history = new Dictionary<Guid, Node>();
+        var contents = new Dictionary<Guid, byte[]>();
+        var remainingBytes = MaxHistoryBytes;
+        foreach (var file in files)
+        {
+            token.ThrowIfCancellationRequested();
+            if (history.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
+            var full = Path.GetFullPath(file);
+            ValidateDirectory(Path.GetDirectoryName(full)!);
+            var bytes = await ReadRegularFileAsync(full, remainingBytes, token).ConfigureAwait(false);
+            remainingBytes -= bytes.Length;
+            var node = ParseNode(bytes);
+            if (node.Manifest.ProjectId != projectId || !history.TryAdd(node.Manifest.RevisionId, node))
+                throw new InvalidDataException("The history has a foreign project or duplicate revision ID.");
+            contents.Add(node.Manifest.RevisionId, bytes);
+        }
+
+        var inspection = InspectNodes(history);
+        token.ThrowIfCancellationRequested();
+        var staging = Path.Combine(parent, $".asset-import-{Guid.NewGuid():N}");
+        if (!CreateDirectory(ToExtendedPath(staging), IntPtr.Zero))
+            throw new IOException("The import staging directory could not be reserved.", new Win32Exception(Marshal.GetLastWin32Error()));
+        var ownedFiles = new List<string>();
+        var published = false;
+        try
+        {
+            foreach (var (revisionId, bytes) in contents)
+            {
+                token.ThrowIfCancellationRequested();
+                var path = RevisionPath(staging, revisionId);
+                await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
+                ownedFiles.Add(path);
+                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                stream.Flush(flushToDisk: true);
+            }
+
+            token.ThrowIfCancellationRequested();
+            ValidateDirectory(staging);
+            Directory.Move(staging, destination);
+            published = true;
+            return inspection;
+        }
+        finally
+        {
+            if (!published)
+            {
+                // Only names created by this call are considered for cleanup.
+                try
+                {
+                    ValidateDirectory(staging);
+                    foreach (var file in ownedFiles) File.Delete(file);
+                    Directory.Delete(staging, recursive: false);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
+
+    private static string ToExtendedPath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
+        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
 
     /// <summary>Initializes an empty series from a root manifest. Existing history is never replaced.</summary>
     public static async Task<Head> InitializeAsync(string directory, AssetManifest root, CancellationToken token = default)
@@ -81,7 +161,8 @@ public static class AssetRevisionSeries
             throw new InvalidDataException("The new revision does not reference the expected project and parent.");
         var full = ValidateDirectory(directory);
         await using var gate = AcquireLock(full);
-        var inspection = await InspectCoreAsync(full, token).ConfigureAwait(false);
+        var nodes = await ReadNodesAsync(full, token).ConfigureAwait(false);
+        var inspection = InspectNodes(nodes);
         var head = MakeHead(next);
         if (acceptCommittedRevision && inspection.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
         {
@@ -91,6 +172,8 @@ public static class AssetRevisionSeries
         }
 
         if (inspection.Head != expected) throw new InvalidDataException("The revision series changed; reload before updating.");
+        if (nodes.Count >= MaxRevisions || nodes.Values.Sum(node => node.ByteCount) + SerializeRevision(next).Length > MaxHistoryBytes)
+            throw new InvalidDataException("The revision history exceeds the storage limit.");
         await AssetManifestStore.SaveNewAsync(RevisionPath(full, next.RevisionId), next, token).ConfigureAwait(false);
         return head;
     }
@@ -122,37 +205,54 @@ public static class AssetRevisionSeries
         return AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(manifest));
     }
 
-    private static Head MakeHead(AssetManifest manifest) => new(manifest.ProjectId, manifest.RevisionId,
-        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true }))));
+    private static byte[] SerializeRevision(AssetManifest manifest)
+        => JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true });
 
-    private sealed record Node(AssetManifest Manifest, string Hash);
+    private static Head MakeHead(AssetManifest manifest) => new(manifest.ProjectId, manifest.RevisionId,
+        Convert.ToHexString(SHA256.HashData(SerializeRevision(manifest))));
+
+    private sealed record Node(AssetManifest Manifest, string Hash, int ByteCount);
 
     private static async Task<Dictionary<Guid, Node>> ReadNodesAsync(string directory, CancellationToken token)
     {
         var nodes = new Dictionary<Guid, Node>();
+        var remainingBytes = MaxHistoryBytes;
         foreach (var path in Directory.EnumerateFileSystemEntries(directory, Prefix + "*", SearchOption.TopDirectoryOnly))
         {
             token.ThrowIfCancellationRequested();
+            if (nodes.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
             var name = Path.GetFileName(path);
             if (name.Length != Prefix.Length + 32 + 5 || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
                 !Guid.TryParseExact(name.Substring(Prefix.Length, 32), "N", out var nameId))
                 throw new InvalidDataException("An unrecognized revision entry exists; history was not modified.");
-            var attributes = File.GetAttributes(path);
-            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-                throw new InvalidDataException("A revision entry is not a regular file.");
-            await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
-            if (stream.Length > MaxManifestBytes) throw new InvalidDataException("Revision is too large.");
-            var bytes = new byte[checked((int)stream.Length)];
-            await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
-            var json = bytes.AsMemory();
-            if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) json = json[3..];
-            using (var doc = JsonDocument.Parse(json))
-                if (HasDuplicateProperties(doc.RootElement)) throw new InvalidDataException("A revision contains duplicate properties.");
-            var manifest = AssetManifestStore.Parse(bytes);
-            if (manifest.RevisionId != nameId || !nodes.TryAdd(nameId, new Node(manifest, Convert.ToHexString(SHA256.HashData(bytes)))))
+            var bytes = await ReadRegularFileAsync(path, remainingBytes, token).ConfigureAwait(false);
+            remainingBytes -= bytes.Length;
+            var node = ParseNode(bytes);
+            if (node.Manifest.RevisionId != nameId || !nodes.TryAdd(nameId, node))
                 throw new InvalidDataException("Revision identifier collision or filename mismatch.");
         }
         return nodes;
+    }
+
+    private static async Task<byte[]> ReadRegularFileAsync(string path, int remainingBytes, CancellationToken token)
+    {
+        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+            throw new InvalidDataException("A revision entry is not a regular file.");
+        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        if (stream.Length > MaxManifestBytes || stream.Length > remainingBytes)
+            throw new InvalidDataException("The revision or its history exceeds the size limit.");
+        var bytes = new byte[checked((int)stream.Length)];
+        await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        return bytes;
+    }
+
+    private static Node ParseNode(byte[] bytes)
+    {
+        var json = bytes.AsMemory();
+        if (bytes.AsSpan().StartsWith(new byte[] { 0xEF, 0xBB, 0xBF })) json = json[3..];
+        using var doc = JsonDocument.Parse(json);
+        if (HasDuplicateProperties(doc.RootElement)) throw new InvalidDataException("A revision contains duplicate properties.");
+        return new Node(AssetManifestStore.Parse(bytes), Convert.ToHexString(SHA256.HashData(bytes)), bytes.Length);
     }
 
     private static bool HasDuplicateProperties(JsonElement element)
@@ -169,8 +269,10 @@ public static class AssetRevisionSeries
     }
 
     private static async Task<Inspection> InspectCoreAsync(string directory, CancellationToken token)
+        => InspectNodes(await ReadNodesAsync(directory, token).ConfigureAwait(false));
+
+    private static Inspection InspectNodes(Dictionary<Guid, Node> nodes)
     {
-        var nodes = await ReadNodesAsync(directory, token).ConfigureAwait(false);
         if (nodes.Count == 0) throw new InvalidDataException("The revision series is empty.");
         var projectId = nodes.Values.First().Manifest.ProjectId;
         if (nodes.Values.Any(n => n.Manifest.ProjectId != projectId)) throw new InvalidDataException("The revision series contains different projects.");

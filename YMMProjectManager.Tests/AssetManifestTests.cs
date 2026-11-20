@@ -111,6 +111,37 @@ internal static class AssetManifestTests
         var selection = await AssetRevisionSeries.ResolveAsync(directory, head.ProjectId, head.RevisionId, head.Sha256, head.RevisionId, head.Sha256);
         if (selection.Selected.Manifest.RevisionId != initial.RevisionId || selection.Head != current)
             throw new Exception("historical selection was lost after a newer revision");
+        var importPath = Path.Combine(root, "imported-history");
+        var winningPath = Path.Combine(directory, $"revision-{current.RevisionId:N}.json");
+        var imported = await AssetRevisionSeries.ImportLegacyAsync(importPath, head.ProjectId, [winningPath, firstPath]);
+        if (!imported.Revisions.Select(x => x.Receipt).SequenceEqual(history.Revisions.Select(x => x.Receipt)))
+            throw new Exception("legacy history import did not preserve the original revision bytes and order");
+        try
+        {
+            await AssetRevisionSeries.ImportLegacyAsync(importPath, head.ProjectId, [firstPath]);
+            throw new Exception("legacy import accepted an existing destination");
+        }
+        catch (IOException) { }
+        if ((await AssetRevisionSeries.ReadHeadAsync(importPath)) != current) throw new Exception("repeated import altered the published history");
+        var orphanImport = Path.Combine(root, "incomplete-import");
+        try
+        {
+            await AssetRevisionSeries.ImportLegacyAsync(orphanImport, head.ProjectId, [winningPath]);
+            throw new Exception("legacy import accepted an orphan revision");
+        }
+        catch (InvalidDataException) { }
+        if (Directory.Exists(orphanImport)) throw new Exception("invalid history became visible as an imported series");
+        using (var cancelledImport = new CancellationTokenSource())
+        {
+            cancelledImport.Cancel();
+            try
+            {
+                await AssetRevisionSeries.ImportLegacyAsync(orphanImport, head.ProjectId, [firstPath], cancelledImport.Token);
+                throw new Exception("legacy import ignored cancellation");
+            }
+            catch (OperationCanceledException) { }
+        }
+        if (Directory.Exists(orphanImport)) throw new Exception("cancelled history import created its destination");
         try
         {
             await AssetRevisionSeries.ResolveAsync(directory, Guid.NewGuid(), head.RevisionId, head.Sha256, current.RevisionId, current.Sha256);
