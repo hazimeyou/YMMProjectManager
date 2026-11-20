@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Text.Json;
 using YMMProjectManager.Infrastructure;
@@ -363,7 +364,57 @@ internal static class AssetManifestTests
             throw new Exception("Replaced output altered source or metadata history.");
         File.Delete(second);
         File.Move(preserved, second);
-        _ = await AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source);
+        var secondReceipt = await AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source);
+
+        var crashOutput = Path.Combine(root, "crash.ymmp");
+        var crashEvidence = await PrepareAsync(crashOutput, secondReceipt.Revision);
+        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("--r16-relink-publication-child");
+        start.ArgumentList.Add(crashEvidence);
+        // An absent child dispatch must fail the fixture immediately.
+        start.Environment["YMM_TEST_FILTER"] = "__r16-relink-publication-child-only__";
+        using (var child = Process.Start(start) ?? throw new Exception("Relink crash fixture could not start."))
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            try { await child.WaitForExitAsync(timeout.Token); }
+            finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
+            if (child.ExitCode != 87) throw new Exception("Relink child missed the durable publication boundary.");
+        }
+        if (File.Exists(crashOutput) || !File.Exists(crashEvidence + ".output.tmp") || !File.Exists(crashEvidence + ".publish") ||
+            await AssetRevisionSeries.ReadHeadAsync(series) != secondReceipt.Revision)
+            throw new Exception("Child exit after proof changed the destination or lost the prepared stage.");
+        var afterCrash = await AssetRelinkRecovery.CompleteForTransferAsync(crashEvidence, series, baseline, default, source, resumePreparedOutput: true);
+        if (!File.Exists(crashOutput) || afterCrash.Output != crashOutput || File.Exists(crashEvidence + ".output.tmp") ||
+            (await AssetRevisionSeries.InspectGraphAsync(series)).Revisions.Count != 4)
+            throw new Exception("Interrupted owned output was not published exactly once after child exit.");
+    }
+
+    internal static async Task InterruptPreparedOutputAsync(string evidence)
+    {
+        evidence = Path.GetFullPath(evidence);
+        var allowed = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests") + Path.DirectorySeparatorChar;
+        var root = Path.GetDirectoryName(evidence)!;
+        if (!evidence.StartsWith(Path.GetFullPath(allowed), StringComparison.OrdinalIgnoreCase) ||
+            Path.GetFileName(root) != "prepared-output" ||
+            !Path.GetFileName(evidence).StartsWith(".ymmpm-relink-", StringComparison.Ordinal))
+            throw new InvalidOperationException("Relink child fixture must be isolated.");
+        ProjectListDrafts.CheckOrdinaryDirectory(root);
+        var source = Path.Combine(root, "source.ymmp");
+        var context = new RelinkDocumentContext
+        {
+            YmmpPath = source,
+            OriginalBytes = await File.ReadAllBytesAsync(source),
+            Rows = [new RelinkRow
+            {
+                OriginalPath = "original.wav",
+                SelectedCandidate = Path.Combine(root, "candidate.wav"),
+                Status = RelinkStatus.Updated,
+            }],
+        };
+        var logger = new FileLogger(Path.Combine(root, "child.log"));
+        var interrupted = new RelinkSaveService(logger, null, null, () => Environment.Exit(87));
+        await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, default);
+        throw new InvalidOperationException("Relink child did not reach the configured interruption point.");
     }
 
     private static async Task TestRevisionSeriesAsync(string root, string project, AssetMetadata item)
