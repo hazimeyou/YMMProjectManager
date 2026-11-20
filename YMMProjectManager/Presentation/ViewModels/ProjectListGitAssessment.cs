@@ -9,9 +9,6 @@ public sealed partial class ProjectListViewModel
 {
     public ICommand InspectGitPullCommand { get; }
 
-    public string PullUnavailableReason =>
-        "更新を伴う Pull は無効です。外部の操作や中断があっても、ブランチ・index・作業ファイルを一貫して保護できることを確認中です。";
-
     private Task InspectGitPullAsync() => ExecuteToolAsync("Git pull assessment", async token =>
     {
         var project = SelectedProject;
@@ -20,7 +17,7 @@ public sealed partial class ProjectListViewModel
         if (!ReferenceEquals(project, SelectedProject)) return;
         if (git is null)
         {
-            GitStatus = $"このプロジェクトの Git ルートを確認できません。\n{PullUnavailableReason}";
+            GitStatus = $"このプロジェクトの Git ルートを確認できません。\n{PullHelp}";
             return;
         }
         var result = await git.Value.Repository.InspectPullAsync(token);
@@ -46,7 +43,7 @@ public sealed partial class ProjectListViewModel
         if (result.TrackingRef is { } tracking)
             lines.Add($"保存済みの追跡 ref {tracking} {result.TrackingObjectId}".TrimEnd());
         lines.Add("ローカルの追跡情報を確認しました。通信は実行していません。");
-        lines.Add(PullUnavailableReason);
+        lines.Add(PullHelp);
         GitStatus = string.Join("\n", lines);
     });
 

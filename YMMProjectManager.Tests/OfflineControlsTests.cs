@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using YMMProjectManager.Application;
@@ -25,7 +26,7 @@ internal static class OfflineControlsTests
             await vm.InitializeAsync();
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
-            if (!vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) ||
+            if (!vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) != ProjectListViewModel.IsConfirmedPullEnabled ||
                 !vm.InspectGitPullCommand.CanExecute(null) || !vm.PushGitCommand.CanExecute(null) || !vm.GitCloneCommand.CanExecute(null))
                 throw new Exception("trusted Git controls or Pull fail-closed gate are incorrect");
             if (!vm.RepairProjectListIdentitiesCommand.CanExecute(null))
@@ -37,23 +38,26 @@ internal static class OfflineControlsTests
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
-            await Program.RunNamedCaseAsync("Pull diagnostics identify the repository and explain the disabled write command", async () =>
+            await Program.RunNamedCaseAsync("Pull diagnostics identify the repository and explain command availability", async () =>
             {
                 await Invoke("InspectGitPullAsync");
                 if (!vm.GitStatus.Contains("ローカルの追跡情報を確認しました") ||
                     !vm.GitStatus.Contains(root, StringComparison.OrdinalIgnoreCase) ||
-                    !vm.GitStatus.EndsWith(vm.PullUnavailableReason, StringComparison.Ordinal) ||
-                    !vm.PullUnavailableReason.Contains("ブランチ・index・作業ファイル") || vm.PullGitCommand.CanExecute(null))
+                    !vm.GitStatus.EndsWith(vm.PullHelp, StringComparison.Ordinal) ||
+                    vm.PullGitCommand.CanExecute(null) != ProjectListViewModel.IsConfirmedPullEnabled)
                     throw new InvalidOperationException("nested project Pull assessment did not explain its selected repository and write gate");
 
                 vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(root, "missing", "project.ymmp") };
                 await Invoke("InspectGitPullAsync");
                 if (!vm.GitStatus.Contains("Git ルートを確認できません") ||
-                    !vm.GitStatus.EndsWith(vm.PullUnavailableReason, StringComparison.Ordinal))
+                    !vm.GitStatus.EndsWith(vm.PullHelp, StringComparison.Ordinal))
                     throw new InvalidOperationException("diagnostics hid the write gate when repository discovery failed");
             });
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             await TestPullPresentationAsync(vm, root);
+            await Program.RunNamedCaseAsync("WPF Pull binds consent to an isolated remote and reports the verified checkout",
+                () => TestProductPullAsync(vm, root));
+            vm.SelectedProject = new ProjectEntry { FullPath = project };
             await Invoke("FindAssetCandidatesAsync");
             if (!vm.AssetStatus.Contains("素材とは限りません") || !vm.AssetStatus.Contains("sample.png") || !vm.AssetStatus.Contains("note.txt")) throw new Exception("candidate labels missing");
             vm.AssetPath = "sample.png\nsample2.png\nsample.png";
@@ -175,6 +179,97 @@ internal static class OfflineControlsTests
         });
     }
 
+    private static async Task TestProductPullAsync(ProjectListViewModel vm, string root)
+    {
+        var fixture = Directory.CreateDirectory(Path.Combine(root, "pull-ui")).FullName;
+        var source = Path.Combine(fixture, "source");
+        var bare = Path.Combine(fixture, "remote.git");
+        var checkout = Path.Combine(fixture, "checkout");
+        var oldGlobal = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
+        var oldSystem = Environment.GetEnvironmentVariable("GIT_CONFIG_NOSYSTEM");
+        Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", Path.Combine(fixture, "empty-config"));
+        Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
+        try
+        {
+            await RunGitFixtureAsync(fixture, "init", "--initial-branch=main", source);
+            await RunGitFixtureAsync(fixture, "init", "--bare", "--initial-branch=main", bare);
+            await RunGitFixtureAsync(source, "config", "user.name", "WPF Test");
+            await RunGitFixtureAsync(source, "config", "user.email", "wpf-test@example.invalid");
+            var sourceProject = Path.Combine(source, "project.ymmp");
+            const string oldJson = """{"Title":"Before"}""";
+            const string newJson = """{"Title":"After"}""";
+            await File.WriteAllTextAsync(sourceProject, oldJson);
+            await RunGitFixtureAsync(source, "add", "--", "project.ymmp");
+            await RunGitFixtureAsync(source, "commit", "-m", "before");
+            await RunGitFixtureAsync(source, "push", bare, "main:refs/heads/main");
+            await RunGitFixtureAsync(fixture, "clone", "--no-local", "--", bare, checkout);
+            var before = await RunGitFixtureAsync(checkout, "rev-parse", "HEAD");
+            await File.WriteAllTextAsync(sourceProject, newJson);
+            await RunGitFixtureAsync(source, "add", "--", "project.ymmp");
+            await RunGitFixtureAsync(source, "commit", "-m", "after");
+            var after = await RunGitFixtureAsync(source, "rev-parse", "HEAD");
+            var afterTree = await RunGitFixtureAsync(source, "rev-parse", "HEAD^{tree}");
+            await RunGitFixtureAsync(source, "push", bare, "main:refs/heads/main");
+
+            var project = Path.Combine(checkout, "project.ymmp");
+            vm.SelectedProject = new ProjectEntry { FullPath = project };
+            var trusted = false;
+            var approved = false;
+            bool InspectTransport(string repository, string remote)
+            {
+                trusted = string.Equals(repository, checkout, StringComparison.OrdinalIgnoreCase) &&
+                    remote.Contains("origin / refs/heads/main", StringComparison.Ordinal);
+                return trusted;
+            }
+            bool InspectTarget(ProjectListViewModel.PullApprovalDetails details)
+            {
+                approved = details.ChangesWorktree && details.StartObjectId == before && details.TargetObjectId == after &&
+                    details.BranchRef == "refs/heads/main" && details.UpstreamRef == "refs/heads/main";
+                return approved;
+            }
+
+            await vm.RunConfirmedGitPullAsync(InspectTransport, details => { InspectTarget(details); return false; });
+            if (!trusted || !approved || !vm.GitStatus.Contains("取り消しました") ||
+                await RunGitFixtureAsync(checkout, "rev-parse", "HEAD") != before ||
+                await File.ReadAllTextAsync(project) != oldJson)
+                throw new InvalidOperationException($"A declined Pull reached the checkout or showed a different offer. {vm.GitStatus}");
+
+            trusted = approved = false;
+            await vm.RunConfirmedGitPullAsync(InspectTransport, InspectTarget);
+            if (!trusted || !approved || !vm.GitStatus.Contains("Pull が完了しました") || !vm.GitStatus.Contains(after) ||
+                await RunGitFixtureAsync(checkout, "rev-parse", "HEAD") != after ||
+                await RunGitFixtureAsync(checkout, "write-tree") != afterTree ||
+                await RunGitFixtureAsync(checkout, "status", "--porcelain") != "" ||
+                await File.ReadAllTextAsync(project) != newJson)
+                throw new InvalidOperationException($"WPF did not report a verified ref, index and worktree. {vm.GitStatus}");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("GIT_CONFIG_GLOBAL", oldGlobal);
+            Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", oldSystem);
+        }
+    }
+
+    private static async Task<string> RunGitFixtureAsync(string directory, params string[] arguments)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = directory,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot start fixture Git.");
+        var output = process.StandardOutput.ReadToEndAsync();
+        var error = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        if (process.ExitCode != 0) throw new InvalidOperationException($"Git fixture failed with exit {process.ExitCode}: {await error}");
+        await error;
+        return (await output).TrimEnd();
+    }
+
     private static async Task TestPullPresentationAsync(ProjectListViewModel vm, string root)
     {
         var remote = new object();
@@ -253,6 +348,42 @@ internal static class OfflineControlsTests
                 if (!message.Contains(field, StringComparison.Ordinal)) throw new InvalidOperationException("Missing approval detail.");
             if (!ProjectListViewModel.DescribePullApproval(details with { ChangesWorktree = false }).Contains("作業ファイルは更新しません"))
                 throw new InvalidOperationException("No-op Pull was presented as a write.");
+            var dialog = ProjectListViewModel.CreatePullConfirmation(details);
+            var panel = (System.Windows.Controls.DockPanel)dialog.Content;
+            var buttons = ((System.Windows.Controls.StackPanel)panel.Children[0]).Children
+                .OfType<System.Windows.Controls.Button>().ToArray();
+            if (buttons.Length != 2 || !buttons[0].IsCancel || !buttons[0].IsDefault ||
+                buttons[1].IsDefault || !Equals(buttons[1].Content, "Pull を実行"))
+                throw new InvalidOperationException("Pull is the default dialog action or cancel is unavailable.");
+            dialog.Close();
+            return Task.CompletedTask;
+        });
+        await Program.RunNamedCaseAsync("A late cancellation does not hide the verified Pull outcome", async () =>
+        {
+            var backendCompletion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var enteredExecution = false;
+            var running = vm.RunGitPullWorkflowAsync(InspectRemote, _ => true, InspectTarget, _ => true,
+                (approved, token) =>
+                {
+                    enteredExecution = ReferenceEquals(approved, target);
+                    return backendCompletion.Task;
+                });
+            var cancellable = vm.CancelToolCommand.CanExecute(null);
+            vm.CancelToolCommand.Execute(null);
+            backendCompletion.SetResult("Pull が完了しました。検証済みです。");
+            await running;
+            if (!enteredExecution || !cancellable || !vm.GitStatus.Contains("検証済み") || vm.CancelToolCommand.CanExecute(null))
+                throw new InvalidOperationException("The presentation discarded the controlled post-mutation verification.");
+        });
+        await Program.RunNamedCaseAsync("Pull recovery message identifies the repository and avoids claiming rollback", () =>
+        {
+            var evidence = Path.Combine(root, ".git", "pull-recovery.json");
+            var result = new GitResult(1, "", "untrusted process text", GitFailure.OutcomeUnknown) { RecoveryPath = evidence };
+            var message = ProjectListViewModel.DescribePullFailure(root, result, "refs/heads/main");
+            if (!message.Contains(root) || !message.Contains("refs/heads/main") || !message.Contains(evidence) ||
+                !message.Contains("確定できません") || !message.Contains("確認が済むまで再実行") ||
+                message.Contains("untrusted process text", StringComparison.Ordinal))
+                throw new InvalidOperationException("The recovery message lost evidence, leaked stderr, or recommended a blind retry.");
             return Task.CompletedTask;
         });
     }

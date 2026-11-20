@@ -96,11 +96,11 @@
                 <Button Content="origin" Command="{Binding GitOriginCommand}" Margin="4,0,0,0" />
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
-            <TextBlock Text="Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は使用できません。" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <TextBlock Text="{Binding GitRemoteOperationsHelp}" TextWrapping="Wrap" Margin="0,0,0,4" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}"
-                        ToolTip="{Binding PullUnavailableReason}" ToolTipService.ShowOnDisabled="True" Margin="0,0,4,0" />
+                        ToolTip="{Binding PullHelp}" ToolTipService.ShowOnDisabled="True" Margin="0,0,4,0" />
                 <Button Content="Pull 前の状態を確認" Command="{Binding InspectGitPullCommand}" Margin="0,0,4,0" />
                 <Button Content="Push" Command="{Binding PushGitCommand}" />
             </StackPanel>

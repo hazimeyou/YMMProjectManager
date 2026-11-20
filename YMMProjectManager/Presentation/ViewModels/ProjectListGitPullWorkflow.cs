@@ -1,18 +1,98 @@
 using System.Windows;
 using System.Windows.Controls;
 using YMMProjectManager.Domain;
+using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed partial class ProjectListViewModel
 {
+    private const string PullWorkflowOperation = "Git Pull";
+    internal static bool IsConfirmedPullEnabled => false;
+
+    public string PullHelp => IsConfirmedPullEnabled
+        ? "現在のブランチとリモートの更新先を確認し、承認後に fast-forward のみ実行します。"
+        : "更新を伴う Pull は無効です。外部の操作や中断があっても、ブランチ・index・作業ファイルを一貫して保護できることを確認中です。";
+
+    public string GitRemoteOperationsHelp => IsConfirmedPullEnabled
+        ? "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は接続の承認と更新先の確認が必要です。"
+        : "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は使用できません。";
+
     internal sealed record PullApprovalDetails(string RepositoryRoot, string BranchRef, string RemoteName,
         string UpstreamRef, string Endpoint, string StartObjectId, string TargetObjectId, bool ChangesWorktree);
+
+    private Task RunConfirmedGitPullAsync()
+    {
+        if (!IsConfirmedPullEnabled) return Task.CompletedTask;
+        return RunConfirmedGitPullAsync(
+            (root, remote) => ConfirmGitTrust("更新先コミットを確認するためリモートへ接続します。Pull の実行は次の画面で選べます。", root, remote),
+            ConfirmPull);
+    }
+
+    internal Task RunConfirmedGitPullAsync(Func<string, string, bool> approveTransport, Func<PullApprovalDetails, bool> approveTarget)
+        => RunGitPullWorkflowAsync<GitPullRemote, GitPullTarget>(
+            async (project, token) =>
+            {
+                var located = await LocateProjectGitRootAsync(project, token);
+                if (located is null)
+                {
+                    GitStatus = "このプロジェクトの Git ルートを確認できません。";
+                    return null;
+                }
+                var result = await located.Value.Repository.InspectPullRemoteAsync(token);
+                if (result.Success && result.PullRemote is { } remote &&
+                    string.Equals(located.Value.Root, remote.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
+                    return remote;
+                GitStatus = DescribePullFailure(located.Value.Root, result);
+                return null;
+            },
+            remote => approveTransport(remote.RepositoryRoot, $"{remote.RemoteName} / {remote.UpstreamRef}\n{remote.Endpoint}"),
+            async (remote, token) =>
+            {
+                var result = await new GitRepository(remote.RepositoryRoot).InspectPullTargetAsync(remote, token);
+                if (result.Success && result.PullTarget is { } target &&
+                    string.Equals(remote.RepositoryRoot, target.RepositoryRoot, StringComparison.OrdinalIgnoreCase) &&
+                    remote.BranchRef == target.BranchRef && remote.StartObjectId == target.StartObjectId &&
+                    remote.RemoteName == target.RemoteName && remote.UpstreamRef == target.UpstreamRef &&
+                    remote.Endpoint == target.Endpoint && remote.Identity == target.Identity)
+                    return target;
+                GitStatus = DescribePullFailure(remote.RepositoryRoot, result);
+                return null;
+            },
+            target => approveTarget(new PullApprovalDetails(target.RepositoryRoot, target.BranchRef,
+                target.RemoteName, target.UpstreamRef, target.Endpoint, target.StartObjectId, target.TargetObjectId,
+                target.ChangesWorktree)),
+            async (target, token) =>
+            {
+                var result = await new GitRepository(target.RepositoryRoot).PullTrustedAsync(target, token);
+                logger.Info($"Pull outcome: exit={result.ExitCode}; failure={result.Failure}; elapsed={result.RemoteDiagnostic?.Elapsed}");
+                if (!result.Success) return DescribePullFailure(target.RepositoryRoot, result, target.BranchRef);
+                var action = target.ChangesWorktree
+                    ? "Pull が完了しました。ブランチ、index、作業ファイルを確認しました。"
+                    : "最新です。作業ファイルの更新はありません。";
+                return $"{action}\n対象リポジトリ {target.RepositoryRoot}\n現在のブランチ {target.BranchRef}\n確認したコミット {target.TargetObjectId}";
+            });
+
+    internal static string DescribePullFailure(string repository, GitResult result, string? branch = null)
+    {
+        var action = result.Failure switch
+        {
+            GitFailure.OutcomeUnknown => "Pull の結果を確定できません。作業ファイルを退避し、Git の状態、現在のブランチ、HEAD、index を確認してください。確認が済むまで再実行や reset は行わないでください。",
+            GitFailure.ConcurrentOperation => "別の Git 操作が進行中です。その操作が終了してから、状態を確認してください。",
+            GitFailure.Divergence => "履歴が分岐しているため fast-forward できません。ローカルと追跡先の履歴を確認してください。",
+            GitFailure.UnsafeOperation => "現在の状態では Pull できません。ブランチ、上流、未コミット・未追跡ファイル、Git 設定を確認してください。",
+            _ when result.Success => "承認対象が変わったため Pull を停止しました。接続先から確認し直してください。",
+            _ => DescribeRemoteFailure(result with { RecoveryPath = null }),
+        };
+        var affected = branch is null ? repository : $"{repository}\n対象ブランチ {branch}";
+        var evidence = result.RecoveryPath is { } path ? $"\n回復記録 {path}" : string.Empty;
+        return $"{action}\n対象リポジトリ {affected}{evidence}";
+    }
 
     internal static string DescribePullApproval(PullApprovalDetails target)
     {
         var change = target.ChangesWorktree
-            ? "対象ブランチ、index、作業ファイルを更新します。"
+            ? "対象ブランチを更新します。差分がある場合は index と作業ファイルを更新します。"
             : "現在と更新先のコミットは同じです。作業ファイルは更新しません。";
         return $"""
             リポジトリ {target.RepositoryRoot}
@@ -29,7 +109,9 @@ public sealed partial class ProjectListViewModel
             """;
     }
 
-    private static bool ConfirmPull(PullApprovalDetails target)
+    private static bool ConfirmPull(PullApprovalDetails target) => CreatePullConfirmation(target).ShowDialog() == true;
+
+    internal static Window CreatePullConfirmation(PullApprovalDetails target)
     {
         var cancel = new Button { Content = "キャンセル", IsCancel = true, IsDefault = true, MinWidth = 120 };
         var run = new Button { Content = "Pull を実行", MinWidth = 120, Margin = new Thickness(8, 0, 0, 0) };
@@ -54,7 +136,7 @@ public sealed partial class ProjectListViewModel
         };
         window.Loaded += (_, _) => cancel.Focus();
         run.Click += (_, _) => window.DialogResult = true;
-        return window.ShowDialog() == true;
+        return window;
     }
 
     internal Task RunGitPullWorkflowAsync<TRemote, TTarget>(
@@ -65,7 +147,7 @@ public sealed partial class ProjectListViewModel
         Func<TTarget, CancellationToken, Task<string>> execute)
         where TRemote : class
         where TTarget : class
-        => ExecuteToolAsync("Git Pull", async token =>
+        => ExecuteToolAsync(PullWorkflowOperation, async token =>
         {
             if (SelectedProject is not { } project) return;
             var projectPath = project.FullPath;
