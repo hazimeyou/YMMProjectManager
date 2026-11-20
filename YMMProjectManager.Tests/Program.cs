@@ -198,6 +198,15 @@ internal static class Program
                 case "RealYmmpxR5":
                     await RealYmmpxR5Tests.RunAsync(workRoot);
                     break;
+                case nameof(AssetManifestTests):
+                    await AssetManifestTests.RunAsync(workRoot);
+                    break;
+                case nameof(OfflineControlsTests):
+                    await OfflineControlsTests.RunAsync(workRoot);
+                    break;
+                case nameof(ProjectListSaveTests):
+                    await ProjectListSaveTests.RunAsync(workRoot);
+                    break;
                 case nameof(ProjectListIdentityRecoveryTests):
                     await ProjectListIdentityRecoveryTests.RunAsync(workRoot);
                     break;
