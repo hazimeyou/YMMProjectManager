@@ -38,8 +38,10 @@ internal sealed class ProjectListDrafts(string directory)
     internal string GetReadyPath(string claimedPath) => CheckPath(claimedPath, claimed: true, requireFile: false).ReadyPath;
 
     internal async Task<string> WriteAsync(ProjectStore baseline, ProjectStore local, Dictionary<string, Evidence> evidence,
-        string? predecessor = null, Action? beforePublication = null, Action? afterPublication = null)
+        string? predecessor = null, Action? beforePublication = null, Action? afterPublication = null,
+        CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (baseline.Revision is null) throw new InvalidDataException("Recovery draft has no base revision.");
         var id = Guid.NewGuid();
         DraftIdentity? previous = predecessor is not null ? RequireCurrent(predecessor) : null;
@@ -57,34 +59,29 @@ internal sealed class ProjectListDrafts(string directory)
         if (bytes.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         CheckDirectory();
         Directory.CreateDirectory(directory);
-        CheckDirectory();
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
         var name = generation > 0 ? $"{id:N}.{family:N}.{generation.ToString(CultureInfo.InvariantCulture)}" : $"{id:N}";
         var path = Path.Combine(directory, $"{name}.draft.json");
         var temporary = path + ".tmp";
-        var owned = false;
-        try
+        await using (var stream = OwnedFilePublication.CreateOwnedOutputFile(temporary))
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+            try
             {
-                owned = true;
-                await stream.WriteAsync(bytes).ConfigureAwait(false);
+                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                await stream.FlushAsync(token).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);
+                beforePublication?.Invoke();
+                token.ThrowIfCancellationRequested();
+                OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, path);
             }
-            beforePublication?.Invoke();
-            File.Move(temporary, path, overwrite: false);
-            owned = false;
-            afterPublication?.Invoke();
-            return path;
-        }
-        finally
-        {
-            if (owned)
+            catch
             {
-                try { File.Delete(temporary); }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
+                OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
+                throw;
             }
         }
+        afterPublication?.Invoke();
+        return path;
     }
 
     internal Task<Draft> ReadAsync(string path, bool claimed = false) =>
@@ -100,7 +97,8 @@ internal sealed class ProjectListDrafts(string directory)
 
     private static async Task<Draft> ReadCoreAsync(string path, DraftIdentity identity)
     {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+        using var stream = ProjectListReplacement.Open(path);
         if (stream.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         var envelope = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options).ConfigureAwait(false);
         if (envelope?.Payload is null || envelope.Sha256 != Convert.ToHexString(SHA256.HashData(envelope.Payload)))

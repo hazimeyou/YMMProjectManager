@@ -18,6 +18,12 @@ internal static class ProjectListPublicationTests
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
         foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation", "missing-intermediate-generation" })
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
+        await Program.RunNamedCaseAsync("Draft publication keeps exclusive ownership through rename",
+            () => TestDraftStagingOwnershipAsync(workRoot));
+        await Program.RunNamedCaseAsync("Draft cancellation before publication keeps the predecessor current",
+            () => TestDraftPublicationCancellationAsync(workRoot, afterPublication: false));
+        await Program.RunNamedCaseAsync("Draft cancellation after publication returns the committed successor",
+            () => TestDraftPublicationCancellationAsync(workRoot, afterPublication: true));
         await Program.RunNamedCaseAsync("List draft retirement cannot race a generation or list publication",
             () => TestRetirementDuringPublicationAsync(workRoot));
         await Program.RunNamedCaseAsync("List publication holds an in-place write lease through replacement",
@@ -350,6 +356,59 @@ internal static class ProjectListPublicationTests
         await leasedPublisher.SaveAsync(store);
         Require(writerRefused && (await repository.LoadAsync()).Projects.Single().DisplayName == "published",
             "An in-place writer reached the checked list, or the lease prevented its legitimate replacement.");
+    }
+
+    private static async Task TestDraftStagingOwnershipAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-draft-staging-ownership");
+        var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        var local = await repository.LoadAsync();
+        local.Projects.Single().DisplayName = "pending";
+        var sharingDenied = false;
+        var ready = await repository.WritePendingDraftAsync(original, local, [], predecessor: null, beforePublication: () =>
+        {
+            var stage = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json.tmp").Single();
+            try
+            {
+                using var writer = new FileStream(stage, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            }
+            catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { sharingDenied = true; }
+        });
+        Require(sharingDenied, "The draft staging file was released before publication.");
+        Require((await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(ready)).Local.Projects.Single().DisplayName == "pending",
+            "The protected draft could not be recovered.");
+        Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)), "Draft publication changed the active list.");
+    }
+
+    private static async Task TestDraftPublicationCancellationAsync(string workRoot, bool afterPublication)
+    {
+        var root = Path.Combine(workRoot, $"list-draft-cancel-{afterPublication}");
+        var (repository, path, baseline, originalBytes) = await ReplacementFixtureAsync(root);
+        var local = await repository.LoadAsync();
+        local.Projects.Single().DisplayName = "previous draft";
+        var previous = await repository.WritePendingDraftAsync(baseline, local, [], predecessor: null);
+        local.Projects.Single().DisplayName = "next draft";
+        using var cancellation = new CancellationTokenSource();
+        string current;
+        try
+        {
+            current = await repository.WritePendingDraftAsync(baseline, local, [], predecessor: previous,
+                beforePublication: afterPublication ? null : cancellation.Cancel,
+                afterPublication: afterPublication ? cancellation.Cancel : null, token: cancellation.Token);
+            Require(afterPublication, "A cancellation before publication was reported as committed.");
+            Require(File.Exists(previous), "Publishing the successor removed historical recovery data.");
+        }
+        catch (OperationCanceledException) when (!afterPublication)
+        {
+            current = previous;
+            Require(Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Length == 1,
+                "A cancellation before publication left a second published draft.");
+        }
+        Require(cancellation.IsCancellationRequested, "The draft cancellation point did not run.");
+        Require((await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(current)).Local.Projects.Single().DisplayName ==
+            (afterPublication ? "next draft" : "previous draft"), "The wrong draft became current.");
+        Require(Directory.GetFiles(repository.RecoveryDirectory, "*.tmp").Length == 0, "Cancellation left a staging file.");
+        Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)), "Draft cancellation changed the active list.");
     }
 
     private static async Task TestRetirementDuringPublicationAsync(string workRoot)

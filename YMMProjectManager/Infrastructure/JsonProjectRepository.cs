@@ -315,12 +315,13 @@ public sealed class JsonProjectRepository : IProjectRepository
 
     internal async Task<string> WritePendingDraftAsync(ProjectStore baseline, ProjectStore local,
         Dictionary<string, ProjectListDrafts.Evidence> evidence, string? predecessor, Action? beforePublication = null,
-        Action? afterPublication = null)
+        Action? afterPublication = null, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         Directory.CreateDirectory(Path.GetDirectoryName(jsonPath)!);
         using var processLock = AcquireProcessLock();
         return await new ProjectListDrafts(RecoveryDirectory)
-            .WriteAsync(baseline, local, evidence, predecessor, beforePublication, afterPublication).ConfigureAwait(false);
+            .WriteAsync(baseline, local, evidence, predecessor, beforePublication, afterPublication, token).ConfigureAwait(false);
     }
 
     internal async Task RetireReadyDraftAsync(string readyDraft, CancellationToken token = default)
