@@ -25,6 +25,7 @@ public sealed partial class ProjectListViewModel
             GitPullState.Diverged => "ローカルと追跡ブランチが分岐しています。",
             GitPullState.OperationInProgress => "別の Git 操作が進行中です。その操作を完了してから状態を確認してください。",
             GitPullState.IndexNotVerifiable => "現在の Git 設定または index では、作業ツリーが安全に更新可能か確認できません。",
+            GitPullState.IgnoredPathCollision => "取り込む履歴のパスが、Git の追跡対象外として除外された作業ファイルと重なります。",
             GitPullState.Dirty => "作業ツリーまたは index に変更があります。",
             GitPullState.TrackingUnavailable => "保存済みの追跡ブランチがありません。必要に応じて Fetch してください。",
             GitPullState.Changed => "確認中にリポジトリが変更されました。再確認してください。",
