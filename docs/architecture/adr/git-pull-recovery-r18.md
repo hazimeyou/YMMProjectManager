@@ -1,5 +1,7 @@
 # ADR R18 — Git Pull の候補公開と中断時の保全
 
+この資料は R18 の判断を記録する。利用者の承認を受けた後続の実装と適用範囲は R19 に記載。 [R19 確認付き fast-forward Pull](git-pull-confirmed-r19.md)
+
 状態 **既存の作業ツリーに反映する Pull は BLOCKED**。候補公開方式の変更は製品判断待ち。
 
 ## 判断条件
