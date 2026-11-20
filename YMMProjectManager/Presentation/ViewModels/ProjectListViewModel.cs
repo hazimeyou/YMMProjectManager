@@ -1,7 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
@@ -1241,10 +1240,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             if (!isProjectListLossless) { AssetStatus = "一覧に安全に保存できない項目があります。ID の設定を中止しました。"; return; }
             if (!File.Exists(project.FullPath)) { AssetStatus = "プロジェクトが見つかりません。移動先の関連付けは未対応です。"; return; }
             var projectPath = project.FullPath;
-            var projectHash = await HashProjectAsync(projectPath).ConfigureAwait(true);
+            var expected = await ProjectFileEvidence.ReadAsync(projectPath);
             if (MessageBox.Show($"次の一覧項目に新しい ID を設定しますか？\n{project.FullPath}\n既存 metadata は関連付けられません。", "プロジェクト ID", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
-            if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || project.FullPath != projectPath || await HashProjectAsync(projectPath).ConfigureAwait(true) != projectHash) return;
-            SetPendingIdentity(project, Guid.NewGuid(), projectHash);
+            await using var file = ProjectFileEvidence.OpenRead(projectPath);
+            var confirmed = await ProjectFileEvidence.ReadAsync(file);
+            if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || project.FullPath != projectPath || confirmed != expected) return;
+            SetPendingIdentity(project, Guid.NewGuid(), confirmed);
             await SaveAsync().ConfigureAwait(true);
             AssetStatus = HasUnsavedProjectList ? "ID を保存しましたが、保存中の一覧変更が未保存です。" : "プロジェクト ID を保存しました。既存 metadata の関連付けは別途必要です。";
         }).ConfigureAwait(true);
@@ -1260,7 +1261,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         await ExecuteWithBusyAsync("Associate legacy metadata", async () =>
         {
             var projectPath = project.FullPath;
-            var projectHash = await HashProjectAsync(projectPath).ConfigureAwait(true);
+            var projectEvidence = await ProjectFileEvidence.ReadAsync(projectPath);
             var before = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
             var manifest = AssetManifestStore.Parse(before);
             var afterLoad = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
@@ -1269,8 +1270,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             var confirm = MessageBox.Show($"一覧項目: {projectPath}\n選択 metadata: {dialog.FileName}\nmetadata の project 名: {manifest.ProjectFileName}\nproject ID: {manifest.ProjectId}\nrevision ID: {manifest.RevisionId}\n\nmetadata の場所は保存しません。今後もファイルを選択する必要があります。名前や内容だけでは同一性を確認できません。同じ論理プロジェクトとして関連付けますか？", "旧素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
             var afterConfirm = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
-            if (!before.SequenceEqual(afterConfirm) || project.FullPath != projectPath || await HashProjectAsync(projectPath).ConfigureAwait(true) != projectHash) throw new InvalidDataException("metadata または project が変更されました。再確認してください。");
-            await AssociateLegacyMetadataAsync(project, manifest, projectHash).ConfigureAwait(true);
+            if (!before.SequenceEqual(afterConfirm) || project.FullPath != projectPath) throw new InvalidDataException("metadata または project が変更されました。再確認してください。");
+            await AssociateLegacyMetadataAsync(project, manifest, projectEvidence).ConfigureAwait(true);
         }).ConfigureAwait(true);
     }
 
@@ -1283,7 +1284,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         return bytes;
     }
 
-    internal async Task AssociateLegacyMetadataAsync(ProjectEntry project, AssetManifest manifest, string? expectedProjectHash = null)
+    internal async Task AssociateLegacyMetadataAsync(ProjectEntry project, AssetManifest manifest, ProjectFileIdentity? expectedProject = null)
     {
         if (!isInitialized || !ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList)
             throw new InvalidOperationException("一覧の状態が変わりました。再確認してください。");
@@ -1293,42 +1294,31 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         if (Projects.Any(item => !ReferenceEquals(item, project) && item.ProjectId == manifest.ProjectId))
             throw new InvalidDataException("この metadata の ID は別の一覧項目に使用されています。");
         var projectPath = project.FullPath;
-        var projectHash = await HashProjectAsync(projectPath).ConfigureAwait(true);
-        if (expectedProjectHash is not null && projectHash != expectedProjectHash) throw new InvalidDataException("project が変更されました。再確認してください。");
+        await using var file = ProjectFileEvidence.OpenRead(projectPath);
+        var projectEvidence = await ProjectFileEvidence.ReadAsync(file);
+        if (expectedProject is not null && projectEvidence != expectedProject) throw new InvalidDataException("project が変更されました。再確認してください。");
         if (!ReferenceEquals(project, SelectedProject) || project.FullPath != projectPath || project.ProjectId is not null || HasUnsavedProjectList)
             throw new InvalidDataException("project または一覧が変更されました。再確認してください。");
-        SetPendingIdentity(project, manifest.ProjectId, projectHash);
+        SetPendingIdentity(project, manifest.ProjectId, projectEvidence);
         await SaveAsync().ConfigureAwait(true);
         AssetStatus = HasUnsavedProjectList ? "ID を保存しましたが、保存中の一覧変更が未保存です。" : "既存の project ID を一覧に関連付けました。metadata と project ファイルは変更していません。";
     }
 
-    private sealed record PendingIdentity(string Path, Guid Id, string Fingerprint, string ProjectHash);
-
-    private static async Task<string> HashProjectAsync(string path)
-    {
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
-        return Convert.ToHexString(await SHA256.HashDataAsync(stream).ConfigureAwait(false));
-    }
-
-    private static async Task<string> HashRecoveryFileAsync(string path)
-    {
-        var full = Path.GetFullPath(path);
-        for (var directory = new DirectoryInfo(Path.GetDirectoryName(full)!); directory is not null; directory = directory.Parent)
-            if ((directory.Attributes & FileAttributes.ReparsePoint) != 0) throw new IOException("project path traverses a reparse point");
-        if ((File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) throw new IOException("project is a reparse point");
-        return await HashProjectAsync(full).ConfigureAwait(false);
-    }
+    private sealed record PendingIdentity(string Path, Guid Id, string Fingerprint, ProjectFileIdentity Evidence);
 
     private string CurrentStoreFingerprint() => ProjectListRecovery.Fingerprint(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList() });
 
-    private void SetPendingIdentity(ProjectEntry project, Guid identity, string projectHash)
+    private void SetPendingIdentity(ProjectEntry project, Guid identity, ProjectFileIdentity evidence)
     {
+        if (Projects.Any(item => !ReferenceEquals(item, project) && item.FileIdentity?.IsSameFile(evidence) == true))
+            throw new InvalidDataException("同じファイルが別のパスから登録されています。");
         var before = CurrentStoreFingerprint();
         var canRecover = !HasUnsavedProjectList && lastSavedFingerprint is not null && before == lastSavedFingerprint;
         project.ProjectId = identity;
+        project.FileIdentity = evidence;
         var current = new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList() };
         pendingIdentity = canRecover && ProjectListRecovery.Fingerprint(current, project.FullPath) == before
-            ? new PendingIdentity(project.FullPath, identity, ProjectListRecovery.Fingerprint(current), projectHash)
+            ? new PendingIdentity(project.FullPath, identity, ProjectListRecovery.Fingerprint(current), evidence)
             : null;
     }
 
@@ -1340,15 +1330,17 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             if (CurrentStoreFingerprint() != pending.Fingerprint) throw new InvalidDataException("未保存の一覧に他の変更があるため自動再適用できません。");
             var latest = await repository.LoadAsync().ConfigureAwait(true);
-            if (CurrentStoreFingerprint() != pending.Fingerprint || await HashProjectAsync(pending.Path).ConfigureAwait(true) != pending.ProjectHash) throw new InvalidDataException("未保存の一覧または project が変更されました。");
-            ProjectListRecovery.ApplyIdentity(latest, pending.Path, pending.Id);
+            await using var file = ProjectFileEvidence.OpenRead(pending.Path);
+            if (CurrentStoreFingerprint() != pending.Fingerprint || await ProjectFileEvidence.ReadAsync(file) != pending.Evidence)
+                throw new InvalidDataException("未保存の一覧または project が変更されました。");
+            ProjectListRecovery.ApplyIdentity(latest, pending.Path, pending.Id, pending.Evidence);
             var previousPaths = Projects.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var latestPaths = latest.Projects.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var added = latestPaths.Except(previousPaths, StringComparer.OrdinalIgnoreCase).Count();
             var removed = previousPaths.Except(latestPaths, StringComparer.OrdinalIgnoreCase).Count();
             var confirm = MessageBox.Show($"最新一覧では追加 {added} 件、削除 {removed} 件です。その他の項目や属性の変更内容は表示しません。\n対象: {pending.Path}\n保留中の ID: {pending.Id}\n最新一覧の内容を維持して、この ID だけ再適用しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
-            if (CurrentStoreFingerprint() != pending.Fingerprint || await HashProjectAsync(pending.Path).ConfigureAwait(true) != pending.ProjectHash) throw new InvalidDataException("未保存の一覧または project が変更されました。");
+            if (CurrentStoreFingerprint() != pending.Fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
             var retained = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless });
             await SaveRepositoryWithPendingDraftAsync(latest);
             projectListRevision = latest.Revision;

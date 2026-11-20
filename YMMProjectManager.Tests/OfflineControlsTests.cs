@@ -1,9 +1,11 @@
 using System.IO;
 using System.Reflection;
+using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Git;
 using YMMProjectManager.Presentation.ViewModels;
+using YMMProjectManager.Presentation.Views;
 
 internal static class OfflineControlsTests
 {
@@ -54,6 +56,22 @@ internal static class OfflineControlsTests
             vm.SelectedProject = null;
             if (vm.AssetStatus != string.Empty || vm.GitStatus != string.Empty) throw new Exception("stale status after selection");
             if (vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("relink enabled without selection");
+            await Program.RunNamedCaseAsync("WPF conflict review requires an explicit decision for both rows", () =>
+            {
+                var first = new ProjectListConflict("first", "DisplayName", "local one", "disk one");
+                var second = new ProjectListConflict("second", "Memo", "local two", "disk two");
+                var dialog = new ProjectListConflictReview([first, second], owner: null);
+                try
+                {
+                    if (dialog.AllDecisionsMade || dialog.Decisions.Count != 0) throw new Exception("A conflict had an implicit choice.");
+                    dialog.ChooseCurrent(false);
+                    if (dialog.AllDecisionsMade || dialog.Decisions[first]) throw new Exception("Disk-side choice was not retained.");
+                    dialog.ChooseCurrent(true);
+                    if (!dialog.AllDecisionsMade || !dialog.Decisions[second]) throw new Exception("Explicit choices were not completed.");
+                }
+                finally { dialog.Close(); }
+                return Task.CompletedTask;
+            });
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
         });

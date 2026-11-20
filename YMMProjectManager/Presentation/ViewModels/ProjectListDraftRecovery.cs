@@ -4,6 +4,7 @@ using System.Windows.Input;
 using Microsoft.Win32;
 using YMMProjectManager.Application;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Presentation.Views;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -54,20 +55,22 @@ public sealed partial class ProjectListViewModel
 
     private static bool IsClaimedDraft(string path) => path.EndsWith(".saving", StringComparison.Ordinal);
 
+    private async Task ExportDraftCopyAsync(ProjectStore local, string title)
+    {
+        var export = new SaveFileDialog { Filter = "JSON (*.json)|*.json", DefaultExt = ".json", OverwritePrompt = false, Title = title };
+        if (export.ShowDialog() != true) return;
+        await new JsonProjectRepository(logger, export.FileName).SaveNewCopyAsync(local);
+        AssetStatus = "未保存の一覧を新しいファイルに退避しました。現在の一覧と保存記録は保持されています。";
+    }
+
     private static ProjectListMergeResult? MergeWithReview(ProjectStore baseline, ProjectStore local, ProjectStore remote)
     {
         var plan = ProjectListMerge.Merge(baseline, local, remote);
-        if (!plan.CanResolveAll || plan.Choices.Count > 12) return plan;
-        var decisions = new Dictionary<ProjectListConflict, bool>();
-        foreach (var conflict in plan.Choices)
-        {
-            var display = $"{conflict.Item} / {conflict.Field}\n\n未保存の値\n{conflict.Local}\n\nディスク上の値\n{conflict.Remote}";
-            if (display.Length > 8000) return plan;
-            var decision = MessageBox.Show(display + "\n\n「はい」で未保存の値、「いいえ」でディスク上の値を選びます。",
-                "一覧の競合を解決", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
-            if (decision == MessageBoxResult.Cancel) return null;
-            decisions.Add(conflict, decision == MessageBoxResult.Yes);
-        }
+        if (!plan.CanResolveAll || plan.Choices.Count > 20 ||
+            plan.Choices.Any(conflict => conflict.Local.Length > 32000 || conflict.Remote.Length > 32000)) return plan;
+        var window = new ProjectListConflictReview(plan.Choices, GetActiveWindow());
+        if (window.ShowDialog() != true || !window.AllDecisionsMade) return null;
+        var decisions = window.Decisions;
         var resolved = ProjectListMerge.Merge(baseline, local, remote, decisions);
         if (resolved.Store is null) return resolved;
         var summary = decisions.Select(pair =>
@@ -104,13 +107,7 @@ public sealed partial class ProjectListViewModel
         }
         if (claimed)
         {
-            var export = new SaveFileDialog { Filter = "JSON (*.json)|*.json", DefaultExt = ".json", OverwritePrompt = false,
-                Title = "保存の成否が不明なため、未保存候補を別ファイルに退避" };
-            if (export.ShowDialog() == true)
-            {
-                await new JsonProjectRepository(logger, export.FileName).SaveNewCopyAsync(draft.Local);
-                AssetStatus = "一覧候補を新しいファイルに退避しました。現在の一覧と保存記録は保持されています。";
-            }
+            await ExportDraftCopyAsync(draft.Local, "保存の成否が不明なため、未保存候補を別ファイルに退避");
             return;
         }
         var latest = await repository.LoadAsync();
@@ -119,9 +116,10 @@ public sealed partial class ProjectListViewModel
         if (plan.Store is null)
         {
             var conflict = string.Join("\n", plan.Conflicts.Take(20));
-            if (MessageBox.Show($"変更が競合しています。保存記録を閉じますか？\n{conflict}", "前回の保存記録",
-                MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes)
-                drafts.Retire(path);
+            var decision = MessageBox.Show($"安全に再適用できない競合があります。\n{conflict}\n\n「はい」で未保存の一覧を別名退避し、「いいえ」で記録を閉じます。「キャンセル」で記録を保持します。",
+                "前回の保存記録", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
+            if (decision == MessageBoxResult.Yes) await ExportDraftCopyAsync(draft.Local, "未保存の一覧を別ファイルに退避");
+            if (decision == MessageBoxResult.No) drafts.Retire(path);
             return;
         }
         var hasChanges = ProjectListRecovery.Fingerprint(plan.Store) != ProjectListRecovery.Fingerprint(latest);

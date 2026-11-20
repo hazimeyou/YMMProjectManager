@@ -132,9 +132,18 @@ internal static class ProjectListRecoveryTests
             timer.Start(); try { await Recover(); } finally { timer.Stop(); }
             if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.First().ProjectId is not null) throw new Exception("changed project was associated during recovery");
             await File.WriteAllTextAsync(project, "{}");
+            var preservedProject = Path.Combine(root, "preserved-before-identity-recovery.ymmp");
+            File.Move(project, preservedProject);
+            File.Copy(preservedProject, project);
+            timer.Start(); try { await Recover(); } finally { timer.Stop(); }
+            if (!conflictVm.HasUnsavedProjectList || (await conflictRepo.LoadAsync()).Projects.First().ProjectId is not null)
+                throw new Exception("identical bytes at a replaced path were associated during recovery");
+            File.Delete(project);
+            File.Move(preservedProject, project);
             dialogReply = 6; confirmTimer.Start(); try { await Recover(); } finally { confirmTimer.Stop(); }
             var recovered = await conflictRepo.LoadAsync();
-            if (conflictVm.HasUnsavedProjectList || recovered.Projects.Count != 2 || recovered.Projects.First().ProjectId != conflictManifest.ProjectId || recovered.Projects.Last().FullPath != extracted)
+            if (conflictVm.HasUnsavedProjectList || recovered.Projects.Count != 2 || recovered.Projects.First().ProjectId != conflictManifest.ProjectId ||
+                recovered.Projects.First().FileIdentity != await ProjectFileEvidence.ReadAsync(project) || recovered.Projects.Last().FullPath != extracted)
                 throw new Exception("identity recovery lost pending or external change: " + conflictVm.AssetStatus + "; pending=" + conflictVm.HasUnsavedProjectList + "; first=" + recovered.Projects.First().ProjectId + "; safe=" + recovered.IsRecoverySafe);
             var generalPath = Path.Combine(root, "general-recovery.json"); var generalRepo = new JsonProjectRepository(logger, generalPath);
             var generalSeed = await generalRepo.LoadAsync(); generalSeed.Projects.Add(Entry(project, Guid.NewGuid())); await generalRepo.SaveAsync(generalSeed);
