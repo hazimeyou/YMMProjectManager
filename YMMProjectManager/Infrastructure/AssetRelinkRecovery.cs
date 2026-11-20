@@ -22,6 +22,9 @@ internal static class AssetRelinkRecovery
     internal sealed record Intent(int Version, Guid OperationId, string Source, string SourceSha256, string Output, string OutputSha256,
         AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetManifest Next, Comparison[] Approved);
 
+    internal sealed record OutputReceipt(AssetRevisionSeries.Head Revision, Guid OperationId, string Source, string SourceSha256,
+        string Output, string OutputSha256);
+
     internal static async Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, CancellationToken token)
     {
@@ -94,6 +97,10 @@ internal static class AssetRelinkRecovery
 
     internal static async Task<AssetRevisionSeries.Head> CompleteAsync(string evidence, string seriesDirectory, AssetRevisionSeries.Head associatedRoot,
         CancellationToken token, string? expectedSource = null)
+        => (await CompleteForTransferAsync(evidence, seriesDirectory, associatedRoot, token, expectedSource).ConfigureAwait(false)).Revision;
+
+    internal static async Task<OutputReceipt> CompleteForTransferAsync(string evidence, string seriesDirectory, AssetRevisionSeries.Head associatedRoot,
+        CancellationToken token, string? expectedSource = null)
     {
         var evidencePath = Path.GetFullPath(evidence);
         await using var intentStream = OpenVerifiedPath(evidencePath);
@@ -156,12 +163,33 @@ internal static class AssetRelinkRecovery
             if (!review.SequenceEqual(intent.Approved) ||
                 !JsonSerializer.SerializeToUtf8Bytes(derived).AsSpan().SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(intent.Next)))
                 throw new InvalidDataException("The pending metadata does not match the relink evidence.");
-            return await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
+            var revision = await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
+            return new OutputReceipt(revision, intent.OperationId, intent.Source, intent.SourceSha256, intent.Output, intent.OutputSha256);
         }
         finally
         {
             foreach (var lease in leases) await lease.DisposeAsync().ConfigureAwait(false);
         }
+    }
+
+    internal static Task VerifyOutputAsync(OutputReceipt receipt, CancellationToken token)
+        => WithVerifiedProjectsAsync(receipt, _ => Task.CompletedTask, token);
+
+    /// <summary>Keeps read leases on both verified files during a short association update.</summary>
+    internal static async Task WithVerifiedProjectsAsync(OutputReceipt receipt, Func<CancellationToken, Task> persist, CancellationToken token)
+    {
+        ArgumentNullException.ThrowIfNull(receipt);
+        ArgumentNullException.ThrowIfNull(persist);
+        token.ThrowIfCancellationRequested();
+        ValidatePaths(receipt.Source, receipt.Output);
+        await using var source = OpenVerifiedPath(receipt.Source);
+        await using var output = OpenVerifiedPath(receipt.Output);
+        if (source.Length > MaxSourceBytes || output.Length > MaxSourceBytes + MaxIntentBytes ||
+            await HashAsync(source, token).ConfigureAwait(false) != receipt.SourceSha256 ||
+            await HashAsync(output, token).ConfigureAwait(false) != receipt.OutputSha256)
+            throw new InvalidDataException("The source project or relink output changed before association transfer.");
+        token.ThrowIfCancellationRequested();
+        await persist(token).ConfigureAwait(false);
     }
 
     private static void ValidatePaths(string source, string output)

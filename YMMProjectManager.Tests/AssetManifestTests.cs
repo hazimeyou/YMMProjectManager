@@ -131,8 +131,33 @@ internal static class AssetManifestTests
         await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default));
         await File.WriteAllBytesAsync(output, published);
         if (await AssetRevisionSeries.ReadHeadAsync(seriesDirectory) != head) throw new Exception("a failed relink changed the metadata head");
-        var completed = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+        var transfer = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, seriesDirectory, head, default, source);
+        var completed = transfer.Revision;
         var repeated = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+        if (transfer.Source != source || transfer.Output != output || transfer.OperationId != completed.RevisionId ||
+            transfer.SourceSha256 != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)) ||
+            transfer.OutputSha256 != Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(published)))
+            throw new Exception("verified transfer receipt did not bind the original source and output");
+        await File.AppendAllTextAsync(output, " ");
+        await RejectAsync(() => AssetRelinkRecovery.WithVerifiedProjectsAsync(transfer,
+            _ => throw new Exception("association transfer ran for a changed output"), default));
+        await File.WriteAllBytesAsync(output, published);
+        var persisted = false;
+        await AssetRelinkRecovery.WithVerifiedProjectsAsync(transfer, _ =>
+        {
+            foreach (var path in new[] { source, output })
+            {
+                try
+                {
+                    using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read);
+                    throw new Exception("the transfer let another writer open a verified file");
+                }
+                catch (IOException) { }
+            }
+            persisted = true;
+            return Task.CompletedTask;
+        }, default);
+        if (!persisted) throw new Exception("association transfer did not run with valid files");
         var rootFile = Path.Combine(seriesDirectory, $"revision-{head.RevisionId:N}.json");
         var rootBytes = await File.ReadAllBytesAsync(rootFile);
         await File.AppendAllTextAsync(rootFile, " ");
