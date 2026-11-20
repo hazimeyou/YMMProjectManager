@@ -26,9 +26,9 @@ internal static class OfflineControlsTests
             await vm.InitializeAsync();
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             if (!vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("selected project relink unavailable");
-            if (!vm.FetchGitCommand.CanExecute(null) || vm.PullGitCommand.CanExecute(null) != ProjectListViewModel.IsConfirmedPullEnabled ||
+            if (!vm.FetchGitCommand.CanExecute(null) || !vm.PullGitCommand.CanExecute(null) ||
                 !vm.InspectGitPullCommand.CanExecute(null) || !vm.PushGitCommand.CanExecute(null) || !vm.GitCloneCommand.CanExecute(null))
-                throw new Exception("trusted Git controls or Pull fail-closed gate are incorrect");
+                throw new Exception("trusted Git controls are unavailable for the selected project");
             if (!vm.RepairProjectListIdentitiesCommand.CanExecute(null))
                 throw new Exception("physical identity review is unavailable for a readable project list");
             if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
@@ -44,8 +44,8 @@ internal static class OfflineControlsTests
                 if (!vm.GitStatus.Contains("ローカルの追跡情報を確認しました") ||
                     !vm.GitStatus.Contains(root, StringComparison.OrdinalIgnoreCase) ||
                     !vm.GitStatus.EndsWith(vm.PullHelp, StringComparison.Ordinal) ||
-                    vm.PullGitCommand.CanExecute(null) != ProjectListViewModel.IsConfirmedPullEnabled)
-                    throw new InvalidOperationException("nested project Pull assessment did not explain its selected repository and write gate");
+                    !vm.PullGitCommand.CanExecute(null))
+                    throw new InvalidOperationException("nested project Pull assessment did not explain its repository and approval path");
 
                 vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(root, "missing", "project.ymmp") };
                 await Invoke("InspectGitPullAsync");
@@ -88,6 +88,7 @@ internal static class OfflineControlsTests
             vm.SelectedProject = null;
             if (vm.AssetStatus != string.Empty || vm.GitStatus != string.Empty) throw new Exception("stale status after selection");
             if (vm.OpenSelectedProjectRelinkCommand.CanExecute(null)) throw new Exception("relink enabled without selection");
+            if (vm.PullGitCommand.CanExecute(null)) throw new Exception("Pull enabled without selection");
             await Program.RunNamedCaseAsync("WPF conflict review requires an explicit decision for both rows", () =>
             {
                 var first = new ProjectListConflict("first", "DisplayName", "local one", "disk one");
@@ -330,7 +331,8 @@ internal static class OfflineControlsTests
                     return target;
                 },
                 _ => { unexpectedCallback = true; return false; }, Execute);
-            if (!vm.CancelToolCommand.CanExecute(null) || !vm.GitStatus.Contains("更新先コミットを確認中"))
+            if (vm.PullGitCommand.CanExecute(null) || !vm.CancelToolCommand.CanExecute(null) ||
+                !vm.GitStatus.Contains("更新先コミットを確認中"))
                 throw new InvalidOperationException("Pull lookup did not expose cancellable progress.");
             vm.CancelToolCommand.Execute(null);
             await pending;

@@ -139,7 +139,8 @@ internal static class GitPullRecoveryTests
         using var limit = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         var output = process.StandardOutput.ReadToEndAsync(limit.Token);
         var error = process.StandardError.ReadToEndAsync(limit.Token);
-        await process.WaitForExitAsync(limit.Token);
+        try { await process.WaitForExitAsync(limit.Token); }
+        finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         await output;
         var details = await error;
         Require(process.ExitCode == 0, $"Could not create a junction inside the synthetic checkout. {details}");

@@ -196,7 +196,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         CreateGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-create"), () => !IsBusy && SelectedProject is not null);
         SwitchGitBranchCommand = new AsyncRelayCommand(() => ChangeGitAsync("branch-switch"), () => !IsBusy && SelectedProject is not null);
         FetchGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Fetch), () => !IsBusy && SelectedProject is not null);
-        PullGitCommand = new AsyncRelayCommand(RunConfirmedGitPullAsync, () => IsConfirmedPullEnabled && !IsBusy && SelectedProject is not null);
+        PullGitCommand = new AsyncRelayCommand(RunConfirmedGitPullAsync, () => !IsBusy && SelectedProject is not null);
         InspectGitPullCommand = new AsyncRelayCommand(InspectGitPullAsync, () => !IsBusy && SelectedProject is not null);
         PushGitCommand = new AsyncRelayCommand(() => RunTrustedRemoteAsync(GitRemoteOperation.Push), () => !IsBusy && SelectedProject is not null);
         GitHistoryCommand = new AsyncRelayCommand(() => ShowGitDetailsAsync(false), () => !IsBusy && SelectedProject is not null);
@@ -243,8 +243,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 if (ex.Data["YmmpxRetainedStagingPath"] is string staging) message += $" 展開一時フォルダー: {staging}";
                 if (name == InspectListPublicationOperation)
                     ProjectListPublicationStatus = "中止しました。保存記録を確認するには、もう一度実行してください。";
-                else if (name == PullWorkflowOperation)
-                    GitStatus = "作業ツリーの更新開始前に中止しました。再実行するには更新先を確認してください。";
                 else if (name == PullWorkflowOperation)
                     GitStatus = "Pull を中止しました。ブランチ、index、作業ファイルの更新は開始していません。";
                 else if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;

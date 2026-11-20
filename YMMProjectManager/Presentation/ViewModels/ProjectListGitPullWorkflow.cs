@@ -8,26 +8,20 @@ namespace YMMProjectManager.Presentation.ViewModels;
 public sealed partial class ProjectListViewModel
 {
     private const string PullWorkflowOperation = "Git Pull";
-    internal static bool IsConfirmedPullEnabled => false;
 
-    public string PullHelp => IsConfirmedPullEnabled
-        ? "現在のブランチとリモートの更新先を確認し、承認後に fast-forward のみ実行します。直接接続できる HTTPS（認証不要）と固定ローカル NTFS の Git リポジトリが対象です。"
-        : "更新を伴う Pull は無効です。外部の操作や中断があっても、ブランチ・index・作業ファイルを一貫して保護できることを確認中です。";
+    public string PullHelp =>
+        "承認後に fast-forward のみ実行します。作業ツリーは固定ローカル NTFS が必要です。接続先はローカル Git または認証不要の HTTPS を指定できます。";
 
-    public string GitRemoteOperationsHelp => IsConfirmedPullEnabled
-        ? "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は接続の承認と更新先の確認が必要です。"
-        : "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は使用できません。";
+    public string GitRemoteOperationsHelp =>
+        "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は接続の承認と更新先の確認が必要です。";
 
     internal sealed record PullApprovalDetails(string RepositoryRoot, string BranchRef, string RemoteName,
         string UpstreamRef, string Endpoint, string StartObjectId, string TargetObjectId, bool ChangesWorktree);
 
-    private Task RunConfirmedGitPullAsync()
-    {
-        if (!IsConfirmedPullEnabled) return Task.CompletedTask;
-        return RunConfirmedGitPullAsync(
+    private Task RunConfirmedGitPullAsync() =>
+        RunConfirmedGitPullAsync(
             (root, remote) => ConfirmGitTrust("更新先コミットを確認するためリモートへ接続します。Pull の実行は次の画面で選べます。", root, remote),
             ConfirmPull);
-    }
 
     internal Task RunConfirmedGitPullAsync(Func<string, string, bool> approveTransport, Func<PullApprovalDetails, bool> approveTarget)
         => RunGitPullWorkflowAsync<GitPullRemote, GitPullTarget>(
