@@ -249,14 +249,26 @@ public sealed class YmmpxLibBridge
             if (entry.Length > maxTotalBytes - total) throw new InvalidDataException("パッケージの展開サイズが上限を超えます。");
             total += entry.Length;
         }
+        var directorySpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in paths)
         {
+            if (!files.Contains(path)) RecordDirectory(path);
             var slash = path.IndexOf('/');
             while (slash >= 0)
             {
-                if (files.Contains(path[..slash])) throw new InvalidDataException("ファイルとディレクトリが競合しています。");
+                var directory = path[..slash];
+                if (files.Contains(directory)) throw new InvalidDataException("ファイルとディレクトリが競合しています。");
+                RecordDirectory(directory);
                 slash = path.IndexOf('/', slash + 1);
             }
+        }
+
+        void RecordDirectory(string directory)
+        {
+            if (directorySpellings.TryGetValue(directory, out var previous) &&
+                !string.Equals(previous, directory, StringComparison.Ordinal))
+                throw new InvalidDataException("大文字・小文字だけが異なるフォルダー名が混在しています。");
+            directorySpellings.TryAdd(directory, directory);
         }
     }
 

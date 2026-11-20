@@ -23,6 +23,8 @@ internal static class YmmpxArchiveValidationTests
         }
         using (var safe = Archive("resources/a.txt", "project.ymmp")) YmmpxLibBridge.ValidateArchiveForExtraction(safe, CancellationToken.None);
         Rejected("../outside.txt"); Rejected("/absolute.txt"); Rejected("C:/outside.txt");
+        Rejected("resources/Folder/a.txt", "resources/folder/b.txt");
+        Rejected("resources/Folder/a.txt", "resources/folder/nested/b.txt");
         Rejected("folder/a.txt", "FOLDER/A.TXT"); Rejected("file", "file/child"); Rejected("NUL.txt"); Rejected("file.txt:stream");
         using (var oversized = Archive("file.txt"))
         {
