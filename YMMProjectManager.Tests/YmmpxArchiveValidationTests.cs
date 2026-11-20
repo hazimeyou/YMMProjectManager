@@ -132,6 +132,8 @@ internal static class YmmpxArchiveValidationTests
         var ownedRoot = Directory.EnumerateDirectories(root, ".ymmpx-*").Single();
         if (!Directory.EnumerateFiles(ownedRoot, "*", SearchOption.AllDirectories).SequenceEqual(new[] { sentinel }))
             throw new Exception("owned staged output files were not cleaned");
+        if (extraction.ErrorMessage?.Contains(ownedRoot, StringComparison.Ordinal) != true)
+            throw new Exception("retained extraction work directory was not reported");
     }
 
     private static async Task VerifyReparseParentRejectedAsync(YmmpxLibBridge bridge, string package, string root)

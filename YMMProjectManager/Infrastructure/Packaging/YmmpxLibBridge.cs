@@ -220,9 +220,11 @@ public sealed class YmmpxLibBridge
         {
             return await Task.Run(() => YmmpxPackageReader.ExtractAsync(ymmpxPath, outputDirectory, token, progress), token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException ex)
         {
             logger.Info($"YmmpxLib 展開キャンセル。対象 ymmpx={ymmpxPath}");
+            if (ex.Data[YmmpxPackageReader.RetainedStagingPath] is string retained)
+                logger.Info($"YMMPX 展開の作業フォルダーが保持されました。path={retained}");
             logger.Flush();
             throw;
         }
@@ -230,10 +232,13 @@ public sealed class YmmpxLibBridge
         {
             logger.Error(ex, $"YmmpxLib 展開失敗。対象 ymmpx={ymmpxPath}, 展開先={outputDirectory}, 探索パス={string.Join(" | ", searchedPaths)}");
             logger.Flush();
+            var retained = ex.Data[YmmpxPackageReader.RetainedStagingPath] as string;
             return new YmmpxExtractResult
             {
                 Success = false,
-                ErrorMessage = "展開に失敗しました。現行の YMMPX 形式と未使用の展開先を確認してください。",
+                ErrorMessage = retained is not null
+                    ? $"展開に失敗しました。公開していない作業フォルダーが保持されています。\n{retained}"
+                    : "展開に失敗しました。現行の YMMPX 形式と未使用の展開先を確認してください。",
             };
         }
     }

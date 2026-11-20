@@ -14,6 +14,7 @@ internal static class YmmpxPackageReader
 {
     private const int MaxMetadataBytes = 16 * 1024 * 1024;
     internal const int MaxProjectBytes = 64 * 1024 * 1024;
+    internal const string RetainedStagingPath = "YmmpxRetainedStagingPath";
     private static readonly uint[] CrcTable = MakeCrcTable();
 
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
@@ -82,15 +83,17 @@ internal static class YmmpxPackageReader
             subdirectoryFence.Dispose();
             RenameOpenedPath(stagingHandle, final);
         }
-        catch
+        catch (Exception ex)
         {
+            var removed = false;
             if (stagingHandle is not null)
             {
                 foreach (var path in files) TryCleanup(path, isDirectory: false);
                 subdirectoryFence.Dispose();
                 foreach (var path in directories.AsEnumerable().Reverse()) TryCleanup(path, isDirectory: true);
-                TryDeleteOpenedPath(stagingHandle);
+                removed = TryDeleteOpenedPath(stagingHandle);
             }
+            if (!removed) ex.Data[RetainedStagingPath] = staging;
             throw;
         }
         finally { stagingHandle?.Dispose(); }
@@ -443,11 +446,11 @@ internal static class YmmpxPackageReader
             throw new IOException("新しい名前で保存できません。", new Win32Exception(Marshal.GetLastWin32Error()));
     }
 
-    internal static void TryDeleteOpenedPath(SafeFileHandle handle)
+    internal static bool TryDeleteOpenedPath(SafeFileHandle handle)
     {
         const int fileDispositionInfo = 4;
         // This marks only the opened file or empty directory for deletion.
-        _ = SetFileInformationByHandle(handle, fileDispositionInfo, [1], 1);
+        return SetFileInformationByHandle(handle, fileDispositionInfo, [1], 1);
     }
 
     [StructLayout(LayoutKind.Sequential)]
