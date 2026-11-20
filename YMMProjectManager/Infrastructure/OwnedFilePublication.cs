@@ -70,7 +70,7 @@ internal static class OwnedFilePublication
         throw new IOException("一時ファイルを作成できません。", new Win32Exception(error));
     }
 
-    internal static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename)
+    internal static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename, FileShare share = FileShare.Read)
     {
         const uint readAttributes = 0x80;
         const uint genericRead = 0x80000000;
@@ -80,7 +80,7 @@ internal static class OwnedFilePublication
         const int fileAttributeTagInfo = 9;
         // Deny writable and delete handles while using a directory as an output boundary.
         var access = (expectDirectory ? readAttributes : genericRead) | (allowRename ? delete : 0);
-        var handle = OpenPath(ExtendedPath(path), access, FileShare.Read,
+        var handle = OpenPath(ExtendedPath(path), access, share,
             IntPtr.Zero, openExisting, openDirectoryWithoutFollowingLink, IntPtr.Zero);
         if (handle.IsInvalid)
         {

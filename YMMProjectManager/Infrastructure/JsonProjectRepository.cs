@@ -35,6 +35,9 @@ public sealed class JsonProjectRepository : IProjectRepository
     private readonly Action? afterDraftClaim;
     private readonly Action? duringReceipt;
     private readonly Action? afterRevisionCheck;
+    private readonly Action? afterParking;
+    private readonly Action? beforeJournalCleanup;
+    private readonly ProjectListReplacement replacement;
     private readonly FileLogger logger;
 
     public JsonProjectRepository(FileLogger logger) : this(logger, ResolvePath()) { }
@@ -43,10 +46,12 @@ public sealed class JsonProjectRepository : IProjectRepository
     internal JsonProjectRepository(FileLogger logger, string path,
         Func<Stream, byte[], CancellationToken, Task>? writeTemporaryFile = null, Action? beforeReplace = null,
         Action? afterReplace = null, Action? beforeCandidate = null, Action? beforeReceipt = null,
-        Action? afterReceipt = null, Action? afterDraftClaim = null, Action? duringReceipt = null, Action? afterRevisionCheck = null)
+        Action? afterReceipt = null, Action? afterDraftClaim = null, Action? duringReceipt = null, Action? afterRevisionCheck = null,
+        Action? afterParking = null, Action? beforeJournalCleanup = null)
     {
         this.logger = logger;
         jsonPath = Path.GetFullPath(path);
+        replacement = new ProjectListReplacement(jsonPath);
         this.writeTemporaryFile = writeTemporaryFile ?? ((stream, bytes, token) => stream.WriteAsync(bytes, token).AsTask());
         this.beforeReplace = beforeReplace;
         this.afterReplace = afterReplace;
@@ -56,6 +61,8 @@ public sealed class JsonProjectRepository : IProjectRepository
         this.afterDraftClaim = afterDraftClaim;
         this.duringReceipt = duringReceipt;
         this.afterRevisionCheck = afterRevisionCheck;
+        this.afterParking = afterParking;
+        this.beforeJournalCleanup = beforeJournalCleanup;
     }
 
     internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
@@ -64,13 +71,34 @@ public sealed class JsonProjectRepository : IProjectRepository
     {
         try
         {
-            var content = await File.ReadAllBytesAsync(jsonPath, cancellationToken).ConfigureAwait(false);
-            return DeserializeStore(content);
+            var content = await TryReadListAsync(cancellationToken).ConfigureAwait(false);
+            if (content is not null) return DeserializeStore(content);
+            // A reader could have arrived while a cooperating save had parked the active name.
+            var processLock = TryAcquireLockInExistingDirectory();
+            using (processLock)
+            {
+                replacement.RequireNoPending();
+                content = await TryReadListAsync(cancellationToken).ConfigureAwait(false);
+                return content is null
+                    ? new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }
+                    : DeserializeStore(content);
+            }
         }
-        catch (FileNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
-        catch (DirectoryNotFoundException) { return new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true }; }
         catch (OperationCanceledException) { throw; }
         catch (Exception ex) { logger.Error("Failed to load projects.json", ex); throw; }
+    }
+
+    private async Task<byte[]?> TryReadListAsync(CancellationToken token)
+    {
+        try { return await File.ReadAllBytesAsync(jsonPath, token).ConfigureAwait(false); }
+        catch (FileNotFoundException) { return null; }
+        catch (DirectoryNotFoundException) { return null; }
+    }
+
+    private FileStream? TryAcquireLockInExistingDirectory()
+    {
+        try { return AcquireProcessLock(); }
+        catch (DirectoryNotFoundException) { return null; }
     }
 
     internal static ProjectStore DeserializeStore(byte[] content)
@@ -316,7 +344,9 @@ public sealed class JsonProjectRepository : IProjectRepository
         using var processLock = AcquireProcessLock();
         var (id, operation) = drafts.GetClaimedIdentity(claimedDraft);
         await drafts.ReadAsync(claimedDraft, claimed: true).ConfigureAwait(false);
-        var store = await LoadAsync(token).ConfigureAwait(false);
+        replacement.RequireNoPending();
+        var content = await TryReadListAsync(token).ConfigureAwait(false);
+        var store = content is null ? new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true } : DeserializeStore(content);
         var revision = store.Revision!;
         var outcome = await new ProjectListPublications(RecoveryDirectory)
             .ReconcileAsync(id, operation, revision.Sha256, revision.OperationId, HasUnconsumedCandidate, token).ConfigureAwait(false);
@@ -345,18 +375,72 @@ public sealed class JsonProjectRepository : IProjectRepository
         catch (DirectoryNotFoundException) { return false; }
     }
 
-    private FileStream? OpenCurrentListForPublication()
+    internal bool HasInterruptedPublication => replacement.IsPending();
+    internal string InterruptedPublicationPath => replacement.JournalPath;
+
+    internal async Task<ProjectListReplacement.Recovery?> InspectInterruptedPublicationAsync(CancellationToken token = default)
     {
-        // Delete sharing permits our atomic replacement. The lease blocks in-place writes, but another process
-        // with delete sharing can still replace the path. The process lock coordinates product writers.
-        try { return new FileStream(jsonPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete, 81920, useAsync: true); }
-        catch (FileNotFoundException) { return null; }
-        catch (DirectoryNotFoundException) { return null; }
+        using var processLock = TryAcquireLockInExistingDirectory();
+        return await replacement.InspectAsync(token).ConfigureAwait(false);
+    }
+
+    internal async Task<ProjectListReplacement.Recovery> RecoverInterruptedPublicationAsync(
+        ProjectListReplacement.Recovery confirmed, CancellationToken token = default)
+    {
+        using var processLock = AcquireProcessLock();
+        return await replacement.ResolveAsync(confirmed, token).ConfigureAwait(false);
+    }
+
+    private async Task ParkAndPublishAsync(FileStream candidate, Guid operationId, ProjectListReplacement.FileVersion original,
+        ProjectListReplacement.FileVersion result, CancellationToken token)
+    {
+        await using var marker = await replacement.WriteAsync(new ProjectListReplacement.Journal(1, operationId, original, result), token).ConfigureAwait(false);
+        var parkedPath = replacement.ParkedPath(operationId);
+        FileStream? parked = null;
+        var didPark = false;
+        var didPublish = false;
+        var verifiedOriginal = false;
+        var journalResolved = false;
+        try
+        {
+            afterRevisionCheck?.Invoke();
+            token.ThrowIfCancellationRequested();
+            File.Move(jsonPath, parkedPath, overwrite: false);
+            didPark = true;
+            afterParking?.Invoke();
+            parked = ProjectListReplacement.Open(parkedPath, canRename: true);
+            verifiedOriginal = await ProjectListReplacement.MatchesAsync(parked, original, token).ConfigureAwait(false);
+            if (!verifiedOriginal)
+                throw new ProjectListConflictException();
+            token.ThrowIfCancellationRequested();
+            OwnedFilePublication.RenameOpenedPath(candidate.SafeFileHandle, jsonPath);
+            didPublish = true;
+            beforeJournalCleanup?.Invoke();
+            if (!OwnedFilePublication.TryDeleteOpenedPath(parked.SafeFileHandle))
+                logger.Info($"Published project list; the original remains in {parkedPath}.");
+            journalResolved = true;
+        }
+        finally
+        {
+            if (!didPark) journalResolved = true;
+            if (didPark && !didPublish && verifiedOriginal && parked is not null)
+            {
+                try
+                {
+                    OwnedFilePublication.RenameOpenedPath(parked.SafeFileHandle, jsonPath);
+                    journalResolved = true;
+                }
+                catch (IOException ex) { logger.Error(ex, $"Project list versions remain beside {jsonPath}."); }
+            }
+            parked?.Dispose();
+            if (journalResolved && !OwnedFilePublication.TryDeleteOpenedPath(marker.SafeFileHandle))
+                logger.Info($"Project list journal left at {replacement.JournalPath}.");
+        }
     }
 
     private async Task SaveCoreAsync(ProjectStore store, string? readyDraft, CancellationToken cancellationToken)
     {
-        string? tempPath = null;
+        FileStream? candidate = null;
         FileStream? processLock = null;
         var drafts = new ProjectListDrafts(RecoveryDirectory);
         string? claim = null;
@@ -377,6 +461,8 @@ public sealed class JsonProjectRepository : IProjectRepository
             Directory.CreateDirectory(directory);
             stage = "inter-process lock";
             processLock = AcquireProcessLock();
+            using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+            replacement.RequireNoPending();
             stage = "write publication receipt";
             Guid? draftId = null;
             if (readyDraft is not null)
@@ -400,30 +486,34 @@ public sealed class JsonProjectRepository : IProjectRepository
             beforeCandidate?.Invoke();
             var candidatePath = CandidatePath(operationId);
             stage = "write temporary file";
-            await using (var stream = new FileStream(candidatePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
-            {
-                tempPath = candidatePath;
-                await writeTemporaryFile(stream, bytes, cancellationToken).ConfigureAwait(false);
-                await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
+            candidate = OwnedFilePublication.CreateOwnedOutputFile(candidatePath, readBack: true);
+            await writeTemporaryFile(candidate, bytes, cancellationToken).ConfigureAwait(false);
+            await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
+            candidate.Flush(flushToDisk: true);
+            var candidateVersion = await ProjectListReplacement.ReadFileVersionAsync(candidate, cancellationToken).ConfigureAwait(false);
+            if (candidateVersion.Sha256 != expectedResult)
+                throw new IOException("The staged project list bytes do not match the publication receipt.");
+
             stage = "replace";
             beforeReplace?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
             await publications.WriteAsync(receipt with { PublicationStarted = true }, cancellationToken).ConfigureAwait(false);
-            await using var current = OpenCurrentListForPublication();
-            var currentHash = current is null ? null :
-                Convert.ToHexString(await SHA256.HashDataAsync(current, cancellationToken).ConfigureAwait(false));
-            if (!string.Equals(currentHash, baseline.Sha256, StringComparison.Ordinal))
+            using var current = ProjectListReplacement.TryOpen(jsonPath, FileShare.Read | FileShare.Delete);
+            var currentVersion = current is null ? null :
+                await ProjectListReplacement.ReadFileVersionAsync(current, cancellationToken).ConfigureAwait(false);
+            if (!string.Equals(currentVersion?.Sha256, baseline.Sha256, StringComparison.Ordinal))
                 throw new ProjectListConflictException();
-            afterRevisionCheck?.Invoke();
-            cancellationToken.ThrowIfCancellationRequested();
-            publicationAttempted = true;
-            if (currentHash is not null)
-                File.Replace(tempPath, jsonPath, null);
+            if (currentVersion is not null)
+            {
+                await ParkAndPublishAsync(candidate, operationId, currentVersion, candidateVersion, cancellationToken).ConfigureAwait(false);
+            }
             else
-                File.Move(tempPath, jsonPath);
-            tempPath = null;
+            {
+                afterRevisionCheck?.Invoke();
+                cancellationToken.ThrowIfCancellationRequested();
+                publicationAttempted = true;
+                OwnedFilePublication.RenameOpenedPath(candidate.SafeFileHandle, jsonPath);
+            }
             committed = true;
             store.Revision = baseline with { Sha256 = expectedResult, OperationId = operationId };
             store.IsRecoverySafe = true;
@@ -447,17 +537,25 @@ public sealed class JsonProjectRepository : IProjectRepository
                 try
                 {
                     if (committed) drafts.Retire(claim, claimed: true);
-                    else if (!publicationAttempted) drafts.ReleaseUnpublishedClaim(claim);
+                    else if (!publicationAttempted && !replacement.IsPending()) drafts.ReleaseUnpublishedClaim(claim);
                 }
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
                 {
                     logger.Error(ex, "A project list draft needs reconciliation.");
                 }
             }
-            if (tempPath is not null)
+            if (candidate is not null)
             {
-                try { File.Delete(tempPath); }
-                catch (Exception ex) { logger.Error(ex, "Failed to remove project list temporary file."); }
+                try
+                {
+                    try
+                    {
+                        if (!committed && !replacement.IsPending())
+                            OwnedFilePublication.TryDeleteOpenedPath(candidate.SafeFileHandle);
+                    }
+                    finally { await candidate.DisposeAsync().ConfigureAwait(false); }
+                }
+                catch (Exception ex) { logger.Error(ex, "Failed to close project list temporary file."); }
             }
             processLock?.Dispose();
             SaveGate.Release();

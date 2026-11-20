@@ -21,6 +21,122 @@ internal static class ProjectListPublicationTests
             () => TestRetirementDuringPublicationAsync(workRoot));
         await Program.RunNamedCaseAsync("List publication holds an in-place write lease through replacement",
             () => TestListLeaseDuringPublicationAsync(workRoot));
+        foreach (var point in new[] { "before-park", "parked", "before-cleanup" })
+            await Program.RunNamedCaseAsync($"Interrupted list replacement: {point}", () => TestInterruptedReplacementAsync(workRoot, point));
+        foreach (var point in new[] { "external-before-park", "external-after-park" })
+            await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
+    }
+
+    private static async Task TestInterruptedReplacementAsync(string workRoot, string point)
+    {
+        var root = Path.Combine(workRoot, "list-replacement-crash", point);
+        var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        await RunReplacementChildAsync(root, point, 86);
+        Require(repository.HasInterruptedPublication, "Interruption lost its durable journal.");
+        var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
+        var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
+        var wanted = point switch
+        {
+            "before-park" => ProjectListReplacement.RecoveryState.ActivePreserved,
+            "parked" => ProjectListReplacement.RecoveryState.CanRestore,
+            "before-cleanup" => ProjectListReplacement.RecoveryState.Published,
+            _ => throw new ArgumentOutOfRangeException(nameof(point)),
+        };
+        Require(evidence.State == wanted, $"Unexpected replacement state: {evidence.State}.");
+        await ExpectRejectedAsync(() => repository.SaveAsync(original));
+        if (wanted == ProjectListReplacement.RecoveryState.CanRestore)
+        {
+            Require(!File.Exists(path), "The crash fixture did not leave the gap.");
+            await ExpectRejectedAsync(() => repository.LoadAsync());
+        }
+        await repository.RecoverInterruptedPublicationAsync(evidence);
+        Require(!repository.HasInterruptedPublication, "Resolved replacement still blocks publication.");
+        var committed = wanted == ProjectListReplacement.RecoveryState.Published;
+        var outcome = await repository.ReconcileDraftAsync(claim);
+        Require(outcome == (committed ? ProjectListPublications.Outcome.Committed : ProjectListPublications.Outcome.Unpublished),
+            "Draft receipt did not reconcile the replacement outcome.");
+        if (committed)
+        {
+            Require((await repository.LoadAsync()).Projects.Single().DisplayName == "after", "The committed list was replaced during recovery.");
+            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(evidence.ParkedPath)), "The old published version was lost.");
+        }
+        else
+        {
+            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)), "The exact baseline did not survive recovery.");
+            var ready = repository.GetReadyDraftPath(claim);
+            var local = (await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(ready)).Local;
+            await repository.SaveReadyDraftAsync(local, ready);
+            Require((await repository.LoadAsync()).Projects.Single().DisplayName == "after", "The released draft could not be reapplied.");
+        }
+    }
+
+    private static async Task TestExternalReplacementAsync(string workRoot, string point)
+    {
+        var root = Path.Combine(workRoot, "list-external-replacement", point);
+        var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
+        var external = """{"Projects":[],"Folders":[],"UnrecognizedExternalField":{"keep":42}}""";
+        await File.WriteAllTextAsync(Path.Combine(root, "synthetic-foreign.json"), external);
+        var local = await repository.LoadAsync();
+        local.Projects.Single().DisplayName = "local";
+        var replaced = point == "external-before-park";
+        Action externalWrite = () => RunReplacementChildAsync(root, point, 0).GetAwaiter().GetResult();
+        var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "publisher.log")), path,
+            afterRevisionCheck: replaced ? externalWrite : null, afterParking: replaced ? null : externalWrite);
+        try { await publisher.SaveAsync(local); throw new Exception("Publication accepted an externally replaced active list."); }
+        catch (IOException) { }
+
+        var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing collision evidence.");
+        Require(File.Exists(evidence.CandidatePath), "Unpublished application version was discarded.");
+        var candidate = JsonProjectRepository.DeserializeStore(await File.ReadAllBytesAsync(evidence.CandidatePath));
+        Require(candidate.Projects.Single().DisplayName == "local", "Application candidate contents changed.");
+        if (replaced)
+        {
+            Require(evidence.State == ProjectListReplacement.RecoveryState.Unverifiable && !File.Exists(path),
+                "The externally replaced file was treated as the checked original.");
+            Require(await File.ReadAllTextAsync(evidence.ParkedPath) == external, "The exact external bytes were not saved.");
+            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(Path.Combine(root, "synthetic-prior.json"))),
+                "Original source was changed.");
+            await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
+            await ExpectRejectedAsync(() => repository.LoadAsync());
+            return;
+        }
+        Require(evidence.State == ProjectListReplacement.RecoveryState.Conflict && await File.ReadAllTextAsync(path) == external,
+            "The newly created external active list was overwritten.");
+        Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(evidence.ParkedPath)), "The original parked bytes were lost.");
+        await File.WriteAllTextAsync(path, external.Replace("42", "43", StringComparison.Ordinal));
+        await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
+        var latest = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Collision evidence was not retained.");
+        await repository.RecoverInterruptedPublicationAsync(latest);
+        Require(await File.ReadAllTextAsync(path) == external.Replace("42", "43", StringComparison.Ordinal) &&
+            File.Exists(latest.CandidatePath) && File.Exists(latest.ParkedPath),
+            "Explicit conflict acknowledgment changed a version or discarded evidence.");
+    }
+
+    private static async Task<(JsonProjectRepository Repository, string Path, ProjectStore Store, byte[] Bytes)> ReplacementFixtureAsync(string root)
+    {
+        Directory.CreateDirectory(root);
+        var path = Path.Combine(root, "projects.json");
+        var repository = Open(root);
+        var baseline = await repository.LoadAsync();
+        baseline.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "before" });
+        await repository.SaveAsync(baseline);
+        return (repository, path, baseline, await File.ReadAllBytesAsync(path));
+    }
+
+    private static async Task RunReplacementChildAsync(string root, string point, int exitCode)
+    {
+        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
+        start.ArgumentList.Add("--list-publication-crash");
+        start.ArgumentList.Add(root);
+        start.ArgumentList.Add(point);
+        using var child = Process.Start(start) ?? throw new Exception("Replacement fixture could not start.");
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            await child.WaitForExitAsync(timeout.Token);
+        }
+        finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
+        Require(child.ExitCode == exitCode, $"Replacement child exit {child.ExitCode}; expected {exitCode} at {point}.");
     }
 
     private static async Task TestListLeaseDuringPublicationAsync(string workRoot)
@@ -301,6 +417,16 @@ internal static class ProjectListPublicationTests
         var prefix = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests")) + Path.DirectorySeparatorChar;
         root = Path.GetFullPath(root);
         if (!root.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Fixture must be isolated.");
+        ProjectListDrafts.CheckOrdinaryDirectory(root);
+        if (point is "external-before-park" or "external-after-park")
+        {
+            if (Path.GetFileName(Path.GetDirectoryName(root)) != "list-external-replacement")
+                throw new InvalidOperationException("External replacement fixture must be isolated.");
+            var active = Path.Combine(root, "projects.json");
+            if (point == "external-before-park") File.Move(active, Path.Combine(root, "synthetic-prior.json"), overwrite: false);
+            File.Move(Path.Combine(root, "synthetic-foreign.json"), active, overwrite: false);
+            return;
+        }
         var repository = Open(root);
         var baseline = await repository.LoadAsync();
         var candidate = await repository.LoadAsync();
@@ -336,7 +462,10 @@ internal static class ProjectListPublicationTests
             beforeReceipt: point == "before-receipt" ? () => Environment.Exit(86) : null,
             afterReceipt: point == "after-receipt" ? () => Environment.Exit(86) : null,
             afterDraftClaim: point is "after-claim" or "fresh-attempt" or "staged-then-external-edit" ? () => Environment.Exit(86) : null,
-            duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null);
+            duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null,
+            afterRevisionCheck: point == "before-park" ? () => Environment.Exit(86) : null,
+            afterParking: point == "parked" ? () => Environment.Exit(86) : null,
+            beforeJournalCleanup: point == "before-cleanup" ? () => Environment.Exit(86) : null);
         if (point == "legacy-claim")
         {
             // R14 published .saving without an operation suffix.
