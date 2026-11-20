@@ -33,7 +33,7 @@ public sealed class GitRepository
     public Task<GitResult> InitializeAsync(CancellationToken token = default) => RunAsync(["init"], token);
     public Task<GitResult> DetectAsync(CancellationToken token = default) => RunAsync(["rev-parse", "--show-toplevel"], token);
     public Task<GitResult> StatusAsync(CancellationToken token = default) => RunAsync(["status", "--porcelain=v1", "-z"], token);
-    public Task<GitResult> HistoryAsync(CancellationToken token = default) => RunAsync(["log", "-n", "100", "--format=%H%x00%an%x00%aI%x00%s"], token);
+    public Task<GitResult> HistoryAsync(CancellationToken token = default) => RunAsync(["log", "-n", "100", "--encoding=UTF-8", "--format=%H%x00%an%x00%aI%x00%s"], token);
     public Task<GitResult> BranchesAsync(CancellationToken token = default) => RunAsync(["branch", "--list", "--no-color"], token);
     public async Task<GitResult> OriginAsync(CancellationToken token = default)
     {
@@ -680,6 +680,9 @@ public sealed class GitRepository
             CreateNoWindow = true,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
+            // Git for Windows emits UTF-8 paths in NUL-terminated output.
+            StandardOutputEncoding = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
         foreach (var name in new[]
         {

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using YMMProjectManager.Infrastructure.Git;
 
 internal static class GitRemoteTests
@@ -47,7 +48,7 @@ internal static class GitRemoteTests
             Check(!(await one.FetchAsync()).Success, "missing remote accepted");
             await Command(source, "config", "user.name", "Synthetic Tester"); await Command(source, "config", "user.email", "synthetic@example.invalid");
             await File.WriteAllTextAsync(Path.Combine(source, "one.txt"), "one");
-            Check((await one.StageAsync(["one.txt"])).Success && (await one.CommitAsync("first")).Success, "initial commit");
+            Check((await one.StageAsync(["one.txt"])).Success && (await one.CommitAsync("first café")).Success, "initial commit");
             await Command(root, "init", "--bare", bare); await Command(source, "remote", "add", "origin", bare);
             var branch = await Command(source, "symbolic-ref", "--short", "HEAD");
             var expectedCommit = await Command(source, "rev-parse", "HEAD");
@@ -334,6 +335,30 @@ internal static class GitRemoteTests
                     if (File.Exists(collision)) File.Delete(collision);
                     File.Delete(unrelated);
                     await File.WriteAllBytesAsync(exclude, priorExclude);
+                }
+            });
+            await Program.RunNamedCaseAsync("Git status and history preserve Unicode outside a UTF-8 console", async () =>
+            {
+                const string name = "素材の候補.txt";
+                var path = Path.Combine(source, name);
+                var previousEncoding = Console.OutputEncoding;
+                await File.WriteAllTextAsync(path, "synthetic");
+                await Command(source, "config", "i18n.logOutputEncoding", "ISO-8859-1");
+                try
+                {
+                    Console.OutputEncoding = Encoding.Latin1;
+                    var status = await one.StatusAsync();
+                    Check(status.Success && status.StandardOutput.Split('\0').Contains("?? " + name),
+                        "Git's UTF-8 path was decoded using the console encoding");
+                    var history = await one.HistoryAsync();
+                    Check(history.Success && history.StandardOutput.Contains("first café", StringComparison.Ordinal),
+                        "Git history encoding was affected by repository configuration");
+                }
+                finally
+                {
+                    Console.OutputEncoding = previousEncoding;
+                    await Command(source, "config", "--unset", "i18n.logOutputEncoding");
+                    File.Delete(path);
                 }
             });
             var disabledPull = await one.PullAsync();
