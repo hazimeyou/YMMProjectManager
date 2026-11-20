@@ -337,6 +337,44 @@ internal static class GitRemoteTests
                     await File.WriteAllBytesAsync(exclude, priorExclude);
                 }
             });
+            await Program.RunNamedCaseAsync("Branch switch preserves an ignored file that overlaps the target tree", async () =>
+            {
+                const string targetBranch = "r18-ignore-target";
+                var exclude = Path.Combine(source, ".git", "info", "exclude");
+                var priorExclude = await File.ReadAllBytesAsync(exclude);
+                var path = Path.Combine(source, "two.txt");
+                var index = Path.Combine(source, ".git", "index");
+                const string contents = "protected synthetic ignored material";
+
+                await Command(source, "branch", targetBranch, "refs/remotes/origin/" + branch);
+                var oldHead = await Command(source, "rev-parse", "HEAD");
+                var oldIndexHash = SHA256.HashData(await File.ReadAllBytesAsync(index));
+                try
+                {
+                    await File.AppendAllTextAsync(exclude, "\n/two.txt\n");
+                    await File.WriteAllTextAsync(path, contents);
+                    Check(await Command(source, "check-ignore", "two.txt") == "two.txt", "branch-switch ignore fixture invalid");
+
+                    var switched = await one.SwitchBranchAsync(targetBranch);
+                    Check(!switched.Success, "branch switch reported success despite an ignored path collision");
+                    Check(await File.ReadAllTextAsync(path) == contents, "branch switch changed ignored file contents");
+                    Check(await Command(source, "symbolic-ref", "--short", "HEAD") == branch &&
+                        await Command(source, "rev-parse", "HEAD") == oldHead, "ref changed after a refused branch switch");
+                    Check(SHA256.HashData(await File.ReadAllBytesAsync(index)).SequenceEqual(oldIndexHash),
+                        "index changed after a refused branch switch");
+
+                    File.Delete(path);
+                    Check((await one.SwitchBranchAsync(targetBranch)).Success &&
+                        await File.ReadAllTextAsync(path) == "two", "branch switch without collision failed");
+                }
+                finally
+                {
+                    if (await Command(source, "symbolic-ref", "--short", "HEAD") == targetBranch)
+                        await Command(source, "switch", branch);
+                    File.Delete(path);
+                    await File.WriteAllBytesAsync(exclude, priorExclude);
+                }
+            });
             await Program.RunNamedCaseAsync("Git status and history preserve Unicode outside a UTF-8 console", async () =>
             {
                 const string name = "素材の候補.txt";

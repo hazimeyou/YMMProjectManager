@@ -52,8 +52,8 @@ public sealed class GitRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         return RunAsync(["commit", "-m", message], token);
     }
-    public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("branch", name, token);
-    public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => RunBranchAsync("switch", name, token);
+    public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => RunBranchAsync(["branch"], name, token);
+    public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => RunBranchAsync(["switch", "--no-overwrite-ignore"], name, token);
 
     public Task<GitResult> InspectRemoteAsync(GitRemoteOperation operation, CancellationToken token = default) =>
         WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
@@ -631,11 +631,11 @@ public sealed class GitRepository
         return false;
     }
 
-    private Task<GitResult> RunBranchAsync(string command, string name, CancellationToken token)
+    private Task<GitResult> RunBranchAsync(string[] command, string name, CancellationToken token)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         if (name.StartsWith('-') || name.Contains('\0')) throw new ArgumentException("Invalid branch name.", nameof(name));
-        return RunAsync([command, name], token);
+        return RunAsync([.. command, name], token);
     }
 
     private Task<GitResult> RunPathsAsync(string[] prefix, IReadOnlyCollection<string> paths, CancellationToken token)
