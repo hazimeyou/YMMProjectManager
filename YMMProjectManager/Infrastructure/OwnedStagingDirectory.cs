@@ -32,6 +32,9 @@ internal sealed class OwnedStagingDirectory : IDisposable
 
     internal static OwnedStagingDirectory Reserve(string parent, string prefix)
     {
+        if (string.IsNullOrWhiteSpace(prefix) || prefix.IndexOfAny(System.IO.Path.GetInvalidFileNameChars()) >= 0)
+            throw new ArgumentException("A staging prefix must be one filename component.", nameof(prefix));
+        parent = System.IO.Path.GetFullPath(parent);
         var paths = new Stack<string>();
         for (var cursor = new DirectoryInfo(parent); cursor is not null; cursor = cursor.Parent)
             paths.Push(cursor.FullName);
@@ -61,6 +64,10 @@ internal sealed class OwnedStagingDirectory : IDisposable
     internal void Publish(string destination, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        destination = System.IO.Path.GetFullPath(destination);
+        if (!string.Equals(System.IO.Path.GetDirectoryName(destination), System.IO.Path.GetDirectoryName(Path), StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(destination, Path, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("A staging directory can only be published to a different name under the reserved parent.", nameof(destination));
         using var publication = OpenForPublication();
         cancellationToken.ThrowIfCancellationRequested();
         OwnedFilePublication.RenameOpenedPath(publication, destination);

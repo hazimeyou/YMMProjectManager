@@ -8,6 +8,21 @@ internal static class YmmpxFailureTests
     public static async Task RunAsync(string workRoot)
     {
         var root = Path.Combine(workRoot, "ymmpx-failure"); Directory.CreateDirectory(root);
+        await Program.RunNamedCaseAsync("Owned staging directory publishes only under its reserved parent", () =>
+        {
+            var elsewhere = Path.Combine(root, "other-parent");
+            Directory.CreateDirectory(elsewhere);
+            using var reserved = OwnedStagingDirectory.Reserve(root, ".stage-");
+            try
+            {
+                reserved.Publish(Path.Combine(elsewhere, "unexpected"), default);
+                throw new InvalidOperationException("Staging tried to publish outside its reserved parent.");
+            }
+            catch (ArgumentException) { }
+            if (reserved.CheckRecoveryPath() != reserved.Path || !reserved.DeleteIfEmpty())
+                throw new InvalidOperationException("Rejected destination changed the reserved stage.");
+            return Task.CompletedTask;
+        });
         var project = Path.Combine(root, "sample.ymmp"); var output = Path.Combine(root, "sample.ymmpx");
         await File.WriteAllTextAsync(project, "{}", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         await File.WriteAllTextAsync(output, "original package");
