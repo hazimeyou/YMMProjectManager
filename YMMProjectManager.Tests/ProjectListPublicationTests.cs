@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.IO;
 using System.Security.AccessControl;
+using System.Security.Cryptography;
+using System.Text.Json;
 using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
@@ -11,13 +13,17 @@ internal static class ProjectListPublicationTests
     {
         foreach (var point in new[]
         {
-            "before-receipt", "during-receipt", "after-receipt", "after-claim", "before-candidate", "write", "flushed", "published",
+            "before-receipt", "during-receipt", "after-receipt", "after-claim", "before-candidate", "write", "flushed", "sealed-receipt", "published",
             "fresh-attempt", "later-saves", "staged-then-external-edit", "externally-restored", "raw-edit-after-later-save",
             "missing-descendant", "corrupt-descendant", "duplicate-descendant", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
         })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
         foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation", "missing-intermediate-generation" })
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
+        await Program.RunNamedCaseAsync("Publication receipt keeps exclusive ownership through rename",
+            () => TestReceiptStagingOwnershipAsync(workRoot));
+        await Program.RunNamedCaseAsync("Started receipt preserves an occupied publication path",
+            () => TestReceiptTargetOccupiedAsync(workRoot));
         await Program.RunNamedCaseAsync("Draft publication keeps exclusive ownership through rename",
             () => TestDraftStagingOwnershipAsync(workRoot));
         await Program.RunNamedCaseAsync("Draft cancellation before publication keeps the predecessor current",
@@ -174,7 +180,14 @@ internal static class ProjectListPublicationTests
             var (id, operation) = drafts.GetClaimedIdentity(claim);
             var legacy = new ProjectListPublications.Receipt(2, operation!.Value, id,
                 evidence.Proof.Original.Sha256, evidence.Proof.Result.Sha256, PublicationStarted: true);
-            await new ProjectListPublications(repository.RecoveryDirectory).WriteAsync(legacy, default);
+            var canonical = Path.Combine(repository.RecoveryDirectory, $"{id:N}-{operation:N}.publication.json");
+            var payload = JsonSerializer.SerializeToUtf8Bytes(legacy);
+            File.Move(canonical, canonical + ".fixture-v3", overwrite: false);
+            await File.WriteAllBytesAsync(canonical, JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                Payload = payload,
+                Hash = Convert.ToHexString(SHA256.HashData(payload)),
+            }));
         }
         else if (change == "equal-content-replacement")
         {
@@ -356,6 +369,55 @@ internal static class ProjectListPublicationTests
         await leasedPublisher.SaveAsync(store);
         Require(writerRefused && (await repository.LoadAsync()).Projects.Single().DisplayName == "published",
             "An in-place writer reached the checked list, or the lease prevented its legitimate replacement.");
+    }
+
+    private static async Task TestReceiptStagingOwnershipAsync(string workRoot)
+    {
+        var directory = Path.Combine(workRoot, "list-receipt-stage");
+        var operation = Guid.NewGuid();
+        var receipt = new ProjectListPublications.Receipt(3, operation, Guid.NewGuid(), new string('1', 64), new string('2', 64), false);
+        var publications = new ProjectListPublications(directory);
+        var sharingDenied = false;
+        await publications.WriteAsync(receipt, default, beforePublication: () =>
+        {
+            var stage = Directory.GetFiles(directory, "*.tmp").Single();
+            try
+            {
+                using var writer = new FileStream(stage, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+            }
+            catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { sharingDenied = true; }
+        });
+        Require(sharingDenied, "The receipt staging file was released before publication.");
+        Require(await publications.ReconcileAsync(receipt.DraftId!.Value, operation, receipt.Expected, null,
+            (_, _, _) => Task.FromResult(false), default) == ProjectListPublications.Outcome.Unpublished,
+            "The protected receipt could not be used for draft recovery.");
+    }
+
+    private static async Task TestReceiptTargetOccupiedAsync(string workRoot)
+    {
+        var directory = Path.Combine(workRoot, "list-receipt-occupied");
+        var operation = Guid.NewGuid();
+        var draft = Guid.NewGuid();
+        var receipt = new ProjectListPublications.Receipt(3, operation, draft, new string('1', 64), new string('2', 64), false);
+        var publications = new ProjectListPublications(directory);
+        await publications.WriteAsync(receipt, default);
+        var ready = Path.Combine(directory, $"{draft:N}-{operation:N}.publication.json");
+        const string collision = "Other synthetic file at the intended receipt name";
+        await File.WriteAllTextAsync(ready, collision);
+        try
+        {
+            await publications.WriteAsync(receipt with
+            {
+                PublicationStarted = true,
+                Candidate = new ProjectListReplacement.FileVersion(1, Guid.NewGuid(), receipt.Result),
+            }, default);
+            throw new Exception("Receipt publication overwrote the occupied path.");
+        }
+        catch (IOException) { }
+        Require(await File.ReadAllTextAsync(ready) == collision, "Receipt publication changed the occupied file.");
+        Require(Directory.GetFiles(directory, "*.publication-sealed.json").Length == 1 &&
+            Directory.GetFiles(directory, "*.publication-pending.json").Length == 0 &&
+            Directory.GetFiles(directory, "*.tmp").Length == 0, "Failed receipt publication discarded its evidence or left an owned temp.");
     }
 
     private static async Task TestDraftStagingOwnershipAsync(string workRoot)
@@ -593,7 +655,21 @@ internal static class ProjectListPublicationTests
         var (draftId, operation) = drafts.GetClaimedIdentity(claim);
         var draft = await drafts.ReadAsync(claim, claimed: true);
         Require((point == "legacy-claim") == (operation is null), "The new claim did not bind exactly one operation.");
+        if (point == "sealed-receipt")
+        {
+            Require(Directory.GetFiles(repository.RecoveryDirectory, $"{draftId:N}-{operation:N}.publication-sealed.json").Length == 1,
+                "Receipt interruption did not preserve the sealed evidence.");
+            Require(!File.Exists(Path.Combine(repository.RecoveryDirectory, $"{draftId:N}-{operation:N}.publication-pending.json")),
+                "The consumed pending receipt remained replayable.");
+            Require(await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown &&
+                await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown && File.Exists(claim),
+                "Receipt interruption allowed the claimed draft to be replayed.");
+            Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"))),
+                "Receipt interruption changed the original project list.");
+            return;
+        }
         var receipt = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication.json")
+            .Concat(Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication-pending.json"))
             .Single(path => Path.GetFileName(path).StartsWith($"{draftId:N}-", StringComparison.Ordinal) &&
                 (operation is null || Path.GetFileName(path).Contains($"{operation:N}", StringComparison.Ordinal)));
         if (point is "later-saves" or "staged-then-external-edit" or "raw-edit-after-later-save" or
@@ -691,6 +767,20 @@ internal static class ProjectListPublicationTests
             throw new Exception("Generation fault hook returned unexpectedly.");
         }
         var ready = await drafts.WriteAsync(baseline, candidate, []);
+        if (point == "sealed-receipt")
+        {
+            var publications = new ProjectListPublications(repository.RecoveryDirectory);
+            var receipt = new ProjectListPublications.Receipt(3, Guid.NewGuid(), drafts.GetReadyId(ready),
+                baseline.Revision!.Sha256, new string('2', 64), false);
+            await publications.WriteAsync(receipt, default);
+            drafts.Claim(ready, receipt.Id);
+            await publications.WriteAsync(receipt with
+            {
+                PublicationStarted = true,
+                Candidate = new ProjectListReplacement.FileVersion(1, Guid.NewGuid(), receipt.Result),
+            }, default, beforePublication: () => Environment.Exit(86));
+            throw new Exception("Receipt interruption hook returned unexpectedly.");
+        }
         if (point == "fresh-attempt")
         {
             var publications = new ProjectListPublications(repository.RecoveryDirectory);

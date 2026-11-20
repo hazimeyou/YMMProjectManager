@@ -19,47 +19,54 @@ internal sealed class ProjectListPublications(string directory)
         AllowDuplicateProperties = false,
     };
 
-    internal async Task WriteAsync(Receipt receipt, CancellationToken token, Action? afterPartialWrite = null)
+    internal async Task WriteAsync(Receipt receipt, CancellationToken token, Action? afterPartialWrite = null,
+        Action? beforePublication = null)
     {
+        token.ThrowIfCancellationRequested();
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         Directory.CreateDirectory(directory);
-        ProjectListDrafts.CheckOrdinaryDirectory(directory);
-        var name = Name(receipt.DraftId, receipt.Id);
-        var path = Path.Combine(directory, name);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        var pendingPath = Path.Combine(directory, PendingName(receipt.DraftId, receipt.Id));
+        var path = receipt.PublicationStarted ? Path.Combine(directory, Name(receipt.DraftId, receipt.Id)) : pendingPath;
         var temporary = Path.Combine(directory, $".{receipt.Id:N}.tmp");
         var payload = JsonSerializer.SerializeToUtf8Bytes(receipt, Options);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new Envelope(payload, Digest(payload)), Options);
-        var owned = false;
+        await using var stream = OwnedFilePublication.CreateOwnedOutputFile(temporary);
+        FileStream? pending = null;
+        var published = false;
         try
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
+            if (afterPartialWrite is null)
+                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+            else
             {
-                owned = true;
-                if (afterPartialWrite is null)
-                    await stream.WriteAsync(bytes, token).ConfigureAwait(false);
-                else
-                {
-                    await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), token).ConfigureAwait(false);
-                    afterPartialWrite();
-                    await stream.WriteAsync(bytes.AsMemory(bytes.Length / 2), token).ConfigureAwait(false);
-                }
-                stream.Flush(flushToDisk: true);
+                await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), token).ConfigureAwait(false);
+                afterPartialWrite();
+                await stream.WriteAsync(bytes.AsMemory(bytes.Length / 2), token).ConfigureAwait(false);
             }
+            stream.Flush(flushToDisk: true);
             token.ThrowIfCancellationRequested();
             if (receipt.PublicationStarted)
-                File.Replace(temporary, path, null);
-            else
-                File.Move(temporary, path, overwrite: false);
-            owned = false;
+            {
+                pending = OpenReceipt(pendingPath, canRename: true);
+                var initial = await ReadAsync(pending, pendingPath, token).ConfigureAwait(false);
+                if (initial != receipt with { PublicationStarted = false, Candidate = null })
+                    throw new InvalidDataException("The prepared publication receipt changed.");
+                token.ThrowIfCancellationRequested();
+                // Consume the only name that proves publication has not started. If this process
+                // stops before publishing the next receipt, recovery must preserve the claim as unknown.
+                OwnedFilePublication.RenameOpenedPath(pending.SafeFileHandle, Path.Combine(directory, SealedName(receipt.DraftId, receipt.Id)));
+            }
+            beforePublication?.Invoke();
+            token.ThrowIfCancellationRequested();
+            OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, path);
+            published = true;
+            if (pending is not null) OwnedFilePublication.TryDeleteOpenedPath(pending.SafeFileHandle);
         }
         finally
         {
-            if (owned)
-            {
-                try { File.Delete(temporary); }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
-            }
+            pending?.Dispose();
+            if (!published) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
         }
     }
 
@@ -68,17 +75,32 @@ internal sealed class ProjectListPublications(string directory)
     {
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         if (!Directory.Exists(directory)) return Outcome.Unknown;
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
         var known = false;
         var unpublished = true;
         var committed = false;
+        var operations = new HashSet<Guid>();
         // Older claims did not name an operation. Keep their conservative all-receipts check.
-        var pattern = boundOperation is { } operation ? Name(draftId, operation) : $"{Prefix(draftId)}*.publication.json";
-        foreach (var path in Directory.EnumerateFiles(directory, pattern))
+        var pattern = boundOperation is { } operation ? $"{Prefix(draftId)}{operation:N}" : $"{Prefix(draftId)}*";
+        var paths = Directory.EnumerateFiles(directory, pattern + ".publication.json")
+            .Concat(Directory.EnumerateFiles(directory, pattern + ".publication-pending.json"));
+        if (boundOperation is null && Directory.EnumerateFileSystemEntries(directory, pattern + ".publication-sealed.json").Any())
+            return Outcome.Unknown;
+        if (boundOperation is not null)
+        {
+            var matching = paths.Take(2).ToArray();
+            if (matching.Length != 1) return Outcome.Unknown;
+            paths = matching;
+        }
+        foreach (var path in paths)
         {
             token.ThrowIfCancellationRequested();
             var receipt = await ReadAsync(path, token).ConfigureAwait(false);
-            if (receipt.DraftId != draftId || (boundOperation is { } required && receipt.Id != required))
+            if (receipt.DraftId != draftId || (boundOperation is { } required && receipt.Id != required) || !operations.Add(receipt.Id))
                 throw new InvalidDataException("Invalid publication receipt binding.");
+            if (Path.GetFileName(path) == PendingName(receipt.DraftId, receipt.Id) &&
+                HasFileSystemEntry(Path.Combine(directory, SealedName(receipt.DraftId, receipt.Id))))
+                return Outcome.Unknown;
             known = true;
             committed |= receipt.Result == current && receipt.Id == currentOperation;
             if (boundOperation is not null)
@@ -122,9 +144,19 @@ internal sealed class ProjectListPublications(string directory)
 
     private static async Task<Receipt> ReadAsync(string path, CancellationToken token)
     {
-        if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
-            throw new InvalidDataException("Invalid publication receipt path.");
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, true);
+        using var stream = OpenReceipt(path);
+        return await ReadAsync(stream, path, token).ConfigureAwait(false);
+    }
+
+    private static FileStream OpenReceipt(string path, bool canRename = false)
+    {
+        try { return ProjectListReplacement.Open(path, canRename); }
+        catch (IOException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 2 or 3 })
+        { throw new FileNotFoundException("Publication receipt was not found.", path, ex); }
+    }
+
+    private static async Task<Receipt> ReadAsync(FileStream stream, string path, CancellationToken token)
+    {
         if (stream.Length > 4096) throw new InvalidDataException("Invalid publication receipt length.");
         var envelope = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options, token).ConfigureAwait(false);
         if (envelope?.Payload is null || Digest(envelope.Payload) != envelope.Hash)
@@ -133,7 +165,8 @@ internal sealed class ProjectListPublications(string directory)
         if (receipt is not { Version: 1 or 2 or 3 } || receipt.Id == Guid.Empty || receipt.DraftId == Guid.Empty ||
             receipt.ExpectedOperation == Guid.Empty || receipt.ExpectedOperation == receipt.Id ||
             (receipt.ExpectedOperation is not null && (receipt.Version == 1 || receipt.Expected is null)) ||
-            Path.GetFileName(path) != Name(receipt.DraftId, receipt.Id) ||
+            (Path.GetFileName(path) != Name(receipt.DraftId, receipt.Id) &&
+                (receipt.PublicationStarted || Path.GetFileName(path) != PendingName(receipt.DraftId, receipt.Id))) ||
             !IsDigest(receipt.Result) || (receipt.Expected is not null && !IsDigest(receipt.Expected)) ||
             (receipt.Candidate is not null) != (receipt.Version == 3 && receipt.PublicationStarted) ||
             (receipt.Candidate is { } candidate && (candidate.FileId == Guid.Empty || candidate.Sha256 != receipt.Result)))
@@ -141,8 +174,17 @@ internal sealed class ProjectListPublications(string directory)
         return receipt;
     }
 
+    private static bool HasFileSystemEntry(string path)
+    {
+        try { _ = File.GetAttributes(path); return true; }
+        catch (FileNotFoundException) { return false; }
+        catch (DirectoryNotFoundException) { return false; }
+    }
+
     private static bool IsDigest(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
     private static string Digest(byte[] data) => Convert.ToHexString(SHA256.HashData(data));
     private static string Prefix(Guid? draftId) => draftId is { } id ? $"{id:N}-" : "standalone-";
     private static string Name(Guid? draftId, Guid id) => $"{Prefix(draftId)}{id:N}.publication.json";
+    private static string PendingName(Guid? draftId, Guid id) => $"{Prefix(draftId)}{id:N}.publication-pending.json";
+    private static string SealedName(Guid? draftId, Guid id) => $"{Prefix(draftId)}{id:N}.publication-sealed.json";
 }
