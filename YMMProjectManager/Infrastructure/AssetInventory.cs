@@ -193,21 +193,22 @@ public static class AssetInventory
         var bytes = JsonSerializer.SerializeToUtf8Bytes(assets, new JsonSerializerOptions { WriteIndented = true });
         var fullPath = Path.GetFullPath(path);
         var temporary = fullPath + ".tmp-" + Guid.NewGuid().ToString("N");
-        var created = false;
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!);
+        await using var stream = OwnedFilePublication.CreateOwnedOutputFile(temporary);
+        var published = false;
         try
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
-            {
-                created = true;
-                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
-                await stream.FlushAsync(token).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
+            await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+            await stream.FlushAsync(token).ConfigureAwait(false);
+            stream.Flush(flushToDisk: true);
             token.ThrowIfCancellationRequested();
-            File.Move(temporary, fullPath);
-            created = false;
+            OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, fullPath);
+            published = true;
         }
-        finally { if (created) { try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
+        finally
+        {
+            if (!published) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
+        }
     }
 
     public static async Task<IReadOnlyList<AssetMetadata>> LoadAsync(string path, CancellationToken token = default)

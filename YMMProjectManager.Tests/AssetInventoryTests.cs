@@ -19,6 +19,29 @@ internal static class AssetInventoryTests
         try { await AssetInventory.ExportAsync(output, [asset]); throw new Exception("overwrite accepted"); } catch (IOException) { }
         var after = await File.ReadAllBytesAsync(output);
         Check(before.SequenceEqual(after), "existing manifest changed");
+        await Program.RunNamedCaseAsync("Concurrent asset exports publish one complete manifest", async () =>
+        {
+            var destination = Path.Combine(root, "parallel-assets.json");
+            using var gate = new Barrier(2);
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            async Task<(bool Published, AssetMetadata Expected)> ExportAsync(AssetMetadata expected)
+            {
+                gate.SignalAndWait(timeout.Token);
+                try
+                {
+                    await AssetInventory.ExportAsync(destination, [expected], timeout.Token);
+                    return (true, expected);
+                }
+                catch (IOException) { return (false, expected); }
+            }
+
+            var second = asset with { DownloadUrl = "https://example.invalid/another" };
+            var results = await Task.WhenAll(Task.Run(() => ExportAsync(asset)), Task.Run(() => ExportAsync(second)));
+            Check(results.Count(entry => entry.Published) == 1 &&
+                (await AssetInventory.LoadAsync(destination)).Single() == results.Single(entry => entry.Published).Expected &&
+                !Directory.EnumerateFiles(root, "parallel-assets.json.tmp-*").Any(),
+                "a conflicting export overwrote an existing result or left its temporary file");
+        });
         await File.WriteAllTextAsync(Path.Combine(root, "asset.txt"), "change");
         Check(await AssetInventory.VerifyAsync(root, asset) == AssetVerification.HashMismatch, "hash mismatch");
         var project = Path.Combine(root, "inventory.ymmp");
