@@ -59,7 +59,7 @@ internal sealed class ProjectListDrafts(string directory)
         if (bytes.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         CheckDirectory();
         Directory.CreateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         var name = generation > 0 ? $"{id:N}.{family:N}.{generation.ToString(CultureInfo.InvariantCulture)}" : $"{id:N}";
         var path = Path.Combine(directory, $"{name}.draft.json");
         var temporary = path + ".tmp";
@@ -97,7 +97,7 @@ internal sealed class ProjectListDrafts(string directory)
 
     private static async Task<Draft> ReadCoreAsync(string path, DraftIdentity identity)
     {
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
         using var stream = ProjectListReplacement.Open(path);
         if (stream.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         var envelope = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options).ConfigureAwait(false);
@@ -131,25 +131,36 @@ internal sealed class ProjectListDrafts(string directory)
     internal string Claim(string path, Guid operation)
     {
         if (operation == Guid.Empty) throw new ArgumentException("A recovery claim requires an operation ID.", nameof(operation));
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        using var source = OpenDraftForRename(path);
         RequireCurrent(path);
         var claimed = $"{path}.{operation:N}.saving";
-        File.Move(path, claimed, overwrite: false);
+        OwnedFilePublication.RenameOpenedPath(source.SafeFileHandle, claimed);
         return claimed;
     }
 
     internal string ReleaseUnpublishedClaim(string path)
     {
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        using var source = OpenDraftForRename(path, claimed: true);
         RequireCurrent(path, claimed: true);
         var ready = GetReadyPath(path);
-        File.Move(path, ready, overwrite: false);
+        OwnedFilePublication.RenameOpenedPath(source.SafeFileHandle, ready);
         return ready;
     }
 
     internal void Retire(string path, bool claimed = false)
     {
-        CheckPath(path, claimed);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        using var source = OpenDraftForRename(path, claimed);
         var closed = claimed ? GetReadyPath(path) + ".closed" : path + ".closed";
-        File.Move(path, closed, overwrite: false);
+        OwnedFilePublication.RenameOpenedPath(source.SafeFileHandle, closed);
+    }
+
+    private FileStream OpenDraftForRename(string path, bool claimed = false)
+    {
+        CheckPath(path, claimed);
+        return ProjectListReplacement.Open(path, canRename: true);
     }
 
     private DraftIdentity RequireCurrent(string path, bool claimed = false)

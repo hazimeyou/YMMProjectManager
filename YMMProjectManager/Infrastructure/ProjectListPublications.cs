@@ -25,7 +25,7 @@ internal sealed class ProjectListPublications(string directory)
         token.ThrowIfCancellationRequested();
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         Directory.CreateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         var pendingPath = Path.Combine(directory, PendingName(receipt.DraftId, receipt.Id));
         var path = receipt.PublicationStarted ? Path.Combine(directory, Name(receipt.DraftId, receipt.Id)) : pendingPath;
         var temporary = Path.Combine(directory, $".{receipt.Id:N}.tmp");
@@ -75,7 +75,7 @@ internal sealed class ProjectListPublications(string directory)
     {
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         if (!Directory.Exists(directory)) return Outcome.Unknown;
-        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         var known = false;
         var unpublished = true;
         var committed = false;

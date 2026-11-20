@@ -84,7 +84,7 @@ internal sealed class ProjectListReplacement(string listPath)
     {
         if (!IsPending()) return null;
         RequireLocalNtfs();
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(listPath)!);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(listPath)!, enforceShare: true);
         using var marker = Open(JournalPath);
         var journal = await ReadAsync(marker, token).ConfigureAwait(false);
         using var active = TryOpen(listPath);
@@ -94,7 +94,7 @@ internal sealed class ProjectListReplacement(string listPath)
     internal async Task<Recovery> ResolveAsync(Recovery confirmed, CancellationToken token)
     {
         RequireLocalNtfs();
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(listPath)!);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(listPath)!, enforceShare: true);
         using var marker = Open(JournalPath, canRename: true);
         var journal = await ReadAsync(marker, token).ConfigureAwait(false);
         // An active file that the user chose to keep cannot be renamed or written until the journal is archived.

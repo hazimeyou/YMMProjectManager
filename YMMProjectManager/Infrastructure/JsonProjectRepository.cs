@@ -486,7 +486,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             Directory.CreateDirectory(directory);
             stage = "inter-process lock";
             processLock = AcquireProcessLock();
-            using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+            using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
             replacement.RequireNoPending();
             stage = "write publication receipt";
             Guid? draftId = null;
