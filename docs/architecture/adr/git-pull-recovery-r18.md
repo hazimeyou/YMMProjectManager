@@ -36,4 +36,5 @@ R17 では HEAD の実ファイルハンドルで更新を拒否しても index 
 - `InspectPullAsync` は置換 ref に加えて、実行環境とリポジトリの graft による履歴の付け替えを考慮する。Win32 の Git で `GIT_NO_REPLACE_OBJECTS` 単独では graft の影響が残ることを合成履歴で確認した。graft を含む作業ツリーは `HistoryNotVerifiable` とし、比較中に graft が現れた場合は再確認を要求する。系譜比較を示せない場合は更新候補の表示を避ける。[Git repository layout](https://git-scm.com/docs/gitrepository-layout#Documentation/gitrepository-layout.txt-infografts)
 - `InspectPullAsync` はネットワークに接続せず、ローカルの追跡 ref を再検証する。合成 bare 側の移動は fetch 前のキャッシュ表示を変えなかった。二回の観測の間にローカル追跡 ref を移動・削除すると `Changed` を返し、次の検証は `UpToDate` または `TrackingUnavailable` を返した。HEAD、index SHA-256、作業ファイルを維持した。
 - 既存の branch switch に対し、追跡対象への切替で上書きされる無視ファイルを保持する回帰テストを追加した。通常の切替は合成 checkout で継続確認する。
+- 読み取り診断の `git status` はオプションの index 書き込みを抑止している。有効なフィルターを先に別の Git プロセスで確認しており、その確認から `status` の設定読込までに実効設定を変えられる。既存診断の境界として残る。作業ツリー状態を引き続き診断するには、固定した許可リストの設定で同じ判定を再現するか、明示の信頼契約を設計する。
 - 既存 checkout への Pull を再開するには、アプリ外の操作を含む参加者とファイルシステムの範囲を明文化し、確認済みの範囲で ref・index・ファイルの回復契約を実装する。別パスの検証済み checkout を提供する場合は、新機能として承認と再関連付けの契約を定義する。
