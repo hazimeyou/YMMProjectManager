@@ -337,12 +337,20 @@ public partial class RelinkMainWindow : Window
         await using var sourceFile = ProjectFileEvidence.OpenRead(snapshot.YmmpPath);
         await VerifyManagedIdentityAsync(sourceFile, token);
         using var candidateLocks = new RelinkCandidateVerifier.CandidateReadLocks(snapshot.Rows);
-        var evidence = await AssetRelinkRecovery.PrepareAsync(snapshot, dialog.FileName, metadataDirectory!, history.Graph.Root,
+        var evidence = await AssetRelinkRecovery.PrepareManagedOutputAsync(snapshot, dialog.FileName, metadataDirectory!, history.Graph.Root,
             history.Selected.Receipt, history.Graph.Heads, review, mismatches, token);
-        var (saved, error) = await saveService.SaveAsAsync(snapshot, dialog.FileName, token);
-        if (!saved)
+        try
         {
-            SetSummaryText($"別名保存を完了できませんでした。{error}");
+            var (saved, error) = await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, snapshot, saveService, token);
+            if (!saved)
+            {
+                SetSummaryText($"別名保存を確認できませんでした。{error}\n再リンクの回復記録\n{evidence}");
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            SetSummaryText($"再リンクを中止しました。回復記録から進行状況を確認できます。\n{evidence}");
             return;
         }
         AssetRelinkRecovery.OutputReceipt receipt;
@@ -353,7 +361,7 @@ public partial class RelinkMainWindow : Window
         catch (Exception ex)
         {
             logger.Error(ex, "Managed relink metadata update failed after SaveAs.");
-            SetSummaryText($"別名保存済みです。メタデータ更新は完了確認できませんでした。「メタデータ更新を再開」で次の記録を選んでください。\n{evidence}");
+            SetSummaryText($"別名保存済みです。メタデータ更新は完了確認できませんでした。「再リンクの回復」で次の記録を選んでください。\n{evidence}");
             return;
         }
         await OfferAssociationTransferAsync(receipt, evidence, token);
@@ -372,11 +380,14 @@ public partial class RelinkMainWindow : Window
             if (dialog.ShowDialog() != true) return;
             await using var sourceFile = ProjectFileEvidence.OpenRead(source);
             await VerifyManagedIdentityAsync(sourceFile, cancellation.Token);
+            if (MessageBox.Show("選んだ記録から再リンクを回復しますか？\n出力がまだない場合は、検証済みの作業ファイルを当初の保存先に公開します。既存の出力は上書きしません。",
+                "再リンクの回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
             var selection = await resolveMetadata(cancellation.Token);
-            var receipt = await AssetRelinkRecovery.CompleteForTransferAsync(dialog.FileName, metadataDirectory, selection.Graph.Root, cancellation.Token, source);
+            var receipt = await AssetRelinkRecovery.CompleteForTransferAsync(dialog.FileName, metadataDirectory, selection.Graph.Root,
+                cancellation.Token, source, resumePreparedOutput: true);
             await OfferAssociationTransferAsync(receipt, dialog.FileName, cancellation.Token);
         }
-        catch (OperationCanceledException) { SetSummaryText("メタデータ更新の再開を中止しました。回復記録は保持されています。"); }
+        catch (OperationCanceledException) { SetSummaryText("再リンクの回復を中止しました。回復記録は保持されています。"); }
         catch (Exception ex)
         {
             logger.Error(ex, "Managed relink recovery failed.");
