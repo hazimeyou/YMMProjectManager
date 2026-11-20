@@ -39,6 +39,7 @@ internal static class GitNativeInterruptionTests
         await GitAsync(seed, ["push", "--", bare, "main"]);
         await GitAsync(root, ["clone", "--", bare, checkout]);
         RequireIsolatedCheckout(checkout);
+        await GitAsync(checkout, ["config", "checkout.workers", "1"]);
 
         // Reuse one blob to keep fixture setup small while Git still has a set of real files to write.
         var payload = new string('x', 32 * 1024);
@@ -117,7 +118,16 @@ internal static class GitNativeInterruptionTests
             }
         };
 
-        var result = await service.PullTrustedAsync(preview.PullTarget!);
+        // A synthetic observer retains a read-only ref handle across the child lifetime.
+        // Windows refuses replacing the ref while it is held, independently of watcher scheduling.
+        FileStream? externalRefReader = null;
+        service.AfterPullJournalCreated = () =>
+            externalRefReader = new FileStream(Path.Combine(checkout, ".git", "refs", "heads", "main"),
+                FileMode.Open, FileAccess.Read, FileShare.Read);
+
+        GitResult result;
+        try { result = await service.PullTrustedAsync(preview.PullTarget!); }
+        finally { externalRefReader?.Dispose(); }
         var stopped = interruption ?? throw new InvalidOperationException(
             $"The fixture did not terminate an observed live native Git update ({result.Failure}, {result.StandardError}).");
         Require(result.Failure == GitFailure.OutcomeUnknown, $"Interrupted checkout was not UNKNOWN ({result.Failure}).");
@@ -136,12 +146,16 @@ internal static class GitNativeInterruptionTests
         var finalEntries = await GitAsync(checkout, ["ls-files", "--stage", "-z"], trim: false);
         var worktreeStatus = await GitAsync(checkout, ["--no-optional-locks", "status", "--porcelain"]);
         var appliedFiles = Directory.EnumerateFiles(updates, "*.bin").Count();
+        var indexMatchesTarget = await GitAsync(checkout, ["diff-index", "--cached", "--name-only", target, "--"]) == "";
         var finalIndexLock = File.Exists(indexLockPath) ? Digest(await File.ReadAllBytesAsync(indexLockPath)) : null;
-        Require(finalBranch == "refs/heads/main" && (finalHead == start || finalHead == target),
+        Require(finalBranch == "refs/heads/main" && finalHead == start,
             "The interruption reached an unexpected branch or commit.");
-        Require(appliedFiles > 0 && appliedFiles < IncomingFileCount && worktreeStatus.Length != 0 &&
-            Digest(await File.ReadAllBytesAsync(stopped.File)) == payloadHash,
-            "The fixture did not retain an observed partially written worktree.");
+        Require(appliedFiles > 0 && worktreeStatus.Length != 0 &&
+            Digest(await File.ReadAllBytesAsync(stopped.File)) == payloadHash &&
+            (appliedFiles < IncomingFileCount || !indexMatchesTarget || finalHead != target),
+            $"Native interruption evidence must include an incomplete update. Files={appliedFiles}/{IncomingFileCount}, " +
+            $"indexMatchesTarget={indexMatchesTarget}, headMatchesTarget={finalHead == target}, " +
+            $"indexLockBeforeStop={stopped.IndexLockWasPresent}, indexLockAfter={finalIndexLock is not null}.");
         Require(Digest(await File.ReadAllBytesAsync(originalPath)) == originalHash &&
             Digest(await File.ReadAllBytesAsync(ignoredPath)) == ignoredHash &&
             await File.ReadAllTextAsync(untrackedPath) == untrackedContents, "An existing file or concurrent synthetic note was changed.");
@@ -159,7 +173,7 @@ internal static class GitNativeInterruptionTests
             "Restart or retry changed the observed state or the operation record.");
 
         Console.WriteLine($"Native Pull termination: exit={stopped.ExitCode}, headBefore={start}, headAfter={finalHead}, target={target}, " +
-            $"indexBefore={initialIndex}, indexAfter={finalIndex}, sameStagedEntries={initialEntries == finalEntries}, " +
+            $"indexBefore={initialIndex}, indexAfter={finalIndex}, sameStagedEntries={initialEntries == finalEntries}, indexMatchesTarget={indexMatchesTarget}, " +
             $"indexLockBeforeStop={stopped.IndexLockWasPresent}, indexLockAfter={finalIndexLock is not null}, " +
             $"materialized={appliedFiles}/{IncomingFileCount}, originalSha256={originalHash}, ignoredSha256={ignoredHash}, " +
             $"untrackedSha256={Digest(await File.ReadAllBytesAsync(untrackedPath))}, outcome={result.Failure}, restartRefused=true");
