@@ -161,6 +161,8 @@ internal sealed class ProjectListReplacement(string listPath)
         if (original.GetAccessControl().GetSecurityDescriptorSddlForm(sections) !=
             candidate.GetAccessControl().GetSecurityDescriptorSddlForm(sections))
             throw new InvalidDataException("The staged list does not have the original file permissions.");
+        if (HasSpecialAccessPolicy(original.SafeFileHandle) || HasSpecialAccessPolicy(candidate.SafeFileHandle))
+            throw new InvalidDataException("Project list replacement cannot preserve a custom access policy.");
     }
 
     internal static void VerifyCompatibleFileMetadata(FileStream original, FileStream candidate, string parkedPath)
@@ -185,6 +187,28 @@ internal sealed class ProjectListReplacement(string listPath)
         if (streamError != 38)
             throw new IOException("Could not verify the project's file streams.", new Win32Exception(streamError));
     }
+
+    private static bool HasSpecialAccessPolicy(SafeFileHandle file)
+    {
+        const int fileObject = 1;
+        const int labelAttributesAndScope = 0x10 | 0x20 | 0x40;
+        var error = GetSecurityInfo(file, fileObject, labelAttributesAndScope, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero,
+            out var acl, out var descriptor);
+        try
+        {
+            if (error != 0) throw new IOException("Could not verify the project's extended access policy.", new Win32Exception((int)error));
+            // AceCount is the third 16-bit slot in the ACL header.
+            return acl != IntPtr.Zero && Marshal.ReadInt16(acl, 4) != 0;
+        }
+        finally { if (descriptor != IntPtr.Zero) LocalFree(descriptor); }
+    }
+
+    [DllImport("advapi32.dll")]
+    private static extern uint GetSecurityInfo(SafeFileHandle file, int objectType, int securityInformation,
+        IntPtr owner, IntPtr group, IntPtr dacl, out IntPtr sacl, out IntPtr descriptor);
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr LocalFree(IntPtr memory);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct StreamInfo

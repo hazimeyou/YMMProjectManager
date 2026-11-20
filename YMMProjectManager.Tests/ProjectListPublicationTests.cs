@@ -29,7 +29,7 @@ internal static class ProjectListPublicationTests
             await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
         await Program.RunNamedCaseAsync("Corrupted replacement journal cannot authorize recovery",
             () => TestCorruptReplacementJournalAsync(workRoot));
-        foreach (var option in new[] { "protected-acl", "hidden", "named-stream" })
+        foreach (var option in new[] { "protected-acl", "integrity-label", "hidden", "named-stream" })
             await Program.RunNamedCaseAsync($"List file metadata is preserved by refusal: {option}", () => TestCustomListMetadataAsync(workRoot, option));
     }
 
@@ -175,6 +175,18 @@ internal static class ProjectListPublicationTests
                 var custom = info.GetAccessControl();
                 custom.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
                 info.SetAccessControl(custom);
+                break;
+            case "integrity-label":
+                var start = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "icacls.exe"))
+                { UseShellExecute = false, CreateNoWindow = true };
+                foreach (var arg in new[] { path, "/setintegritylevel", "Low" }) start.ArgumentList.Add(arg);
+                using (var child = Process.Start(start) ?? throw new Exception("Integrity-label fixture could not start."))
+                {
+                    using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+                    try { await child.WaitForExitAsync(timeout.Token); }
+                    finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
+                    Require(child.ExitCode == 0, "Could not set the synthetic integrity label.");
+                }
                 break;
             case "hidden":
                 File.SetAttributes(path, originalAttributes | FileAttributes.Hidden);
