@@ -436,7 +436,26 @@ internal static class AssetManifestTests
             throw new Exception("Interruption between proof and rename did not preserve a retriable stage.");
         var stagedBytes = await File.ReadAllBytesAsync(staged);
         var stagedIdentity = await ProjectFileEvidence.ReadAsync(staged);
+        var proofBytes = await File.ReadAllBytesAsync(proof);
         await RejectAsync<FileNotFoundException>(() => AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source));
+
+        foreach (var missing in new[] { source, candidate })
+        {
+            // Simulate a temporarily unavailable original without creating a replacement identity.
+            var retained = missing + ".temporarily-unavailable";
+            File.Move(missing, retained);
+            try
+            {
+                await RejectAsync<FileNotFoundException>(() =>
+                    AssetRelinkRecovery.CompleteForTransferAsync(evidence, series, baseline, default, source, resumePreparedOutput: true));
+                var stageAfter = await File.ReadAllBytesAsync(staged);
+                var proofAfter = await File.ReadAllBytesAsync(proof);
+                if (File.Exists(output) || !stageAfter.SequenceEqual(stagedBytes) || !proofAfter.SequenceEqual(proofBytes) ||
+                    await AssetRevisionSeries.ReadHeadAsync(series) != baseline)
+                    throw new Exception("An unavailable original caused recovery to consume evidence or publish output.");
+            }
+            finally { File.Move(retained, missing); }
+        }
 
         // A different file at the proposed destination must not be consumed, even when the bytes match.
         await File.WriteAllBytesAsync(output, stagedBytes);
