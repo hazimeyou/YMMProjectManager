@@ -18,7 +18,7 @@ public sealed class GitRepository
     public GitRepository(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
-        this.directory = Path.GetFullPath(directory);
+        this.directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(this.directory))
             throw new DirectoryNotFoundException(this.directory);
     }
@@ -52,10 +52,14 @@ public sealed class GitRepository
         WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
         {
             if (!HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+            using var lease = operation == GitRemoteOperation.Fetch ? GitRepositoryLease.TryOpen(directory) : null;
+            if (operation == GitRemoteOperation.Fetch && lease is null)
+                return UnsafeRemote("Could not verify the repository and its Git directory identity.");
             var (url, error) = await ResolveOriginAsync(operation == GitRemoteOperation.Push, deadline, literal: true).ConfigureAwait(false);
             if (error is not null) return error;
             var result = new GitResult(0, url!, "");
-            if (operation != GitRemoteOperation.Push) return result;
+            if (operation == GitRemoteOperation.Fetch)
+                return result with { FetchTarget = new GitFetchTarget(directory, url!, lease!.Identity) };
             var (target, tipError) = await ReadPushTargetAsync(url!, trusted: true, deadline).ConfigureAwait(false);
             return tipError ?? result with { PushTarget = target };
         }, token, RemoteTimeout);
@@ -69,10 +73,21 @@ public sealed class GitRepository
         return WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
     }
 
-    private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token)
+    public Task<GitResult> FetchTrustedAsync(GitFetchTarget target, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        return WithinRemoteDeadlineAsync("Fetch", deadline => FetchCoreAsync(target.Endpoint, deadline, target), token, RemoteTimeout);
+    }
+
+    private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token, GitFetchTarget? approvedTarget = null)
     {
         var trusted = expectedRemote is not null;
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
+        if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
+            return UnsafeRemote("This fetch approval belongs to a different repository.");
+        using var lease = approvedTarget is null ? null : GitRepositoryLease.TryOpen(directory);
+        if (approvedTarget is not null && lease?.Identity != approvedTarget.Identity)
+            return UnsafeRemote("The approved repository or its Git directory changed. Review the fetch target again.");
         var (url, error) = await ResolveOriginAsync(push: false, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
         if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
@@ -592,6 +607,20 @@ public sealed record GitPullAssessment(GitPullState State, string? BranchRef = n
     string? TrackingRef = null, string? TrackingObjectId = null, string? Message = null);
 public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);
 
+public sealed class GitFetchTarget
+{
+    internal GitFetchTarget(string repositoryRoot, string endpoint, GitRepositoryIdentity identity)
+    {
+        RepositoryRoot = repositoryRoot;
+        Endpoint = endpoint;
+        Identity = identity;
+    }
+
+    public string RepositoryRoot { get; }
+    public string Endpoint { get; }
+    internal GitRepositoryIdentity Identity { get; }
+}
+
 public sealed record GitPushTarget
 {
     internal GitPushTarget(string repositoryRoot, string endpoint, string branchRef, string objectId)
@@ -614,4 +643,5 @@ public sealed record GitResult(int ExitCode, string StandardOutput, string Stand
     public string? RecoveryPath { get; init; }
     public GitRemoteDiagnostic? RemoteDiagnostic { get; init; }
     public GitPushTarget? PushTarget { get; init; }
+    public GitFetchTarget? FetchTarget { get; init; }
 }

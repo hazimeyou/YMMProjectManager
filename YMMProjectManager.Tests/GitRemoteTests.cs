@@ -179,7 +179,47 @@ internal static class GitRemoteTests
             await Command(source, "config", "--local", "--remove-section", "url.https://beta.invalid/");
             await Command(source, "config", "--local", "--remove-section", "url.https://gamma.invalid/");
             var inspection = await one.InspectRemoteAsync(GitRemoteOperation.Fetch);
-            Check(inspection.Success && inspection.StandardOutput == bare, "trusted inspection did not read the literal local origin");
+            Check(inspection.Success && inspection.StandardOutput == bare && inspection.FetchTarget is { } inspectedFetch &&
+                inspectedFetch.Endpoint == bare && inspectedFetch.RepositoryRoot == source, "trusted inspection did not identify the fetch target");
+            Check((await two.FetchTrustedAsync(inspection.FetchTarget!)).Failure == GitFailure.UnsafeOperation,
+                "fetch approval was accepted from a different checkout");
+
+            var identityRoot = Path.Combine(root, "fetch-identity");
+            var firstRoot = Path.Combine(root, "fetch-retained");
+            var competingRoot = Path.Combine(root, "fetch-other");
+            var movedDuringFetch = Path.Combine(root, "fetch-moved");
+            await Command(root, "init", identityRoot);
+            await Command(root, "init", competingRoot);
+            await Command(identityRoot, "remote", "add", "origin", bare);
+            await Command(competingRoot, "remote", "add", "origin", bare);
+            var identityRepository = new GitRepository(identityRoot);
+            var firstApproval = (await identityRepository.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget
+                ?? throw new InvalidOperationException("missing first repository identity");
+            Directory.Move(identityRoot, firstRoot);
+            Directory.Move(competingRoot, identityRoot);
+            Check((await identityRepository.FetchTrustedAsync(firstApproval)).Failure == GitFailure.UnsafeOperation,
+                "same path and endpoint were accepted for a replaced checkout");
+            Check((await Command(identityRoot, "for-each-ref", "--format=%(refname)", "refs/remotes")).Length == 0,
+                "stale approval modified the replacement checkout");
+            var replacementApproval = (await identityRepository.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget
+                ?? throw new InvalidOperationException("missing replacement identity");
+            identityRepository.BeforeRemoteExecution = _ =>
+            {
+                try { Directory.Move(identityRoot, movedDuringFetch); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            };
+            Check((await identityRepository.FetchTrustedAsync(replacementApproval)).Success && !Directory.Exists(movedDuringFetch),
+                "approved fetch failed or allowed the repository directory to move during execution");
+            Check(await Command(identityRoot, "rev-parse", "refs/remotes/origin/" + branch) == remoteBeforeRejectedPush,
+                "approved fetch failed to write the expected tracking ref");
+            identityRepository.BeforeRemoteExecution = null;
+            Directory.Move(Path.Combine(identityRoot, ".git"), Path.Combine(identityRoot, ".git-retained"));
+            Directory.Move(Path.Combine(firstRoot, ".git"), Path.Combine(identityRoot, ".git"));
+            Check((await identityRepository.FetchTrustedAsync(replacementApproval)).Failure == GitFailure.UnsafeOperation,
+                "unchanged worktree path concealed a replacement Git directory");
+            Check((await Command(identityRoot, "for-each-ref", "--format=%(refname)", "refs/remotes")).Length == 0,
+                "stale approval modified the replacement Git directory");
             await Command(source, "remote", "set-url", "--push", "origin", decoy);
             var pushInspection = await one.InspectRemoteAsync(GitRemoteOperation.Push);
             Check(pushInspection.Success && pushInspection.StandardOutput == decoy, "trusted inspection did not distinguish push URL");
