@@ -520,7 +520,7 @@ public sealed class RelinkSaveService
     public Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token) =>
         SaveAsCoreAsync(context, destination, null, null, token);
 
-    internal Task<(bool Success, string? ErrorMessage)> SavePreparedAsync(RelinkDocumentContext context, string destination,
+    internal Task<(bool Success, string? ErrorMessage)> StagePreparedAsync(RelinkDocumentContext context, string destination,
         string stage, Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token) =>
         SaveAsCoreAsync(context, destination, stage, persistPublication, token);
 
@@ -549,7 +549,7 @@ public sealed class RelinkSaveService
             using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
             if (persistPublication is not null)
             {
-                await PublishPreparedAsync(stage!, output, updated, persistPublication, token).ConfigureAwait(false);
+                await WritePreparedStageAsync(stage!, updated, persistPublication, token).ConfigureAwait(false);
                 return (true, null);
             }
             var candidate = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileName(output) + ".tmp-" + Guid.NewGuid().ToString("N"));
@@ -582,7 +582,7 @@ public sealed class RelinkSaveService
         }
     }
 
-    private async Task PublishPreparedAsync(string stage, string output, byte[] updated,
+    private async Task WritePreparedStageAsync(string stage, byte[] updated,
         Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token)
     {
         await using var stream = OwnedFilePublication.CreateOwnedOutputFile(stage, readBack: true);
@@ -598,11 +598,10 @@ public sealed class RelinkSaveService
             durable = true;
             beforeCommit?.Invoke();
             token.ThrowIfCancellationRequested();
-            OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, output);
         }
         finally
         {
-            // After the proof is durable, keep this file for explicit retry if publication fails.
+            // The metadata writer verifies the branch and publishes this exact stage. Keep its proof for retry.
             if (!durable) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
         }
     }

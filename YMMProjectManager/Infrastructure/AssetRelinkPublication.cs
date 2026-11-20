@@ -10,7 +10,7 @@ internal static partial class AssetRelinkRecovery
 
     private sealed record OutputPublication(int Version, Guid OperationId, string OutputSha256, PhysicalFileId Identity);
 
-    internal static async Task<(bool Success, string? ErrorMessage)> SavePreparedOutputAsync(
+    internal static async Task<(bool Success, string? ErrorMessage)> StagePreparedOutputAsync(
         string evidence, RelinkDocumentContext context, RelinkSaveService saver, CancellationToken token)
     {
         var evidencePath = Path.GetFullPath(evidence);
@@ -37,7 +37,7 @@ internal static partial class AssetRelinkRecovery
                 if (await HashAsync(candidate, token).ConfigureAwait(false) != comparison.CandidateSha256)
                     throw new InvalidDataException("A candidate changed after relink preparation.");
             }
-            return await saver.SavePreparedAsync(context, intent.Output, StagedOutputPath(evidencePath),
+            return await saver.StagePreparedAsync(context, intent.Output, StagedOutputPath(evidencePath),
                 async (staged, stagedToken) =>
                 {
                     if (await HashAsync(staged, stagedToken).ConfigureAwait(false) != intent.OutputSha256)

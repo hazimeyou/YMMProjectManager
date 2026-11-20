@@ -341,7 +341,7 @@ public partial class RelinkMainWindow : Window
             history.Selected.Receipt, history.Graph.Heads, review, mismatches, token);
         try
         {
-            var (saved, error) = await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, snapshot, saveService, token);
+            var (saved, error) = await AssetRelinkRecovery.StagePreparedOutputAsync(evidence, snapshot, saveService, token);
             if (!saved)
             {
                 SetSummaryText($"別名保存を確認できませんでした。{error}\n再リンクの回復記録\n{evidence}");
@@ -362,12 +362,12 @@ public partial class RelinkMainWindow : Window
         AssetRelinkRecovery.OutputReceipt receipt;
         try
         {
-            receipt = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, metadataDirectory!, history.Graph.Root, token, snapshot.YmmpPath);
+            receipt = await AssetRelinkRecovery.CompleteForTransferAsync(evidence, metadataDirectory!, history.Graph.Root, token, snapshot.YmmpPath, resumePreparedOutput: true);
         }
         catch (Exception ex)
         {
             logger.Error(ex, "Managed relink metadata update failed after SaveAs.");
-            SetSummaryText($"別名保存済みです。メタデータ更新は完了確認できませんでした。「再リンクの回復」で次の記録を選んでください。\n{evidence}");
+            SetSummaryText($"出力とメタデータの確定を確認できませんでした。「再リンクの回復」で次の記録を選んでください。\n{evidence}");
             return;
         }
         await OfferAssociationTransferAsync(receipt, evidence, token);

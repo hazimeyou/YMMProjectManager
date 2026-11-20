@@ -335,7 +335,7 @@ internal static class AssetManifestTests
             var interrupted = new RelinkSaveService(logger, null, null, stopAfterProof.Cancel);
             try
             {
-                await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token);
+                await AssetRelinkRecovery.StagePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token);
                 throw new Exception("Staged publication did not reach the interruption point.");
             }
             catch (OperationCanceledException) when (stopAfterProof.IsCancellationRequested) { }
@@ -414,7 +414,7 @@ internal static class AssetManifestTests
             await stream.WriteAsync(bytes.AsMemory(0, bytes.Length / 2), token);
             throw new IOException("synthetic incomplete staged write");
         }, null, null);
-        if ((await AssetRelinkRecovery.SavePreparedOutputAsync(unproven, context, partialWriter, default)).Success ||
+        if ((await AssetRelinkRecovery.StagePreparedOutputAsync(unproven, context, partialWriter, default)).Success ||
             File.Exists(unrelated) || File.Exists(unproven + ".output.tmp") || File.Exists(unproven + ".publish"))
             throw new Exception("Failed pre-proof save published or leaked a stage.");
         await File.WriteAllBytesAsync(unrelated, RelinkJsonUpdate.Apply(original, context.Rows.ToList()));
@@ -429,7 +429,7 @@ internal static class AssetManifestTests
         {
             var interrupted = new RelinkSaveService(logger, null, null, stopAfterProof.Cancel);
             await RejectAsync<OperationCanceledException>(() =>
-                AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token));
+                AssetRelinkRecovery.StagePreparedOutputAsync(evidence, context, interrupted, stopAfterProof.Token));
         }
         if (File.Exists(output) || !File.Exists(staged) || !File.Exists(proof) ||
             await AssetRevisionSeries.ReadHeadAsync(series) != baseline)
@@ -482,8 +482,13 @@ internal static class AssetManifestTests
 
         var second = Path.Combine(root, "normal.ymmp");
         var secondEvidence = await PrepareAsync(second, recovered.Revision);
-        if (!(await AssetRelinkRecovery.SavePreparedOutputAsync(secondEvidence, context, new RelinkSaveService(logger), default)).Success)
-            throw new Exception("Regular managed publication failed.");
+        if (!(await AssetRelinkRecovery.StagePreparedOutputAsync(secondEvidence, context, new RelinkSaveService(logger), default)).Success)
+            throw new Exception("Regular managed staging failed.");
+        if (File.Exists(second) || !File.Exists(secondEvidence + ".output.tmp") ||
+            await AssetRevisionSeries.ReadHeadAsync(series) != recovered.Revision)
+            throw new Exception("Regular managed save published before locked metadata validation.");
+        var receiptBeforeReplacement = await AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source,
+            resumePreparedOutput: true);
         var secondBytes = await File.ReadAllBytesAsync(second);
         var preserved = second + ".retained";
         File.Move(second, preserved);
@@ -491,12 +496,14 @@ internal static class AssetManifestTests
         await RejectAsync<InvalidDataException>(() =>
             AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source));
         var stillOriginal = await File.ReadAllBytesAsync(source);
-        if ((await AssetRevisionSeries.InspectGraphAsync(series)).Revisions.Count != 2 ||
+        if ((await AssetRevisionSeries.InspectGraphAsync(series)).Revisions.Count != 3 ||
             !original.SequenceEqual(stillOriginal))
             throw new Exception("Replaced output altered source or metadata history.");
         File.Delete(second);
         File.Move(preserved, second);
         var secondReceipt = await AssetRelinkRecovery.CompleteForTransferAsync(secondEvidence, series, baseline, default, source);
+        if (secondReceipt != receiptBeforeReplacement)
+            throw new Exception("Recovered already-published output no longer matches its original receipt.");
 
         var crashOutput = Path.Combine(root, "crash.ymmp");
         var crashEvidence = await PrepareAsync(crashOutput, secondReceipt.Revision);
@@ -545,7 +552,7 @@ internal static class AssetManifestTests
         };
         var logger = new FileLogger(Path.Combine(root, "child.log"));
         var interrupted = new RelinkSaveService(logger, null, null, () => Environment.Exit(87));
-        await AssetRelinkRecovery.SavePreparedOutputAsync(evidence, context, interrupted, default);
+        await AssetRelinkRecovery.StagePreparedOutputAsync(evidence, context, interrupted, default);
         throw new InvalidOperationException("Relink child did not reach the configured interruption point.");
     }
 
