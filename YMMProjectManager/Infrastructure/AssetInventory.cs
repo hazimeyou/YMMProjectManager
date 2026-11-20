@@ -27,7 +27,7 @@ public static class AssetInventory
         var project = Path.GetFullPath(projectPath);
         var directory = Path.GetDirectoryName(project) ?? throw new InvalidDataException("The project has no containing directory.");
         var safeProject = ResolveRelativePath(directory, Path.GetFileName(project));
-        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         await using var stream = OpenOrdinaryAsset(safeProject);
         if (stream.Length > 32 * 1024 * 1024) throw new InvalidDataException("The project is too large for inventory scanning.");
         using var reader = new StreamReader(stream);
@@ -94,7 +94,7 @@ public static class AssetInventory
         token.ThrowIfCancellationRequested();
         var path = ResolveRelativePath(projectDirectory, relativePath);
         ValidateUrl(downloadUrl);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
         await using var stream = OpenOrdinaryAsset(path);
         var size = stream.Length;
         var hash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
@@ -159,7 +159,7 @@ public static class AssetInventory
         try
         {
             var path = ResolveRelativePath(directory, relativePath);
-            using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!);
+            using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
             await using var stream = OpenOrdinaryAsset(path);
             if (stream.Length != asset.Size) return AssetVerification.SizeMismatch;
             var hash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
@@ -197,7 +197,7 @@ public static class AssetInventory
         var bytes = JsonSerializer.SerializeToUtf8Bytes(assets, new JsonSerializerOptions { WriteIndented = true });
         var fullPath = Path.GetFullPath(path);
         var temporary = fullPath + ".tmp-" + Guid.NewGuid().ToString("N");
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
         await using var stream = OwnedFilePublication.CreateOwnedOutputFile(temporary);
         var published = false;
         try

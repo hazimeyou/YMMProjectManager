@@ -19,6 +19,21 @@ internal static class AssetInventoryTests
         try { await AssetInventory.ExportAsync(output, [asset]); throw new Exception("overwrite accepted"); } catch (IOException) { }
         var after = await File.ReadAllBytesAsync(output);
         Check(before.SequenceEqual(after), "existing manifest changed");
+        await Program.RunNamedCaseAsync("A pinned asset directory allows child publication without allowing directory rename", async () =>
+        {
+            var container = Directory.CreateDirectory(Path.Combine(root, "owned-container")).FullName;
+            var moved = Path.Combine(root, "moved-container");
+            using (OwnedFilePublication.DirectoryFence.Open(container, enforceShare: true))
+            {
+                try { Directory.Move(container, moved); }
+                catch (IOException) { }
+                Check(Directory.Exists(container) && !Directory.Exists(moved), "asset directory moved while pinned");
+                await AssetInventory.ExportAsync(Path.Combine(container, "assets.json"), [asset]);
+            }
+            Directory.Move(container, moved);
+            Check((await AssetInventory.LoadAsync(Path.Combine(moved, "assets.json"))).Single() == asset,
+                "directory pin outlived publication or damaged the manifest");
+        });
         await Program.RunNamedCaseAsync("Concurrent asset exports publish one complete manifest", async () =>
         {
             var destination = Path.Combine(root, "parallel-assets.json");
