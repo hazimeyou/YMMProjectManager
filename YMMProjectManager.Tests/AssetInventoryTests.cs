@@ -61,6 +61,15 @@ internal static class AssetInventoryTests
         Check(scan.Single(item => item.Path == "present.wav") is { Status: AssetReferenceStatus.Present, Actual.Size: 7 }, "present reference status");
         Check(scan.Single(item => item.Path == outside) is { Status: AssetReferenceStatus.External, Actual: null }, "external reference was opened");
         Check(scan.Count(item => item.Status == AssetReferenceStatus.Unavailable && item.Actual is null) == 2, "reserved path checks");
+        await Program.RunNamedCaseAsync("Inventory marks references under missing directories as missing", async () =>
+        {
+            var nestedProject = Path.Combine(root, "nested.ymmp");
+            var relativePath = Path.Combine("missing-folder", "clip.wav");
+            await File.WriteAllTextAsync(nestedProject, JsonSerializer.Serialize(new { Items = new[] { new { FilePath = relativePath } } }));
+            var reference = (await AssetInventory.ScanProjectAsync(nestedProject)).Single();
+            Check(reference.Status == AssetReferenceStatus.Missing && reference.Actual is null,
+                "missing parent was classified as unavailable");
+        });
         var storage = Path.Combine(root, "external-storage");
         Directory.CreateDirectory(storage);
         var externalName = "external.wav";

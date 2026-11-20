@@ -77,8 +77,10 @@ public static class AssetInventory
                     !string.Equals(actual.Sha256, prior.Sha256, StringComparison.OrdinalIgnoreCase));
                 results.Add(new AssetReference(relative, changed ? AssetReferenceStatus.Changed : AssetReferenceStatus.Present, actual, prior));
             }
-            catch (FileNotFoundException) { results.Add(new AssetReference(relative, AssetReferenceStatus.Missing, null, prior)); }
-            catch (DirectoryNotFoundException) { results.Add(new AssetReference(relative, AssetReferenceStatus.Missing, null, prior)); }
+            catch (IOException ex) when (IsMissing(ex))
+            {
+                results.Add(new AssetReference(relative, AssetReferenceStatus.Missing, null, prior));
+            }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
             {
                 results.Add(new AssetReference(relative, AssetReferenceStatus.Unavailable, null, prior));
@@ -164,11 +166,13 @@ public static class AssetInventory
             if (stream.Length != asset.Size) return AssetVerification.SizeMismatch;
             return string.Equals(Convert.ToHexString(hash), asset.Sha256, StringComparison.OrdinalIgnoreCase) ? AssetVerification.Valid : AssetVerification.HashMismatch;
         }
-        catch (FileNotFoundException) { return AssetVerification.Missing; }
-        catch (DirectoryNotFoundException) { return AssetVerification.Missing; }
-        catch (IOException ex) when (ex.InnerException is Win32Exception { NativeErrorCode: 2 or 3 })
+        catch (IOException ex) when (IsMissing(ex))
         { return AssetVerification.Missing; }
     }
+
+    private static bool IsMissing(IOException exception) =>
+        exception is FileNotFoundException or DirectoryNotFoundException ||
+        exception.InnerException is Win32Exception { NativeErrorCode: 2 or 3 };
 
     private static FileStream OpenOrdinaryAsset(string path)
     {
