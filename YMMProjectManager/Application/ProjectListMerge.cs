@@ -61,10 +61,31 @@ internal static class ProjectListMerge
                 }
                 continue;
             }
+            if (b.ProjectId is null)
+            {
+                if ((l is not null && Same(b, l)) || (l is null && r is null)) continue;
+                if (l?.ProjectId is not null)
+                {
+                    conflicts.Add($"ID 設定には専用の競合回復を使用してください: {key}");
+                    continue;
+                }
+                if (r is null || !IsLegacyRegistrationAt(b.FullPath, r) || (l is not null && !IsLegacyRegistrationAt(b.FullPath, l)))
+                {
+                    conflicts.Add($"ID のない一覧項目を確実に対応付けられません: {key}");
+                    continue;
+                }
+                // This compares an existing list registration. It never assigns a physical/logical identity.
+                if (!Same(b, r) && Decide(key, "ID 未設定の登録内容", l is null ? "登録を削除" : ProjectDetails(l),
+                    ProjectDetails(r), conflicts, choices, useLocal) is not true) continue;
+                var index = merged.Projects.FindIndex(project => string.Equals(Key(project), key, StringComparison.OrdinalIgnoreCase));
+                if (l is null) merged.Projects.RemoveAt(index);
+                else merged.Projects[index] = Clone(l);
+                changes.Add(l is null ? $"ID 未設定の登録を削除: {key}" : $"ID 未設定の登録を採用: {ProjectDetails(l)}");
+                continue;
+            }
             if (l is null)
             {
                 if (r is null) continue;
-                if (b.ProjectId is null) { conflicts.Add($"ID のない項目の削除は自動再適用できません: {key}"); continue; }
                 if (Same(b, r) || Decide(key, "削除と外部の編集・移動", "登録を削除", ProjectDetails(r), conflicts, choices, useLocal) is true)
                 {
                     merged.Projects.RemoveAll(p => string.Equals(Key(p), key, StringComparison.OrdinalIgnoreCase));
@@ -73,7 +94,6 @@ internal static class ProjectListMerge
                 continue;
             }
             if (Same(b, l)) continue;
-            if (b.ProjectId is null) { conflicts.Add($"ID のない項目の編集は自動再適用できません: {key}"); continue; }
             if (b.ProjectId != l.ProjectId) { conflicts.Add($"ID 設定には専用の競合回復を使用してください: {key}"); continue; }
             if (r is null)
             {
@@ -144,6 +164,10 @@ internal static class ProjectListMerge
             conflicts.Add("未知の項目を保持したまま選択結果を保存できません。両方の一覧を退避してください。");
         return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts) { Choices = choices };
     }
+
+    private static bool IsLegacyRegistrationAt(string path, ProjectEntry project) =>
+        project.ProjectId is null && project.FileIdentity is null && project.MetadataAssociation is null &&
+        string.Equals(path, project.FullPath, StringComparison.Ordinal);
 
     private static bool LosesExtensionFields(ProjectStore local, ProjectStore remote, ProjectStore merged)
     {

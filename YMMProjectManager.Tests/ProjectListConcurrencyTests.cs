@@ -89,6 +89,34 @@ internal static class ProjectListConcurrencyTests
         remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "remote.ymmp"), ProjectId = Guid.NewGuid() });
         var independent = ProjectListMerge.Merge(mergeBase, local, remote);
         if (independent.Store?.Projects.Count != 3 || independent.Conflicts.Count != 0) throw new Exception("independent additions did not merge");
+        var legacyBase = ProjectListMerge.Snapshot(mergeBase);
+        legacyBase.Projects[0].ProjectId = null;
+        var legacyLocal = ProjectListMerge.Snapshot(legacyBase);
+        var legacyRemote = ProjectListMerge.Snapshot(legacyBase);
+        legacyLocal.Projects[0].DisplayName = "local legacy edit";
+        var additionalId = Guid.NewGuid();
+        legacyRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "other-registration.ymmp"), ProjectId = additionalId });
+        var repairedLegacy = ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote).Store;
+        if (repairedLegacy?.Projects.Single(p => p.ProjectId is null).DisplayName != "local legacy edit" ||
+            repairedLegacy.Projects.Single(p => p.ProjectId is not null).ProjectId != additionalId)
+            throw new Exception("unchanged legacy registration could not recover an edit independently of a newly registered project");
+        legacyRemote.Projects[0].DisplayName = "external legacy edit";
+        var legacyConflict = ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote);
+        if (!legacyConflict.CanResolveAll || legacyConflict.Choices.Count != 1)
+            throw new Exception("competing legacy changes did not require an explicit choice");
+        var legacyChoice = legacyConflict.Choices.Single();
+        var selectedLegacy = ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote,
+            new Dictionary<ProjectListConflict, bool> { [legacyChoice] = true }).Store;
+        if (selectedLegacy?.Projects[0].ProjectId is not null || selectedLegacy?.Projects[0].DisplayName != "local legacy edit")
+            throw new Exception("legacy adoption silently assigned identity or lost the chosen value");
+        legacyRemote.Projects[0].ProjectId = Guid.NewGuid();
+        if (ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote,
+            new Dictionary<ProjectListConflict, bool> { [legacyChoice] = true }).Store is not null)
+            throw new Exception("legacy choice was reused after a newer identity assignment");
+        legacyRemote = ProjectListMerge.Snapshot(legacyBase);
+        legacyRemote.Projects[0].FullPath = Path.Combine(root, "moved-legacy.ymmp");
+        if (ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote).Store is not null)
+            throw new Exception("ambiguous legacy move was treated as an existing row");
         local = ProjectListMerge.Snapshot(mergeBase); remote = ProjectListMerge.Snapshot(mergeBase);
         local.Projects[0].DisplayName = "local"; remote.Projects[0].Pinned = true;
         var differentFields = ProjectListMerge.Merge(mergeBase, local, remote);
