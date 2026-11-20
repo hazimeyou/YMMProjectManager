@@ -71,8 +71,10 @@ internal static class AssetManifestTests
         async Task<bool> Save(AssetManifest value) { try { await AssetManifestStore.SaveNewAsync(racePath, value); return true; } catch (IOException) { return false; } }
         var winners = await Task.WhenAll(Save(next), Save(AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, loaded, true)));
         if (winners.Count(x => x) != 1 || (await AssetManifestStore.LoadAsync(racePath)).ProjectId != initial.ProjectId) throw new Exception("concurrent revisions overwritten");
-        await TestRevisionSeriesAsync(root, project, item);
-        await TestRelinkRecoveryAsync(root);
+        await Program.RunNamedCaseAsync("Immutable metadata revisions and divergent legacy import",
+            () => TestRevisionSeriesAsync(root, project, item));
+        await Program.RunNamedCaseAsync("Managed relink branch selection, version compatibility and retry",
+            () => TestRelinkRecoveryAsync(root));
         Console.WriteLine("Project asset immutable revision checks passed.");
     }
 
@@ -200,6 +202,14 @@ internal static class AssetManifestTests
         var forkOutput = Path.Combine(folder, "fork.ymmp");
         var forkEvidence = await AssetRelinkRecovery.PrepareAsync(context, forkOutput, seriesDirectory, head, forkTip, graph.Heads, forkReview, true, default);
         if (!(await saver.SaveAsAsync(context, forkOutput, default)).Success) throw new Exception("branch relink SaveAs failed");
+        var forkIntentBytes = await File.ReadAllBytesAsync(forkEvidence);
+        var corruptIntent = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(forkEvidence))!.AsObject();
+        corruptIntent.Remove("ObservedTips");
+        await File.WriteAllTextAsync(forkEvidence, corruptIntent.ToJsonString());
+        await RejectAsync(() => AssetRelinkRecovery.CompleteForTransferAsync(forkEvidence, seriesDirectory, head, default, source));
+        if (!(await AssetRevisionSeries.InspectGraphAsync(seriesDirectory)).Heads.SequenceEqual(graph.Heads))
+            throw new Exception("corrupt branch evidence changed the series");
+        await File.WriteAllBytesAsync(forkEvidence, forkIntentBytes);
         var branchReceipt = await AssetRelinkRecovery.CompleteForTransferAsync(forkEvidence, seriesDirectory, head, default, source);
         var afterFork = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
         if (!afterFork.Heads.ToHashSet().SetEquals([competingHead, branchReceipt.Revision]) ||

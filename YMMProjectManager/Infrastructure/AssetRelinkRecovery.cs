@@ -91,7 +91,7 @@ internal static class AssetRelinkRecovery
     }
 
     private static async Task<(Comparison[], AssetMetadata[])> InspectRowsAsync(string sourceDirectory, AssetManifest manifest,
-        List<RelinkRow> rows, CancellationToken token)
+        List<RelinkRow> rows, CancellationToken token, List<FileStream>? heldCandidates = null)
     {
         if (rows.Count is 0 or > 10) throw new InvalidDataException("A managed relink must have between one and ten candidate rows.");
         var expectedPaths = manifest.Assets.ToDictionary(
@@ -108,7 +108,15 @@ internal static class AssetRelinkRecovery
             if (!candidates.TryGetValue(candidate, out var actual))
             {
                 expectedPaths.TryGetValue(candidate, out var prior);
-                actual = await AssetInventory.InspectAsync(sourceDirectory, relative, prior?.DownloadUrl, token).ConfigureAwait(false);
+                if (heldCandidates is null)
+                    actual = await AssetInventory.InspectAsync(sourceDirectory, relative, prior?.DownloadUrl, token).ConfigureAwait(false);
+                else
+                {
+                    var path = AssetInventory.ResolveRelativePath(sourceDirectory, relative);
+                    var lease = OpenVerifiedPath(path);
+                    heldCandidates.Add(lease);
+                    actual = new AssetMetadata(relative, lease.Length, await HashAsync(lease, token).ConfigureAwait(false), prior?.DownloadUrl);
+                }
                 candidates.Add(candidate, actual);
             }
             expectedPaths.TryGetValue(Path.GetFullPath(row.OriginalPath, sourceDirectory), out var expected);
@@ -157,30 +165,21 @@ internal static class AssetRelinkRecovery
             RowIndex = item.RowIndex, OriginalPath = item.OriginalPath, TypeHint = item.TypeHint,
             SelectedCandidate = item.CandidatePath, Status = RelinkStatus.Updated
         }).ToList();
-        if (Hash(original) != intent.SourceSha256 || Hash(RelinkJsonUpdate.Apply(original, rows)) != intent.OutputSha256)
+        if (Hash(original) != intent.SourceSha256)
+            throw new InvalidDataException("The source project or relink recovery evidence changed.");
+        var expectedOutput = RelinkJsonUpdate.Apply(original, rows);
+        if (Hash(expectedOutput) != intent.OutputSha256)
             throw new InvalidDataException("The source project or relink recovery evidence changed.");
         await using var output = OpenVerifiedPath(intent.Output);
-        if (await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
+        if (output.Length != expectedOutput.Length || await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
             throw new InvalidDataException("The relink output differs from its saved recovery evidence.");
 
         var leases = new List<FileStream>();
         try
         {
             var directory = Path.GetDirectoryName(intent.Output)!;
-            foreach (var candidate in intent.Approved.DistinctBy(item => Path.GetFullPath(item.CandidatePath), StringComparer.OrdinalIgnoreCase))
-            {
-                var relative = Path.GetRelativePath(directory, candidate.CandidatePath);
-                var asset = intent.Next.Assets.SingleOrDefault(item => string.Equals(item.RelativePath, relative, StringComparison.OrdinalIgnoreCase))
-                    ?? throw new InvalidDataException("The relink record lacks candidate evidence.");
-                if (!string.Equals(asset.Sha256, candidate.CandidateSha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("The relink candidate evidence is inconsistent.");
-                var path = AssetInventory.ResolveRelativePath(directory, asset.RelativePath);
-                var lease = OpenVerifiedPath(path);
-                leases.Add(lease);
-                if (lease.Length != asset.Size || !string.Equals(await HashAsync(lease, token).ConfigureAwait(false), asset.Sha256, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("A relink candidate changed after it was selected.");
-            }
-            var (review, candidates) = await InspectRowsAsync(directory, history.Selected.Manifest, rows, token).ConfigureAwait(false);
+            // Keep exactly the bytes used to derive the revision leased until its publication completes.
+            var (review, candidates) = await InspectRowsAsync(directory, history.Selected.Manifest, rows, token, leases).ConfigureAwait(false);
             var derived = AssetManifestStore.Create(intent.Output, candidates, intent.Next.VerifiedAtUtc,
                 history.Selected.Manifest, confirmedProjectAssociation: true, confirmedHashChanges: true, projectId: associatedRoot.ProjectId)
                 with { RevisionId = intent.OperationId };
