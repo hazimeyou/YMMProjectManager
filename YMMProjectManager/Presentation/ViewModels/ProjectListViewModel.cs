@@ -221,7 +221,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         ReviewDraftCommand = new AsyncRelayCommand(ReviewDraftAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository);
         ExportOriginalProjectListCommand = new AsyncRelayCommand(ExportOriginalProjectListAsync,
             () => !IsBusy && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
-        RepairDuplicateProjectIdsCommand = new AsyncRelayCommand(RepairDuplicateProjectIdsAsync,
+        RepairProjectListIdentitiesCommand = new AsyncRelayCommand(RepairProjectListIdentitiesAsync,
             () => !IsBusy && !HasUnsavedProjectList && repository is JsonProjectRepository && (!isInitialized || !isProjectListLossless));
         CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
     }

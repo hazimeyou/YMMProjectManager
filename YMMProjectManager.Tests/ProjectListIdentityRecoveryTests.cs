@@ -4,7 +4,7 @@ using System.Text.Json;
 using YMMProjectManager.Application;
 using YMMProjectManager.Infrastructure;
 
-internal static class DuplicateProjectIdRecoveryTests
+internal static class ProjectListIdentityRecoveryTests
 {
     internal static async Task RunAsync(string workRoot)
     {
@@ -26,12 +26,12 @@ internal static class DuplicateProjectIdRecoveryTests
         });
         var source = Path.Combine(root, "projects.json");
         await File.WriteAllBytesAsync(source, input);
-        var review = DuplicateProjectIdRecovery.Inspect(input);
+        var review = ProjectListIdentityRecovery.Inspect(input);
         var conflict = review.Conflicts.Single();
         if (conflict.Id != duplicate || conflict.Entries.Count != 2 || conflict.Entries.Any(entry => !entry.HasMetadata))
             throw new Exception("Duplicate review missed an association or candidate.");
         var keepers = new Dictionary<Guid, int> { [duplicate] = conflict.Entries[0].Row };
-        var repaired = DuplicateProjectIdRecovery.Repair(input, review, keepers);
+        var repaired = ProjectListIdentityRecovery.Repair(input, review, keepers);
         using var document = JsonDocument.Parse(repaired);
         var payload = document.RootElement;
         var rows = payload.GetProperty("Projects");
@@ -48,13 +48,46 @@ internal static class DuplicateProjectIdRecoveryTests
         catch (IOException) { }
         var originalOnDisk = await File.ReadAllBytesAsync(source);
         var recoveredOnDisk = await File.ReadAllBytesAsync(destination);
-        if (!input.SequenceEqual(originalOnDisk) || DuplicateProjectIdRecovery.Inspect(recoveredOnDisk).Conflicts.Count != 0)
+        if (!input.SequenceEqual(originalOnDisk) || ProjectListIdentityRecovery.Inspect(recoveredOnDisk).Conflicts.Count != 0)
             throw new Exception("Repair copy did not preserve the original or eliminate the conflict.");
 
-        ExpectInvalid(() => DuplicateProjectIdRecovery.Repair([.. input, (byte)' '], review, keepers));
-        ExpectInvalid(() => DuplicateProjectIdRecovery.Repair(input, review, new Dictionary<Guid, int> { [duplicate] = 2 }));
-        ExpectInvalid(() => DuplicateProjectIdRecovery.Inspect(Encoding.UTF8.GetBytes("""{"Projects":[],"projects":[]}""")));
+        ExpectInvalid(() => ProjectListIdentityRecovery.Repair([.. input, (byte)' '], review, keepers));
+        ExpectInvalid(() => ProjectListIdentityRecovery.Repair(input, review, new Dictionary<Guid, int> { [duplicate] = 2 }));
+        ExpectInvalid(() => ProjectListIdentityRecovery.Inspect(Encoding.UTF8.GetBytes("""{"Projects":[],"projects":[]}""")));
         await RunApplyAsync(root, duplicate);
+        await Program.RunNamedCaseAsync("Explicitly assign legacy project and link IDs", () => RunLegacyAsync(root));
+    }
+
+    private static async Task RunLegacyAsync(string root)
+    {
+        var original = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Projects = new object[]
+            {
+                new { FullPath = Path.Combine(root, "legacy-one.ymmp"), FutureProject = 4,
+                    LinkedYmmpFiles = new[] { new { FilePath = Path.Combine(root, "legacy-one.ymmp"), FutureLink = 7 } } },
+                new { FullPath = Path.Combine(root, "legacy-preserved.ymmp") },
+            },
+            Folders = Array.Empty<object>(),
+        });
+        var path = Path.Combine(root, "legacy-active.json");
+        var backup = Path.Combine(root, "legacy-original.json");
+        var repository = new JsonProjectRepository(new FileLogger(Path.Combine(root, "legacy-test.log")), path);
+        await File.WriteAllBytesAsync(path, original);
+        if ((await repository.LoadAsync()).IsRecoverySafe) throw new Exception("Fixture did not require legacy migration.");
+        var review = ProjectListIdentityRecovery.Inspect(original);
+        ExpectInvalid(() => ProjectListIdentityRecovery.Repair(original, review, new Dictionary<Guid, int>()));
+        await ProjectListIdentityRecovery.ApplyAsync(repository, review, new Dictionary<Guid, int>(), backup, default, new HashSet<int> { 0 });
+        var saved = await repository.LoadAsync();
+        if (!saved.IsRecoverySafe || saved.Projects[0].ProjectId is null || saved.Projects[0].LinkedYmmpFiles.Single().Id == Guid.Empty ||
+            saved.Projects[1].ProjectId is not null)
+            throw new Exception("Migration did not constrain changes to the explicitly selected legacy row.");
+        using var output = JsonDocument.Parse(await File.ReadAllBytesAsync(path));
+        var row = output.RootElement.GetProperty("Projects")[0];
+        var restored = await File.ReadAllBytesAsync(backup);
+        if (row.GetProperty("FutureProject").GetInt32() != 4 ||
+            row.GetProperty("LinkedYmmpFiles")[0].GetProperty("FutureLink").GetInt32() != 7 ||
+            !restored.SequenceEqual(original)) throw new Exception("Migration discarded opaque fields or original bytes.");
     }
 
     private static async Task RunApplyAsync(string root, Guid duplicate)
@@ -73,7 +106,7 @@ internal static class DuplicateProjectIdRecoveryTests
             FutureRoot = 42,
         });
         await File.WriteAllBytesAsync(path, original);
-        var review = DuplicateProjectIdRecovery.Inspect(original);
+        var review = ProjectListIdentityRecovery.Inspect(original);
         var chosen = new Dictionary<Guid, int> { [duplicate] = 0 };
         var logger = new FileLogger(Path.Combine(root, "test.log"));
         var backup = Path.Combine(root, "original-active.json");
@@ -81,7 +114,7 @@ internal static class DuplicateProjectIdRecoveryTests
         var conflictedRepo = new JsonProjectRepository(logger, path, beforeReplace: () => File.WriteAllBytes(path, existingReplacement));
         try
         {
-            await DuplicateProjectIdRecovery.ApplyAsync(conflictedRepo, review, chosen, backup, default);
+            await ProjectListIdentityRecovery.ApplyAsync(conflictedRepo, review, chosen, backup, default);
             throw new Exception("Repair overwrote concurrent content.");
         }
         catch (ProjectListConflictException) { }
@@ -93,7 +126,7 @@ internal static class DuplicateProjectIdRecoveryTests
         await File.WriteAllBytesAsync(path, original);
         var repo = new JsonProjectRepository(logger, path);
         var secondBackup = Path.Combine(root, "original-active-2.json");
-        await DuplicateProjectIdRecovery.ApplyAsync(repo, review, chosen, secondBackup, default);
+        await ProjectListIdentityRecovery.ApplyAsync(repo, review, chosen, secondBackup, default);
         var reloaded = await repo.LoadAsync();
         var secondOriginal = await File.ReadAllBytesAsync(secondBackup);
         if (!secondOriginal.SequenceEqual(original) || !reloaded.IsRecoverySafe ||

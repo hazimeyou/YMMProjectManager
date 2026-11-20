@@ -302,6 +302,7 @@ public sealed partial class ProjectListViewModel
         token.ThrowIfCancellationRequested();
         project.FullPath = newPath;
         project.FileIdentity = identity;
+        pendingAdditionEvidence[newPath] = (project.ProjectId!.Value, identity.Sha256);
         foreach (var link in project.LinkedYmmpFiles.Where(l => string.Equals(l.FilePath, oldPath, StringComparison.OrdinalIgnoreCase)))
         {
             link.FilePath = newPath;

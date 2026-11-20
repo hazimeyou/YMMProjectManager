@@ -42,7 +42,7 @@
                 <Button Content="画面状態を退避" Command="{Binding ExportRecoveryScreenCommand}" Margin="4,0,0,0" />
                 <Button Content="前回の保存記録を確認" Command="{Binding ReviewDraftCommand}" Margin="4,0,0,0" />
                 <Button Content="一覧原本を退避" Command="{Binding ExportOriginalProjectListCommand}" Margin="4,0,0,0" />
-                <Button Content="重複 ID を確認・修復" Command="{Binding RepairDuplicateProjectIdsCommand}" Margin="4,0,0,0" />
+                <Button Content="一覧の ID を確認・修復" Command="{Binding RepairProjectListIdentitiesCommand}" Margin="4,0,0,0" />
             </WrapPanel>
 
             <!-- YMM 本体と連携する操作は、通常の一覧操作と分けて配置する。 -->

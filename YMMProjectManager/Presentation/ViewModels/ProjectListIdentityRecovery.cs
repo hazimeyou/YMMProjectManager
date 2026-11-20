@@ -9,24 +9,25 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed partial class ProjectListViewModel
 {
-    public ICommand RepairDuplicateProjectIdsCommand { get; }
+    public ICommand RepairProjectListIdentitiesCommand { get; }
 
-    private async Task RepairDuplicateProjectIdsAsync()
+    private async Task RepairProjectListIdentitiesAsync()
     {
         var published = false;
         await ExecuteToolAsync("Asset duplicate project ID recovery", async token =>
         {
             if (repository is not JsonProjectRepository json || HasUnsavedProjectList) return;
             var original = await json.ReadOriginalAsync(token);
-            var review = await Task.Run(() => DuplicateProjectIdRecovery.Inspect(original), token);
-            if (review.Conflicts.Count == 0)
+            var review = await Task.Run(() => ProjectListIdentityRecovery.Inspect(original), token);
+            if (review.Conflicts.Count == 0 && review.LegacyProjects.All(entry => entry.HasMetadata))
             {
-                AssetStatus = "重複するプロジェクト ID は見つかりませんでした。";
+                AssetStatus = "修復できる重複 ID または未設定の項目は見つかりませんでした。";
                 return;
             }
 
-            var keepers = ChooseDuplicateIdentityKeepers(review);
-            if (keepers is null) return;
+            var choices = ChooseIdentityRepairs(review);
+            if (choices is null) return;
+            var (keepers, legacyRows) = choices.Value;
             var choice = MessageBox.Show(
                 "「はい」で原本を別ファイルに退避してから修復を反映します。「いいえ」で修復版を別ファイルに保存します。",
                 "重複プロジェクト ID の修復", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.No);
@@ -43,7 +44,7 @@ public sealed partial class ProjectListViewModel
             if (picker.ShowDialog() != true || HasUnsavedProjectList) return;
             if (apply)
             {
-                try { await DuplicateProjectIdRecovery.ApplyAsync(json, review, keepers, picker.FileName, token); }
+                try { await ProjectListIdentityRecovery.ApplyAsync(json, review, keepers, picker.FileName, token, legacyRows); }
                 catch (InvalidDataException ex)
                 {
                     AssetStatus = ex.Message;
@@ -57,21 +58,21 @@ public sealed partial class ProjectListViewModel
             else
             {
                 var current = await json.ReadOriginalAsync(token);
-                var recovered = await Task.Run(() => DuplicateProjectIdRecovery.Repair(current, review, keepers), token);
+                var recovered = await Task.Run(() => ProjectListIdentityRecovery.Repair(current, review, keepers, legacyRows), token);
                 await JsonProjectRepository.WriteNewCopyAsync(picker.FileName, recovered, token);
                 AssetStatus = $"修復した一覧を新しいファイルに保存しました。\n{picker.FileName}";
             }
-            logger.Info($"Duplicate project identity repair finished. groups={review.Conflicts.Count} applied={apply}");
+            logger.Info($"Project list identity repair finished. groups={review.Conflicts.Count} legacy={legacyRows.Count} applied={apply}");
         });
         if (published) await InitializeAsync();
     }
 
-    private static Dictionary<Guid, int>? ChooseDuplicateIdentityKeepers(DuplicateProjectIdRecovery.Review review)
+    private static (Dictionary<Guid, int> Keepers, HashSet<int> LegacyRows)? ChooseIdentityRepairs(ProjectListIdentityRecovery.Review review)
     {
         var grid = new DockPanel { Margin = new Thickness(12) };
         var instructions = new TextBlock
         {
-            Text = "各グループで既存の ID を維持する項目を選んでください。他の項目には新しい ID を付け、コピー内で旧 ID のメタデータ関連付けを外します。現在の一覧とメタデータファイルは保持します。",
+            Text = "各グループで既存の ID を維持する項目を選んでください。他の項目には新しい ID を付け、旧 ID の関連付けを外します。ID 未設定の項目を選ぶと、その項目とリンクの未設定 ID を補います。元の一覧は退避し、メタデータファイルは保持します。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 12),
         };
@@ -84,6 +85,9 @@ public sealed partial class ProjectListViewModel
         var fields = new StackPanel();
         grid.Children.Add(new ScrollViewer { Content = fields, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var selections = new Dictionary<Guid, ComboBox>();
+        var legacyOptions = new Dictionary<int, CheckBox>();
+        void UpdateConfirmation() => confirm.IsEnabled = selections.Values.All(box => box.SelectedItem is not null) &&
+            (selections.Count > 0 || legacyOptions.Values.Any(option => option.IsChecked == true));
         foreach (var group in review.Conflicts)
         {
             var options = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
@@ -91,13 +95,24 @@ public sealed partial class ProjectListViewModel
             foreach (var entry in group.Entries)
                 options.Items.Add(new ComboBoxItem { Content = entry.Path + (entry.HasMetadata ? "（関連付けあり）" : ""), Tag = entry.Row });
             selections.Add(group.Id, options);
-            options.SelectionChanged += (_, _) => confirm.IsEnabled = selections.Values.All(box => box.SelectedItem is not null);
+            options.SelectionChanged += (_, _) => UpdateConfirmation();
             fields.Children.Add(options);
         }
-        var window = new Window { Title = "重複プロジェクト ID の修復", Width = 760, Height = 420, Content = grid, Owner = GetActiveWindow() };
+        var legacy = review.LegacyProjects.Where(entry => !entry.HasMetadata).ToArray();
+        if (legacy.Length > 0) fields.Children.Add(new TextBlock { Text = "新しい ID を付ける項目" });
+        foreach (var entry in legacy)
+        {
+            var option = new CheckBox { Content = entry.Path, ToolTip = entry.Path, Margin = new Thickness(0, 2, 0, 2) };
+            legacyOptions.Add(entry.Row, option);
+            option.Checked += (_, _) => UpdateConfirmation();
+            option.Unchecked += (_, _) => UpdateConfirmation();
+            fields.Children.Add(option);
+        }
+        var window = new Window { Title = "プロジェクト一覧の ID を修復", Width = 760, Height = 420, Content = grid, Owner = GetActiveWindow() };
         confirm.Click += (_, _) => window.DialogResult = true;
         return window.ShowDialog() == true
-            ? selections.ToDictionary(item => item.Key, item => (int)((ComboBoxItem)item.Value.SelectedItem).Tag)
+            ? (selections.ToDictionary(item => item.Key, item => (int)((ComboBoxItem)item.Value.SelectedItem).Tag),
+                legacyOptions.Where(item => item.Value.IsChecked == true).Select(item => item.Key).ToHashSet())
             : null;
     }
 }

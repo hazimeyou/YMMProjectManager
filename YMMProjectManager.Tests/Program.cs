@@ -152,8 +152,8 @@ internal static class Program
         await RunGroupAsync("ProjectListConcurrencyTests.RunAsync", () => ProjectListConcurrencyTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListDraftTests.RunAsync", () => ProjectListDraftTests.RunAsync(workRoot));
         await RunGroupAsync("ProjectListPublicationTests.RunAsync", () => ProjectListPublicationTests.RunAsync(workRoot));
-        await RunGroupAsync(nameof(DuplicateProjectIdRecoveryTests), () =>
-            RunNamedCaseAsync("Explicit duplicate project ID repair without modifying the source", () => DuplicateProjectIdRecoveryTests.RunAsync(workRoot)));
+        await RunGroupAsync(nameof(ProjectListIdentityRecoveryTests), () =>
+            RunNamedCaseAsync("Explicit duplicate project ID repair without modifying the source", () => ProjectListIdentityRecoveryTests.RunAsync(workRoot)));
         await RunGroupAsync(nameof(ProjectListRecoveryFilesTests), () =>
             RunNamedCaseAsync("Three-way recovery verifies the selected file and holds its lease", () => ProjectListRecoveryFilesTests.RunAsync(workRoot)));
         await RunGroupAsync("RelinkAssociationTests.RunAsync", () =>
@@ -191,8 +191,8 @@ internal static class Program
                 case "RealYmmpxR5":
                     await RealYmmpxR5Tests.RunAsync(workRoot);
                     break;
-                case nameof(DuplicateProjectIdRecoveryTests):
-                    await DuplicateProjectIdRecoveryTests.RunAsync(workRoot);
+                case nameof(ProjectListIdentityRecoveryTests):
+                    await ProjectListIdentityRecoveryTests.RunAsync(workRoot);
                     break;
                 case nameof(ProjectListRecoveryTests):
                     await ProjectListRecoveryTests.RunAsync(workRoot);

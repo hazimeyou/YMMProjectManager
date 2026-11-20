@@ -266,8 +266,8 @@ public partial class RelinkMainWindow : Window
             }
 
             var snapshot = new RelinkDocumentContext { YmmpPath = context!.YmmpPath, OriginalJsonText = context.OriginalJsonText, OriginalBytes = context.OriginalBytes?.ToArray(), Rows = RelinkCandidateVerifier.SnapshotRows(context.Rows) };
-            var fileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, token);
-            if (fileHashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
+            if (!snapshot.Rows.Any(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)))
+            { SetSummaryText("更新対象はありません。"); return; }
             AssetManifest? expectedManifest = null;
             var association = resolveMetadata is null ? null : await resolveMetadata(token);
             if (association is not null && metadataDirectory is not null)
@@ -275,6 +275,7 @@ public partial class RelinkMainWindow : Window
                 await SaveManagedRelinkAsync(snapshot, association, token);
                 return;
             }
+            var fileHashes = await RelinkCandidateVerifier.HashSelectedAsync(snapshot.Rows, token);
             if (projectId is not null && MessageBox.Show("期待ハッシュを素材メタデータから照合しますか？", "素材再リンク", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
             {
                 var metadataDialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "素材メタデータを選択", CheckFileExists = true };

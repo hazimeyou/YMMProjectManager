@@ -5,14 +5,14 @@ using System.Text.Json.Nodes;
 
 namespace YMMProjectManager.Infrastructure;
 
-internal static class DuplicateProjectIdRecovery
+internal static class ProjectListIdentityRecovery
 {
     private const int MaximumBytes = 32 * 1024 * 1024;
     private static readonly JsonSerializerOptions OutputOptions = new(JsonSerializerOptions.Default) { WriteIndented = true };
 
     internal sealed record Entry(int Row, string Path, bool HasMetadata);
     internal sealed record Conflict(Guid Id, IReadOnlyList<Entry> Entries);
-    internal sealed record Review(string Sha256, IReadOnlyList<Conflict> Conflicts);
+    internal sealed record Review(string Sha256, IReadOnlyList<Conflict> Conflicts, IReadOnlyList<Entry> LegacyProjects);
 
     internal static Review Inspect(byte[] bytes)
     {
@@ -24,6 +24,7 @@ internal static class DuplicateProjectIdRecovery
 
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byId = new Dictionary<Guid, List<Entry>>();
+        var legacy = new List<Entry>();
         var row = 0;
         foreach (var project in projects.EnumerateArray())
         {
@@ -33,23 +34,30 @@ internal static class DuplicateProjectIdRecovery
                 throw new InvalidDataException("無効または重複するパスがあり、一覧項目を識別できません。");
 
             var index = row++;
+            var entry = new Entry(index, path,
+                project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null);
             if (!project.TryGetProperty("ProjectId", out var value) || value.ValueKind == JsonValueKind.Null)
+            {
+                legacy.Add(entry);
                 continue;
+            }
             if (value.ValueKind != JsonValueKind.String || !value.TryGetGuid(out var id) || id == Guid.Empty)
                 throw new InvalidDataException("不正なプロジェクト ID があります。");
             if (!byId.TryGetValue(id, out var group)) byId.Add(id, group = []);
-            group.Add(new Entry(index, path,
-                project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null));
+            group.Add(entry);
         }
         return new Review(Convert.ToHexString(SHA256.HashData(bytes)),
-            byId.Where(pair => pair.Value.Count > 1).Select(pair => new Conflict(pair.Key, pair.Value.AsReadOnly())).ToArray());
+            byId.Where(pair => pair.Value.Count > 1).Select(pair => new Conflict(pair.Key, pair.Value.AsReadOnly())).ToArray(), legacy.AsReadOnly());
     }
 
-    internal static byte[] Repair(byte[] confirmedBytes, Review review, IReadOnlyDictionary<Guid, int> keepers)
+    internal static byte[] Repair(byte[] confirmedBytes, Review review, IReadOnlyDictionary<Guid, int> keepers,
+        IReadOnlySet<int>? legacyRows = null)
     {
         // Recompute rather than trusting row indexes or groups supplied by the screen.
         var current = Inspect(confirmedBytes);
-        if (current.Sha256 != review.Sha256 || current.Conflicts.Count == 0 ||
+        var eligible = current.LegacyProjects.Where(entry => !entry.HasMetadata).Select(entry => entry.Row).ToHashSet();
+        if (current.Sha256 != review.Sha256 || (current.Conflicts.Count == 0 && legacyRows is not { Count: > 0 }) ||
+            (legacyRows is not null && !legacyRows.IsSubsetOf(eligible)) ||
             keepers.Count != current.Conflicts.Count ||
             current.Conflicts.Any(group => !keepers.TryGetValue(group.Id, out var row) || !group.Entries.Any(entry => entry.Row == row)))
             throw new InvalidDataException("選択内容が確認した一覧と一致しません。");
@@ -64,12 +72,22 @@ internal static class DuplicateProjectIdRecovery
             foreach (var entry in group.Entries.Where(entry => entry.Row != keepers[group.Id]))
             {
                 var project = projects[entry.Row]!.AsObject();
-                Guid replacement;
-                do { replacement = Guid.NewGuid(); } while (!used.Add(replacement));
-                project["ProjectId"] = replacement.ToString("D");
+                project["ProjectId"] = NextId(used).ToString("D");
                 // The old association belongs to the retained logical project. Keep it in the untouched source list.
                 if (entry.HasMetadata) project.Remove("MetadataAssociation");
             }
+        }
+
+        foreach (var row in legacyRows ?? new HashSet<int>())
+        {
+            var project = projects[row]!.AsObject();
+            project["ProjectId"] = NextId(used).ToString("D");
+            if (project["LinkedYmmpFiles"] is not JsonArray links) continue;
+            var explicitIds = links.OfType<JsonObject>().Select(link => link["Id"])
+                .OfType<JsonValue>().Select(value => value.TryGetValue<string>(out var raw) && Guid.TryParse(raw, out var id) ? id : Guid.Empty)
+                .ToHashSet();
+            foreach (var link in links.OfType<JsonObject>().Where(link => link["Id"] is null))
+                link["Id"] = NextId(explicitIds).ToString("D");
         }
 
         var result = JsonSerializer.SerializeToUtf8Bytes(root, OutputOptions);
@@ -78,10 +96,10 @@ internal static class DuplicateProjectIdRecovery
     }
 
     internal static async Task ApplyAsync(JsonProjectRepository repository, Review review, IReadOnlyDictionary<Guid, int> keepers,
-        string backup, CancellationToken token)
+        string backup, CancellationToken token, IReadOnlySet<int>? legacyRows = null)
     {
         var current = await repository.ReadOriginalAsync(token).ConfigureAwait(false);
-        var repaired = await Task.Run(() => JsonProjectRepository.DeserializeStore(Repair(current, review, keepers)), token).ConfigureAwait(false);
+        var repaired = await Task.Run(() => JsonProjectRepository.DeserializeStore(Repair(current, review, keepers, legacyRows)), token).ConfigureAwait(false);
         if (!repaired.IsRecoverySafe || repaired.Revision is null)
             throw new InvalidDataException("修復した一覧に、このバージョンで安全に保存できない情報が含まれています。修復版のコピーを作成できます。");
 
@@ -89,6 +107,13 @@ internal static class DuplicateProjectIdRecovery
         repaired.Revision = repaired.Revision with { Sha256 = review.Sha256 };
         await JsonProjectRepository.WriteNewCopyAsync(backup, current, token).ConfigureAwait(false);
         await repository.SaveAsync(repaired, token).ConfigureAwait(false);
+    }
+
+    private static Guid NextId(HashSet<Guid> used)
+    {
+        Guid id;
+        do { id = Guid.NewGuid(); } while (!used.Add(id));
+        return id;
     }
 
     private static JsonDocument Load(byte[] bytes)
