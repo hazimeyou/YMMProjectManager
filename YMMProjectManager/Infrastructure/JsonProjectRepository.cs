@@ -293,6 +293,16 @@ public sealed class JsonProjectRepository : IProjectRepository
             .WriteAsync(baseline, local, evidence, predecessor, beforePublication, afterPublication).ConfigureAwait(false);
     }
 
+    internal async Task RetireReadyDraftAsync(string readyDraft, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        var drafts = new ProjectListDrafts(RecoveryDirectory);
+        using var processLock = AcquireProcessLock();
+        await drafts.ReadAsync(readyDraft).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        drafts.Retire(readyDraft);
+    }
+
     internal Task SaveReadyDraftAsync(ProjectStore store, string readyDraft, CancellationToken token = default) =>
         SaveCoreAsync(store, readyDraft, token);
 

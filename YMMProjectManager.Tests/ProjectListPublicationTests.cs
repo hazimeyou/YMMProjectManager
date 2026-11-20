@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 
@@ -16,6 +17,57 @@ internal static class ProjectListPublicationTests
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
         foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation", "missing-intermediate-generation" })
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
+        await Program.RunNamedCaseAsync("List draft retirement cannot race a generation or list publication",
+            () => TestRetirementDuringPublicationAsync(workRoot));
+    }
+
+    private static async Task TestRetirementDuringPublicationAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-retirement-lock");
+        Directory.CreateDirectory(root);
+        var repository = Open(root);
+        var baseline = await repository.LoadAsync();
+        var local = await repository.LoadAsync();
+        local.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp") });
+        var previous = await repository.WritePendingDraftAsync(baseline, local, [], null);
+
+        async Task<T> PublishWithConcurrentRetirementAsync<T>(string ready, Func<Action, Task<T>> publish)
+        {
+            var acquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var resume = new ManualResetEventSlim();
+            var running = Task.Run(() => publish(() =>
+            {
+                acquired.SetResult();
+                if (!resume.Wait(TimeSpan.FromSeconds(15))) throw new TimeoutException("Publication fixture was not released.");
+            }));
+            try
+            {
+                await acquired.Task.WaitAsync(TimeSpan.FromSeconds(15));
+                try
+                {
+                    await Open(root).RetireReadyDraftAsync(ready);
+                    throw new Exception("Retirement acquired a draft already being published.");
+                }
+                catch (ProjectListBusyException) { }
+                Require(File.Exists(ready) && !File.Exists(ready + ".closed"), "Busy retirement changed the ready draft.");
+            }
+            finally { resume.Set(); }
+            return await running;
+        }
+
+        var successor = await PublishWithConcurrentRetirementAsync(previous,
+            lockHeld => repository.WritePendingDraftAsync(baseline, local, [], previous, beforePublication: lockHeld));
+        await ExpectRejectedAsync(() => repository.RetireReadyDraftAsync(previous));
+        Require(File.Exists(previous), "Stale retirement archived the predecessor.");
+        await PublishWithConcurrentRetirementAsync(successor, async lockHeld =>
+        {
+            var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "publisher.log")),
+                Path.Combine(root, "projects.json"), afterReceipt: lockHeld);
+            await publisher.SaveReadyDraftAsync(local, successor);
+            return true;
+        });
+        Require(File.Exists(successor + ".closed") && !File.Exists(successor) &&
+            (await repository.LoadAsync()).Projects.Count == 1, "Contention changed the successful publication outcome.");
     }
 
     private static async Task RunGenerationPointAsync(string workRoot, string point)
