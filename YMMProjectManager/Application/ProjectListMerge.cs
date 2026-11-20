@@ -85,44 +85,42 @@ internal static class ProjectListMerge
                 continue;
             }
             if (b.ProjectId != r.ProjectId) { conflicts.Add($"外部で project ID が変更されたため再適用できません: {key}"); continue; }
-            if (b.FullPath != l.FullPath && b.FullPath != r.FullPath && l.FullPath != r.FullPath)
-            {
-                conflicts.Add($"別々の移動先が指定されました。同一のファイルと確認してからやり直してください: {key}");
-                continue;
-            }
-            if ((b.FullPath != l.FullPath && b.FullPath == r.FullPath && FileBindingChanged(b, r)) ||
-                (b.FullPath != r.FullPath && b.FullPath == l.FullPath && FileBindingChanged(b, l)))
-            {
-                conflicts.Add($"移動とファイル識別情報またはメタデータの変更が競合しています: {key}");
-                continue;
-            }
             var target = merged.Projects.Single(p => string.Equals(Key(p), key, StringComparison.OrdinalIgnoreCase));
             var before = conflicts.Count;
-            target.FullPath = Field(b.FullPath, l.FullPath, r.FullPath, key, "FullPath", conflicts, choices, useLocal);
-            target.ProjectId = Field(b.ProjectId, l.ProjectId, r.ProjectId, key, "ProjectId", conflicts, choices, useLocal);
             target.DisplayName = Field(b.DisplayName, l.DisplayName, r.DisplayName, key, "DisplayName", conflicts, choices, useLocal);
             target.Pinned = Field(b.Pinned, l.Pinned, r.Pinned, key, "Pinned", conflicts, choices, useLocal);
             target.LastAccess = Field(b.LastAccess, l.LastAccess, r.LastAccess, key, "LastAccess", conflicts, choices, useLocal);
             target.FolderId = Field(b.FolderId, l.FolderId, r.FolderId, key, "FolderId", conflicts, choices, useLocal);
-            target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts, choices, useLocal);
-            target.FileIdentity = Field(b.FileIdentity, l.FileIdentity, r.FileIdentity, key, "FileIdentity", conflicts, choices, useLocal);
             var bLinks = LinksFingerprint(b); var lLinks = LinksFingerprint(l); var rLinks = LinksFingerprint(r);
-            var linkOrder = b.LinkedYmmpFiles.Select(link => link.Id).ToArray();
-            if (bLinks != lLinks && bLinks != rLinks && lLinks != rLinks &&
-                linkOrder.SequenceEqual(l.LinkedYmmpFiles.Select(link => link.Id)) && linkOrder.SequenceEqual(r.LinkedYmmpFiles.Select(link => link.Id)))
+            if (b.FullPath != l.FullPath || b.FullPath != r.FullPath)
             {
-                for (var i = 0; i < linkOrder.Length; i++)
-                    MergeLink(b.LinkedYmmpFiles[i], l.LinkedYmmpFiles[i], r.LinkedYmmpFiles[i], target.LinkedYmmpFiles[i],
-                        $"{key} / link {linkOrder[i]}", conflicts, choices, useLocal);
+                // A destination must stay associated with its own physical evidence, metadata and links.
+                var baseBinding = BindingDetails(b, bLinks);
+                var localBinding = BindingDetails(l, lLinks);
+                var remoteBinding = BindingDetails(r, rLinks);
+                if (localBinding != baseBinding && localBinding != remoteBinding &&
+                    (remoteBinding == baseBinding || Decide(key, "移動先と関連付け", localBinding, remoteBinding, conflicts, choices, useLocal) is true))
+                {
+                    target.FullPath = l.FullPath;
+                    target.MetadataAssociation = l.MetadataAssociation;
+                    target.FileIdentity = l.FileIdentity;
+                    CopyLinks(l, target);
+                }
             }
             else
             {
-                var selected = Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts, choices, useLocal);
-                if (selected == lLinks && lLinks != rLinks)
+                target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts, choices, useLocal);
+                target.FileIdentity = Field(b.FileIdentity, l.FileIdentity, r.FileIdentity, key, "FileIdentity", conflicts, choices, useLocal);
+                var linkOrder = b.LinkedYmmpFiles.Select(link => link.Id).ToArray();
+                if (bLinks != lLinks && bLinks != rLinks && lLinks != rLinks &&
+                    linkOrder.SequenceEqual(l.LinkedYmmpFiles.Select(link => link.Id)) && linkOrder.SequenceEqual(r.LinkedYmmpFiles.Select(link => link.Id)))
                 {
-                    target.LinkedYmmpFiles.Clear();
-                    foreach (var link in l.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link));
+                    for (var i = 0; i < linkOrder.Length; i++)
+                        MergeLink(b.LinkedYmmpFiles[i], l.LinkedYmmpFiles[i], r.LinkedYmmpFiles[i], target.LinkedYmmpFiles[i],
+                            $"{key} / link {linkOrder[i]}", conflicts, choices, useLocal);
                 }
+                else if (lLinks != rLinks && Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts, choices, useLocal) == lLinks)
+                    CopyLinks(l, target);
             }
             if (before == conflicts.Count)
             {
@@ -183,8 +181,17 @@ internal static class ProjectListMerge
         LinkedYmmpFiles = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(LinksFingerprint(p)),
     });
 
-    private static bool FileBindingChanged(ProjectEntry baseline, ProjectEntry side) =>
-        baseline.FileIdentity != side.FileIdentity || baseline.MetadataAssociation != side.MetadataAssociation;
+    private static string BindingDetails(ProjectEntry project, string links) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        project.FullPath, project.MetadataAssociation, project.FileIdentity,
+        LinkedYmmpFiles = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(links),
+    });
+
+    private static void CopyLinks(ProjectEntry source, ProjectEntry target)
+    {
+        target.LinkedYmmpFiles.Clear();
+        foreach (var link in source.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link));
+    }
 
     private static void Describe<T>(T b, T l, T r, string key, string name, List<string> changes)
     {

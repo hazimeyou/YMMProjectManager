@@ -127,6 +127,39 @@ internal static class ProjectListConcurrencyTests
         var independentMove = ProjectListMerge.Merge(mergeBase, local, remote).Store?.Projects.Single();
         if (independentMove is not { Pinned: true } || independentMove.FullPath != local.Projects[0].FullPath)
             throw new Exception("independent move and property change did not merge");
+        var competingLocal = ProjectListMerge.Snapshot(mergeBase);
+        var competingRemote = ProjectListMerge.Snapshot(mergeBase);
+        var localMove = competingLocal.Projects.Single();
+        var remoteMove = competingRemote.Projects.Single();
+        localMove.FullPath = Path.Combine(root, "selected-local.ymmp");
+        remoteMove.FullPath = Path.Combine(root, "selected-remote.ymmp");
+        var localDigest = new string('A', 64);
+        var remoteDigest = new string('B', 64);
+        localMove.FileIdentity = new ProjectFileIdentity(1, Guid.NewGuid(), localDigest);
+        remoteMove.FileIdentity = new ProjectFileIdentity(1, Guid.NewGuid(), remoteDigest);
+        localMove.MetadataAssociation = new ProjectMetadataAssociation(root, Guid.NewGuid(), localDigest, Guid.NewGuid(), localDigest, Guid.NewGuid(), localDigest);
+        remoteMove.MetadataAssociation = new ProjectMetadataAssociation(root, Guid.NewGuid(), remoteDigest, Guid.NewGuid(), remoteDigest, Guid.NewGuid(), remoteDigest);
+        localMove.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = localMove.FullPath, Role = YmmpRole.Main });
+        remoteMove.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = remoteMove.FullPath, Role = YmmpRole.Main });
+        localMove.DisplayName = "local independent edit";
+        remoteMove.Pinned = true;
+        var competing = ProjectListMerge.Merge(mergeBase, competingLocal, competingRemote);
+        if (competing.Store is not null || !competing.CanResolveAll || competing.Choices.Count != 1)
+            throw new Exception("competing destinations did not require one explicit choice");
+        foreach (var selectLocalMove in new[] { true, false })
+        {
+            var picked = ProjectListMerge.Merge(mergeBase, competingLocal, competingRemote,
+                new Dictionary<ProjectListConflict, bool> { [competing.Choices.Single()] = selectLocalMove }).Store?.Projects.Single();
+            var expected = selectLocalMove ? localMove : remoteMove;
+            if (picked is not { Pinned: true, DisplayName: "local independent edit" } || picked.FullPath != expected.FullPath ||
+                picked.ProjectId != expected.ProjectId || picked.FileIdentity != expected.FileIdentity ||
+                picked.MetadataAssociation != expected.MetadataAssociation || picked.LinkedYmmpFiles.Single().FilePath != expected.FullPath)
+                throw new Exception("destination selection mixed bindings or lost independent fields");
+        }
+        remoteMove.LinkedYmmpFiles.Single().Memo = "after choice";
+        if (ProjectListMerge.Merge(mergeBase, competingLocal, competingRemote,
+            new Dictionary<ProjectListConflict, bool> { [competing.Choices.Single()] = true }).Store is not null)
+            throw new Exception("a changed competing destination attachment reused a stale choice");
         var linkBase = ProjectListMerge.Snapshot(mergeBase);
         linkBase.Projects[0].LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = linkBase.Projects[0].FullPath, Role = YmmpRole.Main });
         var linkLocal = ProjectListMerge.Snapshot(linkBase);
