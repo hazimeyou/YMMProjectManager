@@ -1,11 +1,16 @@
 using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
+using System.Net;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
 public sealed partial class GitRepository
 {
+    // Test fixtures may provide their own root for a literal loopback endpoint. The
+    // production service always uses Git's normal certificate trust.
+    internal string? LoopbackPullCertificateAuthorityFile { get; init; }
+
     private sealed class PullSession(OwnedFilePublication.DirectoryFence fence, GitRepositoryLease repository,
         FileStream config, string[] settings) : IDisposable
     {
@@ -165,6 +170,12 @@ public sealed partial class GitRepository
         var local = Path.IsPathFullyQualified(endpoint);
         var settings = local ? Array.Empty<string>() :
             new[] { "-c", "http.followRedirects=false", "-c", "http.sslVerify=true", "-c", "http.proxy=" };
+        if (LoopbackPullCertificateAuthorityFile is { } authority &&
+            Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+            uri.HostNameType is UriHostNameType.IPv4 or UriHostNameType.IPv6 &&
+            IPAddress.TryParse(uri.DnsSafeHost, out var address) &&
+            (address.Equals(IPAddress.Loopback) || address.Equals(IPAddress.IPv6Loopback)))
+            settings = [.. settings, "-c", $"http.sslCAInfo={Path.GetFullPath(authority)}"];
         return RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. settings, .. arguments],
             token, allowedProtocol: local ? "file" : "https", trustedProcess: true, pullSettings: session.Settings);
     }
