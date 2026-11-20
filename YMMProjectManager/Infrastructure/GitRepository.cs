@@ -52,7 +52,11 @@ public sealed class GitRepository
         {
             if (!HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
             var (url, error) = await ResolveOriginAsync(operation == GitRemoteOperation.Push, deadline, literal: true).ConfigureAwait(false);
-            return error ?? new GitResult(0, url!, "");
+            if (error is not null) return error;
+            var result = new GitResult(0, url!, "");
+            if (operation != GitRemoteOperation.Push) return result;
+            var (target, tipError) = await ReadPushTargetAsync(url!, trusted: true, deadline).ConfigureAwait(false);
+            return tipError ?? result with { PushTarget = target };
         }, token, RemoteTimeout);
 
     public Task<GitResult> FetchAsync(CancellationToken token = default) =>
@@ -101,25 +105,58 @@ public sealed class GitRepository
         return WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(expectedRemote, deadline), token, RemoteTimeout);
     }
 
-    private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token)
+    public Task<GitResult> PushTrustedAsync(GitPushTarget target, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        return WithinRemoteDeadlineAsync("Push", deadline => PushCoreAsync(target.Endpoint, deadline, target), token, RemoteTimeout);
+    }
+
+    private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token, GitPushTarget? approvedTarget = null)
     {
         var trusted = expectedRemote is not null;
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
         var (url, error) = await ResolveOriginAsync(push: true, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
         if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
-        var branch = await RunAsync(["symbolic-ref", "--quiet", "HEAD"], token, trustedProcess: trusted).ConfigureAwait(false);
-        if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing.");
-        var name = branch.StandardOutput.Trim();
-        if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || name.Contains('\n') || name.Contains('\r'))
-            return new GitResult(1, "", "Invalid branch name.");
-        var commit = await RunAsync(["rev-parse", "--verify", name + "^{commit}"], token, trustedProcess: trusted).ConfigureAwait(false);
-        var objectId = commit.StandardOutput.Trim();
-        if (!commit.Success || (objectId.Length != 40 && objectId.Length != 64) || !objectId.All(Uri.IsHexDigit))
-            return new GitResult(1, "", "Could not determine the branch commit.");
+        if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
+            return UnsafeRemote("This push approval belongs to a different repository.");
+        var (current, tipError) = await ReadPushTargetAsync(url!, trusted, token).ConfigureAwait(false);
+        if (tipError is not null) return tipError;
+        if (approvedTarget is not null && approvedTarget != current)
+            return UnsafeRemote("The branch or commit changed since approval. Review the push target again.");
         BeforeRemoteExecution?.Invoke(token);
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before push.");
-        return await RunRemoteAsync(url!, ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no", "--", url!, objectId + ":" + name], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
+        if (approvedTarget is not null)
+        {
+            var (lastTarget, _) = await ReadPushTargetAsync(url!, trusted: true, token).ConfigureAwait(false);
+            if (approvedTarget != lastTarget)
+                return UnsafeRemote("The branch or commit changed before push. Review the push target again.");
+        }
+
+        // Pass the same approved object and full destination branch even if HEAD changes
+        // after the final observation. Never ask Git to resolve a mutable source ref.
+        var target = approvedTarget ?? current!;
+        return await RunRemoteAsync(target.Endpoint,
+            ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no",
+             "--", target.Endpoint, target.ObjectId + ":" + target.BranchRef], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
+    }
+
+    private async Task<(GitPushTarget? Target, GitResult? Error)> ReadPushTargetAsync(string url, bool trusted, CancellationToken token)
+    {
+        var branch = await ReadGitAsync(["symbolic-ref", "--quiet", "HEAD"]).ConfigureAwait(false);
+        if (!branch.Success) return (null, new GitResult(branch.ExitCode, "", "A branch must be checked out before pushing."));
+        var name = branch.StandardOutput.TrimEnd('\r', '\n');
+        if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || name.Any(char.IsControl))
+            return (null, new GitResult(1, "", "Invalid branch name."));
+        var commit = await ReadGitAsync(["rev-parse", "--verify", name + "^{commit}"]).ConfigureAwait(false);
+        var objectId = commit.StandardOutput.Trim();
+        if (!commit.Success || (objectId.Length != 40 && objectId.Length != 64) || !objectId.All(Uri.IsHexDigit))
+            return (null, new GitResult(1, "", "Could not determine the branch commit."));
+        return (new GitPushTarget(directory, url, name, objectId), null);
+
+        Task<GitResult> ReadGitAsync(string[] args) => RunAsync(trusted
+            ? [$"--git-dir={Path.Combine(directory, ".git")}", .. args]
+            : args, token, trustedProcess: trusted);
     }
 
     private async Task<GitResult> RunRemoteAsync(string url, string[] arguments, CancellationToken token,
@@ -152,6 +189,12 @@ public sealed class GitRepository
             arguments = [$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. arguments];
         }
         return SanitizeRemote(await RunAsync(arguments, token, protocol).ConfigureAwait(false), classifyPushStatus, cloneStage);
+    }
+
+    public static GitResult InspectCloneRemote(string remote)
+    {
+        try { ValidateRemote(remote); return new GitResult(0, remote, ""); }
+        catch (ArgumentException) { return UnsafeRemote("Clone source is unsupported or contains credentials."); }
     }
 
     public static Task<GitResult> CloneAsync(string remote, string destination, CancellationToken token = default) =>
@@ -463,9 +506,26 @@ public enum GitFailure { None, Authentication, Permission, Network, Divergence, 
 public enum GitRemoteOperation { Fetch, Push }
 public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);
 
+public sealed record GitPushTarget
+{
+    internal GitPushTarget(string repositoryRoot, string endpoint, string branchRef, string objectId)
+    {
+        RepositoryRoot = repositoryRoot;
+        Endpoint = endpoint;
+        BranchRef = branchRef;
+        ObjectId = objectId;
+    }
+
+    public string RepositoryRoot { get; }
+    public string Endpoint { get; }
+    public string BranchRef { get; }
+    public string ObjectId { get; }
+}
+
 public sealed record GitResult(int ExitCode, string StandardOutput, string StandardError, GitFailure Failure = GitFailure.None)
 {
     public bool Success => ExitCode == 0;
     public string? RecoveryPath { get; init; }
     public GitRemoteDiagnostic? RemoteDiagnostic { get; init; }
+    public GitPushTarget? PushTarget { get; init; }
 }

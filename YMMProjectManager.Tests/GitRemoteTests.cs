@@ -143,6 +143,37 @@ internal static class GitRemoteTests
             var trustedFetch = await one.FetchTrustedAsync(bare);
             Check(trustedFetch.Success && trustedFetch.RemoteDiagnostic is { Operation: "Fetch" }, "trusted fetch did not complete or report diagnostics");
             Check((await two.PushTrustedAsync(bare)).Success, "trusted non-force push");
+            var approval = (await two.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
+                ?? throw new InvalidOperationException("push inspection did not return a target");
+            var cloneTip = await Command(clone, "rev-parse", "HEAD");
+            Check(approval.Endpoint == bare && approval.BranchRef == "refs/heads/" + branch &&
+                approval.ObjectId == cloneTip && approval.RepositoryRoot == clone, "push inspection identified the wrong target");
+            Check((await one.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push approval reused for another repository");
+
+            const string approvedBranch = "approval-fixture";
+            var approvedRef = "refs/heads/" + approvedBranch;
+            await Command(clone, "switch", "-c", approvedBranch);
+            Check((await two.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push silently switched branch after approval");
+            approval = (await two.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget!;
+            await Command(clone, "commit", "--allow-empty", "-m", "advance approved branch");
+            Check((await two.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push silently advanced the approved commit");
+            approval = (await two.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget!;
+
+            two.BeforeRemoteExecution = _ =>
+            {
+                // HEAD moves after the operation's first validation without changing the approved commit.
+                File.WriteAllText(Path.Combine(clone, ".git", "HEAD"), $"ref: refs/heads/{branch}\n");
+            };
+            Check((await two.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push followed a branch change at launch");
+            two.BeforeRemoteExecution = null;
+            Check((await Command(root, "--git-dir", bare, "for-each-ref", "--format=%(refname)", approvedRef)).Length == 0,
+                "stale approval updated a remote branch");
+            await Command(clone, "switch", approvedBranch);
+            Check((await two.PushTrustedAsync(approval)).Success, "push rejected the exact approved target");
+            Check(await Command(root, "--git-dir", bare, "rev-parse", approvedRef) == approval.ObjectId,
+                "push did not publish the approved commit");
+            Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == remoteBeforeRejectedPush,
+                "push changed an unapproved remote branch");
             var trustedClonePath = Path.Combine(root, "trusted-clone");
             Check((await GitRepository.CloneTrustedAsync(bare, trustedClonePath)).Success && Directory.Exists(trustedClonePath), "trusted clone");
             var nestedRoot = Path.Combine(source, "nested"); Directory.CreateDirectory(nestedRoot);
@@ -156,6 +187,11 @@ internal static class GitRemoteTests
             Check(unsignedInspection.Success && unsignedInspection.StandardOutput == explicitEndpoint, "HTTPS preview was not literal");
             Check((await one.FetchAsync()).Failure == GitFailure.UnsafeOperation, "HTTPS fetch accepted without explicit trust");
             Check((await one.FetchTrustedAsync("https://other.invalid/repository")).Failure == GitFailure.UnsafeOperation, "trusted fetch accepted wrong HTTPS endpoint");
+            var cloneInspection = GitRepository.InspectCloneRemote(explicitEndpoint);
+            Check(cloneInspection.Success && cloneInspection.StandardOutput == explicitEndpoint, "clone inspection failed to preserve the approved endpoint");
+            var credentialInspection = GitRepository.InspectCloneRemote("https://user:secret@approved.invalid/repository");
+            Check(!credentialInspection.Success && !credentialInspection.StandardOutput.Contains("secret") &&
+                !credentialInspection.StandardError.Contains("secret"), "clone inspection disclosed credentials");
             var unapprovedClone = Path.Combine(root, "unapproved-clone");
             Check((await GitRepository.CloneAsync(explicitEndpoint, unapprovedClone)).Failure == GitFailure.UnsafeOperation &&
                 !Directory.Exists(unapprovedClone), "HTTPS clone accepted without explicit trust");
