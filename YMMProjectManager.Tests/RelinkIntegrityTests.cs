@@ -12,6 +12,13 @@ internal static class RelinkIntegrityTests
         var root = Path.Combine(workRoot, "relink-integrity"); Directory.CreateDirectory(root);
         var logger = new FileLogger(Path.Combine(root,"test.log"));
         void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+        await Program.RunNamedCaseAsync("Active timeline replacement is unavailable without host acceptance", () =>
+        {
+            var blocked = new TimelineItemRelinkService(logger).ReplaceSelectedItemFilePath(null);
+            Check(blocked.Kind == TimelineItemRelinkResultKind.Warning && blocked.Message.Contains("別名保存"),
+                "unverified timeline replacement did not suggest file-based SaveAs");
+            return Task.CompletedTask;
+        });
         string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
         async Task<(string Path, RelinkDocumentContext Context)> Fixture(string name, string json)
         {
