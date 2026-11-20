@@ -65,27 +65,20 @@ public sealed partial class ProjectListViewModel
         }
         var picker = new OpenFolderDialog { Title = $"保管先「{storageName}」のフォルダーを指定" };
         if (picker.ShowDialog() != true) return;
-        var results = new List<string>(locations.Length);
-        foreach (var asset in locations)
+        var statuses = await AssetInventory.VerifyExternalBatchAsync(picker.FolderName, locations, token);
+        var results = locations.Zip(statuses, (asset, status) =>
         {
-            token.ThrowIfCancellationRequested();
-            AssetVerification status;
-            try { status = await AssetInventory.VerifyExternalAsync(picker.FolderName, asset, token); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
-            {
-                results.Add($"{asset.ExternalLocation!.RelativePath}  読み取れません");
-                continue;
-            }
             var text = status switch
             {
                 AssetVerification.Valid => "一致",
                 AssetVerification.Missing => "見つかりません",
                 AssetVerification.SizeMismatch => "サイズが異なります",
                 AssetVerification.HashMismatch => "内容が異なります",
+                AssetVerification.Unreadable => "読み取れません",
                 _ => "確認できません",
             };
-            results.Add($"{asset.ExternalLocation!.RelativePath}  {text}");
-        }
+            return $"{asset.ExternalLocation!.RelativePath}  {text}";
+        });
         if (ReferenceEquals(project, SelectedProject) && project.MetadataAssociation == association &&
             string.Equals(storageName, AssetStorageName.Trim(), StringComparison.OrdinalIgnoreCase))
             AssetStatus = $"{storageName} の照合結果\n{string.Join("\n", results)}";

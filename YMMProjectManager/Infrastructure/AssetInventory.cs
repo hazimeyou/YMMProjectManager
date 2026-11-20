@@ -12,7 +12,7 @@ public sealed record AssetMetadata(string RelativePath, long Size, string Sha256
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ExternalAssetLocation? ExternalLocation { get; init; }
 }
-public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch, ExternalUnverified }
+public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch, ExternalUnverified, Unreadable }
 public enum AssetReferenceStatus { Present, Missing, Changed, External, Unavailable }
 public sealed record AssetReference(string Path, AssetReferenceStatus Status, AssetMetadata? Actual, AssetMetadata? Expected);
 
@@ -121,6 +121,30 @@ public static class AssetInventory
         ValidateMetadata(asset);
         if (asset.ExternalLocation is not { } location) throw new InvalidDataException("No external storage location is recorded.");
         return await VerifyFileAsync(ResolveRelativePath(approvedStorageRoot, location.RelativePath), asset, token).ConfigureAwait(false);
+    }
+
+    internal static Task<IReadOnlyList<AssetVerification>> VerifyExternalBatchAsync(
+        string approvedStorageRoot, IReadOnlyList<AssetMetadata> assets, CancellationToken token)
+    {
+        // Path inspection performs synchronous filesystem calls before the asynchronous file reads.
+        return Task.Run<IReadOnlyList<AssetVerification>>(async () =>
+        {
+            var results = new AssetVerification[assets.Count];
+            for (var index = 0; index < assets.Count; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    results[index] = await VerifyExternalAsync(approvedStorageRoot, assets[index], token).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+                {
+                    results[index] = AssetVerification.Unreadable;
+                }
+            }
+            token.ThrowIfCancellationRequested();
+            return results;
+        }, token);
     }
 
     private static async Task<AssetVerification> VerifyFileAsync(string path, AssetMetadata asset, CancellationToken token)

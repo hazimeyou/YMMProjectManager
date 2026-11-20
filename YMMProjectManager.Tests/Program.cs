@@ -206,6 +206,9 @@ internal static class Program
                 case nameof(YmmpxFailureTests):
                     await YmmpxFailureTests.RunAsync(workRoot);
                     break;
+                case nameof(AssetInventoryTests):
+                    await AssetInventoryTests.RunAsync(workRoot);
+                    break;
                 case nameof(AssetManifestTests):
                     await AssetManifestTests.RunAsync(workRoot);
                     break;

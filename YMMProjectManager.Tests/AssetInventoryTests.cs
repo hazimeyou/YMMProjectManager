@@ -50,6 +50,26 @@ internal static class AssetInventoryTests
         Check(await AssetInventory.VerifyExternalAsync(root, external) == AssetVerification.Missing, "wrong external root verification");
         await File.WriteAllTextAsync(Path.Combine(storage, externalName), "different");
         Check(await AssetInventory.VerifyExternalAsync(storage, external) == AssetVerification.SizeMismatch, "external change verification");
+        await Program.RunNamedCaseAsync("External batch continues after an unreadable asset", async () =>
+        {
+            await File.WriteAllTextAsync(Path.Combine(storage, externalName), "external");
+            var missing = external with { ExternalLocation = location with { RelativePath = "missing.wav" } };
+            var lockedPath = Path.Combine(storage, "locked.wav");
+            await File.WriteAllTextAsync(lockedPath, "external");
+            var locked = external with { ExternalLocation = location with { RelativePath = "locked.wav" } };
+            await using var held = new FileStream(lockedPath, FileMode.Open, FileAccess.Read, FileShare.None);
+            var results = await AssetInventory.VerifyExternalBatchAsync(storage, [locked, missing, external], default);
+            Check(results.SequenceEqual(new[] { AssetVerification.Unreadable, AssetVerification.Missing, AssetVerification.Valid }),
+                "batch did not retain per-item results in order");
+            using var cancellation = new CancellationTokenSource();
+            cancellation.Cancel();
+            try
+            {
+                await AssetInventory.VerifyExternalBatchAsync(storage, [locked, missing, external], cancellation.Token);
+                throw new InvalidOperationException("batch ignored cancellation");
+            }
+            catch (OperationCanceledException) { }
+        });
         var withStorage = await AssetInventory.ScanProjectAsync(project, [external]);
         Check(withStorage.Single(item => item.Path == "missing.wav") is { Status: AssetReferenceStatus.External, Actual: null }
             && withStorage.Single(item => item.Path == "missing.wav").Expected == external, "scan did not expose configured external storage");
