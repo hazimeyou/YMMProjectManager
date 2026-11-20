@@ -80,6 +80,28 @@ internal static class YmmpxFailureTests
             }
             finally { YmmpxLib.YmmpxPackageService.Mode = "success"; }
         });
+        await Program.RunNamedCaseAsync("Packaging refuses the wrong material even when its size matches", async () =>
+        {
+            var selected = Path.Combine(root, "project-with-asset.ymmp");
+            var media = Path.Combine(root, "expected.wav");
+            const string original = """{"Title":"Selected","Items":[{"FilePath":"expected.wav"}]}""";
+            await File.WriteAllTextAsync(selected, original);
+            await File.WriteAllTextAsync(media, "different content");
+            var destination = Path.Combine(root, "project-with-asset.ymmpx");
+            YmmpxLib.YmmpxPackageService.Mode = "same-project-wrong-media";
+            try
+            {
+                var other = await bridge.CreatePackageAsync(selected, destination, default);
+                if (other.Success || File.Exists(destination) || await File.ReadAllTextAsync(selected) != original ||
+                    await File.ReadAllTextAsync(media) != "different content")
+                    throw new InvalidOperationException("An archive containing the wrong material was published or the source was changed.");
+
+                await File.WriteAllTextAsync(media, "synthetic package");
+                if (!(await bridge.CreatePackageAsync(selected, destination, default)).Success)
+                    throw new InvalidOperationException("The matching material was rejected.");
+            }
+            finally { YmmpxLib.YmmpxPackageService.Mode = "success"; }
+        });
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -247,6 +269,7 @@ namespace YmmpxLib
                     {
                         "invalid-project-json" => "{",
                         "same-name-other-project" => """{"Title":"Different","Items":[{"FilePath":"resources/synthetic.txt"}]}""",
+                        "same-project-wrong-media" => """{"Title":"Selected","Items":[{"FilePath":"resources/synthetic.txt"}]}""",
                         _ => await File.ReadAllTextAsync(project, token),
                     };
                     using var writer = new StreamWriter(archive.CreateEntry(projectName).Open());

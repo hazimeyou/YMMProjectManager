@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.IO;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -21,18 +22,35 @@ internal static class YmmpxPackageReader
 
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
     private sealed record OwnedPath(string Path, FileIdentity? Identity);
+    private sealed record ProjectSource(string Directory, JsonElement Document)
+    {
+        public Dictionary<string, string> MaterialPaths { get; } = new(StringComparer.Ordinal);
+    }
 
-    internal static async Task ValidateAsync(Stream source, string expectedProjectName, JsonElement expectedProject, CancellationToken token)
+    internal static async Task ValidateAsync(Stream source, string projectPath, JsonElement expectedProject, CancellationToken token)
     {
         using var archive = OpenValidated(source, token);
-        var package = await ReadPackageAsync(archive, token, expectedProject).ConfigureAwait(false);
-        if (!string.Equals(package.ProjectName, expectedProjectName, StringComparison.OrdinalIgnoreCase))
+        var projectSource = new ProjectSource(Path.GetDirectoryName(Path.GetFullPath(projectPath))!, expectedProject);
+        var package = await ReadPackageAsync(archive, token, projectSource).ConfigureAwait(false);
+        if (!string.Equals(package.ProjectName, Path.GetFileName(projectPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("同梱したプロジェクト名が選択したプロジェクトと一致しません。");
         foreach (var resource in package.Resources)
         {
             var entry = package.Files[resource];
             await using var input = entry.Open();
-            await CopyEntryAsync(input, Stream.Null, entry.Length, entry.Crc32, token).ConfigureAwait(false);
+            if (!projectSource.MaterialPaths.TryGetValue(resource, out var materialPath))
+            {
+                await CopyEntryAsync(input, Stream.Null, entry.Length, entry.Crc32, token).ConfigureAwait(false);
+                continue;
+            }
+
+            await using var material = new FileStream(materialPath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+            const string mismatch = "同梱した素材が元のファイルと一致しません。";
+            if (material.Length != entry.Length) throw new InvalidDataException(mismatch);
+            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            await CopyEntryAsync(input, Stream.Null, entry.Length, entry.Crc32, token, digest).ConfigureAwait(false);
+            var materialHash = await SHA256.HashDataAsync(material, token).ConfigureAwait(false);
+            if (!materialHash.AsSpan().SequenceEqual(digest.GetHashAndReset())) throw new InvalidDataException(mismatch);
         }
     }
 
@@ -139,7 +157,7 @@ internal static class YmmpxPackageReader
         }
     }
 
-    private static async Task<Package> ReadPackageAsync(ZipArchive archive, CancellationToken token, JsonElement? expectedProject = null)
+    private static async Task<Package> ReadPackageAsync(ZipArchive archive, CancellationToken token, ProjectSource? expectedProject = null)
     {
         var files = archive.Entries.Where(entry => !Normalize(entry.FullName).EndsWith('/'))
             .ToDictionary(entry => Normalize(entry.FullName), StringComparer.Ordinal);
@@ -171,14 +189,15 @@ internal static class YmmpxPackageReader
         var projectBytes = await ReadBoundedAsync(projectEntry, MaxProjectBytes, token).ConfigureAwait(false);
         using var projectDocument = JsonDocument.Parse(WithoutBom(projectBytes));
         ValidateProjectJson(projectDocument.RootElement, resources, token);
-        if (expectedProject is { } original && !SamePackagedProject(original, projectDocument.RootElement, resources, token))
+        if (expectedProject is { } original && !SamePackagedProject(original.Document, projectDocument.RootElement, resources, original, token))
             throw new InvalidDataException("同梱したプロジェクトの内容が選択したプロジェクトと一致しません。");
         var project = JsonNode.Parse(WithoutBom(projectBytes).Span) as JsonObject
             ?? throw new InvalidDataException("プロジェクトが JSON オブジェクトではありません。");
         return new Package(files, projectName, project, resources);
     }
 
-    private static bool SamePackagedProject(JsonElement original, JsonElement packaged, HashSet<string> resources, CancellationToken token)
+    private static bool SamePackagedProject(JsonElement original, JsonElement packaged, HashSet<string> resources,
+        ProjectSource source, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (original.ValueKind != packaged.ValueKind) return false;
@@ -200,8 +219,16 @@ internal static class YmmpxPackageReader
                     if (property.Name == "FilePath" && previous.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(previous.GetString()) && property.Value.ValueKind == JsonValueKind.String &&
                         TryGetInternalPath(property.Value.GetString()!, out var member) && resources.Contains(member))
+                    {
+                        // Archive-assigned names do not identify the original media. Bind each
+                        // referenced archive member to its source path for the byte check.
+                        var path = PackagingDetector.ResolveMaterialPath(previous.GetString()!, source.Directory);
+                        if (path is null || (!source.MaterialPaths.TryAdd(member, path) &&
+                            !string.Equals(source.MaterialPaths[member], path, StringComparison.OrdinalIgnoreCase)))
+                            return false;
                         continue;
-                    if (!SamePackagedProject(previous, property.Value, resources, token)) return false;
+                    }
+                    if (!SamePackagedProject(previous, property.Value, resources, source, token)) return false;
                 }
                 return remaining.Count == 0;
 
@@ -211,7 +238,7 @@ internal static class YmmpxPackageReader
                     foreach (var item in original.EnumerateArray())
                     {
                         after.MoveNext();
-                        if (!SamePackagedProject(item, after.Current, resources, token)) return false;
+                        if (!SamePackagedProject(item, after.Current, resources, source, token)) return false;
                     }
                 return true;
 
@@ -284,7 +311,8 @@ internal static class YmmpxPackageReader
         return buffer.ToArray();
     }
 
-    private static async Task CopyEntryAsync(Stream input, Stream output, long expectedBytes, uint expectedCrc, CancellationToken token)
+    private static async Task CopyEntryAsync(Stream input, Stream output, long expectedBytes, uint expectedCrc, CancellationToken token,
+        IncrementalHash? digest = null)
     {
         var buffer = new byte[81920];
         long size = 0;
@@ -297,6 +325,7 @@ internal static class YmmpxPackageReader
             if (size > expectedBytes) throw new InvalidDataException("展開サイズが記録と一致しません。");
             for (var i = 0; i < count; i++)
                 crc = CrcTable[(crc ^ buffer[i]) & 0xFF] ^ (crc >> 8);
+            digest?.AppendData(buffer, 0, count);
             await output.WriteAsync(buffer.AsMemory(0, count), token).ConfigureAwait(false);
         }
         if (size != expectedBytes) throw new InvalidDataException("展開サイズが記録と一致しません。");

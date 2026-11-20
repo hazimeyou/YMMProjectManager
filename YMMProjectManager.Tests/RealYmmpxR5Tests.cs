@@ -137,6 +137,11 @@ internal static class RealYmmpxR5Tests
                 projectItems[5].GetProperty("FilePath").GetString() != "" ||
                 projectItems[6].GetProperty("FilePath").ValueKind != JsonValueKind.Null)
                 throw new InvalidOperationException("Current-form packaging did not preserve non-resource values or expected material links.");
+            using var first = new StreamReader(archive.GetEntry(sharedResource)!.Open());
+            using var second = new StreamReader(archive.GetEntry(nestedResource)!.Open());
+            if (await first.ReadToEndAsync() != await File.ReadAllTextAsync(asset) ||
+                await second.ReadToEndAsync() != "nested media")
+                throw new InvalidOperationException("Current-form packaging mixed the contents of resources that share a basename.");
         });
         Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
     }

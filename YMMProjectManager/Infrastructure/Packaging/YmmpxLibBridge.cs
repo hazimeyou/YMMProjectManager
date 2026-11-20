@@ -144,7 +144,7 @@ public sealed class YmmpxLibBridge
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
-            await YmmpxPackageReader.ValidateAsync(validatedPackage, Path.GetFileName(ymmpPath), source.RootElement, token).ConfigureAwait(false);
+            await YmmpxPackageReader.ValidateAsync(validatedPackage, ymmpPath, source.RootElement, token).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink
