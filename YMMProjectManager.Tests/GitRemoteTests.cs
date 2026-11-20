@@ -84,7 +84,8 @@ internal static class GitRemoteTests
                 using var headProcess = Process.Start(switchHead)!; headProcess.WaitForExit();
                 Check(headProcess.ExitCode == 0, "change HEAD fixture");
             };
-            Check((await one.PushAsync()).Success, "initial push");
+            var initialPush = await one.PushAsync();
+            Check(initialPush.Success, $"initial push failed ({initialPush.Failure}, exit {initialPush.ExitCode}): {initialPush.StandardError}");
             one.BeforeRemoteExecution = null;
             Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == expectedCommit, "push used changed HEAD");
             await Command(source, "symbolic-ref", "HEAD", "refs/heads/" + branch);
