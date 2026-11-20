@@ -23,12 +23,14 @@ internal static class AssetRelinkRecovery
         public bool RequiresConfirmation => !string.Equals(ExpectedSha256, CandidateSha256, StringComparison.OrdinalIgnoreCase);
     }
 
+    internal sealed record PhysicalFileId(ulong Volume, Guid FileId);
+
     internal sealed record Intent(int Version, Guid OperationId, string Source, string SourceSha256, string Output, string OutputSha256,
         AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetManifest Next, Comparison[] Approved,
-        AssetRevisionSeries.Head[]? ObservedTips = null);
+        AssetRevisionSeries.Head[]? ObservedTips = null, PhysicalFileId? SourceIdentity = null);
 
     internal sealed record OutputReceipt(AssetRevisionSeries.Head Revision, Guid OperationId, string Source, string SourceSha256,
-        string Output, string OutputSha256);
+        string Output, string OutputSha256, PhysicalFileId SourceIdentity, PhysicalFileId OutputIdentity);
 
     internal static Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, CancellationToken token)
@@ -70,11 +72,12 @@ internal static class AssetRelinkRecovery
 
         var next = AssetManifestStore.Create(output, candidates, DateTimeOffset.UtcNow,
             selected, confirmedProjectAssociation: true, confirmedHashChanges: confirmedMismatches, projectId: root.ProjectId);
-        var intent = new Intent(2, next.RevisionId, source, Hash(original), output, Hash(RelinkJsonUpdate.Apply(original, rows)),
-            root, parent, next, review, expectedTips);
         await using var sourceLease = OpenVerifiedPath(source);
-        if (await HashAsync(sourceLease, token).ConfigureAwait(false) != intent.SourceSha256)
+        var sourceHash = Hash(original);
+        if (await HashAsync(sourceLease, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
+        var intent = new Intent(3, next.RevisionId, source, sourceHash, output, Hash(RelinkJsonUpdate.Apply(original, rows)),
+            root, parent, next, review, expectedTips, GetPhysicalId(sourceLease));
         var evidence = EvidencePath(source, intent.OperationId);
         await WriteNewAsync(evidence, intent, token).ConfigureAwait(false);
         return evidence;
@@ -136,7 +139,7 @@ internal static class AssetRelinkRecovery
         await using var intentStream = OpenVerifiedPath(evidencePath);
         if (intentStream.Length > MaxIntentBytes) throw new InvalidDataException("The relink recovery record is too large.");
         var intent = await JsonSerializer.DeserializeAsync<Intent>(intentStream, JsonOptions, token).ConfigureAwait(false);
-        if (intent is null || intent.Version is not (1 or 2) || intent.Root != associatedRoot || intent.Next is null ||
+        if (intent is null || intent.Version is not (1 or 2 or 3) || intent.Root != associatedRoot || intent.Next is null ||
             intent.OperationId == Guid.Empty || intent.OperationId != intent.Next.RevisionId || intent.Parent?.ProjectId != associatedRoot.ProjectId ||
             intent.Next.ProjectId != associatedRoot.ProjectId || intent.Next.ParentRevisionId != intent.Parent.RevisionId ||
             intent.Approved is not { Length: > 0 and <= 10 } ||
@@ -145,6 +148,8 @@ internal static class AssetRelinkRecovery
             throw new InvalidDataException("The relink recovery record is invalid or belongs to a different project.");
         if (intent.Version == 1 ? intent.ObservedTips is not null : !ValidTipEvidence(intent.ObservedTips, intent.Parent))
             throw new InvalidDataException("The relink recovery record has invalid branch evidence.");
+        if (intent.Version == 3 ? intent.SourceIdentity is null || intent.SourceIdentity.FileId == Guid.Empty : intent.SourceIdentity is not null)
+            throw new InvalidDataException("The relink recovery record has invalid source identity evidence.");
         ValidatePaths(intent.Source, intent.Output);
         if (expectedSource is not null && !string.Equals(Path.GetFullPath(expectedSource), intent.Source, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("This recovery record belongs to a different source project file.");
@@ -157,6 +162,9 @@ internal static class AssetRelinkRecovery
         var history = await AssetRevisionSeries.ResolveBranchAsync(seriesDirectory, associatedRoot.ProjectId, associatedRoot.RevisionId,
             associatedRoot.Sha256, intent.Parent.RevisionId, intent.Parent.Sha256, token).ConfigureAwait(false);
         await using var source = OpenVerifiedPath(intent.Source);
+        var sourceIdentity = GetPhysicalId(source);
+        if (intent.SourceIdentity is not null && sourceIdentity != intent.SourceIdentity)
+            throw new InvalidDataException("The source project was replaced after relink preparation.");
         if (source.Length > MaxSourceBytes) throw new InvalidDataException("The project is too large for relink recovery.");
         var original = new byte[checked((int)source.Length)];
         await source.ReadExactlyAsync(original, token).ConfigureAwait(false);
@@ -171,7 +179,9 @@ internal static class AssetRelinkRecovery
         if (Hash(expectedOutput) != intent.OutputSha256)
             throw new InvalidDataException("The source project or relink recovery evidence changed.");
         await using var output = OpenVerifiedPath(intent.Output);
-        if (output.Length != expectedOutput.Length || await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
+        var outputIdentity = GetPhysicalId(output);
+        if (outputIdentity == sourceIdentity || output.Length != expectedOutput.Length ||
+            await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
             throw new InvalidDataException("The relink output differs from its saved recovery evidence.");
 
         var leases = new List<FileStream>();
@@ -189,7 +199,8 @@ internal static class AssetRelinkRecovery
             var revision = intent.ObservedTips is { } tips
                 ? await AssetRevisionSeries.AppendToBranchOrVerifyAsync(seriesDirectory, associatedRoot, tips, intent.Parent, intent.Next, token).ConfigureAwait(false)
                 : await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, associatedRoot, intent.Parent, intent.Next, token).ConfigureAwait(false);
-            return new OutputReceipt(revision, intent.OperationId, intent.Source, intent.SourceSha256, intent.Output, intent.OutputSha256);
+            return new OutputReceipt(revision, intent.OperationId, intent.Source, intent.SourceSha256,
+                intent.Output, intent.OutputSha256, sourceIdentity, outputIdentity);
         }
         finally
         {
@@ -215,6 +226,7 @@ internal static class AssetRelinkRecovery
         await using var source = OpenVerifiedPath(receipt.Source);
         await using var output = OpenVerifiedPath(receipt.Output);
         if (source.Length > MaxSourceBytes || output.Length > MaxSourceBytes + MaxIntentBytes ||
+            GetPhysicalId(source) != receipt.SourceIdentity || GetPhysicalId(output) != receipt.OutputIdentity ||
             await HashAsync(source, token).ConfigureAwait(false) != receipt.SourceSha256 ||
             await HashAsync(output, token).ConfigureAwait(false) != receipt.OutputSha256)
             throw new InvalidDataException("The source project or relink output changed before association transfer.");
@@ -231,6 +243,12 @@ internal static class AssetRelinkRecovery
             string.Equals(source, output, StringComparison.OrdinalIgnoreCase) ||
             !string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Relink recovery requires a distinct output beside the source project.");
+    }
+
+    private static PhysicalFileId GetPhysicalId(FileStream file)
+    {
+        var (volume, fileId) = ProjectFileEvidence.ReadPhysicalIdentity(file);
+        return new PhysicalFileId(volume, fileId);
     }
 
     private static string EvidencePath(string source, Guid operationId)

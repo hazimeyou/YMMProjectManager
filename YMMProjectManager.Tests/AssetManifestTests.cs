@@ -110,6 +110,7 @@ internal static class AssetManifestTests
         var oldEvidence = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(evidence))!.AsObject();
         oldEvidence["Version"] = 1;
         oldEvidence.Remove("ObservedTips");
+        oldEvidence.Remove("SourceIdentity");
         await File.WriteAllTextAsync(evidence, oldEvidence.ToJsonString());
         try
         {
@@ -164,6 +165,12 @@ internal static class AssetManifestTests
             return Task.CompletedTask;
         }, default);
         if (!persisted) throw new Exception("association transfer did not run with valid files");
+
+        // This operation treats equally hashed bytes in a different physical file as a replacement.
+        foreach (var path in new[] { source, output })
+            await WithContentIdenticalReplacementAsync(path, () => RejectAsync(() =>
+                AssetRelinkRecovery.WithVerifiedProjectsAsync(transfer,
+                    _ => throw new Exception("association transfer ran with a replaced file"), default)));
         var rootFile = Path.Combine(seriesDirectory, $"revision-{head.RevisionId:N}.json");
         var rootBytes = await File.ReadAllBytesAsync(rootFile);
         await File.AppendAllTextAsync(rootFile, " ");
@@ -203,6 +210,8 @@ internal static class AssetManifestTests
         var forkEvidence = await AssetRelinkRecovery.PrepareAsync(context, forkOutput, seriesDirectory, head, forkTip, graph.Heads, forkReview, true, default);
         if (!(await saver.SaveAsAsync(context, forkOutput, default)).Success) throw new Exception("branch relink SaveAs failed");
         var forkIntentBytes = await File.ReadAllBytesAsync(forkEvidence);
+        await WithContentIdenticalReplacementAsync(source, () => RejectAsync(() =>
+            AssetRelinkRecovery.CompleteForTransferAsync(forkEvidence, seriesDirectory, head, default, source)));
         var corruptIntent = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(forkEvidence))!.AsObject();
         corruptIntent.Remove("ObservedTips");
         await File.WriteAllTextAsync(forkEvidence, corruptIntent.ToJsonString());
@@ -229,6 +238,19 @@ internal static class AssetManifestTests
         var finalGraph = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
         if (!finalGraph.Heads.ToHashSet().SetEquals([otherTip, branchReceipt.Revision]) || finalGraph.Revisions.Count != 6)
             throw new Exception("a refused or repeated branch completion published an unexpected revision");
+
+        static async Task WithContentIdenticalReplacementAsync(string path, Func<Task> verify)
+        {
+            var original = path + ".preserved";
+            File.Move(path, original);
+            File.Copy(original, path);
+            try { await verify(); }
+            finally
+            {
+                File.Delete(path);
+                File.Move(original, path);
+            }
+        }
 
         static async Task RejectAsync(Func<Task> run)
         {
