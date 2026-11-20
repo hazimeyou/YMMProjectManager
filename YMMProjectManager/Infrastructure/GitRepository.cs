@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
@@ -51,6 +53,8 @@ public sealed class GitRepository
     public Task<GitResult> InspectRemoteAsync(GitRemoteOperation operation, CancellationToken token = default) =>
         WithinRemoteDeadlineAsync(operation.ToString(), async deadline =>
         {
+            if (operation is not (GitRemoteOperation.Fetch or GitRemoteOperation.Push))
+                throw new ArgumentOutOfRangeException(nameof(operation));
             if (!HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
             using var lease = GitRepositoryLease.TryOpen(directory);
             if (lease is null)
@@ -239,7 +243,7 @@ public sealed class GitRepository
         var branch = await ReadGitAsync(["symbolic-ref", "--quiet", "HEAD"]).ConfigureAwait(false);
         if (!branch.Success) return (null, new GitResult(branch.ExitCode, "", "A branch must be checked out."));
         var name = branch.StandardOutput.TrimEnd('\r', '\n');
-        if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || name.Any(char.IsControl))
+        if (!name.StartsWith(BranchRefPrefix, StringComparison.Ordinal) || name.Length == BranchRefPrefix.Length || HasHiddenText(name))
             return (null, new GitResult(1, "", "Invalid branch name."));
         var commit = await ReadGitAsync(["rev-parse", "--verify", name + "^{commit}"]).ConfigureAwait(false);
         var objectId = commit.StandardOutput.Trim();
@@ -275,6 +279,7 @@ public sealed class GitRepository
         if (protocol == "https")
         {
             // Scoped settings take precedence over less-specific HTTP configuration.
+            // ValidateRemote excludes a literal '=' because Git's -c splits key and value there.
             arguments = ["-c", "http.followRedirects=false", "-c", $"http.{url}.followRedirects=false",
                 "-c", $"http.{url}.sslVerify=true", .. arguments];
         }
@@ -386,7 +391,7 @@ public sealed class GitRepository
     private bool HasDirectRepository()
     {
         var gitDirectory = Path.Combine(directory, ".git");
-        return IsOrdinaryDirectory(gitDirectory) && IsOrdinaryDirectory(Path.Combine(gitDirectory, "objects")) &&
+        return !HasHiddenText(directory) && IsOrdinaryDirectory(gitDirectory) && IsOrdinaryDirectory(Path.Combine(gitDirectory, "objects")) &&
             IsRegularFile(Path.Combine(gitDirectory, "config")) && IsRegularFile(Path.Combine(gitDirectory, "HEAD")) &&
             !Path.Exists(Path.Combine(gitDirectory, "commondir"));
     }
@@ -437,16 +442,19 @@ public sealed class GitRepository
         return result with { RemoteDiagnostic = new GitRemoteDiagnostic(operation, clock.Elapsed) };
     }
 
+    private static bool HasHiddenText(string value) =>
+        value.EnumerateRunes().Any(character => Rune.GetUnicodeCategory(character) is UnicodeCategory.Control or UnicodeCategory.Format);
+
     private static void ValidateRemote(string remote)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(remote);
-        if (remote.StartsWith('-') || remote.Contains('\r') || remote.Contains('\n') || remote.Contains('\0'))
+        if (remote.StartsWith('-') || HasHiddenText(remote))
             throw new ArgumentException("Invalid remote.", nameof(remote));
         if (Path.IsPathFullyQualified(remote) && !remote.StartsWith("\\\\", StringComparison.Ordinal)) return;
         if (!Uri.TryCreate(remote, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
             string.IsNullOrEmpty(uri.Host) || !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) ||
-            !string.IsNullOrEmpty(uri.Fragment) || remote.Any(char.IsWhiteSpace) || remote.Contains('\\'))
-            throw new ArgumentException("Only local paths and HTTPS URLs without credentials are supported.", nameof(remote));
+            !string.IsNullOrEmpty(uri.Fragment) || remote.Any(char.IsWhiteSpace) || remote.Contains('\\') || remote.Contains('='))
+            throw new ArgumentException("Only unambiguous local paths and HTTPS URLs without credentials are supported.", nameof(remote));
     }
 
     // Git, credential helpers and hooks can emit arbitrary secrets; do not return their output for remote operations.

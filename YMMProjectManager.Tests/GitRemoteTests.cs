@@ -295,6 +295,12 @@ internal static class GitRemoteTests
             Check((await one.FetchTrustedAsync("https://other.invalid/repository")).Failure == GitFailure.UnsafeOperation, "trusted fetch accepted wrong HTTPS endpoint");
             var cloneInspection = GitRepository.InspectCloneRemote(explicitEndpoint);
             Check(cloneInspection.Success && cloneInspection.StandardOutput == explicitEndpoint, "clone inspection failed to preserve the approved endpoint");
+            Check(!GitRepository.InspectCloneRemote(explicitEndpoint + "=sample").Success,
+                "endpoint cannot be represented in scoped Git configuration");
+            Check(GitRepository.InspectCloneRemote(explicitEndpoint + "%3Dsample").Success,
+                "percent-encoded path data was rejected despite safe configuration representation");
+            Check(!GitRepository.InspectCloneRemote(explicitEndpoint + "\u200Bsample").Success,
+                "endpoint confirmation accepted invisible format text");
             var credentialInspection = GitRepository.InspectCloneRemote("https://user:secret@approved.invalid/repository");
             Check(!credentialInspection.Success && !credentialInspection.StandardOutput.Contains("secret") &&
                 !credentialInspection.StandardError.Contains("secret"), "clone inspection disclosed credentials");
