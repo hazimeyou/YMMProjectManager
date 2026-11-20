@@ -11,6 +11,12 @@ public sealed class GitRepository
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
     private const string BranchRefPrefix = "refs/heads/";
+    private static readonly string[] PullOperationMarkers =
+    [
+        "HEAD.lock", "ORIG_HEAD.lock", "index.lock", "packed-refs.lock",
+        "MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_START",
+        "rebase-apply", "rebase-merge", "sequencer",
+    ];
     private readonly string directory;
     internal Action<CancellationToken>? BeforeRemoteExecution { get; set; }
     internal Action? BeforePullInspectionRecheck { get; set; }
@@ -123,19 +129,19 @@ public sealed class GitRepository
         if (error is not null) return new GitPullAssessment(GitPullState.Unavailable, Message: error.StandardError);
         var tracking = "refs/remotes/origin/" + branch!.BranchRef[BranchRefPrefix.Length..];
         var upstream = await ReadTrackingTipAsync().ConfigureAwait(false);
-        var status = await ReadStatusAsync().ConfigureAwait(false);
-        if (!status.Success)
-            return new GitPullAssessment(GitPullState.Unavailable, Message: "Could not inspect the worktree and index.");
-        var state = status.StandardOutput.Length != 0 ? GitPullState.Dirty : upstream is null
+        var worktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking, token).ConfigureAwait(false);
+        if (worktree.Blocked is { } blocked)
+            return new GitPullAssessment(blocked, branch.BranchRef, branch.ObjectId, tracking, upstream, worktree.Message);
+
+        var state = worktree.Status!.Length != 0 ? GitPullState.Dirty : upstream is null
             ? GitPullState.TrackingUnavailable : await ClassifyPullAsync(branch.ObjectId, upstream, token).ConfigureAwait(false);
 
         // The result describes these observations only; no ref or index transaction is held.
         BeforePullInspectionRecheck?.Invoke();
         var (latestBranch, _) = await ReadBranchTipAsync(trusted: true, token).ConfigureAwait(false);
         var latestUpstream = await ReadTrackingTipAsync().ConfigureAwait(false);
-        var latestStatus = await ReadStatusAsync().ConfigureAwait(false);
-        if (!HasDirectRepository() || latestBranch != branch || latestUpstream != upstream || !latestStatus.Success ||
-            latestStatus.StandardOutput != status.StandardOutput)
+        var latestWorktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking, token).ConfigureAwait(false);
+        if (!HasDirectRepository() || latestBranch != branch || latestUpstream != upstream || latestWorktree != worktree)
             return new GitPullAssessment(GitPullState.Changed, Message: "The repository changed during inspection. Refresh the assessment.");
 
         return new GitPullAssessment(state, branch.BranchRef, branch.ObjectId, tracking, upstream);
@@ -146,9 +152,54 @@ public sealed class GitRepository
             var objectId = result.StandardOutput.Trim();
             return result.Success && IsObjectId(objectId) ? objectId : null;
         }
+    }
 
-        Task<GitResult> ReadStatusAsync() => RunDirectAsync(
-            ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"], token);
+    private sealed record PullWorktreeObservation(
+        GitPullState? Blocked = null, string? Message = null, string? Index = null, string? Status = null);
+
+    private async Task<PullWorktreeObservation> ReadPullWorktreeAsync(string branch, string tracking, CancellationToken token)
+    {
+        try
+        {
+            var gitDirectory = Path.Combine(directory, ".git");
+            var markers = PullOperationMarkers.Concat([branch + ".lock", tracking + ".lock"]);
+            foreach (var marker in markers)
+            {
+                token.ThrowIfCancellationRequested();
+                try { File.GetAttributes(Path.Combine(gitDirectory, marker)); }
+                catch (FileNotFoundException) { continue; }
+                catch (DirectoryNotFoundException) { continue; }
+
+                return new(GitPullState.OperationInProgress, "A Git lock or unfinished operation is present.");
+            }
+        }
+        catch (IOException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
+        catch (UnauthorizedAccessException) { return new(GitPullState.Unavailable, "Could not verify Git operation markers."); }
+
+        var index = await RunDirectAsync(["ls-files", "--stage", "-v", "-z"], token).ConfigureAwait(false);
+        if (!index.Success)
+            return new(GitPullState.Unavailable, "Could not inspect the Git index.");
+        // Lowercase marks assume-unchanged entries. S marks skip-worktree, including sparse checkout.
+        var indexEntries = index.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        if (indexEntries.Any(entry => entry[0] is 'S' or (>= 'a' and <= 'z')))
+            return new(GitPullState.IndexNotVerifiable, "The Git index can conceal changes in the worktree.");
+        if (indexEntries.Any(entry => entry.Length >= 2 && entry.AsSpan(2).StartsWith("160000 ", StringComparison.Ordinal)))
+            return new(GitPullState.IndexNotVerifiable, "Submodule worktrees need a separate assessment.");
+
+        // Configured clean/process filters can run while Git compares worktree contents.
+        // Leave such worktrees unverified rather than requesting their status.
+        var filters = await RunDirectAsync(
+            ["config", "--name-only", "--get-regexp", @"^filter\."], token).ConfigureAwait(false);
+        if (filters.Success)
+            return new(GitPullState.IndexNotVerifiable, "Configured Git filters prevent a read-only worktree assessment.");
+        if (filters.ExitCode != 1 || filters.StandardOutput.Length != 0 || filters.StandardError.Length != 0)
+            return new(GitPullState.Unavailable, "Could not verify Git filter configuration.");
+
+        var status = await RunDirectAsync(
+            ["--no-optional-locks", "status", "--porcelain=v1", "-z", "--untracked-files=normal", "--ignore-submodules=none"], token).ConfigureAwait(false);
+        return status.Success
+            ? new(Index: index.StandardOutput, Status: status.StandardOutput)
+            : new(GitPullState.Unavailable, "Could not inspect the worktree and index.");
     }
 
     private async Task<GitPullState> ClassifyPullAsync(string local, string upstream, CancellationToken token)
@@ -164,20 +215,10 @@ public sealed class GitRepository
         return shallow.Success && shallow.StandardOutput.Trim() == "false" ? GitPullState.Diverged : GitPullState.Unavailable;
     }
 
-    public async Task<GitResult> PullAsync(CancellationToken token = default)
+    public Task<GitResult> PullAsync(CancellationToken token = default)
     {
-        var (_, error) = await ResolveOriginAsync(push: false, token).ConfigureAwait(false);
-        if (error is not null) return error;
-        var branch = await RunAsync(["symbolic-ref", "--quiet", "--short", "HEAD"], token).ConfigureAwait(false);
-        if (!branch.Success) return new GitResult(branch.ExitCode, "", "A branch must be checked out before pulling.");
-        var name = branch.StandardOutput.Trim();
-        if (name.Length == 0 || name.StartsWith('-') || name.Contains('\n') || name.Contains('\r'))
-            return new GitResult(1, "", "Invalid branch name.");
-        BeforeRemoteExecution?.Invoke(token);
         token.ThrowIfCancellationRequested();
-        // Git pull updates the branch checked out when it executes, not necessarily the
-        // one observed above. Another process can switch HEAD even after a recheck.
-        return new GitResult(1, "", "Pull is disabled because the checked-out branch can change concurrently.", GitFailure.UnsafeOperation);
+        return Task.FromResult(UnsafeRemote("Pull is disabled pending recoverable updates across the branch, index and worktree."));
     }
 
     public Task<GitResult> PushAsync(CancellationToken token = default) =>
@@ -612,7 +653,7 @@ public sealed class GitRepository
 
 public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong }
 public enum GitRemoteOperation { Fetch, Push }
-public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed }
+public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,
     string? TrackingRef = null, string? TrackingObjectId = null, string? Message = null);
 public sealed record GitRemoteDiagnostic(string Operation, TimeSpan Elapsed);

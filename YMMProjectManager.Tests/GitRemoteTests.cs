@@ -99,19 +99,13 @@ internal static class GitRemoteTests
             await File.WriteAllTextAsync(Path.Combine(clone, "two.txt"), "two");
             Check((await two.StageAsync(["two.txt"])).Success && (await two.CommitAsync("second")).Success && (await two.PushAsync()).Success, "clone push");
             await Command(source, "branch", "race-side");
-            var sideBefore = await Command(source, "rev-parse", "refs/heads/race-side");
-            one.BeforeRemoteExecution = _ =>
-            {
-                var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
-                start.ArgumentList.Add("switch"); start.ArgumentList.Add("race-side");
-                using var process = Process.Start(start)!; process.WaitForExit();
-                Check(process.ExitCode == 0, "switch branch during pull fixture");
-            };
-            var racedPull = await one.PullAsync();
+            var pullReachedRemoteExecution = false;
+            one.BeforeRemoteExecution = _ => pullReachedRemoteExecution = true;
+            var disabledBeforeInspection = await one.PullAsync();
             one.BeforeRemoteExecution = null;
-            Check(!racedPull.Success && racedPull.Failure == GitFailure.UnsafeOperation && !string.IsNullOrWhiteSpace(racedPull.StandardError), "raced pull did not report failure");
-            Check(await Command(source, "symbolic-ref", "--short", "HEAD") == "race-side", "pull race fixture did not switch branches");
-            Check(await Command(source, "rev-parse", "refs/heads/race-side") == sideBefore, "raced pull changed unintended branch");
+            Check(disabledBeforeInspection.Failure == GitFailure.UnsafeOperation && !pullReachedRemoteExecution,
+                "disabled pull reached remote preflight");
+            await Command(source, "switch", "race-side");
             Check((await one.InspectPullAsync()).State == GitPullState.TrackingUnavailable, "unknown tracking ref treated as pull candidate");
             await Command(source, "switch", branch);
             using (var cancelledPull = new CancellationTokenSource())
@@ -141,10 +135,120 @@ internal static class GitRemoteTests
             Check((await one.InspectPullAsync()).State == GitPullState.Changed, "stale inspection did not detect a changed HEAD");
             one.BeforePullInspectionRecheck = null;
             await Command(source, "switch", branch);
-            var untracked = Path.Combine(source, "untracked.txt");
-            await File.WriteAllTextAsync(untracked, "keep");
-            Check((await one.InspectPullAsync()).State == GitPullState.Dirty && File.Exists(untracked), "untracked data was ignored or lost");
-            File.Delete(untracked);
+            await Program.RunNamedCaseAsync("Pull inspection refuses active operations and unverifiable index entries", async () =>
+            {
+                var gitDirectory = Path.Combine(source, ".git");
+                var indexPath = Path.Combine(gitDirectory, "index");
+                var indexLock = indexPath + ".lock";
+                var tracked = Path.Combine(source, "one.txt");
+                var candidatePath = Path.Combine(source, "two.txt");
+                var branchLock = Path.Combine(gitDirectory, "refs", "heads", branch) + ".lock";
+                var mergeMarker = Path.Combine(gitDirectory, "MERGE_HEAD");
+
+                foreach (var marker in new[] { indexLock, branchLock, mergeMarker })
+                {
+                    await File.WriteAllTextAsync(marker, currentLocal);
+                    try
+                    {
+                        Check((await one.InspectPullAsync()).State == GitPullState.OperationInProgress,
+                            "a lock or in-progress operation was ignored");
+                        Check(await File.ReadAllTextAsync(marker) == currentLocal, "inspection changed an operation marker");
+                    }
+                    finally { File.Delete(marker); }
+                }
+
+                one.BeforePullInspectionRecheck = () => File.WriteAllText(indexLock, "appeared");
+                try
+                {
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed,
+                        "inspection missed a lock acquired during assessment");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    File.Delete(indexLock);
+                }
+
+                foreach (var flag in new[] { "assume-unchanged", "skip-worktree" })
+                {
+                    await Command(source, "update-index", "--" + flag, "one.txt");
+                    try
+                    {
+                        await File.WriteAllTextAsync(tracked, "hidden edit");
+                        Check((await one.InspectPullAsync()).State == GitPullState.IndexNotVerifiable,
+                            "inspection accepted an index flag that can conceal worktree edits");
+                        Check(await File.ReadAllTextAsync(tracked) == "hidden edit", "inspection overwrote hidden worktree contents");
+                    }
+                    finally
+                    {
+                        await Command(source, "update-index", "--no-" + flag, "one.txt");
+                        await File.WriteAllTextAsync(tracked, "one");
+                    }
+                }
+
+                await Command(source, "config", "--local", "filter.fixture.clean", "fixture-configuration-only");
+                try
+                {
+                    Check((await one.InspectPullAsync()).State == GitPullState.IndexNotVerifiable,
+                        "inspection accepted a worktree with configured filters");
+                }
+                finally { await Command(source, "config", "--local", "--unset", "filter.fixture.clean"); }
+
+                await Command(source, "update-index", "--add", "--cacheinfo", $"160000,{currentLocal},fixture-module");
+                try
+                {
+                    Check((await one.InspectPullAsync()).State == GitPullState.IndexNotVerifiable,
+                        "inspection accepted an unverified submodule");
+                }
+                finally { await Command(source, "update-index", "--force-remove", "--", "fixture-module"); }
+
+                var indexContent = await File.ReadAllBytesAsync(indexPath);
+                await File.WriteAllTextAsync(tracked, "first staged version");
+                await Command(source, "add", "--", "one.txt");
+                var stagedStatus = await Command(source, "--no-optional-locks", "status", "--porcelain");
+                one.BeforePullInspectionRecheck = () =>
+                {
+                    File.WriteAllText(tracked, "second staged version");
+                    Command(source, "add", "--", "one.txt").GetAwaiter().GetResult();
+                };
+                try
+                {
+                    Check((await one.InspectPullAsync()).State == GitPullState.Changed &&
+                        await Command(source, "--no-optional-locks", "status", "--porcelain") == stagedStatus,
+                        "inspection missed an index change with the same porcelain status");
+                }
+                finally
+                {
+                    one.BeforePullInspectionRecheck = null;
+                    await File.WriteAllTextAsync(tracked, "one");
+                    await File.WriteAllBytesAsync(indexPath, indexContent);
+                }
+
+                using (var interrupted = new CancellationTokenSource())
+                {
+                    one.BeforePullInspectionRecheck = interrupted.Cancel;
+                    try
+                    {
+                        await one.InspectPullAsync(interrupted.Token);
+                        throw new InvalidOperationException("inspection ignored cancellation during recheck");
+                    }
+                    catch (OperationCanceledException) { }
+                    finally { one.BeforePullInspectionRecheck = null; }
+                }
+
+                try
+                {
+                    await File.WriteAllTextAsync(indexPath, "synthetic invalid index");
+                    Check((await one.InspectPullAsync()).State == GitPullState.Unavailable &&
+                        await File.ReadAllTextAsync(indexPath) == "synthetic invalid index", "inspection accepted or rewrote invalid index");
+                }
+                finally { await File.WriteAllBytesAsync(indexPath, indexContent); }
+
+                await File.WriteAllTextAsync(candidatePath, "keep untracked collision");
+                Check((await one.InspectPullAsync()).State == GitPullState.Dirty &&
+                    await File.ReadAllTextAsync(candidatePath) == "keep untracked collision", "untracked collision was ignored or lost");
+                File.Delete(candidatePath);
+            });
             var disabledPull = await one.PullAsync();
             Check(!disabledPull.Success && disabledPull.Failure == GitFailure.UnsafeOperation, "pull must fail closed");
             Program.ReportConditionalSkip("product fast-forward pull disabled pending cross-process branch protection");
