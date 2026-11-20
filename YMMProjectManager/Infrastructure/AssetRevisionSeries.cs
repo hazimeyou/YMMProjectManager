@@ -6,8 +6,8 @@ namespace YMMProjectManager.Infrastructure;
 
 /// <summary>
 /// A create-only revision series in an explicitly selected, dedicated directory.
-/// All cooperating writers must use this API and the same path. Non-cooperating writers and
-/// filesystem aliases are not excluded between the version check and publication.
+/// All cooperating writers must use this API and the same path. Appends hold the revision files read
+/// during validation until publication, while other writers can still add independent directory entries.
 /// </summary>
 public static class AssetRevisionSeries
 {
@@ -221,7 +221,8 @@ public static class AssetRevisionSeries
         var full = ValidateDirectory(directory);
         using var fence = OwnedFilePublication.DirectoryFence.Open(full);
         await using var gate = AcquireLock(full);
-        var nodes = await ReadNodesAsync(full, token).ConfigureAwait(false);
+        using var history = new RevisionReadPins();
+        var nodes = await ReadNodesAsync(full, token, history).ConfigureAwait(false);
         var graph = InspectGraph(nodes);
         if (expectedRoot is not null && graph.Root != expectedRoot)
             throw new InvalidDataException("The associated metadata series changed; reload before updating.");
@@ -284,7 +285,26 @@ public static class AssetRevisionSeries
 
     private sealed record Node(AssetManifest Manifest, string Hash, int ByteCount);
 
-    private static async Task<Dictionary<Guid, Node>> ReadNodesAsync(string directory, CancellationToken token)
+    private sealed class RevisionReadPins : IDisposable
+    {
+        private readonly List<FileStream> streams = [];
+
+        public FileStream Open(string path)
+        {
+            // The bytes are already buffered by ReadRevisionBytesAsync. Keep only the file handle.
+            var stream = OpenRegularRevision(path, bufferSize: 1);
+            streams.Add(stream);
+            return stream;
+        }
+
+        public void Dispose()
+        {
+            foreach (var stream in streams) stream.Dispose();
+        }
+    }
+
+    private static async Task<Dictionary<Guid, Node>> ReadNodesAsync(string directory, CancellationToken token,
+        RevisionReadPins? history = null)
     {
         var nodes = new Dictionary<Guid, Node>();
         var remainingBytes = MaxHistoryBytes;
@@ -299,7 +319,9 @@ public static class AssetRevisionSeries
             if (name.Length != Prefix.Length + 32 + 5 || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
                 !Guid.TryParseExact(name.Substring(Prefix.Length, 32), "N", out var nameId))
                 throw new InvalidDataException("An unrecognized revision entry exists; history was not modified.");
-            var bytes = await ReadRegularFileAsync(path, remainingBytes, token).ConfigureAwait(false);
+            var bytes = history is null
+                ? await ReadRegularFileAsync(path, remainingBytes, token).ConfigureAwait(false)
+                : await ReadRevisionBytesAsync(history.Open(path), remainingBytes, token).ConfigureAwait(false);
             remainingBytes -= bytes.Length;
             var node = ParseNode(bytes);
             if (node.Manifest.RevisionId != nameId || !nodes.TryAdd(nameId, node))
@@ -323,9 +345,19 @@ public static class AssetRevisionSeries
 
     private static async Task<byte[]> ReadRegularFileAsync(string path, int remainingBytes, CancellationToken token)
     {
+        await using var stream = OpenRegularRevision(path);
+        return await ReadRevisionBytesAsync(stream, remainingBytes, token).ConfigureAwait(false);
+    }
+
+    private static FileStream OpenRegularRevision(string path, int bufferSize = 81920)
+    {
         if ((File.GetAttributes(path) & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
             throw new InvalidDataException("A revision entry is not a regular file.");
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize, true);
+    }
+
+    private static async Task<byte[]> ReadRevisionBytesAsync(FileStream stream, int remainingBytes, CancellationToken token)
+    {
         if (stream.Length > MaxManifestBytes || stream.Length > remainingBytes)
             throw new InvalidDataException("The revision or its history exceeds the size limit.");
         var bytes = new byte[checked((int)stream.Length)];

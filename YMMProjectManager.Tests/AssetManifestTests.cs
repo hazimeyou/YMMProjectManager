@@ -82,9 +82,50 @@ internal static class AssetManifestTests
             () => TestAbandonedRevisionStagingAsync(root));
         await Program.RunNamedCaseAsync("Managed relink recovery preserves an unpublished output when metadata advanced",
             () => TestStalePreparedOutputRecoveryAsync(root));
+        await Program.RunNamedCaseAsync("Managed relink keeps its validated history stable through publication",
+            () => TestHistoryPinnedForPublicationAsync(root, project, item));
         await Program.RunNamedCaseAsync("Managed relink durable output proof, cancellation and explicit retry",
             () => TestPreparedOutputRecoveryAsync(root));
         Console.WriteLine("Project asset immutable revision checks passed.");
+    }
+
+    private static async Task TestHistoryPinnedForPublicationAsync(string root, string project, AssetMetadata item)
+    {
+        var directory = Directory.CreateDirectory(Path.Combine(root, "pinned-history")).FullName;
+        var first = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+        var rootHead = await AssetRevisionSeries.InitializeAsync(directory, first);
+        var second = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, first, true, projectId: first.ProjectId);
+        var tip = await AssetRevisionSeries.AppendAsync(directory, rootHead, second);
+        var next = AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, second, true, projectId: first.ProjectId);
+        var paths = new[] { first.RevisionId, second.RevisionId }
+            .Select(id => Path.Combine(directory, $"revision-{id:N}.json")).ToArray();
+        var original = await Task.WhenAll(paths.Select(path => File.ReadAllBytesAsync(path)));
+        var checkpoints = 0;
+
+        void CheckHistorySharing()
+        {
+            checkpoints++;
+            foreach (var path in paths)
+            {
+                try { using var writer = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.Read); }
+                catch (IOException) { continue; }
+                throw new Exception("a validated revision was writable during output publication");
+            }
+        }
+
+        var published = await AssetRevisionSeries.AppendToBranchOrVerifyAsync(directory, rootHead, [tip], tip, next, default, CheckHistorySharing);
+        var replayed = await AssetRevisionSeries.AppendToBranchOrVerifyAsync(directory, rootHead, [tip], tip, next, default, CheckHistorySharing);
+        var graph = await AssetRevisionSeries.InspectGraphAsync(directory);
+        if (checkpoints != 2 || published.RevisionId != next.RevisionId || replayed != published ||
+            graph.Revisions.Count != 3 || !graph.Heads.SequenceEqual(new[] { published }))
+            throw new Exception("guarded publication or committed retry did not leave one verified new revision");
+        for (var i = 0; i < paths.Length; i++)
+        {
+            var after = await File.ReadAllBytesAsync(paths[i]);
+            if (!original[i].AsSpan().SequenceEqual(after))
+                throw new Exception("historical revision bytes changed");
+            using var writer = new FileStream(paths[i], FileMode.Open, FileAccess.Write, FileShare.Read);
+        }
     }
 
     private static async Task TestRelinkRecoveryAsync(string root)
