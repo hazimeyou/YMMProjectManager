@@ -27,7 +27,7 @@ public sealed partial class ProjectListViewModel
     private async Task SavePendingDraftAsync(ProjectStore local)
     {
         if (repository is not JsonProjectRepository json || savedBaseline is not { IsRecoverySafe: true } baseline ||
-            ProjectListRecovery.Fingerprint(baseline) == ProjectListRecovery.Fingerprint(local)) return;
+            (pendingDraftPath is null && ProjectListRecovery.Fingerprint(baseline) == ProjectListRecovery.Fingerprint(local))) return;
         var evidence = pendingAdditionEvidence.ToDictionary(pair => pair.Key,
             pair => new ProjectListDrafts.Evidence(pair.Value.Id, pair.Value.Hash), StringComparer.OrdinalIgnoreCase);
         pendingDraftPath = await json.WritePendingDraftAsync(baseline, local, evidence, pendingDraftPath);

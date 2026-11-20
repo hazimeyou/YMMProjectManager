@@ -75,6 +75,28 @@ internal static class OfflineControlsTests
                 finally { dialog.Close(); }
                 return Task.CompletedTask;
             });
+            await Program.RunNamedCaseAsync("Undoing pending changes fences the abandoned WPF draft", async () =>
+            {
+                var listPath = Path.Combine(root, "reverted", "projects.json");
+                var repository = new JsonProjectRepository(logger, listPath);
+                var recoveryVm = new ProjectListViewModel(logger, repository);
+                await recoveryVm.InitializeAsync();
+                var pendingStore = await repository.LoadAsync();
+                pendingStore.Projects.Add(new ProjectEntry { FullPath = project, ProjectId = Guid.NewGuid() });
+                var draftSave = typeof(ProjectListViewModel).GetMethod("SavePendingDraftAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
+
+                await (Task)draftSave.Invoke(recoveryVm, [pendingStore])!;
+                var predecessor = Directory.EnumerateFiles(drafts.DirectoryPath, "*.draft.json").Single();
+                if ((await drafts.ReadForReviewAsync(predecessor)).ExportOnly)
+                    throw new InvalidOperationException("The first pending change was not recoverable.");
+                await (Task)draftSave.Invoke(recoveryVm, [await repository.LoadAsync()])!;
+                var successor = Directory.EnumerateFiles(drafts.DirectoryPath, "*.draft.json").Single(path => path != predecessor);
+                var newest = await drafts.ReadForReviewAsync(successor);
+                if (!(await drafts.ReadForReviewAsync(predecessor)).ExportOnly || newest.ExportOnly ||
+                    newest.Draft.Local.Projects.Count != 0 || File.Exists(listPath))
+                    throw new InvalidOperationException("The abandoned pending change remained replayable or modified the active list.");
+            });
             Console.WriteLine("Offline Git and asset ViewModel checks passed.");
             return true;
         });
