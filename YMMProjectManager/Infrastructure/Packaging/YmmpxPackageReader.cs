@@ -325,6 +325,54 @@ internal static class YmmpxPackageReader
     internal static SafeFileHandle OpenPackageForPublication(string path)
         => OpenOrdinaryPath(path, expectDirectory: false, allowRename: true);
 
+    internal static IDisposable ReserveInstallerDirectory(string tempRoot, out string directory)
+    {
+        directory = Path.GetFullPath(tempRoot);
+        var fence = DirectoryFence.Open(directory);
+        try
+        {
+            foreach (var part in new[] { "YMMProjectManager", "YmmpxLibPlugin" })
+            {
+                directory = Path.Combine(directory, part);
+                if (!CreateDirectory(ExtendedPath(directory), IntPtr.Zero))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    if (error != 183) throw new IOException("ダウンロード先を作成できません。", new Win32Exception(error));
+                }
+                fence.Add(directory);
+            }
+            return fence;
+        }
+        catch
+        {
+            fence.Dispose();
+            throw;
+        }
+    }
+
+    internal static FileStream CreateOwnedDownload(string path)
+    {
+        const uint genericWrite = 0x40000000;
+        const uint delete = 0x10000;
+        const uint createNew = 1;
+        const uint openWithoutFollowingLink = 0x00200000;
+        var handle = OpenPath(ExtendedPath(path), genericWrite | delete, FileShare.None, IntPtr.Zero,
+            createNew, openWithoutFollowingLink, IntPtr.Zero);
+        if (!handle.IsInvalid)
+        {
+            try { return new FileStream(handle, FileAccess.Write, bufferSize: 1); }
+            catch
+            {
+                TryDeleteOpenedPath(handle);
+                handle.Dispose();
+                throw;
+            }
+        }
+        var error = Marshal.GetLastWin32Error();
+        handle.Dispose();
+        throw new IOException("一時ダウンロードを作成できません。", new Win32Exception(error));
+    }
+
     private static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename)
     {
         const uint readAttributes = 0x80;

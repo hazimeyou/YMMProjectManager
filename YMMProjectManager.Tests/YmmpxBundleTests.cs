@@ -11,7 +11,8 @@ internal static class YmmpxBundleTests
         await TestInstallGuideMessageAsync(workRoot);
         await TestLegacyFolderDetectionAsync(workRoot);
         await TestInstallerCancellationPreservesExistingFileAsync(workRoot);
-        await TestInstallerDownloadAndLaunchAsync(workRoot);
+        await Program.RunNamedCaseAsync("Installer publishes only a complete download", () => TestInstallerDownloadAndLaunchAsync(workRoot));
+        await Program.RunNamedCaseAsync("Installer launch failure preserves completed download", () => TestInstallerLaunchFailureKeepsDownloadAsync(workRoot));
         await TestResolverSearchPathsAsync(workRoot);
         var configuredLibrary = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
         if (string.IsNullOrWhiteSpace(configuredLibrary)) await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
@@ -79,9 +80,9 @@ internal static class YmmpxBundleTests
         var guide = new YmmpxLibInstallGuide(
             logger,
             launcher: startInfo => launchedPaths.Add(startInfo.FileName),
-            downloader: async (_, path, _) =>
+            downloader: async (_, output, token) =>
             {
-                await File.WriteAllTextAsync(path, "dummy ymme").ConfigureAwait(false);
+                await output.WriteAsync("dummy ymme"u8.ToArray(), token).ConfigureAwait(false);
             });
 
         var result = await guide.DownloadAndLaunchInstallerAsync();
@@ -91,6 +92,22 @@ internal static class YmmpxBundleTests
         AssertTrue(File.Exists(result.DownloadPath!), "downloaded ymme should exist");
         AssertTrue(launchedPaths.Count == 1, "installer should be launched once");
         AssertTrue(string.Equals(launchedPaths[0], result.DownloadPath, StringComparison.OrdinalIgnoreCase), "launched path should match downloaded ymme");
+        AssertTrue(await File.ReadAllTextAsync(result.DownloadPath!) == "dummy ymme", "launched path did not contain full contents");
+        AssertTrue(!Directory.EnumerateFiles(Path.GetDirectoryName(result.DownloadPath!)!, "*.download").Any(), "published installer left partial downloads");
+    }
+
+    private static async Task TestInstallerLaunchFailureKeepsDownloadAsync(string workRoot)
+    {
+        var root = CreateRoot(workRoot, nameof(TestInstallerLaunchFailureKeepsDownloadAsync));
+        string? attempted = null;
+        var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
+            launcher: start => { attempted = start.FileName; throw new IOException("synthetic launcher error"); },
+            downloader: async (_, output, token) => await output.WriteAsync("verified bytes"u8.ToArray(), token));
+
+        var result = await guide.DownloadAndLaunchInstallerAsync();
+        AssertTrue(!result.Success && result.DownloadPath is not null && result.DownloadPath == attempted, "manual installer location missing");
+        AssertTrue(await File.ReadAllTextAsync(result.DownloadPath!) == "verified bytes", "launcher failure removed completed installer");
+        AssertTrue(!Directory.EnumerateFiles(Path.GetDirectoryName(result.DownloadPath!)!, "*.download").Any(), "launcher failure left partial downloads");
     }
 
     private static async Task TestInstallerCancellationPreservesExistingFileAsync(string workRoot)
@@ -117,7 +134,7 @@ internal static class YmmpxBundleTests
             AssertTrue(!failed.Success && await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "failed download modified existing file or launched");
             using var interrupted = new CancellationTokenSource();
             var duringDownload = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "during.log")),
-                launcher: _ => launches++, downloader: async (_, path, _) => { await File.WriteAllTextAsync(path, "synthetic partial"); interrupted.Cancel(); });
+                launcher: _ => launches++, downloader: async (_, output, _) => { await output.WriteAsync("synthetic partial"u8.ToArray()); interrupted.Cancel(); });
             try { await duringDownload.DownloadAndLaunchInstallerAsync(interrupted.Token); throw new Exception("download cancellation ignored before launch"); }
             catch (OperationCanceledException) { }
             AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled download modified existing file or launched");
