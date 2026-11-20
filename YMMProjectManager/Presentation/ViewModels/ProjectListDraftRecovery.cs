@@ -28,13 +28,9 @@ public sealed partial class ProjectListViewModel
     {
         if (repository is not JsonProjectRepository json || savedBaseline is not { IsRecoverySafe: true } baseline ||
             ProjectListRecovery.Fingerprint(baseline) == ProjectListRecovery.Fingerprint(local)) return;
-        var drafts = new ProjectListDrafts(json.RecoveryDirectory);
         var evidence = pendingAdditionEvidence.ToDictionary(pair => pair.Key,
             pair => new ProjectListDrafts.Evidence(pair.Value.Id, pair.Value.Hash), StringComparer.OrdinalIgnoreCase);
-        var previous = pendingDraftPath;
-        var next = await drafts.WriteAsync(baseline, local, evidence);
-        pendingDraftPath = next;
-        if (previous is not null && File.Exists(previous)) drafts.Retire(previous);
+        pendingDraftPath = await json.WritePendingDraftAsync(baseline, local, evidence, pendingDraftPath);
     }
 
     private async Task SaveRepositoryWithPendingDraftAsync(ProjectStore store)
@@ -93,7 +89,12 @@ public sealed partial class ProjectListViewModel
             return;
         }
         var claimed = IsClaimedDraft(path);
-        var draft = await drafts.ReadAsync(path, claimed);
+        var (draft, exportOnly) = await drafts.ReadForReviewAsync(path, claimed);
+        if (exportOnly)
+        {
+            await ExportDraftCopyAsync(draft.Local, "より新しい記録または競合する記録があるため、選択した一覧を別ファイルに退避");
+            return;
+        }
         if (claimed)
         {
             var outcome = ProjectListPublications.Outcome.Unknown;

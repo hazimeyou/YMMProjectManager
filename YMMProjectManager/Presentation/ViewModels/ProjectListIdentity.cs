@@ -69,7 +69,13 @@ public sealed partial class ProjectListViewModel
         foreach (var asset in locations)
         {
             token.ThrowIfCancellationRequested();
-            var status = await AssetInventory.VerifyExternalAsync(picker.FolderName, asset, token);
+            AssetVerification status;
+            try { status = await AssetInventory.VerifyExternalAsync(picker.FolderName, asset, token); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                results.Add($"{asset.ExternalLocation!.RelativePath}  読み取れません");
+                continue;
+            }
             var text = status switch
             {
                 AssetVerification.Valid => "一致",
@@ -80,7 +86,8 @@ public sealed partial class ProjectListViewModel
             };
             results.Add($"{asset.ExternalLocation!.RelativePath}  {text}");
         }
-        if (ReferenceEquals(project, SelectedProject) && project.MetadataAssociation == association)
+        if (ReferenceEquals(project, SelectedProject) && project.MetadataAssociation == association &&
+            string.Equals(storageName, AssetStorageName.Trim(), StringComparison.OrdinalIgnoreCase))
             AssetStatus = $"{storageName} の照合結果\n{string.Join("\n", results)}";
     });
 

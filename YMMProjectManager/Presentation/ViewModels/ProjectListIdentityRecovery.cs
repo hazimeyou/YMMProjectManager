@@ -18,10 +18,21 @@ public sealed partial class ProjectListViewModel
         {
             if (repository is not JsonProjectRepository json || HasUnsavedProjectList) return;
             var original = await json.ReadOriginalAsync(token);
+            var physical = await ProjectListIdentityRecovery.InspectPhysicalAsync(original, token);
+            if (physical.Conflicts.Count != 0)
+            {
+                published = await RepairPhysicalRegistrationsAsync(json, physical, token);
+                if (published) isInitialized = false;
+                return;
+            }
+
             var review = await Task.Run(() => ProjectListIdentityRecovery.Inspect(original), token);
             if (review.Conflicts.Count == 0 && review.LegacyProjects.All(entry => entry.HasMetadata))
             {
-                AssetStatus = "修復できる重複 ID または未設定の項目は見つかりませんでした。";
+                AssetStatus = physical.UnverifiedRecordedDuplicates.Count == 0
+                    ? "修復できる重複 ID または未設定の項目は見つかりませんでした。"
+                    : "同じ物理ファイルを示す登録情報がありますが、実ファイルを確認できませんでした。\n" +
+                        string.Join("\n", physical.UnverifiedRecordedDuplicates.SelectMany(group => group.Entries).Select(entry => entry.Path));
                 return;
             }
 
@@ -65,6 +76,80 @@ public sealed partial class ProjectListViewModel
             logger.Info($"Project list identity repair finished. groups={review.Conflicts.Count} legacy={legacyRows.Count} applied={apply}");
         });
         if (published) await InitializeAsync();
+    }
+
+    private async Task<bool> RepairPhysicalRegistrationsAsync(JsonProjectRepository json,
+        ProjectListIdentityRecovery.PhysicalReview review, CancellationToken token)
+    {
+        var keepers = ChoosePhysicalRegistrations(review);
+        if (keepers is null) return false;
+
+        var choice = MessageBox.Show(
+            "「はい」で一覧原本を別ファイルに退避して、選択した登録だけを残します。「いいえ」で修復版を別ファイルへ保存します。",
+            "同じファイルを指す登録の修復", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.No);
+        if (choice == MessageBoxResult.Cancel) return false;
+
+        var apply = choice == MessageBoxResult.Yes;
+        var picker = new SaveFileDialog
+        {
+            Filter = "JSON (*.json)|*.json",
+            DefaultExt = ".json",
+            FileName = apply ? "projects.original.json" : "projects.recovered.json",
+            Title = apply ? "一覧原本の退避先を選択" : "修復した一覧のコピーを保存",
+            OverwritePrompt = false,
+        };
+        if (picker.ShowDialog() != true || HasUnsavedProjectList) return false;
+
+        if (apply)
+            await ProjectListIdentityRecovery.ApplyPhysicalAsync(json, review, keepers, picker.FileName, token);
+        else
+            await ProjectListIdentityRecovery.ExportPhysicalRepairAsync(json, review, keepers, picker.FileName, token);
+
+        AssetStatus = (apply ? "選択した登録を残しました。原本の退避先" : "修復した一覧の保存先") + $"\n{picker.FileName}";
+        logger.Info($"Physical project registration repair finished. groups={review.Conflicts.Count} applied={apply}");
+        return apply;
+    }
+
+    private static Dictionary<(ulong Volume, Guid FileId), int>? ChoosePhysicalRegistrations(
+        ProjectListIdentityRecovery.PhysicalReview review)
+    {
+        var panel = new DockPanel { Margin = new Thickness(12) };
+        var instructions = new TextBlock
+        {
+            Text = "同じ実ファイルを指すグループごとに、一覧に残す登録を選んでください。外す登録の ID・リンク・関連付けは元の一覧に残ります。プロジェクトとメタデータのファイルはそのままです。",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        DockPanel.SetDock(instructions, Dock.Top);
+        panel.Children.Add(instructions);
+
+        var confirm = new Button { Content = "選択を確認して続ける", IsEnabled = false, IsDefault = true, Margin = new Thickness(0, 12, 0, 0) };
+        DockPanel.SetDock(confirm, Dock.Bottom);
+        panel.Children.Add(confirm);
+        var choices = new StackPanel();
+        panel.Children.Add(new ScrollViewer { Content = choices, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        var selections = new Dictionary<(ulong Volume, Guid FileId), ComboBox>();
+        foreach (var group in review.Conflicts)
+        {
+            var options = new ComboBox { Margin = new Thickness(0, 0, 0, 12) };
+            choices.Children.Add(new TextBlock { Text = $"同じファイルを指す登録 {group.Entries.Count} 件" });
+            foreach (var entry in group.Entries)
+            {
+                var metadata = entry.HasMetadata ? "関連付けあり" : "関連付けなし";
+                var id = entry.ProjectId?.ToString("D") ?? "未設定";
+                var text = $"項目 {entry.Row + 1}  {entry.Path}\nID {id} / {metadata} / リンク {entry.LinkCount} 件";
+                options.Items.Add(new ComboBoxItem { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, Tag = entry.Row });
+            }
+            selections.Add((group.Volume, group.FileId), options);
+            options.SelectionChanged += (_, _) => confirm.IsEnabled = selections.Values.All(box => box.SelectedItem is not null);
+            choices.Children.Add(options);
+        }
+
+        var window = new Window { Title = "同じファイルを指すプロジェクト登録", Width = 820, Height = 460, Content = panel, Owner = GetActiveWindow() };
+        confirm.Click += (_, _) => window.DialogResult = true;
+        return window.ShowDialog() == true
+            ? selections.ToDictionary(item => item.Key, item => (int)((ComboBoxItem)item.Value.SelectedItem).Tag)
+            : null;
     }
 
     private static (Dictionary<Guid, int> Keepers, HashSet<int> LegacyRows)? ChooseIdentityRepairs(ProjectListIdentityRecovery.Review review)

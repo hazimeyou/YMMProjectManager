@@ -23,12 +23,14 @@ public sealed partial class ProjectListViewModel
             GitPullState.UpToDate => "保存済みの追跡ブランチと同じコミットです。",
             GitPullState.LocalAhead => "ローカル側に先行するコミットがあります。",
             GitPullState.Diverged => "ローカルと追跡ブランチが分岐しています。",
+            GitPullState.OperationInProgress => "別の Git 操作が進行中です。その操作を完了してから状態を確認してください。",
+            GitPullState.IndexNotVerifiable => "現在の Git 設定または index では、作業ツリーが安全に更新可能か確認できません。",
             GitPullState.Dirty => "作業ツリーまたは index に変更があります。",
             GitPullState.TrackingUnavailable => "保存済みの追跡ブランチがありません。必要に応じて Fetch してください。",
             GitPullState.Changed => "確認中にリポジトリが変更されました。再確認してください。",
             _ => "状態を確認できません。通常のリポジトリのルートとブランチを確認してください。",
         };
-        GitStatus = $"{description}\n{result.BranchRef} {result.LocalObjectId}\n{result.TrackingRef} {result.TrackingObjectId}\nローカルの追跡情報を確認しました。通信や Pull は実行していません。";
+        GitStatus = $"{description}\n{result.BranchRef} {result.LocalObjectId}\n{result.TrackingRef} {result.TrackingObjectId}\nローカルの追跡情報を確認しました。通信は実行していません。更新を伴う Pull は無効です。";
     });
 
     private static async Task<(GitRepository Repository, string Root)?> LocateProjectGitRootAsync(ProjectEntry project, CancellationToken token)
