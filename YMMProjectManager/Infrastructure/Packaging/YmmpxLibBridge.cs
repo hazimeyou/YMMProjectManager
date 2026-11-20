@@ -62,6 +62,7 @@ public sealed class YmmpxLibBridge
 
         string? temporaryPath = null;
         var temporaryOwned = false;
+        FileStream? validatedPackage = null;
         try
         {
             token.ThrowIfCancellationRequested();
@@ -138,8 +139,8 @@ public sealed class YmmpxLibBridge
             if (!string.Equals(Path.GetFullPath(packagedOutputPath), temporaryPath, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
-            using (var packageStream = new FileStream(temporaryPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                await YmmpxPackageReader.ValidateAsync(packageStream, token).ConfigureAwait(false);
+            validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
+            await YmmpxPackageReader.ValidateAsync(validatedPackage, token).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink
@@ -151,7 +152,7 @@ public sealed class YmmpxLibBridge
                 Status = link.Exists ? "packaged" : "missing",
             }).ToArray();
             token.ThrowIfCancellationRequested();
-            try { File.Move(temporaryPath, destination); }
+            try { YmmpxPackageReader.RenameOpenedPath(validatedPackage.SafeFileHandle, destination); }
             catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
             {
                 return new YmmpxPackageResult { Success = false, ErrorMessage = "出力中に同じ名前のファイルが作成されました。別の名前で保存してください。" };
@@ -192,10 +193,13 @@ public sealed class YmmpxLibBridge
         }
         finally
         {
-            if (temporaryOwned && temporaryPath is not null)
+            if (temporaryOwned && validatedPackage is not null)
+                YmmpxPackageReader.TryDeleteOpenedPath(validatedPackage.SafeFileHandle);
+            else if (temporaryOwned && temporaryPath is not null)
             {
                 try { File.Delete(temporaryPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             }
+            validatedPackage?.Dispose();
         }
 
         static YmmpxPackageResult InvalidProject() => new()

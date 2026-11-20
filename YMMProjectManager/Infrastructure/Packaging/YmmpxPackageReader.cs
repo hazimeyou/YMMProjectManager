@@ -79,7 +79,7 @@ internal static class YmmpxPackageReader
             // Windows may require child directory handles to be closed before renaming.
             // Keep the staging root open and publish that exact object without replacement.
             subdirectoryFence.Dispose();
-            RenameDirectory(stagingHandle, final);
+            RenameOpenedPath(stagingHandle, final);
         }
         catch
         {
@@ -88,7 +88,7 @@ internal static class YmmpxPackageReader
                 foreach (var path in files) TryCleanup(path, isDirectory: false);
                 subdirectoryFence.Dispose();
                 foreach (var path in directories.AsEnumerable().Reverse()) TryCleanup(path, isDirectory: true);
-                TryDeleteEmptyDirectory(stagingHandle);
+                TryDeleteOpenedPath(stagingHandle);
             }
             throw;
         }
@@ -320,49 +320,63 @@ internal static class YmmpxPackageReader
     }
 
     private static SafeFileHandle OpenOrdinaryDirectory(string path, bool allowRename = false)
+        => OpenOrdinaryPath(path, expectDirectory: true, allowRename);
+
+    internal static SafeFileHandle OpenPackageForPublication(string path)
+        => OpenOrdinaryPath(path, expectDirectory: false, allowRename: true);
+
+    private static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename)
     {
         const uint readAttributes = 0x80;
+        const uint genericRead = 0x80000000;
         const uint delete = 0x10000;
         const uint openExisting = 3;
         const uint openDirectoryWithoutFollowingLink = 0x02200000;
         const int fileAttributeTagInfo = 9;
         // Deny writable and delete handles while using a directory as an output boundary.
-        var handle = OpenDirectory(@"\\?\" + path, readAttributes | (allowRename ? delete : 0), FileShare.Read,
+        var access = (expectDirectory ? readAttributes : genericRead) | (allowRename ? delete : 0);
+        var handle = OpenPath(ExtendedPath(path), access, FileShare.Read,
             IntPtr.Zero, openExisting, openDirectoryWithoutFollowingLink, IntPtr.Zero);
         if (handle.IsInvalid)
         {
             var error = Marshal.GetLastWin32Error();
             handle.Dispose();
-            throw new IOException("展開先フォルダーを保護できません。", new Win32Exception(error));
+            throw new IOException("保存先を保護できません。", new Win32Exception(error));
         }
         if (!GetFileInformationByHandleEx(handle, fileAttributeTagInfo, out var info, 8) ||
-            (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != FileAttributes.Directory)
+            (info.Attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != (expectDirectory ? FileAttributes.Directory : 0))
         {
             handle.Dispose();
-            throw new IOException("リンクまたはフォルダー以外のパスは展開先に使用できません。");
+            throw new IOException("通常のファイルまたはフォルダーを使用してください。リンクは利用できません。");
         }
         return handle;
     }
 
-    private static void RenameDirectory(SafeFileHandle handle, string final)
+    private static string ExtendedPath(string path)
+    {
+        if (path.StartsWith(@"\\?\", StringComparison.Ordinal)) return path;
+        return path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
+    }
+
+    internal static void RenameOpenedPath(SafeFileHandle handle, string final)
     {
         const int fileRenameInfo = 3;
         // FILE_RENAME_INFO has a native-sized RootDirectory and a trailing UTF-16 name.
         // A null RootDirectory uses the complete destination path. ReplaceIfExists is false.
-        var name = Encoding.Unicode.GetBytes(@"\\?\" + final);
+        var name = Encoding.Unicode.GetBytes(ExtendedPath(final));
         var nameLengthOffset = 2 * IntPtr.Size;
         var nameOffset = nameLengthOffset + sizeof(int);
         var data = new byte[nameOffset + name.Length + sizeof(char)];
         BitConverter.TryWriteBytes(data.AsSpan(nameLengthOffset), name.Length);
         name.CopyTo(data, nameOffset);
         if (!SetFileInformationByHandle(handle, fileRenameInfo, data, (uint)data.Length))
-            throw new IOException("展開先フォルダーを公開できません。", new Win32Exception(Marshal.GetLastWin32Error()));
+            throw new IOException("新しい名前で保存できません。", new Win32Exception(Marshal.GetLastWin32Error()));
     }
 
-    private static void TryDeleteEmptyDirectory(SafeFileHandle handle)
+    internal static void TryDeleteOpenedPath(SafeFileHandle handle)
     {
         const int fileDispositionInfo = 4;
-        // This operation only marks the exact opened directory for non-recursive deletion.
+        // This marks only the opened file or empty directory for deletion.
         _ = SetFileInformationByHandle(handle, fileDispositionInfo, [1], 1);
     }
 
@@ -382,6 +396,6 @@ internal static class YmmpxPackageReader
     private static extern bool SetFileInformationByHandle(SafeFileHandle file, int informationClass, byte[] information, uint length);
 
     [DllImport("kernel32.dll", EntryPoint = "CreateFileW", CharSet = CharSet.Unicode, SetLastError = true)]
-    private static extern SafeFileHandle OpenDirectory(string path, uint access, FileShare share, IntPtr securityAttributes,
+    private static extern SafeFileHandle OpenPath(string path, uint access, FileShare share, IntPtr securityAttributes,
         uint disposition, uint flags, IntPtr template);
 }
