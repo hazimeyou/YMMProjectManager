@@ -75,10 +75,12 @@ public sealed class JsonProjectRepository : IProjectRepository
         var dto = JsonSerializer.Deserialize<ProjectListFileDto>(jsonContent.Span, JsonOptions);
         if (dto is null) throw new InvalidDataException("Project list is null.");
         var safe = IsSafeForRecovery(content);
+        var nested = safe ? CaptureNestedFields(dto) : null;
         var revision = new ProjectListRevision(Convert.ToHexString(SHA256.HashData(content)), dto.SaveOperationId)
         {
             PreservedRootFieldsJson = dto.ExtensionData is { Count: > 0 } fields ? JsonSerializer.Serialize(fields) : null,
-            PreservedNestedFieldsJson = safe ? CaptureNestedFields(dto) : null,
+            PreservedNestedFieldsJson = nested is null ? null : JsonSerializer.Serialize(nested),
+            PreservedFieldAnchors = nested is null ? null : string.Join(';', EnumeratePreservedAnchors(nested).Order(StringComparer.Ordinal)),
         };
         var store = new ProjectStore { Revision = revision, IsRecoverySafe = safe };
         foreach (var f in dto.Folders ?? [])
@@ -182,7 +184,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     private sealed record ProjectFields(Dictionary<string, JsonElement>? Fields, Dictionary<Guid, Dictionary<string, JsonElement>> Links);
     private sealed record NestedFields(Dictionary<Guid, ProjectFields> Projects, Dictionary<Guid, Dictionary<string, JsonElement>> Folders);
 
-    private static string? CaptureNestedFields(ProjectListFileDto dto)
+    private static NestedFields? CaptureNestedFields(ProjectListFileDto dto)
     {
         var projects = new Dictionary<Guid, ProjectFields>();
         foreach (var project in dto.Projects.Where(item => item.ProjectId.HasValue))
@@ -194,7 +196,17 @@ public sealed class JsonProjectRepository : IProjectRepository
         }
         var folders = dto.Folders.Where(folder => folder.ExtensionData is { Count: > 0 })
             .ToDictionary(folder => folder.Id!.Value, folder => folder.ExtensionData!);
-        return projects.Count == 0 && folders.Count == 0 ? null : JsonSerializer.Serialize(new NestedFields(projects, folders));
+        return projects.Count == 0 && folders.Count == 0 ? null : new NestedFields(projects, folders);
+    }
+
+    private static IEnumerable<string> EnumeratePreservedAnchors(NestedFields nested)
+    {
+        foreach (var (id, fields) in nested.Projects)
+        {
+            if (fields.Fields is { Count: > 0 }) yield return ProjectListFieldAnchors.Project(id);
+            foreach (var link in fields.Links.Keys) yield return ProjectListFieldAnchors.Link(id, link);
+        }
+        foreach (var id in nested.Folders.Keys) yield return ProjectListFieldAnchors.Folder(id);
     }
 
     private static void RestoreNestedFields(ProjectListFileDto dto, string preserved)

@@ -140,7 +140,21 @@ internal static class ProjectListMerge
         MergeOrder(baseline.Folders, local.Folders, remote.Folders, merged.Folders,
             f => f.Id, EqualityComparer<Guid>.Default, "フォルダー", changes, conflicts, choices, useLocal);
         if (!Valid(merged)) conflicts.Add("再適用により project ID、パスまたは folder ID が重複します。");
+        if (conflicts.Count == 0 && LosesExtensionFields(local, remote, merged))
+            conflicts.Add("未知の項目を保持したまま選択結果を保存できません。両方の一覧を退避してください。");
         return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts) { Choices = choices };
+    }
+
+    private static bool LosesExtensionFields(ProjectStore local, ProjectStore remote, ProjectStore merged)
+    {
+        var localFields = local.Revision?.PreservedFieldAnchors;
+        var remoteFields = remote.Revision?.PreservedFieldAnchors;
+        if (localFields is null && remoteFields is null) return false;
+        var mergedAnchors = ProjectListFieldAnchors.Enumerate(merged).ToHashSet(StringComparer.Ordinal);
+        if (remoteFields is not null && remoteFields.Split(';').Any(anchor => !mergedAnchors.Contains(anchor))) return true;
+        if (localFields is null) return false;
+        var remoteAnchors = ProjectListFieldAnchors.Enumerate(remote).ToHashSet(StringComparer.Ordinal);
+        return localFields.Split(';').Any(anchor => mergedAnchors.Contains(anchor) && !remoteAnchors.Contains(anchor));
     }
 
     private static void MergeLink(LinkedYmmpFile baseline, LinkedYmmpFile local, LinkedYmmpFile remote, LinkedYmmpFile target,
@@ -264,10 +278,37 @@ internal static class ProjectListMerge
         foreach (var id in bs.Keys.Union(ls.Keys))
         {
             bs.TryGetValue(id, out var b); ls.TryGetValue(id, out var l); rs.TryGetValue(id, out var r);
-            if (b is null) { if (l is null) continue; if (r is null) { merged.Folders.Add(Clone(l)); changes.Add($"folder 追加: {l.Name}"); } else if (!Same(l, r)) conflicts.Add($"folder の追加競合: {id}"); continue; }
-            if (l is null) { if (r is null) continue; if (!Same(b, r)) conflicts.Add($"folder の削除と変更が競合: {id}"); else { merged.Folders.RemoveAll(f => f.Id == id); changes.Add($"folder 削除: {b.Name}"); } continue; }
+            if (b is null)
+            {
+                if (l is null) continue;
+                if (r is null) { merged.Folders.Add(Clone(l)); changes.Add($"folder 追加: {l.Name}"); }
+                else if (!Same(l, r) && Decide(id.ToString(), "folder の追加", FolderDetails(l), FolderDetails(r), conflicts, choices, useLocal) is true)
+                {
+                    merged.Folders[merged.Folders.FindIndex(folder => folder.Id == id)] = Clone(l);
+                    changes.Add($"未保存の folder を採用: {l.Name}");
+                }
+                continue;
+            }
+            if (l is null)
+            {
+                if (r is not null && (Same(b, r) ||
+                    Decide(id.ToString(), "folder の削除と変更", "folder を削除", FolderDetails(r), conflicts, choices, useLocal) is true))
+                {
+                    merged.Folders.RemoveAll(folder => folder.Id == id);
+                    changes.Add($"folder 削除: {b.Name}");
+                }
+                continue;
+            }
             if (Same(b, l)) continue;
-            if (r is null) { conflicts.Add($"folder の編集と削除が競合: {id}"); continue; }
+            if (r is null)
+            {
+                if (Decide(id.ToString(), "folder の変更と削除", FolderDetails(l), "folder を削除", conflicts, choices, useLocal) is true)
+                {
+                    merged.Folders.Add(Clone(l));
+                    changes.Add($"変更した folder を採用: {l.Name}");
+                }
+                continue;
+            }
             var target = merged.Folders.Single(f => f.Id == id); var before = conflicts.Count;
             target.Name = Field(b.Name, l.Name, r.Name, id.ToString(), "Name", conflicts, choices, useLocal);
             target.DisplayOrder = Field(b.DisplayOrder, l.DisplayOrder, r.DisplayOrder, id.ToString(), "DisplayOrder", conflicts, choices, useLocal);
@@ -282,6 +323,11 @@ internal static class ProjectListMerge
             }
         }
     }
+
+    private static string FolderDetails(ProjectFolder folder) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        folder.Id, folder.Name, folder.DisplayOrder, folder.CreatedAt, folder.UpdatedAt,
+    });
 
     private static bool Valid(ProjectStore value)
     {

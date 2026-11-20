@@ -202,6 +202,37 @@ internal static class ProjectListSaveTests
         await Expect<InvalidDataException>(() => nestedRepo.SaveAsync(orphanedFolder));
         var afterOrphanAttempts = await File.ReadAllBytesAsync(nestedPath);
         Check(nestedBytes.SequenceEqual(afterOrphanAttempts), "refused orphan changes mutated project list bytes");
+        var resurrectBase = await nestedRepo.LoadAsync();
+        foreach (var kind in new[] { "project", "link", "folder" })
+        {
+            var edited = ProjectListMerge.Snapshot(resurrectBase);
+            var latestJson = nestedResult.DeepClone();
+            switch (kind)
+            {
+                case "project":
+                    edited.Projects.Single().DisplayName = "local edit";
+                    latestJson["Projects"]!.AsArray().Clear();
+                    break;
+                case "link":
+                    edited.Projects.Single().LinkedYmmpFiles.Single().Memo = "local edit";
+                    latestJson["Projects"]![0]!["LinkedYmmpFiles"]!.AsArray().Clear();
+                    break;
+                case "folder":
+                    edited.Folders.Single().Name = "local edit";
+                    latestJson["Folders"]!.AsArray().Clear();
+                    latestJson["Projects"]![0]!.AsObject().Remove("FolderId");
+                    break;
+            }
+            var latestWithoutAnchor = JsonProjectRepository.DeserializeStore(JsonSerializer.SerializeToUtf8Bytes(latestJson));
+            var contested = ProjectListMerge.Merge(resurrectBase, edited, latestWithoutAnchor);
+            Check(contested.CanResolveAll && contested.Choices.Count == 1, $"deleted {kind} was not represented as an explicit conflict");
+            var option = contested.Choices.Single();
+            var resurrect = ProjectListMerge.Merge(resurrectBase, edited, latestWithoutAnchor,
+                new Dictionary<ProjectListConflict, bool> { [option] = true });
+            var keepNewest = ProjectListMerge.Merge(resurrectBase, edited, latestWithoutAnchor,
+                new Dictionary<ProjectListConflict, bool> { [option] = false });
+            Check(resurrect.Store is null && keepNewest.Store is not null, $"resurrecting {kind} discarded unknown data or blocked the remote choice");
+        }
         var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
         await File.WriteAllTextAsync(copyPath, "existing synthetic data");
         await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));
