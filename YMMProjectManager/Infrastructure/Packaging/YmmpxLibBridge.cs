@@ -60,6 +60,7 @@ public sealed class YmmpxLibBridge
             };
         }
 
+        OwnedStagingDirectory? staging = null;
         string? temporaryPath = null;
         (ulong Volume, Guid FileId)? temporaryIdentity = null;
         FileStream? validatedPackage = null;
@@ -84,7 +85,8 @@ public sealed class YmmpxLibBridge
                 if (source.RootElement.ValueKind != JsonValueKind.Object) return InvalidProject();
             }
             catch (JsonException) { return InvalidProject(); }
-            temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(destination);
+            staging = OwnedStagingDirectory.Reserve(Path.GetDirectoryName(destination)!, ".ymmpm-package-");
+            temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(Path.Combine(staging.Path, Path.GetFileName(destination)));
             using (var reserved = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 temporaryIdentity = ProjectFileEvidence.ReadPhysicalIdentity(reserved);
             var scan = ScanProjectForLogging(ymmpPath);
@@ -141,7 +143,7 @@ public sealed class YmmpxLibBridge
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
-            await YmmpxPackageReader.ValidateAsync(validatedPackage, token).ConfigureAwait(false);
+            await YmmpxPackageReader.ValidateAsync(validatedPackage, token, Path.GetFileName(ymmpPath)).ConfigureAwait(false);
             var resourceCount = GetIntProperty(result, "ResourceCount");
             var fileMap = GetDictionaryProperty(result, "FileMap");
             var links = scan.Links.Select(link => new YmmpxPackageLink
@@ -199,6 +201,18 @@ public sealed class YmmpxLibBridge
             if (temporaryIdentity is { } owned && temporaryPath is not null)
                 TryDeleteOwnedPackage(temporaryPath, owned, validatedPackage);
             validatedPackage?.Dispose();
+            if (staging is not null)
+            {
+                try
+                {
+                    if (!staging.DeleteIfEmpty()) logger.Info($"同梱の作業フォルダーを保持しました。path={staging.Path}");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    logger.Info($"同梱の作業フォルダーを後始末できませんでした。path={staging.Path}, error={ex.GetType().Name}");
+                }
+                finally { staging.Dispose(); }
+            }
         }
 
         static YmmpxPackageResult InvalidProject() => new()

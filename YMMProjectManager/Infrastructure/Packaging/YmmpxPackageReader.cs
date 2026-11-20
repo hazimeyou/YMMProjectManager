@@ -22,10 +22,12 @@ internal static class YmmpxPackageReader
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
     private sealed record OwnedPath(string Path, FileIdentity? Identity);
 
-    internal static async Task ValidateAsync(Stream source, CancellationToken token)
+    internal static async Task ValidateAsync(Stream source, CancellationToken token, string? expectedProjectName = null)
     {
         using var archive = OpenValidated(source, token);
         var package = await ReadPackageAsync(archive, token).ConfigureAwait(false);
+        if (expectedProjectName is not null && !string.Equals(package.ProjectName, expectedProjectName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("同梱したプロジェクト名が選択したプロジェクトと一致しません。");
         foreach (var resource in package.Resources)
         {
             var entry = package.Files[resource];

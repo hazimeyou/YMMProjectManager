@@ -42,6 +42,14 @@ internal static class YmmpxFailureTests
             if ((await bridge.CreatePackageAsync(project, newPath, CancellationToken.None)).Success || File.Exists(newPath))
                 throw new Exception("package with malformed JSON was published: " + mode);
         }
+        await Program.RunNamedCaseAsync("Packaging refuses an archive for another project", async () =>
+        {
+            const string mode = "other-project";
+            YmmpxLib.YmmpxPackageService.Mode = mode;
+            var wrongProject = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
+            if (wrongProject.Success || File.Exists(newPath))
+                throw new InvalidOperationException("Published an archive for a different project.");
+        });
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -82,7 +90,7 @@ internal static class YmmpxFailureTests
                 YmmpxLib.YmmpxPackageService.AfterPartialWrite = null;
                 YmmpxLib.YmmpxPackageService.Mode = "success";
             }
-            if (File.Exists(missingOutput) || Directory.EnumerateFiles(root, ".*.tmp.ymmpx").Any() ||
+            if (File.Exists(missingOutput) || Directory.EnumerateDirectories(root, ".ymmpm-package-*").Any() ||
                 await File.ReadAllTextAsync(output) != "original package")
                 throw new Exception("cancelled creation left partial output or changed an existing file");
         }
@@ -97,7 +105,8 @@ internal static class YmmpxFailureTests
             YmmpxLib.YmmpxPackageService.Mode = "cancel-after-write";
             YmmpxLib.YmmpxPackageService.AfterPartialWrite = () =>
             {
-                replacedPath = Directory.EnumerateFiles(isolated, ".cancel-replaced.*.tmp.ymmpx").Single();
+                var staging = Directory.EnumerateDirectories(isolated, ".ymmpm-package-*").Single();
+                replacedPath = Directory.EnumerateFiles(staging, ".cancel-replaced.*.tmp.ymmpx").Single();
                 File.Move(replacedPath, movedOriginal);
                 File.WriteAllText(replacedPath, "separate file");
                 cancelled.Cancel();
@@ -139,7 +148,7 @@ internal static class YmmpxFailureTests
             if (locked.Success) throw new Exception("locked package replaced");
         }
         if (await File.ReadAllTextAsync(output) != "original package") throw new Exception("existing package changed");
-        if (Directory.EnumerateFiles(root, ".*.tmp.ymmpx").Any()) throw new Exception("temporary package remained");
+        if (Directory.EnumerateDirectories(root, ".ymmpm-package-*").Any()) throw new Exception("temporary package remained");
         var generated = Path.Combine(root, "generated.tmp");
         var existingOutput = Path.Combine(root, "existing.ymmpx");
         await File.WriteAllTextAsync(generated, "synthetic new package");
@@ -194,15 +203,16 @@ namespace YmmpxLib
                 await File.WriteAllTextAsync(output, "invalid archive", token);
                 return new { OutputPath = output, ResourceCount = 0 };
             }
+            var projectName = Mode == "other-project" ? "other-project.ymmp" : Path.GetFileName(project);
             using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {
                 using (var writer = new StreamWriter(archive.CreateEntry(Mode == "unsafe" ? "../escape.txt" : "resources/synthetic.txt").Open()))
                     await writer.WriteAsync("synthetic package");
                 if (Mode != "missing-marker")
-                    using (var writer = new StreamWriter(archive.CreateEntry("_ymmpx_project_path.txt").Open())) await writer.WriteAsync(Mode == "oversized-marker" ? new string('x', 4097) : "project.ymmp");
+                    using (var writer = new StreamWriter(archive.CreateEntry("_ymmpx_project_path.txt").Open())) await writer.WriteAsync(Mode == "oversized-marker" ? new string('x', 4097) : projectName);
                 if (Mode != "missing-project")
-                    using (var writer = new StreamWriter(archive.CreateEntry("project.ymmp").Open())) await writer.WriteAsync(Mode == "invalid-project-json" ? "{" : """{"FilePath":"resources/synthetic.txt"}""");
+                    using (var writer = new StreamWriter(archive.CreateEntry(projectName).Open())) await writer.WriteAsync(Mode == "invalid-project-json" ? "{" : """{"FilePath":"resources/synthetic.txt"}""");
                 if (Mode != "missing-links")
                     using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync(Mode == "invalid-links-json" ? "[]" : """{"resources/synthetic.txt":"resources/synthetic.txt"}""");
             }
