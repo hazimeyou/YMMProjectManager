@@ -27,6 +27,9 @@ internal static class ProjectListPublicationTests
         foreach (var point in new[] { "external-before-park", "external-after-park", "external-before-park-crash",
             "external-after-park-crash", "external-identical-before-park" })
             await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
+        foreach (var change in new[] { "changed-content", "equal-content-replacement", "legacy-started-receipt" })
+            await Program.RunNamedCaseAsync($"Draft recovery rejects an unproven candidate: {change}",
+                () => TestChangedCandidateAsync(workRoot, change));
         await Program.RunNamedCaseAsync("Corrupted replacement journal cannot authorize recovery",
             () => TestCorruptReplacementJournalAsync(workRoot));
         await Program.RunNamedCaseAsync("Cancellation after parking restores the verified list",
@@ -147,6 +150,43 @@ internal static class ProjectListPublicationTests
         }
         Require(await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown && File.Exists(claim),
             "The competing version allowed stale draft replay.");
+    }
+
+    private static async Task TestChangedCandidateAsync(string workRoot, string change)
+    {
+        var root = Path.Combine(workRoot, "list-candidate-evidence", change);
+        var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
+        await RunReplacementChildAsync(root, "before-park", 86);
+        var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
+        await repository.RecoverInterruptedPublicationAsync(evidence);
+        var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
+
+        var originalCandidate = await File.ReadAllBytesAsync(evidence.CandidatePath);
+        if (change == "legacy-started-receipt")
+        {
+            var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
+            var (id, operation) = drafts.GetClaimedIdentity(claim);
+            var legacy = new ProjectListPublications.Receipt(2, operation!.Value, id,
+                evidence.Proof.Original.Sha256, evidence.Proof.Result.Sha256, PublicationStarted: true);
+            await new ProjectListPublications(repository.RecoveryDirectory).WriteAsync(legacy, default);
+        }
+        else if (change == "equal-content-replacement")
+        {
+            File.Move(evidence.CandidatePath, evidence.CandidatePath + ".fixture-preserved", overwrite: false);
+            await File.WriteAllBytesAsync(evidence.CandidatePath, originalCandidate);
+        }
+        else
+        {
+            await File.WriteAllTextAsync(evidence.CandidatePath, "fixture edited the candidate contents");
+        }
+
+        var observedCandidate = await File.ReadAllBytesAsync(evidence.CandidatePath);
+        for (var attempt = 0; attempt < 2; attempt++)
+            Require(await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown && File.Exists(claim),
+                "A substituted or changed candidate incorrectly released an ambiguous draft.");
+        Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)) &&
+            Enumerable.SequenceEqual(observedCandidate, await File.ReadAllBytesAsync(evidence.CandidatePath)),
+            "Ambiguous recovery modified the current list or the candidate.");
     }
 
     private static async Task TestCorruptReplacementJournalAsync(string workRoot)

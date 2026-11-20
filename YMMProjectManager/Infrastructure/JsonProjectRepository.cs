@@ -352,7 +352,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         var store = content is null ? new ProjectStore { Revision = new ProjectListRevision(null), IsRecoverySafe = true } : DeserializeStore(content);
         var revision = store.Revision!;
         var outcome = await new ProjectListPublications(RecoveryDirectory)
-            .ReconcileAsync(id, operation, revision.Sha256, revision.OperationId, HasUnconsumedCandidate, token).ConfigureAwait(false);
+            .ReconcileAsync(id, operation, revision.Sha256, revision.OperationId, VerifyUnconsumedCandidateAsync, token).ConfigureAwait(false);
         if (outcome == ProjectListPublications.Outcome.Unpublished && store.IsRecoverySafe)
             drafts.ReleaseUnpublishedClaim(claimedDraft);
         else if (outcome == ProjectListPublications.Outcome.Committed)
@@ -371,11 +371,20 @@ public sealed class JsonProjectRepository : IProjectRepository
 
     private string CandidatePath(Guid operationId) => $"{jsonPath}.tmp-{operationId:N}";
 
-    private bool HasUnconsumedCandidate(Guid operationId)
+    private async Task<bool> VerifyUnconsumedCandidateAsync(Guid operationId, ProjectListReplacement.FileVersion expected,
+        CancellationToken token)
     {
-        try { return (File.GetAttributes(CandidatePath(operationId)) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) == 0; }
-        catch (FileNotFoundException) { return false; }
-        catch (DirectoryNotFoundException) { return false; }
+        try
+        {
+            using var candidate = ProjectListReplacement.TryOpen(CandidatePath(operationId));
+            return candidate is not null &&
+                await ProjectListReplacement.MatchesAsync(candidate, expected, token).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            logger.Error(ex, "Unconsumed project list candidate could not be verified.");
+            return false;
+        }
     }
 
     internal bool HasInterruptedPublication => replacement.IsPending();
@@ -486,7 +495,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 await drafts.ReadAsync(readyDraft).ConfigureAwait(false);
             }
             var publications = new ProjectListPublications(RecoveryDirectory);
-            var receipt = new ProjectListPublications.Receipt(2, operationId, draftId, baseline.Sha256, expectedResult,
+            var receipt = new ProjectListPublications.Receipt(3, operationId, draftId, baseline.Sha256, expectedResult,
                 PublicationStarted: false, ExpectedOperation: baseline.OperationId);
             beforeReceipt?.Invoke();
             await publications.WriteAsync(receipt, cancellationToken, duringReceipt).ConfigureAwait(false);
@@ -518,7 +527,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             stage = "replace";
             beforeReplace?.Invoke();
             cancellationToken.ThrowIfCancellationRequested();
-            await publications.WriteAsync(receipt with { PublicationStarted = true }, cancellationToken).ConfigureAwait(false);
+            await publications.WriteAsync(receipt with { PublicationStarted = true, Candidate = candidateVersion }, cancellationToken).ConfigureAwait(false);
             using var current = ProjectListReplacement.TryOpen(jsonPath, FileShare.Read | FileShare.Delete);
             var currentVersion = current is null ? null :
                 await ProjectListReplacement.ReadFileVersionAsync(current, cancellationToken).ConfigureAwait(false);

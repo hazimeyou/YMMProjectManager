@@ -10,7 +10,8 @@ internal sealed class ProjectListPublications(string directory)
     internal enum Outcome { Unknown, Unpublished, Committed }
     internal sealed record Receipt(int Version, Guid Id, Guid? DraftId, string? Expected, string Result,
         [property: JsonRequired] bool PublicationStarted,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ExpectedOperation = null);
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? ExpectedOperation = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ProjectListReplacement.FileVersion? Candidate = null);
     private sealed record Envelope(byte[] Payload, string Hash);
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -63,7 +64,7 @@ internal sealed class ProjectListPublications(string directory)
     }
 
     internal async Task<Outcome> ReconcileAsync(Guid draftId, Guid? boundOperation, string? current, Guid? currentOperation,
-        Func<Guid, bool> hasUnconsumedCandidate, CancellationToken token)
+        Func<Guid, ProjectListReplacement.FileVersion, CancellationToken, Task<bool>> verifyUnconsumedCandidate, CancellationToken token)
     {
         ProjectListDrafts.CheckOrdinaryDirectory(directory);
         if (!Directory.Exists(directory)) return Outcome.Unknown;
@@ -86,8 +87,11 @@ internal sealed class ProjectListPublications(string directory)
                     return Outcome.Committed;
                 if (!receipt.PublicationStarted) return Outcome.Unpublished;
             }
-            // Once publication starts, it consumes the candidate. Exact base bytes can also mean a later restore.
-            unpublished &= receipt.Expected == current && (!receipt.PublicationStarted || hasUnconsumedCandidate(receipt.Id));
+            // Publication consumes the staged file. Only its recorded identity and contents can prove that
+            // it is still unconsumed: a later restore can also have the exact base bytes at the active name.
+            unpublished = unpublished && receipt.Expected == current &&
+                (!receipt.PublicationStarted || (receipt.Candidate is { } candidate &&
+                    await verifyUnconsumedCandidate(receipt.Id, candidate, token).ConfigureAwait(false)));
         }
         return committed ? Outcome.Committed : known && unpublished ? Outcome.Unpublished : Outcome.Unknown;
     }
@@ -126,11 +130,13 @@ internal sealed class ProjectListPublications(string directory)
         if (envelope?.Payload is null || Digest(envelope.Payload) != envelope.Hash)
             throw new InvalidDataException("Invalid publication receipt checksum.");
         var receipt = JsonSerializer.Deserialize<Receipt>(envelope.Payload, Options);
-        if (receipt is not { Version: 1 or 2 } || receipt.Id == Guid.Empty || receipt.DraftId == Guid.Empty ||
+        if (receipt is not { Version: 1 or 2 or 3 } || receipt.Id == Guid.Empty || receipt.DraftId == Guid.Empty ||
             receipt.ExpectedOperation == Guid.Empty || receipt.ExpectedOperation == receipt.Id ||
             (receipt.ExpectedOperation is not null && (receipt.Version == 1 || receipt.Expected is null)) ||
             Path.GetFileName(path) != Name(receipt.DraftId, receipt.Id) ||
-            !IsDigest(receipt.Result) || (receipt.Expected is not null && !IsDigest(receipt.Expected)))
+            !IsDigest(receipt.Result) || (receipt.Expected is not null && !IsDigest(receipt.Expected)) ||
+            (receipt.Candidate is not null) != (receipt.Version == 3 && receipt.PublicationStarted) ||
+            (receipt.Candidate is { } candidate && (candidate.FileId == Guid.Empty || candidate.Sha256 != receipt.Result)))
             throw new InvalidDataException("Invalid publication receipt contents.");
         return receipt;
     }
