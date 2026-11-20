@@ -1,15 +1,79 @@
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
+using YMMProjectManager.Infrastructure.Packaging;
 
 namespace YMMProjectManager.Infrastructure;
 
 public sealed record AssetMetadata(string RelativePath, long Size, string Sha256, string? DownloadUrl);
 public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch }
+public enum AssetReferenceStatus { Present, Missing, Changed, External, Unavailable }
+public sealed record AssetReference(string Path, AssetReferenceStatus Status, AssetMetadata? Actual, AssetMetadata? Expected);
 
 /// <summary>Inspects explicitly selected local assets; it never modifies media files.</summary>
 public static class AssetInventory
 {
+    public static async Task<IReadOnlyList<AssetReference>> ScanProjectAsync(string projectPath,
+        IReadOnlyList<AssetMetadata>? expected = null, CancellationToken token = default)
+    {
+        token.ThrowIfCancellationRequested();
+        var project = Path.GetFullPath(projectPath);
+        var directory = Path.GetDirectoryName(project) ?? throw new InvalidDataException("The project has no containing directory.");
+        var safeProject = ResolveRelativePath(directory, Path.GetFileName(project));
+        await using var stream = new FileStream(safeProject, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        if (stream.Length > 32 * 1024 * 1024) throw new InvalidDataException("The project is too large for inventory scanning.");
+        using var reader = new StreamReader(stream);
+        var json = await reader.ReadToEndAsync(token).ConfigureAwait(false);
+        var expectedByPath = new Dictionary<string, AssetMetadata>(StringComparer.OrdinalIgnoreCase);
+        foreach (var asset in expected ?? [])
+        {
+            ValidateMetadata(asset);
+            if (!expectedByPath.TryAdd(Path.GetFullPath(asset.RelativePath, directory), asset))
+                throw new InvalidDataException("Duplicate expected asset path.");
+        }
+
+        using var projectJson = JsonDocument.Parse(json);
+        if (projectJson.RootElement.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("The project does not contain a JSON object.");
+        var paths = PackagingDetector.FindFilePaths(json);
+        if (paths.Count > 1000) throw new InvalidDataException("The project has too many asset references for one inventory scan.");
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var results = new List<AssetReference>();
+        var prefix = Path.TrimEndingDirectorySeparator(directory) + Path.DirectorySeparatorChar;
+        foreach (var reference in paths)
+        {
+            token.ThrowIfCancellationRequested();
+            var path = PackagingDetector.ResolveMaterialPath(reference, directory);
+            if (!seen.Add(path ?? reference)) continue;
+            if (path is null)
+            {
+                results.Add(new AssetReference(reference, AssetReferenceStatus.Unavailable, null, null));
+                continue;
+            }
+            if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                results.Add(new AssetReference(path, AssetReferenceStatus.External, null, null));
+                continue;
+            }
+            var relative = Path.GetRelativePath(directory, path);
+            expectedByPath.TryGetValue(path, out var prior);
+            try
+            {
+                var actual = await InspectAsync(directory, relative, prior?.DownloadUrl, token).ConfigureAwait(false);
+                var changed = prior is not null && (actual.Size != prior.Size ||
+                    !string.Equals(actual.Sha256, prior.Sha256, StringComparison.OrdinalIgnoreCase));
+                results.Add(new AssetReference(relative, changed ? AssetReferenceStatus.Changed : AssetReferenceStatus.Present, actual, prior));
+            }
+            catch (FileNotFoundException) { results.Add(new AssetReference(relative, AssetReferenceStatus.Missing, null, prior)); }
+            catch (DirectoryNotFoundException) { results.Add(new AssetReference(relative, AssetReferenceStatus.Missing, null, prior)); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                results.Add(new AssetReference(relative, AssetReferenceStatus.Unavailable, null, prior));
+            }
+        }
+        return results;
+    }
+
     public static async Task<AssetMetadata> InspectAsync(string projectDirectory, string relativePath, string? downloadUrl = null, CancellationToken token = default)
     {
         var path = ResolveRelativePath(projectDirectory, relativePath);
@@ -98,6 +162,14 @@ public static class AssetInventory
         var current = root;
         foreach (var segment in Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
+            var stem = segment.Split('.')[0].TrimEnd();
+            if (segment.EndsWith('.') || segment.EndsWith(' ') || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
+                stem.Equals("CON", StringComparison.OrdinalIgnoreCase) || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
+                stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
+                stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) ||
+                (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                    && "0123456789¹²³".Contains(stem[3])))
+                throw new ArgumentException("Asset path contains an invalid or reserved name.", nameof(relativePath));
             current = Path.Combine(current, segment);
             if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
                 throw new IOException("Asset paths through reparse points are not supported.");

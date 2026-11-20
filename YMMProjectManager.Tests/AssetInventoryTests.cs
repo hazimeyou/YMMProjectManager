@@ -1,5 +1,6 @@
 using System.IO;
 using System.Diagnostics;
+using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 
 internal static class AssetInventoryTests
@@ -20,6 +21,23 @@ internal static class AssetInventoryTests
         Check(before.SequenceEqual(after), "existing manifest changed");
         await File.WriteAllTextAsync(Path.Combine(root, "asset.txt"), "change");
         Check(await AssetInventory.VerifyAsync(root, asset) == AssetVerification.HashMismatch, "hash mismatch");
+        var project = Path.Combine(root, "inventory.ymmp");
+        var outside = Path.Combine(workRoot, "outside-media.wav");
+        await File.WriteAllTextAsync(outside, "outside");
+        await File.WriteAllTextAsync(Path.Combine(root, "present.wav"), "present");
+        await File.WriteAllTextAsync(project, JsonSerializer.Serialize(new
+        {
+            Items = new[] { "asset.txt", "missing.wav", "present.wav", ".\\PRESENT.wav", outside, "NUL.wav", "present.wav:private" }
+                .Select(path => new { FilePath = path })
+        }));
+        var scan = await AssetInventory.ScanProjectAsync(project, [asset]);
+        Check(scan.Count == 6, "equivalent references were not deduplicated");
+        Check(scan.Single(item => item.Path == "asset.txt") is { Status: AssetReferenceStatus.Changed, Actual.Size: 6 }
+            && scan.Single(item => item.Path == "asset.txt").Expected == asset, "changed reference status");
+        Check(scan.Single(item => item.Path == "missing.wav") is { Status: AssetReferenceStatus.Missing, Actual: null }, "missing reference status");
+        Check(scan.Single(item => item.Path == "present.wav") is { Status: AssetReferenceStatus.Present, Actual.Size: 7 }, "present reference status");
+        Check(scan.Single(item => item.Path == outside) is { Status: AssetReferenceStatus.External, Actual: null }, "external reference was opened");
+        Check(scan.Count(item => item.Status == AssetReferenceStatus.Unavailable && item.Actual is null) == 2, "reserved path checks");
         File.Delete(Path.Combine(root, "asset.txt"));
         Check(await AssetInventory.VerifyAsync(root, asset) == AssetVerification.Missing, "missing asset");
         try { await AssetInventory.InspectAsync(root, "../outside"); throw new Exception("traversal accepted"); } catch (ArgumentException) { }
