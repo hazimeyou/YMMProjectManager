@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -10,8 +11,11 @@ internal sealed class ProjectListDrafts(string directory)
 {
     internal sealed record Evidence(Guid Id, string Hash);
     private sealed record Document(int Version, Guid Id, string? BaseRevision, byte[] Baseline, byte[] Local,
-        Dictionary<string, Evidence> Additions, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PredecessorId);
-    private readonly record struct DraftIdentity(Guid Id, Guid? Predecessor, Guid? Operation, string ReadyPath);
+        Dictionary<string, Evidence> Additions,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? PredecessorId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] Guid? FamilyId,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? Generation);
+    private readonly record struct DraftIdentity(Guid Id, Guid Family, int Generation, Guid? Operation, string ReadyPath);
     private sealed record Envelope(byte[] Payload, string Sha256);
     internal sealed record Draft(ProjectStore Baseline, ProjectStore Local, Dictionary<string, Evidence> Additions);
     private const int MaxBytes = 32 * 1024 * 1024;
@@ -37,22 +41,24 @@ internal sealed class ProjectListDrafts(string directory)
         string? predecessor = null, Action? beforePublication = null, Action? afterPublication = null)
     {
         if (baseline.Revision is null) throw new InvalidDataException("Recovery draft has no base revision.");
-        Guid? previous = null;
-        if (predecessor is not null)
-        {
-            previous = RequireCurrent(predecessor).Id;
-            await ReadAsync(predecessor).ConfigureAwait(false);
-        }
         var id = Guid.NewGuid();
+        DraftIdentity? previous = predecessor is not null ? RequireCurrent(predecessor) : null;
+        if (previous is { } prior)
+        {
+            if (prior.Generation == int.MaxValue) throw new InvalidDataException("Recovery generation limit reached.");
+            await ReadCoreAsync(predecessor!, prior).ConfigureAwait(false);
+        }
+        var family = previous?.Family ?? id;
+        var generation = previous.HasValue ? previous.Value.Generation + 1 : 0;
         var document = new Document(previous.HasValue ? 2 : 1, id, baseline.Revision.Sha256, JsonProjectRepository.SerializeStore(baseline),
-            JsonProjectRepository.SerializeStore(local), evidence, previous);
+            JsonProjectRepository.SerializeStore(local), evidence, previous?.Id, generation > 0 ? family : null, generation > 0 ? generation : null);
         var payload = JsonSerializer.SerializeToUtf8Bytes(document, Options);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new Envelope(payload, Convert.ToHexString(SHA256.HashData(payload))), Options);
         if (bytes.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         CheckDirectory();
         Directory.CreateDirectory(directory);
         CheckDirectory();
-        var name = previous is Guid predecessorId ? $"{id:N}.{predecessorId:N}" : $"{id:N}";
+        var name = generation > 0 ? $"{id:N}.{family:N}.{generation.ToString(CultureInfo.InvariantCulture)}" : $"{id:N}";
         var path = Path.Combine(directory, $"{name}.draft.json");
         var temporary = path + ".tmp";
         var owned = false;
@@ -100,9 +106,7 @@ internal sealed class ProjectListDrafts(string directory)
         if (envelope?.Payload is null || envelope.Sha256 != Convert.ToHexString(SHA256.HashData(envelope.Payload)))
             throw new InvalidDataException("Recovery draft checksum is invalid.");
         var document = JsonSerializer.Deserialize<Document>(envelope.Payload, Options);
-        var expectedVersion = identity.Predecessor.HasValue ? 2 : 1;
-        if (document is null || document.Version != expectedVersion || document.Id != identity.Id ||
-            document.PredecessorId != identity.Predecessor || document.Baseline is null || document.Local is null ||
+        if (document is null || !Matches(document, identity) || document.Baseline is null || document.Local is null ||
             document.Additions is null || (document.BaseRevision is not null && !IsHash(document.BaseRevision)))
             throw new InvalidDataException("Recovery draft format or identity is invalid.");
         var baseline = JsonProjectRepository.DeserializeStore(document.Baseline);
@@ -114,6 +118,16 @@ internal sealed class ProjectListDrafts(string directory)
         baseline.Revision = baseline.Revision! with { Sha256 = document.BaseRevision };
         local.Revision = local.Revision! with { Sha256 = document.BaseRevision };
         return new Draft(baseline, local, document.Additions);
+    }
+
+    private static bool Matches(Document document, DraftIdentity identity)
+    {
+        if (document.Id != identity.Id) return false;
+        if (identity.Generation == 0)
+            return document is { Version: 1, PredecessorId: null, FamilyId: null, Generation: null };
+        return document.Version == 2 && document.FamilyId == identity.Family && document.Generation == identity.Generation &&
+            document.PredecessorId is Guid previous && previous != Guid.Empty && previous != identity.Id &&
+            (previous == identity.Family) == (identity.Generation == 1);
     }
 
     internal string Claim(string path, Guid operation)
@@ -151,13 +165,29 @@ internal sealed class ProjectListDrafts(string directory)
     private bool CanReplay(DraftIdentity identity, string path)
     {
         var full = Path.GetFullPath(path);
-        // The published name fences a predecessor even when the successor payload is unreadable.
-        // A temporary file exists before the generation changes and does not establish that fence.
-        if (PublishedNames($"*.{identity.Id:N}.draft.json*").Any()) return false;
-        var peers = identity.Predecessor is Guid predecessor
-            ? PublishedNames($"*.{predecessor:N}.draft.json*")
-            : PublishedNames(Path.GetFileName(identity.ReadyPath) + "*");
-        return !peers.Any(peer => !string.Equals(peer, full, StringComparison.OrdinalIgnoreCase));
+        var generations = new HashSet<int>();
+        var selected = false;
+        var candidates = PublishedNames($"{identity.Family:N}.draft.json*")
+            .Concat(PublishedNames($"*.{identity.Family:N}.*.draft.json*"));
+        foreach (var candidate in candidates)
+        {
+            DraftIdentity peer;
+            try
+            {
+                var name = Path.GetFileName(candidate);
+                peer = CheckPath(candidate, claimed: name.EndsWith(".saving", StringComparison.Ordinal),
+                    archived: name.EndsWith(".closed", StringComparison.Ordinal), requireFile: false);
+            }
+            catch (InvalidDataException) { return false; }
+            // The name of any later published generation fences earlier records, even if a payload is damaged
+            // or intermediate generations are missing. Two names for one generation leave its outcome uncertain.
+            if (peer.Family != identity.Family || !generations.Add(peer.Generation) || peer.Generation > identity.Generation)
+                return false;
+            if (peer.Generation != identity.Generation) continue;
+            selected = string.Equals(candidate, full, StringComparison.OrdinalIgnoreCase);
+            if (!selected) return false;
+        }
+        return selected;
     }
 
     private IEnumerable<string> PublishedNames(string pattern) =>
@@ -193,18 +223,17 @@ internal sealed class ProjectListDrafts(string directory)
             !name.EndsWith(extension, StringComparison.Ordinal) ||
             (requireFile && (File.GetAttributes(full) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) != 0))
             throw new InvalidDataException("Recovery draft path is invalid.");
-        var stem = name.AsSpan(0, name.Length - extension.Length);
-        Guid? predecessor = null;
-        if (stem.Length == 65 && stem[32] == '.')
-        {
-            if (!Guid.TryParseExact(stem[33..], "N", out var previous) || previous == Guid.Empty)
-                throw new InvalidDataException("Recovery draft predecessor is invalid.");
-            predecessor = previous;
-            stem = stem[..32];
-        }
-        if (!Guid.TryParseExact(stem, "N", out var id) || id == Guid.Empty || id == predecessor)
+        var parts = name[..^extension.Length].Split('.');
+        if (!Guid.TryParseExact(parts[0], "N", out var id) || id == Guid.Empty)
             throw new InvalidDataException("Recovery draft identity is invalid.");
-        return new DraftIdentity(id, predecessor, operation, Path.Combine(directory, name));
+        var family = id;
+        var generation = 0;
+        if (parts.Length != 1 &&
+            (parts.Length != 3 || !Guid.TryParseExact(parts[1], "N", out family) || family == Guid.Empty || family == id ||
+                !int.TryParse(parts[2], NumberStyles.None, CultureInfo.InvariantCulture, out generation) || generation < 1 ||
+                parts[2] != generation.ToString(CultureInfo.InvariantCulture)))
+            throw new InvalidDataException("Recovery draft generation is invalid.");
+        return new DraftIdentity(id, family, generation, operation, Path.Combine(directory, name));
     }
 
     private void CheckDirectory() => CheckOrdinaryDirectory(directory);

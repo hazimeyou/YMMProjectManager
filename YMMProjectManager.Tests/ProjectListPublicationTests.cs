@@ -14,7 +14,7 @@ internal static class ProjectListPublicationTests
             "missing-descendant", "corrupt-descendant", "duplicate-descendant", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
         })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
-        foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation" })
+        foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation", "missing-intermediate-generation" })
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
     }
 
@@ -70,7 +70,7 @@ internal static class ProjectListPublicationTests
 
         if (point == "ambiguous-generation")
         {
-            var broken = Path.Combine(repository.RecoveryDirectory, $"{Guid.NewGuid():N}.{Path.GetFileName(previous)[..32]}.draft.json");
+            var broken = Path.Combine(repository.RecoveryDirectory, $"{Guid.NewGuid():N}.{Path.GetFileName(previous)[..32]}.1.draft.json");
             await File.WriteAllTextAsync(broken, "unknown future format");
             var (_, exportOnly) = await drafts.ReadForReviewAsync(successor);
             Require(exportOnly, "A peer with unsupported data did not block the competing generation.");
@@ -78,6 +78,21 @@ internal static class ProjectListPublicationTests
             Require(await File.ReadAllTextAsync(broken) == "unknown future format" &&
                 Enumerable.SequenceEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"))),
                 "An ambiguous transition lost evidence or wrote the list.");
+            return;
+        }
+
+        if (point == "missing-intermediate-generation")
+        {
+            next.Local.Projects.Single().DisplayName = "newest";
+            var last = await repository.WritePendingDraftAsync(baseline, next.Local, [], successor);
+            var detached = Path.Combine(root, "synthetic-detached-generation");
+            File.Move(successor, detached);
+            await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(review.Local, previous));
+            var latest = await drafts.ReadAsync(last);
+            await repository.SaveReadyDraftAsync(latest.Local, last);
+            Require(File.Exists(detached) && File.Exists(last + ".closed") &&
+                (await repository.LoadAsync()).Projects.Single().DisplayName == "newest",
+                "Missing intermediate evidence caused an older replay or erased the newest generation.");
             return;
         }
 
@@ -214,7 +229,7 @@ internal static class ProjectListPublicationTests
         var candidate = await repository.LoadAsync();
         candidate.Projects.Single().DisplayName = "after";
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
-        if (point is "before-generation" or "after-generation" or "ambiguous-generation")
+        if (point is "before-generation" or "after-generation" or "ambiguous-generation" or "missing-intermediate-generation")
         {
             var previous = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Single();
             candidate.Projects.Single().DisplayName = "newer";
