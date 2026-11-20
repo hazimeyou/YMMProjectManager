@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Reflection;
+using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Packaging;
 
@@ -34,6 +35,39 @@ internal static class RealYmmpxR5Tests
         var managed = await service.ExtractPackageAsync(output, Path.Combine(root, "bridge-extract"), CancellationToken.None);
         if (!managed.Success || managed.ReplacedPathCount < 1 || !File.Exists(managed.RestoredProjectPath))
             throw new Exception("managed reader could not extract the real package");
+        await Program.RunNamedCaseAsync("Concurrent extraction of a real YMMPX publishes once", async () =>
+        {
+            var sharedDestination = Path.Combine(root, "shared-extract");
+            using var bothWriting = new Barrier(2);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            InlineProgress FirstWrite() => new(() => bothWriting.SignalAndWait(deadline.Token));
+            var first = service.ExtractPackageAsync(output, sharedDestination, deadline.Token, FirstWrite());
+            var second = service.ExtractPackageAsync(output, sharedDestination, deadline.Token, FirstWrite());
+            var results = await Task.WhenAll(first, second);
+            if (results.Count(result => result.Success) != 1)
+                throw new InvalidOperationException("One concurrent extraction must publish and the other must stop.");
+            var winner = results.Single(result => result.Success);
+            using var restoredJson = JsonDocument.Parse(await File.ReadAllTextAsync(winner.RestoredProjectPath!));
+            var media = restoredJson.RootElement.GetProperty("Items")[0].GetProperty("FilePath").GetString();
+            var packageAfter = await File.ReadAllBytesAsync(output);
+            if (winner.ExtractedResourceCount != managed.ExtractedResourceCount ||
+                media is null || !media.StartsWith(sharedDestination + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase) ||
+                await File.ReadAllTextAsync(media) != "synthetic media" ||
+                Directory.EnumerateDirectories(root, ".ymmpx-*").Any() || !bytes.SequenceEqual(packageAfter))
+                throw new InvalidOperationException("Concurrent extraction changed the package or left an incomplete destination.");
+        });
         Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
+    }
+
+    private sealed class InlineProgress(Action firstWrite) : IProgress<double>
+    {
+        private bool reported;
+
+        public void Report(double value)
+        {
+            if (reported) return;
+            reported = true;
+            firstWrite();
+        }
     }
 }
