@@ -72,7 +72,89 @@ internal static class AssetManifestTests
         var winners = await Task.WhenAll(Save(next), Save(AssetManifestStore.Create(project, [item], DateTimeOffset.UtcNow, loaded, true)));
         if (winners.Count(x => x) != 1 || (await AssetManifestStore.LoadAsync(racePath)).ProjectId != initial.ProjectId) throw new Exception("concurrent revisions overwritten");
         await TestRevisionSeriesAsync(root, project, item);
+        await TestRelinkRecoveryAsync(root);
         Console.WriteLine("Project asset immutable revision checks passed.");
+    }
+
+    private static async Task TestRelinkRecoveryAsync(string root)
+    {
+        var folder = Path.Combine(root, "managed-relink");
+        Directory.CreateDirectory(folder);
+        var source = Path.Combine(folder, "source.ymmp");
+        var output = Path.Combine(folder, "output.ymmp");
+        var original = Path.Combine(folder, "original.wav");
+        var candidate = Path.Combine(folder, "candidate.wav");
+        var seriesDirectory = Path.Combine(folder, "series");
+        Directory.CreateDirectory(seriesDirectory);
+        await File.WriteAllTextAsync(source, """{"Items":[{"FilePath":"original.wav"}]}""");
+        await File.WriteAllTextAsync(original, "original asset");
+        await File.WriteAllTextAsync(candidate, "replacement asset");
+        var bytes = await File.ReadAllBytesAsync(source);
+        var originalAsset = await AssetInventory.InspectAsync(folder, "original.wav");
+        var initial = AssetManifestStore.Create(source, [originalAsset], DateTimeOffset.UtcNow);
+        var head = await AssetRevisionSeries.InitializeAsync(seriesDirectory, initial);
+        var context = new RelinkDocumentContext
+        {
+            YmmpPath = source, OriginalBytes = bytes,
+            Rows = [new RelinkRow { OriginalPath = "original.wav", SelectedCandidate = candidate, Status = RelinkStatus.Updated }]
+        };
+        var review = await AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, head, default);
+        if (review.Count != 1 || !review[0].RequiresConfirmation) throw new Exception("replacement hash mismatch was not displayed");
+        await RejectAsync(() => AssetRelinkRecovery.PrepareAsync(context, output, seriesDirectory, head, head, review, false, default));
+        await File.WriteAllTextAsync(candidate, "another asset");
+        await RejectAsync(() => AssetRelinkRecovery.PrepareAsync(context, output, seriesDirectory, head, head, review, true, default));
+        await File.WriteAllTextAsync(candidate, "replacement asset");
+        var evidence = await AssetRelinkRecovery.PrepareAsync(context, output, seriesDirectory, head, head, review, true, default);
+        try
+        {
+            await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+            throw new Exception("revision written before output publication");
+        }
+        catch (FileNotFoundException) { }
+        using (var cancelled = new CancellationTokenSource())
+        {
+            cancelled.Cancel();
+            try
+            {
+                await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, cancelled.Token);
+                throw new Exception("cancelled recovery accepted");
+            }
+            catch (OperationCanceledException) { }
+        }
+        var saver = new RelinkSaveService(new FileLogger(Path.Combine(folder, "test.log")));
+        if (!(await saver.SaveAsAsync(context, output, default)).Success) throw new Exception("relink SaveAs failed");
+        var published = await File.ReadAllBytesAsync(output);
+        await File.WriteAllTextAsync(candidate, "another asset");
+        await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default));
+        await File.WriteAllTextAsync(candidate, "replacement asset");
+        await File.WriteAllTextAsync(output, "{}");
+        await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default));
+        await File.WriteAllBytesAsync(output, published);
+        if (await AssetRevisionSeries.ReadHeadAsync(seriesDirectory) != head) throw new Exception("a failed relink changed the metadata head");
+        var completed = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+        var repeated = await AssetRelinkRecovery.CompleteAsync(evidence, seriesDirectory, head, default);
+        var pendingOutput = Path.Combine(folder, "pending.ymmp");
+        var pendingReview = await AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, completed, default);
+        var pending = await AssetRelinkRecovery.PrepareAsync(context, pendingOutput, seriesDirectory, head, completed, pendingReview, true, default);
+        if (!(await saver.SaveAsAsync(context, pendingOutput, default)).Success) throw new Exception("pending relink SaveAs failed");
+        var competing = AssetManifestStore.Create(output, [], DateTimeOffset.UtcNow,
+            (await AssetRevisionSeries.InspectAsync(seriesDirectory)).Revisions[^1].Manifest, true, projectId: head.ProjectId);
+        var competingHead = await AssetRevisionSeries.AppendOrVerifyAsync(seriesDirectory, completed, competing);
+        await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(pending, seriesDirectory, head, default));
+        var pendingBytes = await File.ReadAllBytesAsync(pendingOutput);
+        var history = await AssetRevisionSeries.InspectAsync(seriesDirectory);
+        var preservedSource = await File.ReadAllBytesAsync(source);
+        var preservedOutput = await File.ReadAllBytesAsync(output);
+        if (repeated != completed || history.Head != competingHead || history.Revisions.Count != 3 ||
+            history.Revisions[1].Manifest.Assets.Count != 2 || !bytes.SequenceEqual(preservedSource) ||
+            !published.SequenceEqual(preservedOutput) || !published.SequenceEqual(pendingBytes) || !File.Exists(pending))
+            throw new Exception("relink recovery duplicated a revision or failed to preserve existing or pending data");
+
+        static async Task RejectAsync(Func<Task> run)
+        {
+            try { await run(); throw new Exception("invalid relink state accepted"); }
+            catch (InvalidDataException) { }
+        }
     }
 
     private static async Task TestRevisionSeriesAsync(string root, string project, AssetMetadata item)

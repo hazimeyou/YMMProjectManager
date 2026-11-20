@@ -12,7 +12,7 @@ public static class AssetInventory
 {
     public static async Task<AssetMetadata> InspectAsync(string projectDirectory, string relativePath, string? downloadUrl = null, CancellationToken token = default)
     {
-        var path = Resolve(projectDirectory, relativePath);
+        var path = ResolveRelativePath(projectDirectory, relativePath);
         ValidateUrl(downloadUrl);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
         var size = stream.Length;
@@ -24,7 +24,7 @@ public static class AssetInventory
     public static async Task<AssetVerification> VerifyAsync(string projectDirectory, AssetMetadata asset, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(asset);
-        var path = Resolve(projectDirectory, asset.RelativePath);
+        var path = ResolveRelativePath(projectDirectory, asset.RelativePath);
         ValidateUrl(asset.DownloadUrl);
         if (asset.Size < 0 || asset.Sha256 is null || asset.Sha256.Length != 64 || !asset.Sha256.All(Uri.IsHexDigit))
             throw new InvalidDataException("Invalid asset metadata.");
@@ -83,7 +83,7 @@ public static class AssetInventory
             throw new InvalidDataException("Invalid asset metadata.");
         ValidateUrl(asset.DownloadUrl);
     }
-    private static string Resolve(string projectDirectory, string relativePath)
+    internal static string ResolveRelativePath(string projectDirectory, string relativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(projectDirectory);
         ArgumentException.ThrowIfNullOrWhiteSpace(relativePath);
