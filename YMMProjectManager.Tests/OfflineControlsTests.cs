@@ -37,10 +37,21 @@ internal static class OfflineControlsTests
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
-            await Invoke("InspectGitPullAsync");
-            if (!vm.GitStatus.Contains("ローカルの追跡情報を確認しました") ||
-                !vm.GitStatus.Contains("更新を伴う Pull は無効です") || vm.PullGitCommand.CanExecute(null))
-                throw new Exception("nested project Pull assessment did not reach its containing repository");
+            await Program.RunNamedCaseAsync("Pull diagnostics identify the repository and explain the disabled write command", async () =>
+            {
+                await Invoke("InspectGitPullAsync");
+                if (!vm.GitStatus.Contains("ローカルの追跡情報を確認しました") ||
+                    !vm.GitStatus.Contains(root, StringComparison.OrdinalIgnoreCase) ||
+                    !vm.GitStatus.EndsWith(vm.PullUnavailableReason, StringComparison.Ordinal) ||
+                    !vm.PullUnavailableReason.Contains("ブランチ・index・作業ファイル") || vm.PullGitCommand.CanExecute(null))
+                    throw new InvalidOperationException("nested project Pull assessment did not explain its selected repository and write gate");
+
+                vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(root, "missing", "project.ymmp") };
+                await Invoke("InspectGitPullAsync");
+                if (!vm.GitStatus.Contains("Git ルートを確認できません") ||
+                    !vm.GitStatus.EndsWith(vm.PullUnavailableReason, StringComparison.Ordinal))
+                    throw new InvalidOperationException("diagnostics hid the write gate when repository discovery failed");
+            });
             vm.SelectedProject = new ProjectEntry { FullPath = project };
             await Invoke("FindAssetCandidatesAsync");
             if (!vm.AssetStatus.Contains("素材とは限りません") || !vm.AssetStatus.Contains("sample.png") || !vm.AssetStatus.Contains("note.txt")) throw new Exception("candidate labels missing");
