@@ -76,6 +76,8 @@ internal static class AssetManifestTests
             () => TestRevisionSeriesAsync(root, project, item));
         await Program.RunNamedCaseAsync("Managed relink branch selection, version compatibility and retry",
             () => TestRelinkRecoveryAsync(root));
+        await Program.RunNamedCaseAsync("Metadata series resumes past abandoned staged revisions without accepting unknown entries",
+            () => TestAbandonedRevisionStagingAsync(root));
         await Program.RunNamedCaseAsync("Managed relink recovery preserves an unpublished output when metadata advanced",
             () => TestStalePreparedOutputRecoveryAsync(root));
         await Program.RunNamedCaseAsync("Managed relink durable output proof, cancellation and explicit retry",
@@ -270,6 +272,37 @@ internal static class AssetManifestTests
             try { await run(); throw new Exception("invalid relink state accepted"); }
             catch (InvalidDataException) { }
         }
+    }
+
+    private static async Task TestAbandonedRevisionStagingAsync(string parent)
+    {
+        var root = Path.Combine(parent, "abandoned-revision-staging");
+        Directory.CreateDirectory(root);
+        var source = Path.Combine(root, "sample.ymmp");
+        await File.WriteAllTextAsync(source, "{}");
+        var manifest = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow);
+        var head = await AssetRevisionSeries.InitializeAsync(root, manifest);
+        var next = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow, manifest, confirmedProjectAssociation: true);
+        var pending = Path.Combine(root, $"revision-{next.RevisionId:N}.json.tmp-{Guid.NewGuid():N}");
+        await File.WriteAllTextAsync(pending, """{"Partial":""");
+        if (await AssetRevisionSeries.ReadHeadAsync(root) != head)
+            throw new Exception("A legacy staging record changed the committed head.");
+
+        var appended = await AssetRevisionSeries.AppendAsync(root, head, next);
+        if (await AssetRevisionSeries.ReadHeadAsync(root) != appended ||
+            await File.ReadAllTextAsync(pending) != """{"Partial":""")
+            throw new Exception("Publication did not preserve the abandoned legacy stage.");
+
+        var unknown = Path.Combine(root, $"revision-{Guid.NewGuid():N}.json.tmp-unknown");
+        await File.WriteAllTextAsync(unknown, "{}");
+        try
+        {
+            await AssetRevisionSeries.ReadHeadAsync(root);
+            throw new Exception("An unrecognized history entry was interpreted as staging.");
+        }
+        catch (InvalidDataException) { }
+        if (await File.ReadAllTextAsync(unknown) != "{}")
+            throw new Exception("Inspection changed an unrecognized entry.");
     }
 
     private static async Task TestStalePreparedOutputRecoveryAsync(string parent)

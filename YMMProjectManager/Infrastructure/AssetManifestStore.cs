@@ -94,22 +94,24 @@ public static class AssetManifestStore
         var bytes = JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true });
         if (bytes.Length > 4 * 1024 * 1024) throw new InvalidDataException("Asset metadata is too large.");
         var destination = Path.GetFullPath(path);
-        var temporary = destination + ".tmp-" + Guid.NewGuid().ToString("N");
-        var owned = false;
+        var directory = Path.GetDirectoryName(destination)!;
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory);
+        var temporary = Path.Combine(directory, $".asset-manifest-pending-{Guid.NewGuid():N}.tmp");
+        await using var stream = OwnedFilePublication.CreateOwnedOutputFile(temporary);
+        var published = false;
         try
         {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
-            {
-                owned = true;
-                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
-                await stream.FlushAsync(token).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
+            await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+            await stream.FlushAsync(token).ConfigureAwait(false);
+            stream.Flush(flushToDisk: true);
             token.ThrowIfCancellationRequested();
-            File.Move(temporary, destination);
-            owned = false;
+            OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, destination);
+            published = true;
         }
-        finally { if (owned) { try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { } } }
+        finally
+        {
+            if (!published) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
+        }
     }
 
     private static void Validate(AssetManifest manifest)

@@ -121,6 +121,7 @@ public static class AssetRevisionSeries
         if (root.ParentRevisionId is not null) throw new InvalidDataException("A series must start with an actual root revision.");
         root = Snapshot(root);
         var full = ValidateDirectory(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
         await using var gate = AcquireLock(full);
         if ((await ReadNodesAsync(full, token).ConfigureAwait(false)).Count != 0)
             throw new InvalidDataException("The revision series already contains history.");
@@ -139,6 +140,7 @@ public static class AssetRevisionSeries
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
         await using var gate = AcquireLock(full);
         return await InspectCoreAsync(full, token).ConfigureAwait(false);
     }
@@ -148,6 +150,7 @@ public static class AssetRevisionSeries
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
         await using var gate = AcquireLock(full);
         return InspectGraph(await ReadNodesAsync(full, token).ConfigureAwait(false));
     }
@@ -214,6 +217,7 @@ public static class AssetRevisionSeries
         if (next.ProjectId != expected.ProjectId || next.ParentRevisionId != expected.RevisionId)
             throw new InvalidDataException("The new revision does not reference the expected project and parent.");
         var full = ValidateDirectory(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full);
         await using var gate = AcquireLock(full);
         var nodes = await ReadNodesAsync(full, token).ConfigureAwait(false);
         var graph = InspectGraph(nodes);
@@ -285,8 +289,11 @@ public static class AssetRevisionSeries
         foreach (var path in Directory.EnumerateFileSystemEntries(directory, Prefix + "*", SearchOption.TopDirectoryOnly))
         {
             token.ThrowIfCancellationRequested();
-            if (nodes.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
             var name = Path.GetFileName(path);
+            // Older writers staged revisions in the committed namespace. Leave those files available
+            // for diagnosis after interruption, and never inspect them as published revisions.
+            if (IsLegacyRevisionStage(name)) continue;
+            if (nodes.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
             if (name.Length != Prefix.Length + 32 + 5 || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
                 !Guid.TryParseExact(name.Substring(Prefix.Length, 32), "N", out var nameId))
                 throw new InvalidDataException("An unrecognized revision entry exists; history was not modified.");
@@ -297,6 +304,19 @@ public static class AssetRevisionSeries
                 throw new InvalidDataException("Revision identifier collision or filename mismatch.");
         }
         return nodes;
+    }
+
+    private static bool IsLegacyRevisionStage(string name)
+    {
+        const string marker = ".json.tmp-";
+        const int idLength = 32;
+        var markerOffset = Prefix.Length + idLength;
+        var tempIdOffset = markerOffset + marker.Length;
+        return name.Length == tempIdOffset + idLength &&
+            name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) &&
+            name.AsSpan(markerOffset, marker.Length).Equals(marker, StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParseExact(name.AsSpan(Prefix.Length, idLength), "N", out _) &&
+            Guid.TryParseExact(name.AsSpan(tempIdOffset), "N", out _);
     }
 
     private static async Task<byte[]> ReadRegularFileAsync(string path, int remainingBytes, CancellationToken token)
