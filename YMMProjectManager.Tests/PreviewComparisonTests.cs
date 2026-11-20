@@ -15,6 +15,7 @@ internal static class PreviewComparisonTests
         await CaseAsync("TL-1 matching buffers, single pixel and alpha differences", TestMetrics);
         await CaseAsync("TL-1 invalid frame, size, length and format classification", TestInvalidFrames);
         await CaseAsync("TL-1 cancellation and stateless retry", TestCancellation);
+        await CaseAsync("TL-1 cancellation during buffer acquisition", TestCancellationDuringBufferAcquisition);
         await CaseAsync("TL-1 4K metrics, wide accumulator and bounded allocation", TestLargeImage);
         await Program.RunNamedCaseAsync("TL-1 concurrent comparisons with stable independent buffers", TestConcurrencyAsync);
     }
@@ -154,6 +155,24 @@ internal static class PreviewComparisonTests
         }
 
         Ensure(Compare(a, b).ExactlyEqual, "Retry after cancellation");
+    }
+
+    private static void TestCancellationDuringBufferAcquisition()
+    {
+        using var cancellation = new CancellationTokenSource();
+        using var pixels = new CancelOnSpanAccess(new byte[8], cancellation);
+        var a = Frame(A, new byte[8]) with { Pixels = pixels.Buffer };
+        var b = Frame(B, new byte[8]);
+
+        try
+        {
+            PreviewFrameComparison.Compare(new(TimeSpan.Zero, A, B), a, b, cancellation.Token);
+            throw new InvalidOperationException("Comparison returned after cancellation at buffer acquisition.");
+        }
+        catch (OperationCanceledException ex) when (ex.CancellationToken == cancellation.Token)
+        {
+            Ensure(pixels.AccessCount == 1, "Cancellation happened before the comparison acquired its buffers.");
+        }
     }
 
     private static void TestLargeImage()

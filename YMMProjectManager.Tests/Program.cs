@@ -116,6 +116,7 @@ internal static class Program
         }
 
         await RunGroupAsync(nameof(PreviewComparisonTests), PreviewComparisonTests.RunAsync);
+        await RunGroupAsync(nameof(SceneComparisonHandoffTests), SceneComparisonHandoffTests.RunAsync);
         await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
         await RunGroupAsync("TestCreateAndListAsync", () => TestCreateAndListAsync(workRoot));
         await RunGroupAsync("TestMultipleGenerationsAsync", () => TestMultipleGenerationsAsync(workRoot));
@@ -201,6 +202,9 @@ internal static class Program
         {
             switch (testName)
             {
+                case nameof(SceneComparisonHandoffTests):
+                    await SceneComparisonHandoffTests.RunAsync();
+                    break;
                 case nameof(PreviewComparisonTests):
                     await PreviewComparisonTests.RunAsync();
                     break;
