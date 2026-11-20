@@ -43,6 +43,28 @@ internal static class ManifestWriteHardeningTests
         // The delete path moves then rolls back when the manifest write fails.
         var deleted = await failingService.DeleteGenerationAsync(project, first.GenerationId);
         Check(!deleted.Success && Directory.Exists(first.GenerationPath),"delete rollback"); CheckPreserved();
+        await Program.RunNamedCaseAsync("Generation rollback reports the retained snapshot when the old path is occupied", async () =>
+        {
+            var isolatedProject = Path.Combine(root, "rollback-collision.ymmp");
+            await File.WriteAllTextAsync(isolatedProject, "retained generation");
+            var generation = await service.CreateGenerationAsync(isolatedProject, "rollback", null);
+            var projectId = new ProjectGenerationHashService().ComputeProjectId(isolatedProject);
+            var manifest = storage.GetManifestPath(projectId);
+            var initialHash = Hash(manifest);
+            var rollbackBlocked = new ProjectGenerationStorage(storageRoot, null, null, () =>
+            {
+                Directory.CreateDirectory(generation.GenerationPath);
+                File.WriteAllText(Path.Combine(generation.GenerationPath, "separate.txt"), "separate folder");
+                throw new IOException("synthetic manifest failure");
+            });
+
+            var result = await new ProjectGenerationService(logger, rollbackBlocked).DeleteGenerationAsync(isolatedProject, generation.GenerationId);
+            var moved = Directory.EnumerateDirectories(storage.GetDeletedDirectory(projectId)).Single();
+            Check(!result.Success && result.ErrorMessage?.Contains(moved, StringComparison.Ordinal) == true &&
+                await File.ReadAllTextAsync(Path.Combine(moved, "project.ymmp")) == "retained generation" &&
+                await File.ReadAllTextAsync(Path.Combine(generation.GenerationPath, "separate.txt")) == "separate folder" &&
+                initialHash == Hash(manifest), "failed rollback hid or changed a retained version");
+        });
         var flushFailure = new ProjectGenerationService(logger, new ProjectGenerationStorage(storageRoot, null, _ => throw new IOException("synthetic flush"), null));
         await Expect<IOException>(() => flushFailure.CreateGenerationAsync(project,"flush",null)); CheckPreserved();
         // Actual OS replacement failure, no real ACL changes.

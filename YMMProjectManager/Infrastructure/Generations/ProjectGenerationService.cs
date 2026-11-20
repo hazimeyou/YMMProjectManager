@@ -369,18 +369,18 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationDeleteFailed projectPath={normalizedProjectPath}, generationId={generationId}");
+            if (!moved) return (false, ex.Message);
             try
             {
-                if (moved && Directory.Exists(deletedDirectory) && !Directory.Exists(generationDirectory))
-                {
-                    Directory.Move(deletedDirectory, generationDirectory);
-                }
+                Directory.Move(deletedDirectory, generationDirectory);
+                return (false, ex.Message);
             }
-            catch
+            catch (Exception rollbackError) when (rollbackError is IOException or UnauthorizedAccessException)
             {
+                logger.Error(rollbackError, $"GenerationDeleteRollbackFailed generationId={generationId}, movedPath={deletedDirectory}");
+                logger.Flush();
+                return (false, $"世代の削除を確定できず、元の場所にも戻せませんでした。両方のフォルダーを保全して状態を確認してください。\n元の場所 {generationDirectory}\n移動先 {deletedDirectory}");
             }
-
-            return (false, ex.Message);
         }
     }
 
