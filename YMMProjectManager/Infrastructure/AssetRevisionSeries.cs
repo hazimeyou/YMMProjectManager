@@ -1,6 +1,4 @@
 using System.IO;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json;
 
@@ -36,8 +34,14 @@ public static class AssetRevisionSeries
     public static Task<GraphInspection> ImportLegacyGraphAsync(string directory, Guid projectId, IEnumerable<string> files,
         CancellationToken token = default) => ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: false, token);
 
+    internal const string RetainedImportPath = "AssetMetadataRetainedImportPath";
+
+    internal static Task<GraphInspection> ImportLegacyGraphAsync(string directory, Guid projectId, IEnumerable<string> files,
+        CancellationToken token, Action<string> beforePublication)
+        => ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: false, token, beforePublication);
+
     private static async Task<GraphInspection> ImportLegacyCoreAsync(string directory, Guid projectId, IEnumerable<string> files,
-        bool requireSingleHead, CancellationToken token)
+        bool requireSingleHead, CancellationToken token, Action<string>? beforePublication = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         token.ThrowIfCancellationRequested();
@@ -66,52 +70,50 @@ public static class AssetRevisionSeries
         var graph = InspectGraph(history);
         if (requireSingleHead) RequireSingleHead(graph);
         token.ThrowIfCancellationRequested();
-        var staging = Path.Combine(parent, $".asset-import-{Guid.NewGuid():N}");
-        if (!CreateDirectory(ToExtendedPath(staging), IntPtr.Zero))
-            throw new IOException("The import staging directory could not be reserved.", new Win32Exception(Marshal.GetLastWin32Error()));
-        var ownedFiles = new List<string>();
-        var published = false;
+        using var staging = OwnedStagingDirectory.Reserve(parent, ".asset-import-");
         try
         {
             foreach (var (revisionId, bytes) in contents)
             {
                 token.ThrowIfCancellationRequested();
-                var path = RevisionPath(staging, revisionId);
-                await using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
-                ownedFiles.Add(path);
-                await stream.WriteAsync(bytes, token).ConfigureAwait(false);
-                stream.Flush(flushToDisk: true);
-            }
-
-            token.ThrowIfCancellationRequested();
-            ValidateDirectory(staging);
-            Directory.Move(staging, destination);
-            published = true;
-            return graph;
-        }
-        finally
-        {
-            if (!published)
-            {
-                // Only names created by this call are considered for cleanup.
+                var path = RevisionPath(staging.Path, revisionId);
+                await using var stream = OwnedFilePublication.CreateOwnedOutputFile(path);
+                var complete = false;
                 try
                 {
-                    ValidateDirectory(staging);
-                    foreach (var file in ownedFiles) File.Delete(file);
-                    Directory.Delete(staging, recursive: false);
+                    await stream.WriteAsync(bytes, token).ConfigureAwait(false);
+                    await stream.FlushAsync(token).ConfigureAwait(false);
+                    stream.Flush(flushToDisk: true);
+                    complete = true;
                 }
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
+                finally
+                {
+                    if (!complete) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle);
+                }
             }
+
+            beforePublication?.Invoke(staging.Path);
+            token.ThrowIfCancellationRequested();
+            var staged = await ReadNodesAsync(staging.Path, token).ConfigureAwait(false);
+            if (Directory.EnumerateFileSystemEntries(staging.Path).Take(history.Count + 1).Count() != history.Count ||
+                staged.Count != history.Count || staged.Any(pair => !history.TryGetValue(pair.Key, out var expected) ||
+                    pair.Value.Hash != expected.Hash))
+                throw new InvalidDataException("The imported history differs from the explicitly selected revisions.");
+            staging.Publish(destination, token);
+            return graph;
+        }
+        catch (Exception ex)
+        {
+            // The temporary directory can contain externally changed files. Leave them for diagnosis.
+            try
+            {
+                if (staging.CheckRecoveryPath() is { } retained) ex.Data[RetainedImportPath] = retained;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            throw;
         }
     }
-
-    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
-
-    private static string ToExtendedPath(string path) => path.StartsWith(@"\\?\", StringComparison.Ordinal) ? path
-        : path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
 
     /// <summary>Initializes an empty series from a root manifest. Existing history is never replaced.</summary>
     public static async Task<Head> InitializeAsync(string directory, AssetManifest root, CancellationToken token = default)

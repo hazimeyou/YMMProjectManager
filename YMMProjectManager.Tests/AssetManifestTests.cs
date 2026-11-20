@@ -76,6 +76,8 @@ internal static class AssetManifestTests
             () => TestRevisionSeriesAsync(root, project, item));
         await Program.RunNamedCaseAsync("Managed relink branch selection, version compatibility and retry",
             () => TestRelinkRecoveryAsync(root));
+        await Program.RunNamedCaseAsync("Metadata import preserves occupied destinations and unproven staging files",
+            () => TestLegacyImportPublicationAsync(root));
         await Program.RunNamedCaseAsync("Metadata series resumes past abandoned staged revisions without accepting unknown entries",
             () => TestAbandonedRevisionStagingAsync(root));
         await Program.RunNamedCaseAsync("Managed relink recovery preserves an unpublished output when metadata advanced",
@@ -272,6 +274,57 @@ internal static class AssetManifestTests
             try { await run(); throw new Exception("invalid relink state accepted"); }
             catch (InvalidDataException) { }
         }
+    }
+
+    private static async Task TestLegacyImportPublicationAsync(string parent)
+    {
+        var root = Path.Combine(parent, "legacy-publication");
+        Directory.CreateDirectory(root);
+        var source = Path.Combine(root, "original.ymmp");
+        await File.WriteAllTextAsync(source, "{}");
+        var manifest = AssetManifestStore.Create(source, [], DateTimeOffset.UtcNow);
+        var legacy = Path.Combine(root, "legacy.json");
+        await AssetManifestStore.SaveNewAsync(legacy, manifest);
+        var original = await File.ReadAllBytesAsync(legacy);
+        var occupied = Path.Combine(root, "occupied");
+        var sentinel = Path.Combine(occupied, "keep.txt");
+        string? retained = null;
+        try
+        {
+            await AssetRevisionSeries.ImportLegacyGraphAsync(occupied, manifest.ProjectId, [legacy], default, _ =>
+            {
+                Directory.CreateDirectory(occupied);
+                File.WriteAllText(sentinel, "external");
+            });
+            throw new Exception("Metadata import replaced an occupied destination.");
+        }
+        catch (IOException ex) { retained = ex.Data[AssetRevisionSeries.RetainedImportPath] as string; }
+        var name = $"revision-{manifest.RevisionId:N}.json";
+        if (await File.ReadAllTextAsync(sentinel) != "external" || retained is null ||
+            File.Exists(Path.Combine(occupied, name)))
+            throw new Exception("A destination conflict lost external contents or the prepared history.");
+        var retainedBytes = await File.ReadAllBytesAsync(Path.Combine(retained, name));
+        if (!original.SequenceEqual(retainedBytes))
+            throw new Exception("The independently retained original revision was modified.");
+
+        var edited = Path.Combine(root, "edited");
+        retained = null;
+        try
+        {
+            await AssetRevisionSeries.ImportLegacyGraphAsync(edited, manifest.ProjectId, [legacy], default,
+                temporary => File.WriteAllText(Path.Combine(temporary, "unrelated.txt"), "retain"));
+            throw new Exception("Metadata import published unexpected staging contents.");
+        }
+        catch (InvalidDataException ex) { retained = ex.Data[AssetRevisionSeries.RetainedImportPath] as string; }
+        if (Directory.Exists(edited) || retained is null || await File.ReadAllTextAsync(Path.Combine(retained, "unrelated.txt")) != "retain")
+            throw new Exception("Refused import lost an unproven staging file.");
+
+        var retry = Path.Combine(root, "retried");
+        var completed = await AssetRevisionSeries.ImportLegacyGraphAsync(retry, manifest.ProjectId, [legacy]);
+        var published = await File.ReadAllBytesAsync(Path.Combine(retry, name));
+        var sourceAfter = await File.ReadAllBytesAsync(legacy);
+        if (completed.Root.RevisionId != manifest.RevisionId || !original.SequenceEqual(published) || !original.SequenceEqual(sourceAfter))
+            throw new Exception("A new import could not publish the exact legacy history.");
     }
 
     private static async Task TestAbandonedRevisionStagingAsync(string parent)
