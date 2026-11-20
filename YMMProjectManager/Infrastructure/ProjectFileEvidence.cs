@@ -42,10 +42,13 @@ internal static class ProjectFileEvidence
         return new ProjectFileIdentity(volume, id, digest);
     }
 
-    internal static (ulong Volume, Guid FileId) ReadPhysicalIdentity(FileStream stream)
+    internal static (ulong Volume, Guid FileId) ReadPhysicalIdentity(FileStream stream) =>
+        ReadPhysicalIdentity(stream.SafeFileHandle);
+
+    internal static (ulong Volume, Guid FileId) ReadPhysicalIdentity(SafeFileHandle handle)
     {
         const int fileIdInformation = 18;
-        if (!GetFileInformationByHandleEx(stream.SafeFileHandle, fileIdInformation, out var identity, (uint)Marshal.SizeOf<FileIdInfo>()) ||
+        if (!GetFileInformationByHandleEx(handle, fileIdInformation, out var identity, (uint)Marshal.SizeOf<FileIdInfo>()) ||
             identity.FileId == Guid.Empty)
             throw new IOException("The filesystem did not provide a project file identity.");
         return (identity.Volume, identity.FileId);
