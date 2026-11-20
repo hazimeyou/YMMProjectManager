@@ -111,6 +111,24 @@ internal static class ProjectListSaveTests
         await File.WriteAllTextAsync(path, "{\"Projects\":[{\"FullPath\":\"p.ymmp\",\"LinkedYmmpFiles\":[{\"FilePath\":\"p.ymmp\"}]}]}");
         var legacyLink = await Repo().LoadAsync(); Check(legacyLink.IsRecoverySafe && legacyLink.Projects.Single().LinkedYmmpFiles.Count == 1, "legacy minimal link rejected");
         await Repo().SaveAsync(legacyLink); Check((await Repo().LoadAsync()).Projects.Single().LinkedYmmpFiles.Single().FilePath == "p.ymmp", "legacy minimal link lost");
+        var defaultLinkPath = Path.Combine(root, "legacy-default-link.ymmp");
+        var folderId = Guid.NewGuid();
+        var legacyDefaults = JsonSerializer.Serialize(new
+        {
+            Projects = new[] { new { FullPath = defaultLinkPath, FolderId = folderId } },
+            Folders = new[] { new { Id = folderId, Name = "legacy-folder" } },
+        });
+        await File.WriteAllTextAsync(path, legacyDefaults);
+        var firstLegacy = await Repo().LoadAsync();
+        await File.WriteAllTextAsync(defaultLinkPath, "{}");
+        var secondLegacy = await Repo().LoadAsync();
+        Check(ProjectListRecovery.Fingerprint(firstLegacy) == ProjectListRecovery.Fingerprint(secondLegacy), "legacy defaults changed across reads or live file appearance");
+        var inferredLink = secondLegacy.Projects.Single().LinkedYmmpFiles.Single();
+        Check(inferredLink.Id != Guid.Empty && inferredLink.LastCheckedAt is null && inferredLink.RegisteredAt == DateTimeOffset.UnixEpoch &&
+            !inferredLink.Exists && secondLegacy.Folders.Single().CreatedAt == DateTimeOffset.UnixEpoch, "legacy fallback invented runtime evidence");
+        firstLegacy.Projects.Single().Pinned = true;
+        await Repo().SaveAsync(firstLegacy);
+        Check((await Repo().LoadAsync()).Projects.Single().LinkedYmmpFiles.Single().Id == inferredLink.Id, "legacy child identity changed on save");
         var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
         await File.WriteAllTextAsync(copyPath, "existing synthetic data");
         await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));

@@ -74,7 +74,8 @@ public sealed class JsonProjectRepository : IProjectRepository
         foreach (var f in dto.Folders ?? [])
         {
             if (f.Id is null || string.IsNullOrWhiteSpace(f.Name)) continue;
-            store.Folders.Add(new ProjectFolder { Id = f.Id.Value, Name = f.Name!, DisplayOrder = f.DisplayOrder ?? 0, CreatedAt = f.CreatedAt ?? DateTimeOffset.Now, UpdatedAt = f.UpdatedAt ?? DateTimeOffset.Now });
+            var created = f.CreatedAt ?? DateTimeOffset.UnixEpoch;
+            store.Folders.Add(new ProjectFolder { Id = f.Id.Value, Name = f.Name!, DisplayOrder = f.DisplayOrder ?? 0, CreatedAt = created, UpdatedAt = f.UpdatedAt ?? created });
         }
         var projectIds = new HashSet<Guid>();
         foreach (var x in dto.Projects ?? [])
@@ -86,18 +87,44 @@ public sealed class JsonProjectRepository : IProjectRepository
             }
             if (x.ProjectId is Guid id && (id == Guid.Empty || !projectIds.Add(id))) throw new InvalidDataException("Project list contains an empty or duplicate project identity.");
             var p = new ProjectEntry { FullPath = x.FullPath!, ProjectId = x.ProjectId, MetadataAssociation = x.MetadataAssociation, FileIdentity = x.FileIdentity, DisplayName = string.IsNullOrWhiteSpace(x.DisplayName) ? null : x.DisplayName, Pinned = x.Pinned ?? false, LastAccess = x.LastAccess, FolderId = x.FolderId };
+            var legacyOccurrences = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
             foreach (var l in x.LinkedYmmpFiles ?? [])
             {
                 if (string.IsNullOrWhiteSpace(l.FilePath)) continue;
-                p.LinkedYmmpFiles.Add(new LinkedYmmpFile { Id = l.Id ?? Guid.NewGuid(), FilePath = l.FilePath!, DisplayName = l.DisplayName, Role = Enum.TryParse<YmmpRole>(l.Role, true, out var role) ? role : YmmpRole.Unknown, Memo = l.Memo, RegisteredAt = l.RegisteredAt ?? DateTimeOffset.Now, UpdatedAt = l.UpdatedAt ?? DateTimeOffset.Now, LastCheckedAt = l.LastCheckedAt, Exists = l.Exists ?? File.Exists(l.FilePath!) });
+                var registered = l.RegisteredAt ?? DateTimeOffset.UnixEpoch;
+                var occurrence = legacyOccurrences.GetValueOrDefault(l.FilePath);
+                legacyOccurrences[l.FilePath] = occurrence + 1;
+                p.LinkedYmmpFiles.Add(new LinkedYmmpFile
+                {
+                    Id = l.Id ?? LegacyLinkId(p.FullPath, l.FilePath, occurrence),
+                    FilePath = l.FilePath, DisplayName = l.DisplayName,
+                    Role = Enum.TryParse<YmmpRole>(l.Role, true, out var role) ? role : YmmpRole.Unknown,
+                    Memo = l.Memo, RegisteredAt = registered, UpdatedAt = l.UpdatedAt ?? registered,
+                    LastCheckedAt = l.LastCheckedAt, Exists = l.Exists ?? false,
+                });
             }
             if (p.LinkedYmmpFiles.Count == 0 && p.FullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
             {
-                p.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = p.FullPath, DisplayName = p.DisplayName, Role = YmmpRole.Main, Exists = File.Exists(p.FullPath), LastCheckedAt = DateTimeOffset.Now });
+                p.LinkedYmmpFiles.Add(new LinkedYmmpFile
+                {
+                    Id = LegacyLinkId(p.FullPath, p.FullPath, 0), FilePath = p.FullPath, DisplayName = p.DisplayName, Role = YmmpRole.Main,
+                    RegisteredAt = DateTimeOffset.UnixEpoch, UpdatedAt = DateTimeOffset.UnixEpoch,
+                });
             }
+            // Existing metadata can be inspected even if duplicate child identity makes editing unsafe.
+            if (p.LinkedYmmpFiles.Any(link => link.Id == Guid.Empty) ||
+                p.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != p.LinkedYmmpFiles.Count)
+                store.IsRecoverySafe = false;
             store.Projects.Add(p);
         }
         return store;
+    }
+
+    private static Guid LegacyLinkId(string projectPath, string linkPath, int occurrence)
+    {
+        var anchor = JsonSerializer.SerializeToUtf8Bytes(new { Type = "project-list-legacy-link", Project = projectPath.ToUpperInvariant(),
+            Link = linkPath.ToUpperInvariant(), Occurrence = occurrence });
+        return new Guid(SHA256.HashData(anchor).AsSpan(0, 16));
     }
 
     private static bool IsSafeForRecovery(byte[] content)
@@ -114,8 +141,10 @@ public sealed class JsonProjectRepository : IProjectRepository
                     (project.DisplayName is not null && string.IsNullOrWhiteSpace(project.DisplayName))) return false;
                 if (project.MetadataAssociation is { } metadata && (!ValidMetadata(metadata) || project.ProjectId is null)) return false;
                 if (project.FileIdentity is { } identity && (identity.FileId == Guid.Empty || !IsHash(identity.Sha256) || project.ProjectId is null)) return false;
-                if (project.LinkedYmmpFiles.Any(l => l is null || string.IsNullOrWhiteSpace(l.FilePath) ||
+                if (project.LinkedYmmpFiles.Any(l => l is null || l.Id == Guid.Empty || string.IsNullOrWhiteSpace(l.FilePath) ||
                     (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;
+                var ids = project.LinkedYmmpFiles.Where(l => l.Id.HasValue).Select(l => l.Id!.Value).ToArray();
+                if (ids.Distinct().Count() != ids.Length) return false;
             }
             using var document = JsonDocument.Parse(jsonContent);
             return !HasDuplicateProperties(document.RootElement);
