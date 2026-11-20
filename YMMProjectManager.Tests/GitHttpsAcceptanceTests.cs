@@ -2,13 +2,20 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Git;
 
 internal static class GitHttpsAcceptanceTests
 {
     public static async Task RunAsync(string workRoot)
     {
-        var modeRoot = Directory.CreateDirectory(Path.Combine(workRoot, "https-pull")).FullName;
+        var fullWorkRoot = Path.GetFullPath(workRoot);
+        var expectedParent = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests");
+        Check(Guid.TryParseExact(Path.GetFileName(fullWorkRoot), "N", out _) &&
+            string.Equals(Path.GetDirectoryName(fullWorkRoot), expectedParent, StringComparison.OrdinalIgnoreCase),
+            "HTTPS acceptance requires the isolated runner's GUID fixture root.");
+        using var fixtureFence = OwnedFilePublication.DirectoryFence.Open(fullWorkRoot, enforceShare: true);
+        var modeRoot = Directory.CreateDirectory(Path.Combine(fullWorkRoot, "https-pull")).FullName;
         var serverRoot = Directory.CreateDirectory(Path.Combine(modeRoot, "server")).FullName;
         var bare = Path.Combine(serverRoot, "fixture.git");
         var source = Path.Combine(modeRoot, "source");
@@ -249,6 +256,14 @@ internal static class GitHttpsAcceptanceTests
             WorkingDirectory = directory, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
+        foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(name);
+        start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_ATTR_NOSYSTEM"] = "1";
+        start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+        start.Environment["GIT_ALLOW_PROTOCOL"] = "file";
+        start.Environment["GIT_NO_LAZY_FETCH"] = "1";
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
         return Process.Start(start) ?? throw new InvalidOperationException("Could not start an HTTPS fixture process.");
     }
