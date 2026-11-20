@@ -70,9 +70,13 @@ internal sealed class ProjectListDrafts(string directory)
         }
     }
 
-    internal async Task<Draft> ReadAsync(string path, bool claimed = false)
+    internal Task<Draft> ReadAsync(string path, bool claimed = false) => ReadCoreAsync(path, claimed, archived: false);
+
+    internal Task<Draft> ReadArchivedAsync(string path) => ReadCoreAsync(path, claimed: false, archived: true);
+
+    private async Task<Draft> ReadCoreAsync(string path, bool claimed, bool archived)
     {
-        var (id, _) = CheckPath(path, claimed);
+        var (id, _) = CheckPath(path, claimed, archived: archived);
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
         if (stream.Length > MaxBytes) throw new InvalidDataException("Recovery draft is too large.");
         var envelope = await JsonSerializer.DeserializeAsync<Envelope>(stream, Options).ConfigureAwait(false);
@@ -117,12 +121,18 @@ internal sealed class ProjectListDrafts(string directory)
         File.Move(path, closed, overwrite: false);
     }
 
-    private (Guid Id, Guid? Operation) CheckPath(string path, bool claimed = false, bool requireFile = true)
+    private (Guid Id, Guid? Operation) CheckPath(string path, bool claimed = false, bool requireFile = true, bool archived = false)
     {
         CheckDirectory();
         var full = Path.GetFullPath(path);
         var name = Path.GetFileName(full);
         Guid? operation = null;
+        if (archived)
+        {
+            const string suffix = ".closed";
+            if (!name.EndsWith(suffix, StringComparison.Ordinal)) throw new InvalidDataException("Recovery archive path is invalid.");
+            name = name[..^suffix.Length];
+        }
         if (claimed)
         {
             if (!name.EndsWith(".saving", StringComparison.Ordinal)) throw new InvalidDataException("Recovery claim is invalid.");

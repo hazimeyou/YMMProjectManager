@@ -45,6 +45,15 @@ internal static class ProjectListDraftTests
         reopened.Retire(claim, claimed: true);
         if (File.Exists(writes[0]) || !File.Exists(writes[0] + ".closed") || !File.Exists(writes[1]))
             throw new Exception("explicit retirement affected another draft");
+        await Program.RunNamedCaseAsync("Closed recovery artifacts can be read only through archive export", async () =>
+        {
+            var archivePath = writes[0] + ".closed";
+            var historical = await reopened.ReadArchivedAsync(archivePath);
+            if (historical.Local.Projects.Single().MetadataAssociation != association)
+                throw new Exception("Archive export did not retain the saved association.");
+            try { reopened.Claim(archivePath, Guid.NewGuid()); throw new Exception("An archived draft could be claimed for reapplication."); }
+            catch (InvalidDataException) { }
+        });
         await File.WriteAllTextAsync(writes[1], "{\"Version\":1}");
         try { await reopened.ReadAsync(writes[1]); throw new Exception("invalid record accepted"); }
         catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException) { }

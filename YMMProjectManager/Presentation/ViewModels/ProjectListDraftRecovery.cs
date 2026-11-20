@@ -83,9 +83,15 @@ public sealed partial class ProjectListViewModel
         if (repository is not JsonProjectRepository json || HasUnsavedProjectList) return;
         var drafts = new ProjectListDrafts(json.RecoveryDirectory);
         var picker = new OpenFileDialog { InitialDirectory = drafts.DirectoryPath,
-            Filter = "一覧の保存記録 (*.draft.json;*.saving)|*.draft.json;*.saving" };
+            Filter = "一覧の保存記録 (*.draft.json;*.saving)|*.draft.json;*.saving|終了した記録 (*.closed)|*.closed" };
         if (picker.ShowDialog() != true) return;
         var path = picker.FileName;
+        if (path.EndsWith(".closed", StringComparison.Ordinal))
+        {
+            var archived = await drafts.ReadArchivedAsync(path);
+            await ExportDraftCopyAsync(archived.Local, "終了した一覧の記録を別ファイルに退避");
+            return;
+        }
         var claimed = IsClaimedDraft(path);
         var draft = await drafts.ReadAsync(path, claimed);
         if (claimed)
