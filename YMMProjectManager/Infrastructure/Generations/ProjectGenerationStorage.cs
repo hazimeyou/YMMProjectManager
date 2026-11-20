@@ -136,7 +136,8 @@ public sealed class ProjectGenerationStorage
     {
         try
         {
-            await using var stream = File.OpenRead(GetManifestPath(projectId));
+            // Atomic replacement keeps this handle on the original version while new readers see the new version.
+            await using var stream = new FileStream(GetManifestPath(projectId), FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             using var buffer = new MemoryStream();
             await stream.CopyToAsync(buffer, cancellationToken).ConfigureAwait(false);
             var data = buffer.ToArray();
