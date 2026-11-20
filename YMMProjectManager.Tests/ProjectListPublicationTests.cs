@@ -29,6 +29,10 @@ internal static class ProjectListPublicationTests
             await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
         await Program.RunNamedCaseAsync("Corrupted replacement journal cannot authorize recovery",
             () => TestCorruptReplacementJournalAsync(workRoot));
+        await Program.RunNamedCaseAsync("Cancellation after parking restores the verified list",
+            () => TestCancelParkedListAsync(workRoot));
+        await Program.RunNamedCaseAsync("Replacing an ordinary list preserves its creation time",
+            () => TestListCreationTimeAsync(workRoot));
         foreach (var option in new[] { "protected-acl", "integrity-label", "hidden", "named-stream" })
             await Program.RunNamedCaseAsync($"List file metadata is preserved by refusal: {option}", () => TestCustomListMetadataAsync(workRoot, option));
     }
@@ -158,6 +162,42 @@ internal static class ProjectListPublicationTests
         Require(!File.Exists(path) && File.Exists(evidence.CandidatePath) &&
             Enumerable.SequenceEqual(await File.ReadAllBytesAsync(evidence.ParkedPath), originalBytes),
             "A corrupt journal caused publication or lost evidence.");
+    }
+
+    private static async Task TestCancelParkedListAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-replacement-cancellation");
+        var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        var local = await repository.LoadAsync();
+        local.Projects.Single().DisplayName = "not published";
+        var ready = await repository.WritePendingDraftAsync(original, local, [], null);
+        using var cancellation = new CancellationTokenSource();
+        var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "cancel.log")), path,
+            afterParking: cancellation.Cancel);
+        try
+        {
+            await publisher.SaveReadyDraftAsync(local, ready, cancellation.Token);
+            throw new Exception("Canceled replacement published the list.");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        Require(!repository.HasInterruptedPublication && File.Exists(ready) &&
+            !Directory.EnumerateFiles(root, "projects.json.tmp-*").Any() &&
+            !Directory.EnumerateFiles(root, "projects.json.parked-*").Any() &&
+            Enumerable.SequenceEqual(await File.ReadAllBytesAsync(path), originalBytes),
+            "Cancellation did not restore the original, release its draft, and clean owned staging.");
+    }
+
+    private static async Task TestListCreationTimeAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "list-replacement-creation-time");
+        var (repository, path, pending, _) = await ReplacementFixtureAsync(root);
+        var creation = new DateTime(2006, 2, 4, 13, 22, 33, DateTimeKind.Utc);
+        File.SetCreationTimeUtc(path, creation);
+        var observed = File.GetCreationTimeUtc(path);
+        pending.Projects.Single().DisplayName = "new";
+        await repository.SaveAsync(pending);
+        Require(File.GetCreationTimeUtc(path) == observed && (await repository.LoadAsync()).Projects.Single().DisplayName == "new",
+            "Replacement did not preserve the verified original creation time.");
     }
 
     private static async Task TestCustomListMetadataAsync(string workRoot, string mode)

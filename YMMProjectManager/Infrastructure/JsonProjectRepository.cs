@@ -412,10 +412,18 @@ public sealed class JsonProjectRepository : IProjectRepository
             didPark = true;
             afterParking?.Invoke();
             parked = ProjectListReplacement.Open(parkedPath, canRename: true);
-            verifiedOriginal = await ProjectListReplacement.MatchesAsync(parked, original, token).ConfigureAwait(false);
+            // The active name is already vacant. Establish whether we can safely restore the original
+            // even if the caller cancels during this short verification.
+            using (var verification = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
+            {
+                try { verifiedOriginal = await ProjectListReplacement.MatchesAsync(parked, original, verification.Token).ConfigureAwait(false); }
+                catch (OperationCanceledException ex) { throw new IOException("Could not verify the parked project list before the recovery deadline.", ex); }
+            }
             if (!verifiedOriginal)
                 throw new ProjectListConflictException();
+            token.ThrowIfCancellationRequested();
             ProjectListReplacement.VerifyCompatibleFileMetadata(parked, candidate, parkedPath);
+            File.SetCreationTimeUtc(candidate.SafeFileHandle, File.GetCreationTimeUtc(parked.SafeFileHandle));
             token.ThrowIfCancellationRequested();
             try { OwnedFilePublication.RenameOpenedPath(candidate.SafeFileHandle, jsonPath); }
             catch (IOException ex) when (ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 80 or 183 })
