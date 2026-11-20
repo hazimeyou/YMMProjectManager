@@ -157,11 +157,15 @@ internal static class ProjectListPublicationTests
             duringReceipt: point == "during-receipt" ? () => Environment.Exit(86) : null);
         if (point == "legacy-claim")
         {
-            var legacyClaim = drafts.Claim(ready);
-            await crash.SaveWithDraftAsync(candidate, legacyClaim);
-            await new ProjectListPublications(repository.RecoveryDirectory).WriteAsync(new ProjectListPublications.Receipt(
-                1, candidate.Revision!.OperationId!.Value, drafts.GetClaimedIdentity(legacyClaim).Id,
-                baseline.Revision!.Sha256, candidate.Revision.Sha256!, PublicationStarted: true), default);
+            // R14 published .saving without an operation suffix.
+            var legacyClaim = ready + ".saving";
+            File.Move(ready, legacyClaim, overwrite: false);
+            await crash.SaveAsync(candidate);
+            var legacyPublications = new ProjectListPublications(repository.RecoveryDirectory);
+            var legacyReceipt = new ProjectListPublications.Receipt(1, candidate.Revision!.OperationId!.Value,
+                drafts.GetClaimedIdentity(legacyClaim).Id, baseline.Revision!.Sha256, candidate.Revision.Sha256!, PublicationStarted: false);
+            await legacyPublications.WriteAsync(legacyReceipt, default);
+            await legacyPublications.WriteAsync(legacyReceipt with { PublicationStarted = true }, default);
             Environment.Exit(86);
         }
         await crash.SaveReadyDraftAsync(candidate, ready);

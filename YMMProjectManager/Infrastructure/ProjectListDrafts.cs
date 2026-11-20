@@ -93,10 +93,11 @@ internal sealed class ProjectListDrafts(string directory)
         return new Draft(baseline, local, document.Additions);
     }
 
-    internal string Claim(string path, Guid? operation = null)
+    internal string Claim(string path, Guid operation)
     {
+        if (operation == Guid.Empty) throw new ArgumentException("A recovery claim requires an operation ID.", nameof(operation));
         CheckPath(path);
-        var claimed = operation is { } id ? $"{path}.{id:N}.saving" : path + ".saving";
+        var claimed = $"{path}.{operation:N}.saving";
         File.Move(path, claimed, overwrite: false);
         return claimed;
     }

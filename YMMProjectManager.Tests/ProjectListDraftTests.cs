@@ -37,8 +37,8 @@ internal static class ProjectListDraftTests
             throw new Exception("association lost on list round trip");
         var alreadyApplied = ProjectListMerge.Merge(draft.Baseline, draft.Local, saved);
         if (alreadyApplied.Store?.Projects.Count != 1) throw new Exception("reapplication duplicated the recovered project");
-        var claim = reopened.Claim(writes[0]);
-        try { reopened.Claim(writes[0]); throw new Exception("same draft claimed twice"); }
+        var claim = reopened.Claim(writes[0], Guid.NewGuid());
+        try { reopened.Claim(writes[0], Guid.NewGuid()); throw new Exception("same draft claimed twice"); }
         catch (FileNotFoundException) { }
         if ((await reopened.ReadAsync(claim, claimed: true)).Local.Projects.Single().ProjectId != project.ProjectId)
             throw new Exception("interrupted publication evidence cannot be exported");

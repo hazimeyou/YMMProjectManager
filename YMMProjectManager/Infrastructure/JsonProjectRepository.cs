@@ -260,20 +260,12 @@ public sealed class JsonProjectRepository : IProjectRepository
     }
 
     public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default) =>
-        SaveCoreAsync(store, null, null, cancellationToken);
+        SaveCoreAsync(store, null, cancellationToken);
 
     internal Task SaveReadyDraftAsync(ProjectStore store, string readyDraft, CancellationToken token = default) =>
-        SaveCoreAsync(store, null, readyDraft, token);
+        SaveCoreAsync(store, readyDraft, token);
 
     internal string GetReadyDraftPath(string claimedDraft) => new ProjectListDrafts(RecoveryDirectory).GetReadyPath(claimedDraft);
-
-    internal async Task SaveWithDraftAsync(ProjectStore store, string claimedDraft, CancellationToken token = default)
-    {
-        var (id, operation) = new ProjectListDrafts(RecoveryDirectory).GetClaimedIdentity(claimedDraft);
-        if (operation is not null) throw new InvalidDataException("An operation-bound claim must be reconciled before saving again.");
-        using var claim = new FileStream(claimedDraft, FileMode.Open, FileAccess.Read, FileShare.Read);
-        await SaveCoreAsync(store, id, null, token).ConfigureAwait(false);
-    }
 
     internal async Task<ProjectListPublications.Outcome> ReconcileDraftAsync(string claimedDraft, CancellationToken token = default)
     {
@@ -310,7 +302,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         catch (DirectoryNotFoundException) { return false; }
     }
 
-    private async Task SaveCoreAsync(ProjectStore store, Guid? draftId, string? readyDraft, CancellationToken cancellationToken)
+    private async Task SaveCoreAsync(ProjectStore store, string? readyDraft, CancellationToken cancellationToken)
     {
         string? tempPath = null;
         FileStream? processLock = null;
@@ -334,6 +326,7 @@ public sealed class JsonProjectRepository : IProjectRepository
             stage = "inter-process lock";
             processLock = AcquireProcessLock();
             stage = "write publication receipt";
+            Guid? draftId = null;
             if (readyDraft is not null)
             {
                 draftId = drafts.GetReadyId(readyDraft);
