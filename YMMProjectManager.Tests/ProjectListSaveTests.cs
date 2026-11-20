@@ -103,6 +103,12 @@ internal static class ProjectListSaveTests
         identified.Projects[1].ProjectId = null;
         await Expect<InvalidDataException>(() => Repo().SaveAsync(identified));
         Check(Hash() == identityHash, "legacy project without path modified list");
+        var aliases = await Repo().LoadAsync();
+        var fileIndex = Guid.NewGuid();
+        aliases.Projects[0].FileIdentity = new ProjectFileIdentity(7, fileIndex, new string('1', 64));
+        aliases.Projects[1].FileIdentity = new ProjectFileIdentity(7, fileIndex, new string('2', 64));
+        await Expect<InvalidDataException>(() => Repo().SaveAsync(aliases));
+        Check(Hash() == identityHash, "physical alias save changed original list");
         await File.WriteAllTextAsync(path, $"{{\"Projects\":[{{\"FullPath\":\"one.ymmp\",\"ProjectId\":\"{id1}\"}},{{\"FullPath\":\"two.ymmp\",\"ProjectId\":\"{id1}\"}}]}}");
         var duplicateHash = Hash(); await Expect<InvalidDataException>(() => Repo().LoadAsync()); Check(Hash() == duplicateHash, "duplicate load modified list");
         var bomBytes = new byte[] { 0xEF, 0xBB, 0xBF }.Concat(System.Text.Encoding.UTF8.GetBytes("{\"Projects\":[],\"Folders\":[]}")).ToArray();

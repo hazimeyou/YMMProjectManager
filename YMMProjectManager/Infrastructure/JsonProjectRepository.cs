@@ -153,6 +153,7 @@ public sealed class JsonProjectRepository : IProjectRepository
                 !CanPreserve(f.ExtensionData, ReservedFolderNames, true))) return false;
             if (dto.Folders.Select(f => f.Id).Distinct().Count() != dto.Folders.Count) return false;
             var projectIds = new HashSet<Guid>();
+            var physicalIds = new HashSet<(ulong Volume, Guid Id)>();
             foreach (var project in dto.Projects)
             {
                 if (project is null || string.IsNullOrWhiteSpace(project.FullPath) || project.LinkedYmmpFiles is null ||
@@ -160,7 +161,8 @@ public sealed class JsonProjectRepository : IProjectRepository
                 if (project.ProjectId is { } id && (id == Guid.Empty || !projectIds.Add(id))) return false;
                 if (!CanPreserve(project.ExtensionData, ReservedProjectNames, project.ProjectId.HasValue)) return false;
                 if (project.MetadataAssociation is { } metadata && (!ValidMetadata(metadata) || project.ProjectId is null)) return false;
-                if (project.FileIdentity is { } identity && (identity.FileId == Guid.Empty || !IsHash(identity.Sha256) || project.ProjectId is null)) return false;
+                if (project.FileIdentity is { } identity && (identity.FileId == Guid.Empty || !IsHash(identity.Sha256) ||
+                    project.ProjectId is null || !physicalIds.Add((identity.Volume, identity.FileId)))) return false;
                 if (project.LinkedYmmpFiles.Any(l => l is null || l.Id == Guid.Empty || string.IsNullOrWhiteSpace(l.FilePath) ||
                     !CanPreserve(l.ExtensionData, ReservedLinkNames, l.Id.HasValue && project.ProjectId.HasValue) ||
                     (l.Role is not null && !Enum.GetNames<YmmpRole>().Any(name => string.Equals(name, l.Role, StringComparison.OrdinalIgnoreCase))))) return false;

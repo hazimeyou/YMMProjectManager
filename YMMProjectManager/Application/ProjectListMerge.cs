@@ -30,7 +30,7 @@ internal static class ProjectListMerge
         if (!baseline.IsRecoverySafe || !local.IsRecoverySafe || !remote.IsRecoverySafe || remote.Revision is null)
             return new(null, changes, ["一覧に未知・不正な項目があるか、最新の版がありません。"]);
         if (!Valid(baseline) || !Valid(local) || !Valid(remote))
-            return new(null, changes, ["パス、project ID、folder ID の重複または不正があります。"]);
+            return new(null, changes, ["パス、project ID、ファイル識別情報、folder ID の重複または不正があります。"]);
         var originalPaths = baseline.Projects.Where(project => project.ProjectId.HasValue)
             .ToDictionary(project => project.ProjectId!.Value, project => project.FullPath);
         string Key(ProjectEntry project) => project.ProjectId is { } id && originalPaths.TryGetValue(id, out var original)
@@ -139,7 +139,7 @@ internal static class ProjectListMerge
             Key, StringComparer.OrdinalIgnoreCase, "プロジェクト", changes, conflicts, choices, useLocal);
         MergeOrder(baseline.Folders, local.Folders, remote.Folders, merged.Folders,
             f => f.Id, EqualityComparer<Guid>.Default, "フォルダー", changes, conflicts, choices, useLocal);
-        if (!Valid(merged)) conflicts.Add("再適用により project ID、パスまたは folder ID が重複します。");
+        if (!Valid(merged)) conflicts.Add("再適用により project ID、パス、ファイル識別情報または folder ID が重複します。");
         if (conflicts.Count == 0 && LosesExtensionFields(local, remote, merged))
             conflicts.Add("未知の項目を保持したまま選択結果を保存できません。両方の一覧を退避してください。");
         return conflicts.Count == 0 ? new(merged, changes, conflicts) : new(null, changes, conflicts) { Choices = choices };
@@ -336,6 +336,9 @@ internal static class ProjectListMerge
             if (value.Projects.Any(x => string.IsNullOrWhiteSpace(x.FullPath) || !Path.IsPathFullyQualified(x.FullPath) || x.ProjectId == Guid.Empty)) return false;
             if (value.Projects.Select(x => Path.GetFullPath(x.FullPath)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != value.Projects.Count) return false;
             if (value.Projects.Where(x => x.ProjectId.HasValue).Select(x => x.ProjectId).Distinct().Count() != value.Projects.Count(x => x.ProjectId.HasValue)) return false;
+            var fileIds = new HashSet<(ulong Volume, Guid Id)>();
+            if (value.Projects.Any(project => project.FileIdentity is { } file &&
+                (file.FileId == Guid.Empty || !fileIds.Add((file.Volume, file.FileId))))) return false;
             if (value.Projects.Any(x => x.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != x.LinkedYmmpFiles.Count)) return false;
             if (value.Folders.Any(x => x.Id == Guid.Empty || string.IsNullOrWhiteSpace(x.Name)) || value.Folders.Select(x => x.Id).Distinct().Count() != value.Folders.Count) return false;
             var folderIds = value.Folders.Select(x => x.Id).ToHashSet();

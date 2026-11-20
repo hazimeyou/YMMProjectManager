@@ -175,6 +175,24 @@ internal static class ProjectListConcurrencyTests
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("conflicting additions were accepted");
         local = ProjectListMerge.Snapshot(mergeBase); local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "duplicate-id.ymmp"), ProjectId = mergeBase.Projects[0].ProjectId });
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("duplicate project identity was accepted");
+        var localAlias = ProjectListMerge.Snapshot(mergeBase);
+        var remoteAlias = ProjectListMerge.Snapshot(mergeBase);
+        var sharedFileId = Guid.NewGuid();
+        localAlias.Projects.Add(new ProjectEntry
+        {
+            FullPath = Path.Combine(root, "alias-local.ymmp"), ProjectId = Guid.NewGuid(),
+            FileIdentity = new ProjectFileIdentity(7, sharedFileId, new string('1', 64)),
+        });
+        remoteAlias.Projects.Add(new ProjectEntry
+        {
+            FullPath = Path.Combine(root, "alias-remote.ymmp"), ProjectId = Guid.NewGuid(),
+            FileIdentity = new ProjectFileIdentity(7, sharedFileId, new string('2', 64)),
+        });
+        if (ProjectListMerge.Merge(mergeBase, localAlias, remoteAlias).Store is not null)
+            throw new Exception("independent apps registered the same physical project under different paths");
+        remoteAlias.Projects.Last().FileIdentity = remoteAlias.Projects.Last().FileIdentity! with { Volume = 8 };
+        if (ProjectListMerge.Merge(mergeBase, localAlias, remoteAlias).Store?.Projects.Count != 3)
+            throw new Exception("identical index on a different volume was conflated");
         var folder = new ProjectFolder { Name = "folder" }; var folderBase = ProjectListMerge.Snapshot(mergeBase);
         folderBase.Folders.Add(folder); folderBase.Projects[0].FolderId = folder.Id;
         var folderLocal = ProjectListMerge.Snapshot(folderBase); var folderRemote = ProjectListMerge.Snapshot(folderBase);
