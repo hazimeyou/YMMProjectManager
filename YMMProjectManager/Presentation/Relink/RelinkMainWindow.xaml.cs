@@ -353,6 +353,12 @@ public partial class RelinkMainWindow : Window
             SetSummaryText($"再リンクを中止しました。回復記録から進行状況を確認できます。\n{evidence}");
             return;
         }
+        catch (Exception ex) when (ex is InvalidDataException or IOException or UnauthorizedAccessException)
+        {
+            logger.Error(ex, "Managed relink publication failed after preparation.");
+            SetSummaryText($"別名保存の状態を確認できませんでした。「再リンクの回復」で次の記録を確認してください。\n{evidence}");
+            return;
+        }
         AssetRelinkRecovery.OutputReceipt receipt;
         try
         {
