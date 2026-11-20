@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 
@@ -7,7 +8,7 @@ public sealed partial class GitRepository
 {
     internal Action<CancellationToken>? BeforePullExecutionRecheck { get; set; }
     internal Action? AfterPullJournalCreated { get; set; }
-    internal Action? AfterPullProcessStarted { get; set; }
+    internal Action<Process>? AfterPullProcessStarted { get; set; }
     internal Action? AfterPullProcessExit { get; set; }
 
     public Task<GitResult> InspectPullRemoteAsync(CancellationToken token = default) =>

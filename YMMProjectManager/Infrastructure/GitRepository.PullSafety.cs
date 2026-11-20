@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.ComponentModel;
 using System.IO;
 
@@ -156,7 +157,7 @@ public sealed partial class GitRepository
         return true;
     }
 
-    private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token, Action? afterStart = null) =>
+    private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token, Action<Process>? afterStart = null) =>
         RunDirectAsync(arguments, token, pullSettings: session.Settings, afterStart: afterStart);
 
     private Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token)

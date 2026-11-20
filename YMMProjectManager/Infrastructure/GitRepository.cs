@@ -403,7 +403,7 @@ public sealed partial class GitRepository
     }
 
     private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false,
-        string[]? pullSettings = null, Action? afterStart = null, string? standardInput = null, int? outputLimit = null) =>
+        string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null, int? outputLimit = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
             trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart,
             standardInput: standardInput, outputLimit: outputLimit);
@@ -693,7 +693,7 @@ public sealed partial class GitRepository
     }
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
-        bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action? afterStart = null, string? standardInput = null,
+        bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
         int? outputLimit = null)
     {
         token.ThrowIfCancellationRequested();
@@ -779,7 +779,7 @@ public sealed partial class GitRepository
         var input = standardInput is null ? Task.CompletedTask : WriteGitInputAsync(process, standardInput, deadline.Token);
         try
         {
-            afterStart?.Invoke();
+            afterStart?.Invoke(process);
             await Task.WhenAll(process.WaitForExitAsync(deadline.Token), output, error, input).ConfigureAwait(false);
         }
         catch (OperationCanceledException)

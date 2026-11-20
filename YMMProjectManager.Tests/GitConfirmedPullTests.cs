@@ -213,7 +213,7 @@ internal static class GitConfirmedPullTests
         fixture.Repository.AfterPullJournalCreated = null;
 
         using var duringExecution = new CancellationTokenSource();
-        fixture.Repository.AfterPullProcessStarted = duringExecution.Cancel;
+        fixture.Repository.AfterPullProcessStarted = _ => duringExecution.Cancel();
         var result = await fixture.Repository.PullTrustedAsync(target, duringExecution.Token);
         Check(duringExecution.IsCancellationRequested && result.Success, "executing update was not verified after cancellation: " + result.StandardError);
         await VerifyUpdatedAsync(fixture);
@@ -262,7 +262,7 @@ internal static class GitConfirmedPullTests
         fixture.Repository.AfterPullJournalCreated = () =>
             external = new FileStream(Path.Combine(fixture.Local, ".git", "refs", "heads", "main"),
                 FileMode.Open, FileAccess.Read, FileShare.Read);
-        fixture.Repository.AfterPullProcessStarted = () => launched = true;
+        fixture.Repository.AfterPullProcessStarted = _ => launched = true;
         GitResult result;
         try { result = await fixture.Repository.PullTrustedAsync(target); }
         finally { external?.Dispose(); }
