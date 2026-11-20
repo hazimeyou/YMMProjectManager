@@ -1,7 +1,10 @@
+using System.ComponentModel;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using YMMProjectManager.Application;
+using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 
 internal static class ProjectListIdentityRecoveryTests
@@ -56,7 +59,122 @@ internal static class ProjectListIdentityRecoveryTests
         ExpectInvalid(() => ProjectListIdentityRecovery.Inspect(Encoding.UTF8.GetBytes("""{"Projects":[],"projects":[]}""")));
         await RunApplyAsync(root, duplicate);
         await Program.RunNamedCaseAsync("Explicitly assign legacy project and link IDs", () => RunLegacyAsync(root));
+        await Program.RunNamedCaseAsync("Resolve verified hard-link registrations without moving projects or metadata", () => RunPhysicalAsync(root));
     }
+
+    private static async Task RunPhysicalAsync(string parent)
+    {
+        var root = Path.Combine(parent, "physical");
+        Directory.CreateDirectory(root);
+        var source = Path.Combine(root, "source.ymmp");
+        var alias = Path.Combine(root, "alias.ymmp");
+        var copied = Path.Combine(root, "copy.ymmp");
+        var projectBytes = "synthetic project"u8.ToArray();
+        await File.WriteAllBytesAsync(source, projectBytes);
+        File.Copy(source, copied);
+        if (!CreateHardLink(alias, source, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
+
+        var identity = await ProjectFileEvidence.ReadAsync(source);
+        var firstId = Guid.NewGuid();
+        var keeperId = Guid.NewGuid();
+        var copyId = Guid.NewGuid();
+        var firstMetadata = CreateAssociation("first-meta");
+        var keeperMetadata = CreateAssociation("keeper-meta");
+        var keeperLink = Guid.NewGuid();
+        ProjectMetadataAssociation CreateAssociation(string name)
+        {
+            var path = Path.Combine(root, name);
+            Directory.CreateDirectory(path);
+            File.WriteAllBytes(Path.Combine(path, "fixture.bin"), projectBytes);
+            var revision = Guid.NewGuid();
+            return new ProjectMetadataAssociation(path, revision, identity.Sha256, revision, identity.Sha256,
+                revision, identity.Sha256);
+        }
+
+        var original = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Projects = new object[]
+            {
+                new { FullPath = source, ProjectId = firstId, FileIdentity = identity, MetadataAssociation = firstMetadata, FutureRow = "original" },
+                new { FullPath = alias, ProjectId = keeperId, MetadataAssociation = keeperMetadata, FutureRow = "keeper",
+                    LinkedYmmpFiles = new[] { new { Id = keeperLink, FilePath = alias, FutureLink = 5 } } },
+                new { FullPath = copied, ProjectId = copyId, FutureRow = "independent" },
+            },
+            Folders = Array.Empty<object>(),
+            FutureRoot = 3,
+        });
+        var active = Path.Combine(root, "projects.json");
+        var logger = new FileLogger(Path.Combine(root, "repair.log"));
+        var repository = new JsonProjectRepository(logger, active);
+        await File.WriteAllBytesAsync(active, original);
+        var review = await ProjectListIdentityRecovery.InspectPhysicalAsync(original);
+        var group = review.Conflicts.Single();
+        if (review.UnverifiedRecordedDuplicates.Count != 0 || group.Volume != identity.Volume || group.FileId != identity.FileId ||
+            !group.Entries.Select(row => row.ProjectId).SequenceEqual(new Guid?[] { firstId, keeperId }) ||
+            group.Entries[1] is not { HasMetadata: true, LinkCount: 1 })
+            throw new Exception("Physical review missed the hard-linked rows or confused a content-identical copy with an alias.");
+
+        var keepers = new Dictionary<(ulong, Guid), int> { [(group.Volume, group.FileId)] = group.Entries[1].Row };
+        var export = Path.Combine(root, "recovered.json");
+        await ProjectListIdentityRecovery.ExportPhysicalRepairAsync(repository, review, keepers, export, default);
+        var exported = JsonProjectRepository.DeserializeStore(await File.ReadAllBytesAsync(export));
+        if (!exported.Projects.Select(row => row.ProjectId).SequenceEqual(new Guid?[] { keeperId, copyId }))
+            throw new Exception("Export did not keep the explicitly selected identity.");
+
+        var backup = Path.Combine(root, "original.json");
+        await ProjectListIdentityRecovery.ApplyPhysicalAsync(repository, review, keepers, backup, default);
+        var loaded = await repository.LoadAsync();
+        if (!loaded.IsRecoverySafe || !loaded.Projects.Select(row => row.ProjectId).SequenceEqual(new Guid?[] { keeperId, copyId }) ||
+            loaded.Projects[0].MetadataAssociation != keeperMetadata || loaded.Projects[0].LinkedYmmpFiles.Single().Id != keeperLink)
+            throw new Exception("Repair merged identities or changed the kept association and link.");
+        using var afterRepair = JsonDocument.Parse(await File.ReadAllBytesAsync(active));
+        var payload = afterRepair.RootElement;
+        var archived = await File.ReadAllBytesAsync(backup);
+        if (payload.GetProperty("FutureRoot").GetInt32() != 3 ||
+            payload.GetProperty("Projects")[0].GetProperty("FutureRow").GetString() != "keeper" ||
+            payload.GetProperty("Projects")[0].GetProperty("LinkedYmmpFiles")[0].GetProperty("FutureLink").GetInt32() != 5 ||
+            payload.GetProperty("Projects")[1].GetProperty("FutureRow").GetString() != "independent" ||
+            !original.SequenceEqual(archived))
+            throw new Exception("Repair lost opaque data or the original archive.");
+        foreach (var path in new[] { source, alias, copied, Path.Combine(firstMetadata.Directory, "fixture.bin"), Path.Combine(keeperMetadata.Directory, "fixture.bin") })
+        {
+            var bytes = await File.ReadAllBytesAsync(path);
+            if (!projectBytes.SequenceEqual(bytes))
+                throw new Exception("Repair modified a project or its metadata.");
+        }
+
+        // Replacing an alias with a copy preserves the SHA-256 but invalidates the approved physical identity.
+        File.Delete(alias);
+        File.Copy(source, alias);
+        await File.WriteAllBytesAsync(active, original);
+        var staleBackup = Path.Combine(root, "stale-original.json");
+        try
+        {
+            await ProjectListIdentityRecovery.ApplyPhysicalAsync(repository, review, keepers, staleBackup, default);
+            throw new Exception("Repair accepted a replaced project alias.");
+        }
+        catch (InvalidDataException) { }
+        var unchanged = await File.ReadAllBytesAsync(active);
+        if (File.Exists(staleBackup) || !original.SequenceEqual(unchanged))
+            throw new Exception("Stale review wrote a backup or changed the active list.");
+
+        var recordedOnly = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Projects = new[]
+            {
+                new { FullPath = source, ProjectId = firstId, FileIdentity = identity },
+                new { FullPath = alias, ProjectId = keeperId, FileIdentity = identity },
+            },
+            Folders = Array.Empty<object>(),
+        });
+        var unresolved = await ProjectListIdentityRecovery.InspectPhysicalAsync(recordedOnly);
+        if (unresolved.Conflicts.Count != 0 || unresolved.UnverifiedRecordedDuplicates.Single().Entries.Count != 2)
+            throw new Exception("Stored duplicate evidence was treated as a live physical duplicate.");
+    }
+
+    [DllImport("kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool CreateHardLink(string newFile, string existingFile, IntPtr reserved);
 
     private static async Task RunLegacyAsync(string root)
     {

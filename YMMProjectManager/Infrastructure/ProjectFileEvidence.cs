@@ -37,11 +37,17 @@ internal static class ProjectFileEvidence
 
     internal static async Task<ProjectFileIdentity> ReadAsync(FileStream stream, CancellationToken token = default)
     {
+        var (volume, id) = ReadPhysicalIdentity(stream);
+        var digest = Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
+        return new ProjectFileIdentity(volume, id, digest);
+    }
+
+    internal static (ulong Volume, Guid FileId) ReadPhysicalIdentity(FileStream stream)
+    {
         const int fileIdInformation = 18;
         if (!GetFileInformationByHandleEx(stream.SafeFileHandle, fileIdInformation, out var identity, (uint)Marshal.SizeOf<FileIdInfo>()) ||
             identity.FileId == Guid.Empty)
             throw new IOException("The filesystem did not provide a project file identity.");
-        var digest = Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
-        return new ProjectFileIdentity(identity.Volume, identity.FileId, digest);
+        return (identity.Volume, identity.FileId);
     }
 }

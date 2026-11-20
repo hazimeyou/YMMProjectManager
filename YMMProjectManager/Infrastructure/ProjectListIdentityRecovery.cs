@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 
 namespace YMMProjectManager.Infrastructure;
 
-internal static class ProjectListIdentityRecovery
+internal static partial class ProjectListIdentityRecovery
 {
     private const int MaximumBytes = 32 * 1024 * 1024;
     private static readonly JsonSerializerOptions OutputOptions = new(JsonSerializerOptions.Default) { WriteIndented = true };
