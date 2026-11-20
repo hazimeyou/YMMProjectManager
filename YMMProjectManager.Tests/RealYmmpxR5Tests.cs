@@ -56,6 +56,25 @@ internal static class RealYmmpxR5Tests
                 Directory.EnumerateDirectories(root, ".ymmpx-*").Any() || !bytes.SequenceEqual(packageAfter))
                 throw new InvalidOperationException("Concurrent extraction changed the package or left an incomplete destination.");
         });
+        await Program.RunNamedCaseAsync("Cancelled real YMMPX extraction can retry the same destination", async () =>
+        {
+            var retryDestination = Path.Combine(root, "retry-extract");
+            using var cancelled = new CancellationTokenSource();
+            try
+            {
+                await service.ExtractPackageAsync(output, retryDestination, cancelled.Token, new InlineProgress(cancelled.Cancel));
+                throw new InvalidOperationException("The cancelled extraction published output.");
+            }
+            catch (OperationCanceledException) when (cancelled.IsCancellationRequested) { }
+
+            if (Directory.Exists(retryDestination) || Directory.EnumerateDirectories(root, ".ymmpx-*").Any())
+                throw new InvalidOperationException("The cancelled extraction left its destination or working directory.");
+
+            var retried = await service.ExtractPackageAsync(output, retryDestination, CancellationToken.None);
+            var packageAfter = await File.ReadAllBytesAsync(output);
+            if (!retried.Success || !File.Exists(retried.RestoredProjectPath) || !bytes.SequenceEqual(packageAfter))
+                throw new InvalidOperationException("Retry could not publish without changing the original package.");
+        });
         Console.WriteLine("Real YmmpxLib package creation, direct-library extraction and managed product extraction passed.");
     }
 
