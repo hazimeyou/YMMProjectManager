@@ -103,7 +103,8 @@ internal static class GitNativeInterruptionTests
                 var lockBeforeStop = File.Exists(indexLockPath);
                 Require(!process.HasExited, "Native Git exited before termination after observing the worktree change.");
                 process.Kill();
-                Require(process.WaitForExit(10_000) && process.ExitCode != 0, "The observed Git process did not terminate unsuccessfully.");
+                // On Windows Process.Kill supplies exit code -1. A natural ref-sharing error does not count.
+                Require(process.WaitForExit(10_000) && process.ExitCode == -1, "The observed Git child did not exit through the forced termination.");
                 interruption = (path, lockBeforeStop, process.ExitCode);
             }
             finally
