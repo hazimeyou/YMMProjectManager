@@ -239,6 +239,67 @@ internal static class ProjectListSaveTests
                 new Dictionary<ProjectListConflict, bool> { [option] = false });
             Check(resurrect.Store is null && keepNewest.Store is not null, $"resurrecting {kind} discarded unknown data or blocked the remote choice");
         }
+        await Program.RunNamedCaseAsync("Opaque managed-list fields stay with the exact association and file identity", async () =>
+        {
+            var managedPath = Path.Combine(root, "forward-managed-records.json");
+            var managedRepo = new JsonProjectRepository(logger, managedPath);
+            var sha = new string('A', 64);
+            var metadata = new ProjectMetadataAssociation(Path.Combine(root, "metadata"), Guid.NewGuid(), sha,
+                Guid.NewGuid(), sha, Guid.NewGuid(), sha);
+            var identity = new ProjectFileIdentity(1, Guid.NewGuid(), sha);
+            var fixture = System.Text.Json.Nodes.JsonNode.Parse(JsonSerializer.Serialize(new
+            {
+                Projects = new[] { new { FullPath = defaultLinkPath, ProjectId = stableId, MetadataAssociation = metadata, FileIdentity = identity } },
+                Folders = Array.Empty<object>(),
+            }))!;
+            var record = fixture["Projects"]![0]!;
+            record["MetadataAssociation"]!["FutureMetadata"] = "older";
+            record["FileIdentity"]!["FutureIdentity"] = System.Text.Json.Nodes.JsonNode.Parse("[null, {\"evidence\":42}]");
+            await File.WriteAllTextAsync(managedPath, fixture.ToJsonString());
+            var managedBaseline = await managedRepo.LoadAsync();
+            var managedLocal = ProjectListMerge.Snapshot(managedBaseline);
+            managedLocal.Projects.Single().Pinned = true;
+            Check(managedBaseline.IsRecoverySafe && managedBaseline.Projects.Single().MetadataAssociation == metadata &&
+                managedBaseline.Projects.Single().FileIdentity == identity, "compatible managed record could not be loaded");
+            var ready = await managedRepo.WritePendingDraftAsync(managedBaseline, managedLocal, [], null);
+            var decoded = await new ProjectListDrafts(managedRepo.RecoveryDirectory).ReadAsync(ready);
+
+            record["MetadataAssociation"]!["FutureMetadata"] = "external change";
+            await File.WriteAllTextAsync(managedPath, fixture.ToJsonString());
+            await Expect<ProjectListConflictException>(() => managedRepo.SaveAsync(decoded.Local));
+            var merged = ProjectListMerge.Merge(decoded.Baseline, decoded.Local, await managedRepo.LoadAsync());
+            Check(merged.Store is not null, "independent pin change conflicted with a forward-compatible field");
+            await managedRepo.SaveReadyDraftAsync(merged.Store!, ready);
+            var mergedBytes = await File.ReadAllBytesAsync(managedPath);
+            var written = System.Text.Json.Nodes.JsonNode.Parse(mergedBytes)!["Projects"]![0]!;
+            Check(written["Pinned"]!.GetValue<bool>() &&
+                written["MetadataAssociation"]!["FutureMetadata"]!.GetValue<string>() == "external change" &&
+                System.Text.Json.Nodes.JsonNode.DeepEquals(written["FileIdentity"]!["FutureIdentity"], record["FileIdentity"]!["FutureIdentity"]),
+                "managed record lost its newest opaque fields or its ordinary edit");
+
+            var current = await managedRepo.LoadAsync();
+            var switched = ProjectListMerge.Snapshot(current);
+            switched.Projects.Single().MetadataAssociation = metadata with { SelectedRevisionId = Guid.NewGuid() };
+            Check(ProjectListMerge.Merge(current, switched, current).Store is null,
+                "a changed association was allowed to inherit opaque data");
+            await Expect<InvalidDataException>(() => managedRepo.SaveAsync(switched));
+            switched = ProjectListMerge.Snapshot(current);
+            switched.Projects.Single().FileIdentity = identity with { Sha256 = new string('B', 64) };
+            await Expect<InvalidDataException>(() => managedRepo.SaveAsync(switched));
+            var unchanged = await File.ReadAllBytesAsync(managedPath);
+            Check(mergedBytes.SequenceEqual(unchanged), "refused managed-record edits changed the list");
+
+            record["MetadataAssociation"]!["SchemaVersion"] = 99;
+            await File.WriteAllTextAsync(managedPath, fixture.ToJsonString());
+            var unknownSchema = await managedRepo.LoadAsync();
+            Check(!unknownSchema.IsRecoverySafe, "an unrecognized managed schema version was accepted");
+            await Expect<InvalidDataException>(() => managedRepo.SaveAsync(unknownSchema));
+            var quarantine = Path.Combine(root, "forward-managed-original.json");
+            await managedRepo.ExportOriginalAsync(quarantine);
+            var exported = await File.ReadAllBytesAsync(quarantine);
+            var original = await File.ReadAllBytesAsync(managedPath);
+            Check(exported.SequenceEqual(original), "unknown managed schema was not exported byte-for-byte");
+        });
         var copyPath = Path.Combine(root, "recovery-copy.json"); var copyRepo = new JsonProjectRepository(logger, copyPath);
         await File.WriteAllTextAsync(copyPath, "existing synthetic data");
         await Expect<IOException>(() => copyRepo.SaveNewCopyAsync(legacyLink));
