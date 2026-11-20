@@ -108,7 +108,7 @@ public sealed class YmmpxLibInstallGuide
             logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
             logger.Flush();
 
-            await using (var output = YmmpxPackageReader.CreateOwnedDownload(downloadPath + ".download"))
+            await using (var output = YmmpxPackageReader.CreateOwnedOutputFile(downloadPath + ".download"))
             {
                 try
                 {

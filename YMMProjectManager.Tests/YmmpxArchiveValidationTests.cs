@@ -105,7 +105,33 @@ internal static class YmmpxArchiveValidationTests
             Directory.Exists(missingOutput) || Directory.EnumerateDirectories(root, ".ymmpx-*").Any())
             throw new Exception("missing internal resource was accepted");
         await VerifyReparseParentRejectedAsync(bridge, path, root);
+        await Program.RunNamedCaseAsync("Interrupted nested extraction preserves unowned staging data",
+            () => VerifyNestedCleanupAsync(bridge, root));
         Console.WriteLine("YMMPX archive safety preflight checks passed.");
+    }
+
+    private static async Task VerifyNestedCleanupAsync(YmmpxLibBridge bridge, string root)
+    {
+        var archive = Path.Combine(root, "nested.ymmpx");
+        WriteCurrentPackage(archive, """{"Items":[{"FilePath":"resources/nested/clip.txt"}]}""", "resources/nested/clip.txt");
+        var archiveHash = await ReadHashAsync(archive);
+        var destination = Path.Combine(root, "nested-destination");
+        string? sentinel = null;
+        var writes = 0;
+        var extraction = await bridge.ExtractPackageAsync(archive, destination, CancellationToken.None, new InlineProgress(() =>
+        {
+            if (++writes != 4) return;
+            var staging = Directory.EnumerateDirectories(root, ".ymmpx-*").Single();
+            sentinel = Path.Combine(staging, "resources", "nested", "unowned-note.txt");
+            File.WriteAllText(sentinel, "data from a separate operation");
+            throw new IOException("synthetic failure after nested resource write");
+        }));
+        if (extraction.Success || Directory.Exists(destination) || sentinel is null ||
+            await File.ReadAllTextAsync(sentinel) != "data from a separate operation" || await ReadHashAsync(archive) != archiveHash)
+            throw new Exception("nested extraction did not preserve unrelated data or source archive");
+        var ownedRoot = Directory.EnumerateDirectories(root, ".ymmpx-*").Single();
+        if (!Directory.EnumerateFiles(ownedRoot, "*", SearchOption.AllDirectories).SequenceEqual(new[] { sentinel }))
+            throw new Exception("owned staged output files were not cleaned");
     }
 
     private static async Task VerifyReparseParentRejectedAsync(YmmpxLibBridge bridge, string package, string root)
@@ -134,14 +160,14 @@ internal static class YmmpxArchiveValidationTests
         return Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(stream));
     }
 
-    private static void WriteCurrentPackage(string path, string projectJson)
+    private static void WriteCurrentPackage(string path, string projectJson, string resourceName = "resources/clip.txt")
     {
         using var stream = new FileStream(path, FileMode.Create, FileAccess.Write);
         using var zip = new ZipArchive(stream, ZipArchiveMode.Create);
         Write("_ymmpx_project_path.txt", "project.ymmp");
-        Write("links.json", """{"resources/clip.txt":"resources/clip.txt"}""");
+        Write("links.json", System.Text.Json.JsonSerializer.Serialize(new Dictionary<string, string> { [resourceName] = resourceName }));
         Write("project.ymmp", projectJson);
-        Write("resources/clip.txt", "synthetic asset");
+        Write(resourceName, "synthetic asset");
 
         void Write(string name, string content)
         {

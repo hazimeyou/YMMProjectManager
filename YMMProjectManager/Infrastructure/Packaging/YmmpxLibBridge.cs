@@ -242,6 +242,13 @@ public sealed class YmmpxLibBridge
     {
         token.ThrowIfCancellationRequested();
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        ValidateArchiveForExtraction(archive, token, maxTotalBytes, maxEntries);
+    }
+
+    internal static void ValidateArchiveForExtraction(ZipArchive archive, CancellationToken token,
+        long maxTotalBytes = 100L * 1024 * 1024 * 1024, int maxEntries = 100000)
+    {
+        token.ThrowIfCancellationRequested();
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long total = 0;
@@ -275,6 +282,7 @@ public sealed class YmmpxLibBridge
         var directorySpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var path in paths)
         {
+            token.ThrowIfCancellationRequested();
             if (!files.Contains(path)) RecordDirectory(path);
             var slash = path.IndexOf('/');
             while (slash >= 0)

@@ -17,6 +17,7 @@ internal static class YmmpxPackageReader
     private static readonly uint[] CrcTable = MakeCrcTable();
 
     private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
+    private sealed record OwnedPath(string Path, FileIdentity? Identity);
 
     internal static async Task ValidateAsync(Stream source, CancellationToken token)
     {
@@ -47,8 +48,8 @@ internal static class YmmpxPackageReader
         var replacements = RewriteReferences(package.Project, package.Resources, final, token);
 
         var staging = Path.Combine(parent, ".ymmpx-" + Guid.NewGuid().ToString("N"));
-        var files = new List<string>();
-        var directories = new List<string>();
+        var files = new List<OwnedPath>();
+        var directories = new List<OwnedPath>();
         var createdDirectories = new HashSet<string>(StringComparer.Ordinal);
         using var subdirectoryFence = new DirectoryFence();
         token.ThrowIfCancellationRequested();
@@ -64,8 +65,8 @@ internal static class YmmpxPackageReader
                 var target = Path.Combine(staging, name.Replace('/', Path.DirectorySeparatorChar));
                 EnsureParents(Path.GetDirectoryName(target)!);
                 RequireOrdinaryDirectory(Path.GetDirectoryName(target)!);
-                await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true);
-                files.Add(target);
+                await using var output = CreateOwnedOutputFile(target);
+                files.Add(new OwnedPath(target, ReadIdentity(output.SafeFileHandle)));
                 if (name == package.ProjectName)
                     await JsonSerializer.SerializeAsync(output, package.Project, cancellationToken: token).ConfigureAwait(false);
                 else
@@ -109,17 +110,26 @@ internal static class YmmpxPackageReader
             EnsureParents(Path.GetDirectoryName(path)!);
             RequireOrdinaryDirectory(Path.GetDirectoryName(path)!);
             ReserveDirectory(path);
-            directories.Add(path);
-            subdirectoryFence.Add(path);
+            var handle = subdirectoryFence.Add(path);
+            directories.Add(new OwnedPath(path, ReadIdentity(handle)));
             createdDirectories.Add(path);
         }
     }
 
     private static ZipArchive OpenValidated(Stream stream, CancellationToken token)
     {
-        YmmpxLibBridge.ValidateArchiveForExtraction(stream, token);
-        stream.Position = 0;
-        return new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        token.ThrowIfCancellationRequested();
+        var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
+        try
+        {
+            YmmpxLibBridge.ValidateArchiveForExtraction(archive, token);
+            return archive;
+        }
+        catch
+        {
+            archive.Dispose();
+            throw;
+        }
     }
 
     private static async Task<Package> ReadPackageAsync(ZipArchive archive, CancellationToken token)
@@ -262,14 +272,14 @@ internal static class YmmpxPackageReader
                 throw new IOException("リンクまたはフォルダー以外のパスは展開先に使用できません。");
     }
 
-    private static void TryCleanup(string path, bool isDirectory)
+    private static void TryCleanup(OwnedPath entry, bool isDirectory)
     {
+        if (entry.Identity is null) return;
         try
         {
-            RequireOrdinaryDirectory(Path.GetDirectoryName(path)!);
-            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) return;
-            if (isDirectory) Directory.Delete(path, recursive: false);
-            else File.Delete(path);
+            RequireOrdinaryDirectory(Path.GetDirectoryName(entry.Path)!);
+            using var handle = OpenOrdinaryPath(entry.Path, isDirectory, allowRename: true);
+            if (ReadIdentity(handle) == entry.Identity) TryDeleteOpenedPath(handle);
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
@@ -307,9 +317,11 @@ internal static class YmmpxPackageReader
             }
         }
 
-        public void Add(string path)
+        public SafeFileHandle Add(string path)
         {
-            handles.Add(OpenOrdinaryDirectory(path));
+            var handle = OpenOrdinaryDirectory(path);
+            handles.Add(handle);
+            return handle;
         }
 
         public void Dispose()
@@ -350,17 +362,18 @@ internal static class YmmpxPackageReader
         }
     }
 
-    internal static FileStream CreateOwnedDownload(string path)
+    internal static FileStream CreateOwnedOutputFile(string path)
     {
         const uint genericWrite = 0x40000000;
         const uint delete = 0x10000;
         const uint createNew = 1;
         const uint openWithoutFollowingLink = 0x00200000;
+        const uint overlapped = 0x40000000;
         var handle = OpenPath(ExtendedPath(path), genericWrite | delete, FileShare.None, IntPtr.Zero,
-            createNew, openWithoutFollowingLink, IntPtr.Zero);
+            createNew, openWithoutFollowingLink | overlapped, IntPtr.Zero);
         if (!handle.IsInvalid)
         {
-            try { return new FileStream(handle, FileAccess.Write, bufferSize: 1); }
+            try { return new FileStream(handle, FileAccess.Write, bufferSize: 1, isAsync: true); }
             catch
             {
                 TryDeleteOpenedPath(handle);
@@ -370,7 +383,16 @@ internal static class YmmpxPackageReader
         }
         var error = Marshal.GetLastWin32Error();
         handle.Dispose();
-        throw new IOException("一時ダウンロードを作成できません。", new Win32Exception(error));
+        throw new IOException("一時ファイルを作成できません。", new Win32Exception(error));
+    }
+
+    private static FileIdentity? ReadIdentity(SafeFileHandle handle)
+    {
+        const int fileIdInfo = 18;
+        return GetFileIdentityByHandle(handle, fileIdInfo, out var identity, (uint)Marshal.SizeOf<NativeFileIdentity>()) &&
+            identity.Id != Guid.Empty
+            ? new FileIdentity(identity.Volume, identity.Id)
+            : null;
     }
 
     private static SafeFileHandle OpenOrdinaryPath(string path, bool expectDirectory, bool allowRename)
@@ -435,9 +457,22 @@ internal static class YmmpxPackageReader
         public uint ReparseTag;
     }
 
+    private readonly record struct FileIdentity(ulong Volume, Guid Id);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeFileIdentity
+    {
+        internal ulong Volume;
+        internal Guid Id;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetFileInformationByHandleEx(SafeFileHandle file, int informationClass, out FileAttributeTagInfo information, uint length);
+
+    [DllImport("kernel32.dll", EntryPoint = "GetFileInformationByHandleEx", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetFileIdentityByHandle(SafeFileHandle file, int informationClass, out NativeFileIdentity information, uint length);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
