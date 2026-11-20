@@ -46,6 +46,10 @@ public sealed partial class ProjectListViewModel
                 _ => "安全に復旧できる版を確認できませんでした。以下の記録を保全してください。",
             };
             var detail = $"{action}\n現用一覧 {review.ActivePath}\n退避先 {review.ParkedPath}\n保存候補 {review.CandidatePath}\n公開記録 {review.JournalPath}";
+            if (review.ActiveVersion is { } active)
+                detail += $"\n現用一覧 SHA-256 {active.Sha256}";
+            if (review.ParkedVersion is { } parked)
+                detail += $"\n退避ファイル SHA-256 {parked.Sha256}";
             ProjectListPublicationStatus = detail;
             if (review.State == ProjectListReplacement.RecoveryState.Unverifiable ||
                 MessageBox.Show(detail, "中断された一覧保存の回復", MessageBoxButton.OKCancel,
