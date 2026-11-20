@@ -39,7 +39,18 @@ internal sealed class SceneCapturedFrame
 
     public static (SceneCapturedFrame? Frame, SceneHandoffError Error) Copy(
         SceneComparisonPlan plan, PreviewComparisonSide side, SceneRenderResponse response,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CopyCore(plan, side, response, PreviewPixelFormat.Bgra32, cancellationToken);
+
+    // Experimental byte conversion. The coordinator uses the straight-only Copy contract.
+    internal static (SceneCapturedFrame? Frame, SceneHandoffError Error) CopyExperimentalPbgra32(
+        SceneComparisonPlan plan, PreviewComparisonSide side, SceneRenderResponse response,
+        CancellationToken cancellationToken = default) =>
+        CopyCore(plan, side, response, PreviewPixelFormat.Pbgra32, cancellationToken);
+
+    private static (SceneCapturedFrame? Frame, SceneHandoffError Error) CopyCore(
+        SceneComparisonPlan plan, PreviewComparisonSide side, SceneRenderResponse response,
+        PreviewPixelFormat requiredFormat, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         SceneRenderRequest? issued = side switch
@@ -61,7 +72,7 @@ internal sealed class SceneCapturedFrame
             return (null, error);
         if (response.Width != request.Width || response.Height != request.Height)
             return (null, SceneHandoffError.InvalidDimensions);
-        if (response.Format != PreviewPixelFormat.Bgra32)
+        if (response.Format != requiredFormat)
             return (null, SceneHandoffError.UnsupportedPixelFormat);
 
         int rowBytes = response.Width * BytesPerPixel;
@@ -76,7 +87,17 @@ internal sealed class SceneCapturedFrame
         var source = response.Pixels.Span;
         cancellationToken.ThrowIfCancellationRequested();
         var owned = new byte[rowBytes * response.Height];
-        if (rowBytes == response.Stride)
+        if (requiredFormat == PreviewPixelFormat.Pbgra32)
+        {
+            for (int row = 0; row < response.Height; row++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!TryUnpremultiply(source.Slice(row * response.Stride, rowBytes),
+                        owned.AsSpan(row * rowBytes, rowBytes), cancellationToken))
+                    return (null, SceneHandoffError.InvalidPremultipliedPixel);
+            }
+        }
+        else if (rowBytes == response.Stride)
         {
             CopyWithCancellation(source, owned, cancellationToken);
         }
@@ -101,6 +122,49 @@ internal sealed class SceneCapturedFrame
             int count = Math.Min(BytesPerCancellationCheck, source.Length - offset);
             source.Slice(offset, count).CopyTo(destination.Slice(offset, count));
         }
+    }
+
+    private static bool TryUnpremultiply(ReadOnlySpan<byte> source, Span<byte> destination, CancellationToken token)
+    {
+        for (int offset = 0; offset < source.Length; offset += BytesPerPixel)
+        {
+            if (offset % BytesPerCancellationCheck == 0)
+                token.ThrowIfCancellationRequested();
+
+            int alpha = source[offset + 3];
+            for (int channel = 0; channel < 3; channel++)
+            {
+                int premultiplied = source[offset + channel];
+                if (premultiplied > alpha)
+                    return false;
+                destination[offset + channel] = alpha == 0 ? (byte)0
+                    : (byte)((premultiplied * 255 + alpha / 2) / alpha);
+            }
+
+            destination[offset + 3] = (byte)alpha;
+        }
+
+        return true;
+    }
+
+    internal bool MatchesReplay(SceneCapturedFrame replay, CancellationToken token)
+    {
+        if (Request.OperationId == replay.Request.OperationId ||
+            Request != (replay.Request with { OperationId = Request.OperationId }))
+            return false;
+
+        var first = frame.Pixels.Span;
+        var second = replay.frame.Pixels.Span;
+        for (int offset = 0; offset < first.Length; offset += BytesPerCancellationCheck)
+        {
+            token.ThrowIfCancellationRequested();
+            int count = Math.Min(BytesPerCancellationCheck, first.Length - offset);
+            if (!first.Slice(offset, count).SequenceEqual(second.Slice(offset, count)))
+                return false;
+        }
+
+        token.ThrowIfCancellationRequested();
+        return true;
     }
 
     internal static PreviewComparisonResult Compare(

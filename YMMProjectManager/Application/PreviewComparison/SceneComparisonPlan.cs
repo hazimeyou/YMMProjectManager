@@ -46,6 +46,7 @@ internal enum SceneHandoffError
     UnsupportedPixelFormat,
     InvalidStride,
     InvalidBufferLength,
+    InvalidPremultipliedPixel,
 }
 
 internal readonly record struct SceneHandoffRejection(SceneHandoffError Error, PreviewComparisonSide? Side = null);
@@ -68,6 +69,16 @@ internal sealed class SceneComparisonPlan
         A = new(Guid.NewGuid(), a, comparison.Timestamp, alignment.FrameA!.Value, width, height);
         B = new(Guid.NewGuid(), b, comparison.Timestamp, alignment.FrameB!.Value, width, height);
     }
+
+    private SceneComparisonPlan(PreviewComparisonRequest comparison, SceneRenderRequest a, SceneRenderRequest b)
+    {
+        this.comparison = comparison;
+        A = a;
+        B = b;
+    }
+
+    internal SceneComparisonPlan Reissue() =>
+        new(comparison, A with { OperationId = Guid.NewGuid() }, B with { OperationId = Guid.NewGuid() });
 
     public SceneRenderRequest A { get; }
     public SceneRenderRequest B { get; }
