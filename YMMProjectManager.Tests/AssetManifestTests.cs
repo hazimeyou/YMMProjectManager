@@ -205,6 +205,14 @@ internal static class AssetManifestTests
         var fork = AssetManifestStore.Create(source, [originalAsset], DateTimeOffset.UtcNow, initial, true, projectId: head.ProjectId);
         await AssetManifestStore.SaveNewAsync(Path.Combine(seriesDirectory, $"revision-{fork.RevisionId:N}.json"), fork);
         var graph = await AssetRevisionSeries.InspectGraphAsync(seriesDirectory);
+        if (await AssetRelinkRecovery.CompleteForTransferAsync(evidence, seriesDirectory, head, default, source) != transfer)
+            throw new Exception("A later fork prevented proof of an already committed legacy relink.");
+        var legacyPending = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(pending))!.AsObject();
+        legacyPending["Version"] = 1;
+        legacyPending.Remove("ObservedTips");
+        legacyPending.Remove("SourceIdentity");
+        await File.WriteAllTextAsync(pending, legacyPending.ToJsonString());
+        await RejectAsync(() => AssetRelinkRecovery.CompleteAsync(pending, seriesDirectory, head, default));
         var forkTip = graph.Heads.Single(tip => tip.RevisionId == fork.RevisionId);
         await RejectAsync(() => AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, forkTip, default));
         await RejectAsync(() => AssetRelinkRecovery.ReviewAsync(context, seriesDirectory, head, head, graph.Heads, default));

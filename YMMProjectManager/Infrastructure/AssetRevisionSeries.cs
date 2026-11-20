@@ -219,8 +219,6 @@ public static class AssetRevisionSeries
         var graph = InspectGraph(nodes);
         if (expectedRoot is not null && graph.Root != expectedRoot)
             throw new InvalidDataException("The associated metadata series changed; reload before updating.");
-        if (observedTips is null)
-            RequireSingleHead(graph);
         var head = MakeHead(next);
         if (acceptCommittedRevision && graph.Revisions.FirstOrDefault(r => r.Receipt.RevisionId == next.RevisionId) is { } committed)
         {
@@ -229,7 +227,8 @@ public static class AssetRevisionSeries
             return committed.Receipt;
         }
 
-        if (observedTips is not null && !SameTips(graph.Heads, observedTips))
+        if (observedTips is null) RequireSingleHead(graph);
+        else if (!SameTips(graph.Heads, observedTips))
             throw new InvalidDataException("The revision branches changed; inspect them before updating.");
         if (!graph.Heads.Contains(expected)) throw new InvalidDataException("The selected revision is no longer a branch tip.");
         if (nodes.Count >= MaxRevisions || nodes.Values.Sum(node => node.ByteCount) + SerializeRevision(next).Length > MaxHistoryBytes)
