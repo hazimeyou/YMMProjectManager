@@ -131,16 +131,11 @@ internal static class ProjectListMerge
             {
                 target.MetadataAssociation = Field(b.MetadataAssociation, l.MetadataAssociation, r.MetadataAssociation, key, "MetadataAssociation", conflicts, choices, useLocal);
                 target.FileIdentity = Field(b.FileIdentity, l.FileIdentity, r.FileIdentity, key, "FileIdentity", conflicts, choices, useLocal);
-                var linkOrder = b.LinkedYmmpFiles.Select(link => link.Id).ToArray();
-                if (bLinks != lLinks && bLinks != rLinks && lLinks != rLinks &&
-                    linkOrder.SequenceEqual(l.LinkedYmmpFiles.Select(link => link.Id)) && linkOrder.SequenceEqual(r.LinkedYmmpFiles.Select(link => link.Id)))
+                if (lLinks != bLinks && lLinks != rLinks)
                 {
-                    for (var i = 0; i < linkOrder.Length; i++)
-                        MergeLink(b.LinkedYmmpFiles[i], l.LinkedYmmpFiles[i], r.LinkedYmmpFiles[i], target.LinkedYmmpFiles[i],
-                            $"{key} / link {linkOrder[i]}", conflicts, choices, useLocal);
+                    if (rLinks == bLinks) CopyLinks(l, target);
+                    else MergeLinks(b, l, r, target, key, changes, conflicts, choices, useLocal);
                 }
-                else if (lLinks != rLinks && Field(bLinks, lLinks, rLinks, key, "LinkedYmmpFiles", conflicts, choices, useLocal) == lLinks)
-                    CopyLinks(l, target);
             }
             if (before == conflicts.Count)
             {
@@ -181,18 +176,84 @@ internal static class ProjectListMerge
         return localFields.Split(';').Any(anchor => mergedAnchors.Contains(anchor) && !remoteAnchors.Contains(anchor));
     }
 
+    private static void MergeLinks(ProjectEntry baseline, ProjectEntry local, ProjectEntry remote, ProjectEntry target, string key,
+        List<string> changes, List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
+    {
+        var original = baseline.LinkedYmmpFiles.ToList();
+        var edited = local.LinkedYmmpFiles.ToList();
+        var latest = remote.LinkedYmmpFiles.ToList();
+        var merged = target.LinkedYmmpFiles.ToList();
+        var bs = original.ToDictionary(link => link.Id);
+        var ls = edited.ToDictionary(link => link.Id);
+        var rs = latest.ToDictionary(link => link.Id);
+        foreach (var id in bs.Keys.Union(ls.Keys))
+        {
+            bs.TryGetValue(id, out var b);
+            ls.TryGetValue(id, out var l);
+            rs.TryGetValue(id, out var r);
+            var linkKey = $"{key} / link {id}";
+            if (b is null)
+            {
+                if (l is null) continue;
+                if (r is null) merged.Add(Clone(l));
+                else if (!SameLink(l, r) && Decide(linkKey, "リンクの追加", LinkDetails(l), LinkDetails(r), conflicts, choices, useLocal) is true)
+                    merged[merged.FindIndex(link => link.Id == id)] = Clone(l);
+                continue;
+            }
+            if (l is null)
+            {
+                if (r is not null && (SameLink(b, r) ||
+                    Decide(linkKey, "リンクの削除と変更", "リンクを削除", LinkDetails(r), conflicts, choices, useLocal) is true))
+                    merged.RemoveAll(link => link.Id == id);
+                continue;
+            }
+            if (SameLink(b, l)) continue;
+            if (r is null)
+            {
+                if (Decide(linkKey, "リンクの変更と削除", LinkDetails(l), "リンクを削除", conflicts, choices, useLocal) is true)
+                    merged.Add(Clone(l));
+                continue;
+            }
+            MergeLink(b, l, r, merged.Single(link => link.Id == id), linkKey, conflicts, choices, useLocal);
+        }
+        MergeOrder(original, edited, latest, merged, link => link.Id, EqualityComparer<Guid>.Default,
+            $"{key} のリンク", changes, conflicts, choices, useLocal);
+        target.LinkedYmmpFiles.Clear();
+        foreach (var link in merged) target.LinkedYmmpFiles.Add(link);
+    }
+
     private static void MergeLink(LinkedYmmpFile baseline, LinkedYmmpFile local, LinkedYmmpFile remote, LinkedYmmpFile target,
         string key, List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
-        target.FilePath = Field(baseline.FilePath, local.FilePath, remote.FilePath, key, "FilePath", conflicts, choices, useLocal);
         target.DisplayName = Field(baseline.DisplayName, local.DisplayName, remote.DisplayName, key, "DisplayName", conflicts, choices, useLocal);
         target.Role = Field(baseline.Role, local.Role, remote.Role, key, "Role", conflicts, choices, useLocal);
         target.Memo = Field(baseline.Memo, local.Memo, remote.Memo, key, "Memo", conflicts, choices, useLocal);
         target.RegisteredAt = Field(baseline.RegisteredAt, local.RegisteredAt, remote.RegisteredAt, key, "RegisteredAt", conflicts, choices, useLocal);
-        target.LastCheckedAt = Field(baseline.LastCheckedAt, local.LastCheckedAt, remote.LastCheckedAt, key, "LastCheckedAt", conflicts, choices, useLocal);
-        target.Exists = Field(baseline.Exists, local.Exists, remote.Exists, key, "Exists", conflicts, choices, useLocal);
+        if (baseline.FilePath != local.FilePath || baseline.FilePath != remote.FilePath)
+        {
+            static string DescribeFile(LinkedYmmpFile link) => System.Text.Json.JsonSerializer.Serialize(new { link.FilePath, link.LastCheckedAt, link.Exists });
+            var b = DescribeFile(baseline); var l = DescribeFile(local); var r = DescribeFile(remote);
+            if (l != b && l != r && (r == b || Decide(key, "リンク先と存在確認", l, r, conflicts, choices, useLocal) is true))
+            {
+                target.FilePath = local.FilePath;
+                target.LastCheckedAt = local.LastCheckedAt;
+                target.Exists = local.Exists;
+            }
+        }
+        else
+        {
+            target.LastCheckedAt = Field(baseline.LastCheckedAt, local.LastCheckedAt, remote.LastCheckedAt, key, "LastCheckedAt", conflicts, choices, useLocal);
+            target.Exists = Field(baseline.Exists, local.Exists, remote.Exists, key, "Exists", conflicts, choices, useLocal);
+        }
         target.UpdatedAt = local.UpdatedAt >= remote.UpdatedAt ? local.UpdatedAt : remote.UpdatedAt;
     }
+
+    private static string LinkDetails(LinkedYmmpFile link) => System.Text.Json.JsonSerializer.Serialize(new
+    {
+        link.Id, link.FilePath, link.DisplayName, link.Role, link.Memo, link.RegisteredAt, link.UpdatedAt, link.LastCheckedAt, link.Exists,
+    });
+
+    private static bool SameLink(LinkedYmmpFile left, LinkedYmmpFile right) => LinkDetails(left) == LinkDetails(right);
 
     private static T Field<T>(T b, T l, T r, string key, string name, List<string> conflicts,
         List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
@@ -363,7 +424,8 @@ internal static class ProjectListMerge
             var fileIds = new HashSet<(ulong Volume, Guid Id)>();
             if (value.Projects.Any(project => project.FileIdentity is { } file &&
                 (file.FileId == Guid.Empty || !fileIds.Add((file.Volume, file.FileId))))) return false;
-            if (value.Projects.Any(x => x.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != x.LinkedYmmpFiles.Count)) return false;
+            if (value.Projects.Any(project => project.LinkedYmmpFiles.Any(link => link.Id == Guid.Empty) ||
+                project.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != project.LinkedYmmpFiles.Count)) return false;
             if (value.Folders.Any(x => x.Id == Guid.Empty || string.IsNullOrWhiteSpace(x.Name)) || value.Folders.Select(x => x.Id).Distinct().Count() != value.Folders.Count) return false;
             var folderIds = value.Folders.Select(x => x.Id).ToHashSet();
             return value.Projects.All(x => x.FolderId is null || folderIds.Contains(x.FolderId.Value));

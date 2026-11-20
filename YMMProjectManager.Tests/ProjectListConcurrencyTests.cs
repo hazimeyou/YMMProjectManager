@@ -197,6 +197,39 @@ internal static class ProjectListConcurrencyTests
         var linkResult = ProjectListMerge.Merge(linkBase, linkLocal, linkRemote).Store?.Projects.Single().LinkedYmmpFiles.Single();
         if (linkResult is not { Memo: "local memo", DisplayName: "remote label" })
             throw new Exception("independent changes to a link were not merged");
+        var linkId = linkBase.Projects[0].LinkedYmmpFiles[0].Id;
+        var anotherLink = new LinkedYmmpFile { FilePath = Path.Combine(root, "existing-link.ymmp") };
+        linkBase.Projects[0].LinkedYmmpFiles.Add(anotherLink);
+        var localLinks = ProjectListMerge.Snapshot(linkBase);
+        var remoteLinks = ProjectListMerge.Snapshot(linkBase);
+        localLinks.Projects[0].LinkedYmmpFiles[0].Memo = "local changed";
+        remoteLinks.Projects[0].LinkedYmmpFiles[1].DisplayName = "remote changed";
+        localLinks.Projects[0].LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = Path.Combine(root, "local-added-link.ymmp") });
+        remoteLinks.Projects[0].LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = Path.Combine(root, "remote-added-link.ymmp") });
+        var bothLinks = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks).Store?.Projects.Single().LinkedYmmpFiles;
+        if (bothLinks?.Count != 4 || bothLinks.Single(link => link.Id == linkId).Memo != "local changed" ||
+            bothLinks.Single(link => link.Id == anotherLink.Id).DisplayName != "remote changed")
+            throw new Exception("independent link membership or field changes were conflated");
+        remoteLinks.Projects[0].LinkedYmmpFiles.RemoveAt(0);
+        var removedLink = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks);
+        if (!removedLink.CanResolveAll || removedLink.Choices.Count != 1)
+            throw new Exception("link removal and edit did not disclose an explicit conflict");
+        var chooseLink = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks,
+            new Dictionary<ProjectListConflict, bool> { [removedLink.Choices.Single()] = true }).Store?.Projects.Single().LinkedYmmpFiles;
+        if (chooseLink?.Count != 4 || chooseLink.Single(link => link.Id == linkId).Memo != "local changed")
+            throw new Exception("explicit link restoration lost independent additions or edits");
+        localLinks = ProjectListMerge.Snapshot(linkBase); remoteLinks = ProjectListMerge.Snapshot(linkBase);
+        var localLink = localLinks.Projects[0].LinkedYmmpFiles[0];
+        localLink.FilePath = Path.Combine(root, "moved-link.ymmp");
+        remoteLinks.Projects[0].LinkedYmmpFiles[0].Exists = true;
+        remoteLinks.Projects[0].LinkedYmmpFiles[0].LastCheckedAt = DateTimeOffset.UtcNow;
+        var linkBinding = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks);
+        if (!linkBinding.CanResolveAll || linkBinding.Choices.Count != 1)
+            throw new Exception("link destination inherited a presence check for the old path");
+        var chooseBinding = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks,
+            new Dictionary<ProjectListConflict, bool> { [linkBinding.Choices.Single()] = true }).Store?.Projects.Single().LinkedYmmpFiles[0];
+        if (chooseBinding?.FilePath != localLink.FilePath || chooseBinding.Exists || chooseBinding.LastCheckedAt is not null)
+            throw new Exception("link selection mixed the new path with an old file check");
         local = ProjectListMerge.Snapshot(mergeBase); remote = ProjectListMerge.Snapshot(mergeBase);
         local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
         remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "same.ymmp"), ProjectId = Guid.NewGuid() });
