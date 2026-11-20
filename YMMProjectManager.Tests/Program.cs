@@ -115,6 +115,7 @@ internal static class Program
             return;
         }
 
+        await RunGroupAsync(nameof(PreviewComparisonTests), PreviewComparisonTests.RunAsync);
         await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
         await RunGroupAsync("TestCreateAndListAsync", () => TestCreateAndListAsync(workRoot));
         await RunGroupAsync("TestMultipleGenerationsAsync", () => TestMultipleGenerationsAsync(workRoot));
@@ -200,6 +201,9 @@ internal static class Program
         {
             switch (testName)
             {
+                case nameof(PreviewComparisonTests):
+                    await PreviewComparisonTests.RunAsync();
+                    break;
                 case "RealYmmpxR5":
                     await RealYmmpxR5Tests.RunAsync(workRoot);
                     break;
