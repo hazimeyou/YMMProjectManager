@@ -88,7 +88,8 @@ public sealed partial class GitRepository
         return WithinRemoteDeadlineAsync("Fetch", deadline => WithAppWriteLeaseAsync(() => FetchCoreAsync(target.Endpoint, deadline, target), deadline), token, RemoteTimeout);
     }
 
-    private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token, GitFetchTarget? approvedTarget = null)
+    private async Task<GitResult> FetchCoreAsync(string? expectedRemote, CancellationToken token, GitFetchTarget? approvedTarget = null,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         var trusted = expectedRemote is not null;
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
@@ -102,7 +103,8 @@ public sealed partial class GitRepository
         if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
         BeforeRemoteExecution?.Invoke(token);
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before fetch.");
-        return await RunRemoteAsync(url!, ["fetch", "--no-recurse-submodules", "--", url!, "+refs/heads/*:refs/remotes/origin/*"], token, trusted).ConfigureAwait(false);
+        return await RunRemoteAsync(url!, ["fetch", "--no-recurse-submodules", "--", url!, "+refs/heads/*:refs/remotes/origin/*"],
+            token, trusted, authentication: authentication).ConfigureAwait(false);
     }
 
     /// <summary>Assesses the locally fetched origin branch without fetching or modifying the repository.</summary>
@@ -344,7 +346,8 @@ public sealed partial class GitRepository
         return WithinRemoteDeadlineAsync("Push", deadline => WithAppWriteLeaseAsync(() => PushCoreAsync(target.Endpoint, deadline, target), deadline), token, RemoteTimeout);
     }
 
-    private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token, GitPushTarget? approvedTarget = null)
+    private async Task<GitResult> PushCoreAsync(string? expectedRemote, CancellationToken token, GitPushTarget? approvedTarget = null,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         var trusted = expectedRemote is not null;
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
@@ -383,9 +386,10 @@ public sealed partial class GitRepository
         if (!HasOrdinaryPublicationObjectStore())
             return PublicationRefusal("The Git object store changed during inspection.");
         return await RunRemoteAsync(target.Endpoint,
-            ["-c", "push.followTags=false", "-c", "push.negotiate=false",
-             "push", "--porcelain", "--no-follow-tags", "--no-verify", "--recurse-submodules=no",
-             "--", target.Endpoint, target.ObjectId + ":" + target.BranchRef], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
+            ["-c", "push.followTags=false", "-c", "push.negotiate=false", "-c", "push.pushOption=",
+             "push", "--porcelain", "--no-follow-tags", "--no-verify", "--signed=no", "--recurse-submodules=no",
+             "--", target.Endpoint, target.ObjectId + ":" + target.BranchRef], token, trusted, classifyPushStatus: true,
+            authentication: authentication).ConfigureAwait(false);
     }
 
     private async Task<(GitPushTarget? Target, GitResult? Error)> ReadPushTargetAsync(string url, bool trusted, CancellationToken token,
@@ -423,8 +427,22 @@ public sealed partial class GitRepository
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
     private async Task<GitResult> RunRemoteAsync(string url, string[] arguments, CancellationToken token,
-        bool trusted, bool classifyPushStatus = false, string? cloneStage = null)
+        bool trusted, bool classifyPushStatus = false, string? cloneStage = null,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
+        if (HasGitHubHost(url))
+        {
+            if (!trusted || !IsSupportedGitHubEndpoint(url)) return UnsupportedGitHubEndpoint();
+            using var session = cloneStage is null ? await OpenPullSessionAsync(token, requireIndex: false).ConfigureAwait(false) : null;
+            if (cloneStage is null && session is null) return UnsupportedGitHubRepository();
+            if (cloneStage is not null)
+                arguments = ["clone", "--template=", "--no-recurse-submodules", "--", url, cloneStage];
+            var result = await RunGitHubTransportAsync(url, arguments, token, authentication, session?.Settings ?? [],
+                cloneStage).ConfigureAwait(false);
+            return SanitizeRemote(result, classifyPushStatus, cloneStage);
+        }
+        if (authentication != GitHubAuthentication.Anonymous) return UnsupportedGitHubEndpoint();
+
         var protocol = Path.IsPathFullyQualified(url) ? "file" : "https";
         if (trusted)
         {
@@ -471,10 +489,13 @@ public sealed partial class GitRepository
     internal static Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token) =>
         WithinRemoteDeadlineAsync("Clone", deadline => CloneCoreAsync(remote, destination, beforeMove, deadline, trusted: false), token, Timeout);
 
-    private static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token, bool trusted)
+    private static async Task<GitResult> CloneCoreAsync(string remote, string destination, Action? beforeMove, CancellationToken token, bool trusted,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         token.ThrowIfCancellationRequested();
         ValidateRemote(remote);
+        if (authentication != GitHubAuthentication.Anonymous && !IsSupportedGitHubEndpoint(remote))
+            return UnsupportedGitHubEndpoint();
         ArgumentException.ThrowIfNullOrWhiteSpace(destination);
         var full = Path.GetFullPath(destination);
         if (Directory.Exists(full) || File.Exists(full)) throw new IOException("Clone destination already exists.");
@@ -490,7 +511,7 @@ public sealed partial class GitRepository
         try
         {
             result = await repository.RunRemoteAsync(remote, ["clone", "--no-recurse-submodules", "--", remote, staging.Path],
-                token, trusted, cloneStage: staging.Path).ConfigureAwait(false);
+                token, trusted, cloneStage: staging.Path, authentication: authentication).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -618,14 +639,19 @@ public sealed partial class GitRepository
     }
 
     // Git, credential helpers and hooks can emit arbitrary secrets; do not return their output for remote operations.
-    private static GitResult SanitizeRemote(GitResult result, bool classifyPushStatus, string? cloneStage)
+    internal static GitResult SanitizeRemote(GitResult result, bool classifyPushStatus, string? cloneStage)
     {
+        if (result.Failure != GitFailure.None) return result;
         if (result.Success) return new GitResult(result.ExitCode, "", "");
         var category = classifyPushStatus && HasNonFastForwardRejection(result.StandardOutput)
             ? GitFailure.Divergence : ClassifyRemoteError(result.StandardError, cloneStage);
-        var message = category == GitFailure.PathTooLong
-            ? "Git could not represent a filesystem path. Use a shorter repository or clone destination path."
-            : "Remote operation failed. Check authentication, connectivity and branch state.";
+        var message = category switch
+        {
+            GitFailure.PathTooLong => "Git could not represent a filesystem path. Use a shorter repository or clone destination path.",
+            GitFailure.Authentication => "GitHub or the remote could not authenticate this request. Check the selected credential mode and account access.",
+            GitFailure.Permission => "The current account or remote denied permission for this operation.",
+            _ => "Remote operation failed. Check authentication, connectivity and branch state.",
+        };
         return new GitResult(result.ExitCode, "", message, category);
     }
 
@@ -638,8 +664,10 @@ public sealed partial class GitRepository
         if (cloneStage is { Length: >= 260 } && Contains("Clone succeeded, but checkout failed") &&
             Contains("this operation must be run in a work tree"))
             return GitFailure.PathTooLong;
-        if (Contains("authentication failed") || Contains("could not read Username")) return GitFailure.Authentication;
         if (Contains("permission denied") || Contains("requested URL returned error: 403")) return GitFailure.Permission;
+        if (Contains("authentication failed") || Contains("could not read Username") || Contains("requested URL returned error: 401") ||
+            Contains("interactive authentication has been disabled") || Contains("cannot prompt because user interactivity has been disabled"))
+            return GitFailure.Authentication;
         if (Contains("could not resolve host") || Contains("couldn't connect")) return GitFailure.Network;
         return GitFailure.Unknown;
     }
@@ -708,10 +736,11 @@ public sealed partial class GitRepository
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
         int? outputLimit = null, string? privateIndex = null, Func<Stream, CancellationToken, Task>? rawOutput = null,
-        bool noLazyFetch = false)
+        bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null)
     {
         token.ThrowIfCancellationRequested();
-        var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
+        var start = new ProcessStartInfo(githubTransport?.Executable ??
+            (allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable()))
         {
             WorkingDirectory = directory,
             UseShellExecute = false,
@@ -783,6 +812,7 @@ public sealed partial class GitRepository
             start.Environment.Remove("GIT_ASKPASS");
             start.Environment.Remove("SSH_ASKPASS");
         }
+        githubTransport?.Configure(start.Environment);
         // Status refresh must not silently start a repository-configured fsmonitor process.
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add("core.fsmonitor=false");

@@ -12,13 +12,16 @@ public sealed partial class GitRepository
     internal Action? AfterPullProcessExit { get; set; }
 
     public Task<GitResult> InspectPullRemoteAsync(CancellationToken token = default) =>
+        InspectPullRemoteAsync(GitHubAuthentication.Anonymous, token);
+
+    public Task<GitResult> InspectPullRemoteAsync(GitHubAuthentication authentication, CancellationToken token = default) =>
         WithinRemoteDeadlineAsync("Pull preview", async deadline =>
         {
             if (HasPendingPullEvidence()) return UnresolvedPull();
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
-            var (remote, failure) = await ReadPullRemoteAsync(session, deadline).ConfigureAwait(false);
+            var (remote, failure) = await ReadPullRemoteAsync(session, deadline, authentication).ConfigureAwait(false);
             return failure ?? new GitResult(0, "", "") { PullRemote = remote };
         }, token, RemoteTimeout);
 
@@ -31,7 +34,7 @@ public sealed partial class GitRepository
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
-            var (current, failure) = await ReadPullRemoteAsync(session, deadline).ConfigureAwait(false);
+            var (current, failure) = await ReadPullRemoteAsync(session, deadline, approvedRemote.Authentication).ConfigureAwait(false);
             if (failure is not null) return failure;
             if (!SamePullRemote(current!, approvedRemote)) return ChangedPull();
             var (target, error) = await ReadAdvertisedCommitAsync(session, current!, deadline).ConfigureAwait(false);
@@ -53,7 +56,7 @@ public sealed partial class GitRepository
         using var session = await OpenPullSessionAsync(preparationToken).ConfigureAwait(false);
         if (session is null) return UnsupportedPullRepository();
         if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
-        var (remote, failure) = await ReadPullRemoteAsync(session, preparationToken).ConfigureAwait(false);
+        var (remote, failure) = await ReadPullRemoteAsync(session, preparationToken, approved.Remote.Authentication).ConfigureAwait(false);
         if (failure is not null) return failure;
         if (!SamePullRemote(remote!, approved.Remote)) return ChangedPull();
 
@@ -69,7 +72,7 @@ public sealed partial class GitRepository
         var imported = await RunPullTransportAsync(session, approved.Endpoint,
             ["fetch", "--no-recurse-submodules", "--no-tags", "--no-prune", "--no-prune-tags",
                 "--no-auto-maintenance", "--no-write-fetch-head", "--refmap=", "--", approved.Endpoint, approved.TargetObjectId],
-            preparationToken).ConfigureAwait(false);
+            preparationToken, approved.Remote.Authentication).ConfigureAwait(false);
         if (!imported.Success) return SanitizeRemote(imported, classifyPushStatus: false, cloneStage: null);
 
         BeforePullExecutionRecheck?.Invoke(preparationToken);
@@ -158,7 +161,8 @@ public sealed partial class GitRepository
     private GitResult ClearPullJournal(GitPullOperationJournal journal, GitResult result) =>
         journal.Clear() ? result : UnresolvedPull();
 
-    private async Task<(GitPullRemote? Remote, GitResult? Error)> ReadPullRemoteAsync(PullSession session, CancellationToken token)
+    private async Task<(GitPullRemote? Remote, GitResult? Error)> ReadPullRemoteAsync(PullSession session, CancellationToken token,
+        GitHubAuthentication authentication)
     {
         var (branch, error) = await ReadBranchTipAsync(trusted: true, token, session.Settings).ConfigureAwait(false);
         if (branch is null || error is not null)
@@ -177,10 +181,14 @@ public sealed partial class GitRepository
         var endpoint = await ReadSinglePullSettingAsync(session, $"remote.{remote}.url", token).ConfigureAwait(false);
         try { ValidateRemote(endpoint ?? ""); }
         catch (ArgumentException) { return (null, UnsupportedPullRemote()); }
+        if (!Enum.IsDefined(authentication) ||
+            ((HasGitHubHost(endpoint!) || authentication != GitHubAuthentication.Anonymous) && !IsSupportedGitHubEndpoint(endpoint!)))
+            return (null, UnsupportedGitHubEndpoint());
         if (Path.IsPathFullyQualified(endpoint!) &&
             (!OnFixedLocalNtfs(endpoint!) || !IsOrdinaryDirectory(endpoint!)))
             return (null, UnsupportedPullRemote());
-        return (new GitPullRemote(directory, branch.BranchRef, branch.ObjectId, remote, upstream, endpoint!, session.Identity, session.Settings), null);
+        return (new GitPullRemote(directory, branch.BranchRef, branch.ObjectId, remote, upstream, endpoint!, session.Identity, session.Settings,
+            authentication), null);
     }
 
     private async Task<string?> ReadSinglePullSettingAsync(PullSession session, string name, CancellationToken token)
@@ -193,7 +201,7 @@ public sealed partial class GitRepository
     private async Task<(string? ObjectId, GitResult? Error)> ReadAdvertisedCommitAsync(PullSession session, GitPullRemote remote, CancellationToken token)
     {
         var listing = await RunPullTransportAsync(session, remote.Endpoint,
-            ["ls-remote", "--exit-code", "--refs", "--", remote.Endpoint, remote.UpstreamRef], token).ConfigureAwait(false);
+            ["ls-remote", "--exit-code", "--refs", "--", remote.Endpoint, remote.UpstreamRef], token, remote.Authentication).ConfigureAwait(false);
         if (listing.ExitCode == 2)
             return (null, UnsafeRemote("The approved upstream branch is missing."));
         if (!listing.Success) return (null, SanitizeRemote(listing, classifyPushStatus: false, cloneStage: null));
@@ -207,7 +215,7 @@ public sealed partial class GitRepository
 
     private async Task<(PullSnapshot? State, GitResult? Error)> ReadPreparedPullAsync(PullSession session, GitPullTarget approved, CancellationToken token)
     {
-        var (current, failure) = await ReadPullRemoteAsync(session, token).ConfigureAwait(false);
+        var (current, failure) = await ReadPullRemoteAsync(session, token, approved.Remote.Authentication).ConfigureAwait(false);
         if (failure is not null || !SamePullRemote(current!, approved.Remote)) return (null, ChangedPull());
         var state = await ReadCurrentPullStateAsync(session, approved, token).ConfigureAwait(false);
         return state is not null && state.StartObjectId == approved.StartObjectId
@@ -244,7 +252,7 @@ public sealed partial class GitRepository
     private static bool SamePullRemote(GitPullRemote current, GitPullRemote approved) =>
         current.RepositoryRoot == approved.RepositoryRoot && current.BranchRef == approved.BranchRef &&
         current.StartObjectId == approved.StartObjectId && current.RemoteName == approved.RemoteName &&
-        current.UpstreamRef == approved.UpstreamRef && current.Endpoint == approved.Endpoint &&
+        current.UpstreamRef == approved.UpstreamRef && current.Endpoint == approved.Endpoint && current.Authentication == approved.Authentication &&
         current.Identity == approved.Identity && current.Settings.SequenceEqual(approved.Settings, StringComparer.Ordinal);
 
     private static GitResult UnsupportedPullRepository() =>
@@ -273,7 +281,8 @@ public sealed partial class GitRepository
 public sealed class GitPullRemote
 {
     internal GitPullRemote(string repositoryRoot, string branchRef, string startObjectId, string remoteName,
-        string upstreamRef, string endpoint, GitRepositoryIdentity identity, string[] settings)
+        string upstreamRef, string endpoint, GitRepositoryIdentity identity, string[] settings,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         RepositoryRoot = repositoryRoot;
         BranchRef = branchRef;
@@ -281,6 +290,7 @@ public sealed class GitPullRemote
         RemoteName = remoteName;
         UpstreamRef = upstreamRef;
         Endpoint = endpoint;
+        Authentication = authentication;
         Identity = identity;
         Settings = settings.ToArray();
     }
@@ -291,6 +301,7 @@ public sealed class GitPullRemote
     public string RemoteName { get; }
     public string UpstreamRef { get; }
     public string Endpoint { get; }
+    public GitHubAuthentication Authentication { get; }
     internal GitRepositoryIdentity Identity { get; }
     internal string[] Settings { get; }
 }

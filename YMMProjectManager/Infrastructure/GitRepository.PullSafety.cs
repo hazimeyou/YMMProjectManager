@@ -165,8 +165,11 @@ public sealed partial class GitRepository
     private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token, Action<Process>? afterStart = null) =>
         RunDirectAsync(arguments, token, pullSettings: session.Settings, afterStart: afterStart);
 
-    private Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token)
+    private Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token,
+        GitHubAuthentication authentication)
     {
+        if (HasGitHubHost(endpoint) || authentication != GitHubAuthentication.Anonymous)
+            return RunGitHubTransportAsync(endpoint, arguments, token, authentication, session.Settings);
         var local = Path.IsPathFullyQualified(endpoint);
         var settings = local ? Array.Empty<string>() :
             new[] { "-c", "http.followRedirects=false", "-c", "http.sslVerify=true", "-c", "http.proxy=" };

@@ -87,6 +87,85 @@ internal static class GitRepositoryTests
         Console.WriteLine("Offline Git local operations passed.");
         await Program.RunNamedCaseAsync("Reviewed Commit preserves staged and unstaged changes across a ref compare-and-swap", () => VerifyReviewedCommitAsync(workRoot));
         await Program.RunNamedCaseAsync("Reviewed Commit rejects changed staging, branch moves and cancellation", () => VerifyCommitInterferenceAsync(workRoot));
+        await Program.RunNamedCaseAsync("GitHub scope and helper isolation preserve auth, permission and cancellation categories", () => VerifyGitHubProfileAsync(workRoot));
+    }
+
+    private static async Task VerifyGitHubProfileAsync(string workRoot)
+    {
+        var root = Path.Combine(workRoot, "github-profile");
+        Directory.CreateDirectory(root);
+        var git = new GitRepository(root);
+        Require((await git.InitializeAsync()).Success, "init GitHub settings fixture");
+        Require(GitRepository.IsSupportedGitHubEndpoint("https://github.com/Synthetic/repo-name.git"), "literal repository URL accepted");
+        foreach (var uri in new[]
+        {
+            "https://github.com.evil.invalid/Synthetic/repo", "https://github.com:443/Synthetic/repo",
+            "https://github.com/Synthetic/../repo", "https://github.com/Synthetic/%72epo",
+            "https://github.com/Synthetic/repo?token=value", "https://github.com@evil.invalid/Synthetic/repo",
+            "https://github.com/Synthetic/repo/extra", "https://github.com/Synthetic/..",
+        })
+        {
+            Require(!GitRepository.IsSupportedGitHubEndpoint(uri), "non-literal repository URL accepted");
+            Require((await git.ProbeGitHubAccessAsync(uri, GitHubAuthentication.CachedWindows)).Failure == GitFailure.UnsafeOperation,
+                "unsupported endpoint reached the credential path");
+        }
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        try
+        {
+            await git.ProbeGitHubAccessAsync("https://github.com/Synthetic/repo-name.git", GitHubAuthentication.CachedWindows, cancelled.Token);
+            throw new InvalidOperationException("credential probe ignored pre-cancellation");
+        }
+        catch (OperationCanceledException) { }
+
+        var script = Path.Combine(root, "manager.sh");
+        await File.WriteAllTextAsync(script, "#!/bin/sh\nprintf 'username=fixture\\npassword=synthetic-non-secret\\n'\n");
+        foreach (var candidate in new[]
+        {
+            (Helper: (string?)null, Host: "github.com", Expected: 128),
+            (Helper: script, Host: "github.com", Expected: 0),
+            (Helper: script, Host: "other.invalid", Expected: 128),
+        })
+        {
+            // This exercises Git's actual helper parser with a wholly local,
+            // synthetic helper. No network connection or real credential is made.
+            var start = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            };
+            ConfigureFixtureGit(start);
+            start.Environment["GIT_TERMINAL_PROMPT"] = "0";
+            start.Environment.Remove("SSH_ASKPASS");
+            var arguments = GitRepository.BuildGitHubTransportSettings(
+                ["-c", "credential.https://github.com.helper=!echo unsafe > unsafe-helper-ran"], candidate.Helper);
+            foreach (var arg in arguments.Concat(["credential", "fill"])) start.ArgumentList.Add(arg);
+            using var process = Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.StandardInput.BaseStream.WriteAsync(System.Text.Encoding.UTF8.GetBytes($"protocol=https\nhost={candidate.Host}\npath=Synthetic/repo.git\n\n"));
+            process.StandardInput.Close();
+            await process.WaitForExitAsync();
+            var output = await stdout;
+            await stderr;
+            Require(process.ExitCode == candidate.Expected && output.Contains("password=synthetic-non-secret") == (candidate.Expected == 0),
+                "helper selection did not match the approved host or auth mode");
+            Require(!File.Exists(Path.Combine(root, "unsafe-helper-ran")), "lower-priority credential helper was executed");
+        }
+
+        foreach (var (reason, failure) in new[]
+        {
+            ("authentication failed", GitFailure.Authentication),
+            ("The requested URL returned error: 401", GitFailure.Authentication),
+            ("The requested URL returned error: 403", GitFailure.Permission),
+            ("permission denied", GitFailure.Permission),
+        })
+        {
+            const string marker = "synthetic-private-diagnostic";
+            var safe = GitRepository.SanitizeRemote(new(128, marker, reason + ": " + marker), false, null);
+            Require(safe.Failure == failure && safe.StandardOutput == "" && !safe.StandardError.Contains(marker),
+                "remote error was not classified or helper output leaked");
+        }
     }
 
     private static async Task VerifyReviewedCommitAsync(string workRoot)
@@ -177,12 +256,7 @@ internal static class GitRepositoryTests
             WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
             RedirectStandardOutput = true, RedirectStandardError = true,
         };
-        foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
-            start.Environment.Remove(key);
-        start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
-        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
-        start.Environment["GIT_NO_LAZY_FETCH"] = "1";
-        start.Environment["GIT_ALLOW_PROTOCOL"] = "";
+        ConfigureFixtureGit(start);
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var child = Process.Start(start)!;
         var output = child.StandardOutput.ReadToEndAsync();
@@ -190,6 +264,16 @@ internal static class GitRepositoryTests
         await child.WaitForExitAsync();
         Require(child.ExitCode == allowedExitCode, $"fixture {args[0]} returned {child.ExitCode}: {await error}");
         return await output;
+    }
+
+    private static void ConfigureFixtureGit(ProcessStartInfo start)
+    {
+        foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_NO_LAZY_FETCH"] = "1";
+        start.Environment["GIT_ALLOW_PROTOCOL"] = "";
     }
 
     private static void Require(bool condition, string message)
