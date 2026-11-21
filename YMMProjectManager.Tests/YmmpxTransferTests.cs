@@ -153,7 +153,7 @@ internal static class YmmpxTransferTests
             var imported = await service.ExtractPackageAsync(legacy, Path.Combine(root, "verified-legacy-map"), default);
             Check(imported.Success && !imported.TransferEvidenceVerified && imported.ReplacedPathCount == 1, "Historical basename import");
             var project = JsonNode.Parse(await File.ReadAllTextAsync(imported.RestoredProjectPath!))!;
-            var material = project["Items"]![0]!["FilePath"]!.GetValue<string>();
+            var material = project["Items"]![0]!["filePath"]!.GetValue<string>();
             Check(Path.GetFileName(material) == "絵.txt" && await File.ReadAllTextAsync(material) == "legacy contents", "Legacy asset restored");
 
             var unmapped = Path.Combine(root, "unbound-legacy-map.ymmpx");
@@ -165,7 +165,7 @@ internal static class YmmpxTransferTests
             static void WriteLegacy(string package, string reference)
             {
                 using var archive = ZipFile.Open(package, ZipArchiveMode.Create);
-                WriteEntry(archive, "source.ymmp", JsonSerializer.Serialize(new { Items = new[] { new { FilePath = reference } } }));
+                WriteEntry(archive, "source.ymmp", JsonSerializer.Serialize(new { Items = new[] { new { filePath = reference } } }));
                 WriteEntry(archive, "_ymmpx_project_path.txt", "source.ymmp");
                 WriteEntry(archive, "links.json", """{"絵.txt":"resources/絵.txt"}""");
                 WriteEntry(archive, "resources/絵.txt", "legacy contents");

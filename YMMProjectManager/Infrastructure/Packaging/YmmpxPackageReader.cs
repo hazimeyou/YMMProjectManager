@@ -89,7 +89,7 @@ internal static class YmmpxPackageReader
         var transfer = manifestInput is not null
             ? await VerifyTransferAsync(source, manifestInput, archive.Comment, Path.GetFileName(packagePath), package, token).ConfigureAwait(false)
             : null;
-        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer);
+        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer, package.HasLegacyAliases);
 
         token.ThrowIfCancellationRequested();
         using var stage = OwnedStagingDirectory.Reserve(parent, ".ymmpx-");
@@ -460,15 +460,20 @@ internal static class YmmpxPackageReader
             token.ThrowIfCancellationRequested();
             if (node is JsonObject obj)
             {
+                var hasReference = false;
                 foreach (var (property, value) in obj.ToArray())
                 {
-                    if (property == "FilePath" && value is JsonValue path && path.TryGetValue<string>(out var key) &&
-                        aliases.TryGetValue(key, out var member))
+                    if (property.Equals("FilePath", StringComparison.OrdinalIgnoreCase))
                     {
-                        obj[property] = member;
-                        usedAliases.Add(key);
+                        if (hasReference) throw new InvalidDataException("旧形式のプロジェクトに曖昧な素材参照があります。");
+                        hasReference = true;
+                        if (value is JsonValue path && path.TryGetValue<string>(out var key) && aliases.TryGetValue(key, out var member))
+                        {
+                            obj[property] = member;
+                            usedAliases.Add(key);
+                        }
                     }
-                    else if (value is not null) Visit(value);
+                    if (value is not null) Visit(value);
                 }
             }
             else if (node is JsonArray array)
@@ -496,7 +501,8 @@ internal static class YmmpxPackageReader
                     token.ThrowIfCancellationRequested();
                     if (!remaining.Remove(property.Name, out var previous)) return false;
                     // Current YMMPX rewrites nonempty FilePath strings to members of its resource map.
-                    if (property.Name == "FilePath" && previous.ValueKind == JsonValueKind.String &&
+                    if (property.Name.Equals("FilePath", aliases.Count > 0 ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
+                        previous.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(previous.GetString()) && property.Value.ValueKind == JsonValueKind.String &&
                         (aliases.TryGetValue(property.Value.GetString()!, out var member) ||
                             (TryGetInternalPath(property.Value.GetString()!, out member) && resources.Contains(member))))
@@ -549,14 +555,15 @@ internal static class YmmpxPackageReader
     }
 
     private static int RewriteReferences(JsonNode node, HashSet<string> resources, string final, CancellationToken token,
-        YmmpxTransfer.Manifest? transfer = null)
+        YmmpxTransfer.Manifest? transfer, bool hasLegacyAliases)
     {
         token.ThrowIfCancellationRequested();
         var count = 0;
         if (node is JsonObject obj)
         {
             foreach (var (name, value) in obj.ToArray())
-                if ((transfer is not null ? YmmpxTransfer.IsReferenceProperty(name) : name == "FilePath") &&
+                if ((transfer is not null ? YmmpxTransfer.IsReferenceProperty(name) :
+                    name.Equals("FilePath", hasLegacyAliases ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) &&
                     value is JsonValue pathValue && pathValue.TryGetValue<string>(out var path) &&
                     ((TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath)) ||
                         (transfer is not null && path.StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal))))
@@ -564,11 +571,11 @@ internal static class YmmpxPackageReader
                     obj[name] = Path.Combine(final, internalPath.Replace('/', Path.DirectorySeparatorChar));
                     count++;
                 }
-                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer);
+                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer, hasLegacyAliases);
         }
         else if (node is JsonArray array)
             foreach (var child in array)
-                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer);
+                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer, hasLegacyAliases);
         return count;
     }
 
