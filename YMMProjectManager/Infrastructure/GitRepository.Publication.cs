@@ -143,6 +143,7 @@ public sealed partial class GitRepository
             component.Equals("ymmpm-transfer.json", StringComparison.OrdinalIgnoreCase) ||
             HasOperationName(component, ".ymmpm-transfer-") ||
             HasOperationName(component, ".ymmpm-package-") ||
+            HasOperationName(component, ".ymmpx-") ||
             HasOperationName(component, ".ymmpm-relink-") ||
             HasOperationName(component, ".ymmpm-relink-external-") ||
             HasOperationName(component, ".ymmpm-relink.tmp-") ||
@@ -335,7 +336,9 @@ public sealed partial class GitRepository
         {
             foreach (var property in node.EnumerateObject())
             {
-                if (property.NameEquals("FilePath") && property.Value.ValueKind == JsonValueKind.String &&
+                if ((property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) ||
+                    property.Name.Equals("EnableLayersFilePath", StringComparison.OrdinalIgnoreCase)) &&
+                    property.Value.ValueKind == JsonValueKind.String &&
                     property.Value.GetString() is { } reference)
                 {
                     if (IsTransferAssetReference(reference))

@@ -170,7 +170,8 @@ internal static class GitPublicationTests
             {
                 var operation = Guid.NewGuid().ToString("N");
                 var blockedPaths = new[] { "ymmpm-transfer.json", $".ymmpm-transfer-{operation}/new.ymmp",
-                    $".ymmpm-package-{operation}/copy.ymmp", "resources/ymmpm-transfer/00000001/clip.txt",
+                    $".ymmpm-package-{operation}/copy.ymmp", $".ymmpx-{operation}/copy.ymmp",
+                    "resources/ymmpm-transfer/00000001/clip.txt",
                     "ymmpm-missing/00000001/clip.txt" };
                 var objects = Path.Combine(source, ".git", "objects");
                 var before = Directory.GetFiles(objects, "*", SearchOption.AllDirectories);
@@ -197,7 +198,8 @@ internal static class GitPublicationTests
             var manifest = """{"version":1,"packageName":"fixture.ymmpx","packageSha256":"fixture","assets":[]}""";
             var bundled = """{"Timelines":[{"Items":[{"FilePath":"C:\\synthetic\\resources\\ymmpm-transfer\\0000000a\\clip.txt"}]}]}""";
             var missing = """{"Timelines":[{"Items":[{"FilePath":"ymmpm-missing/0000000b/clip.txt"}]}]}""";
-            foreach (var (name, contents) in new[] { ("manifest", manifest), ("bundled", bundled), ("missing", missing) })
+            var layers = """{"Timelines":[{"Items":[{"enableLayersFilePath":"resources/ymmpm-transfer/0000000c/layers.psd"}]}]}""";
+            foreach (var (name, contents) in new[] { ("manifest", manifest), ("bundled", bundled), ("missing", missing), ("layers", layers) })
                 await TestAsync(root, "r23-transfer-" + name, async (source, git) =>
                 {
                     var file = Path.Combine(source, "notes.json");
