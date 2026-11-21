@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Win32.SafeHandles;
+using YMMProjectManager.Domain;
 using YMMProjectManager.Domain.Packaging;
 
 using static YMMProjectManager.Infrastructure.OwnedFilePublication;
@@ -54,9 +55,17 @@ internal static class YmmpxPackageReader
         }
     }
 
-    internal static async Task<YmmpxExtractResult> ExtractAsync(string packagePath, string destination, CancellationToken token, IProgress<double>? progress)
+    internal static async Task VerifyTransferAsync(Stream source, Stream manifest, string packageName, CancellationToken token)
     {
-        var final = Path.TrimEndingDirectorySeparator(Path.GetFullPath(destination));
+        using var archive = OpenValidated(source, token);
+        var package = await ReadPackageAsync(archive, token).ConfigureAwait(false);
+        await VerifyTransferAsync(source, manifest, archive.Comment, packageName, package, token).ConfigureAwait(false);
+    }
+
+    internal static async Task<YmmpxExtractResult> ExtractAsync(string packagePath, string destination, CancellationToken token,
+        IProgress<double>? progress, bool requireTransfer = false)
+    {
+        var final = Path.TrimEndingDirectorySeparator(AssetPool.FullOrdinaryPath(Path.GetFullPath(destination)));
         var parent = Path.GetDirectoryName(final);
         if (parent is null || final.StartsWith(@"\\", StringComparison.Ordinal) || !Directory.Exists(parent) ||
             new DriveInfo(Path.GetPathRoot(final)!).DriveType is not (DriveType.Fixed or DriveType.Removable))
@@ -65,20 +74,34 @@ internal static class YmmpxPackageReader
         if (File.Exists(final) || Directory.Exists(final))
             throw new IOException("展開先が既に存在します。新しいフォルダー名を指定してください。");
 
-        await using var source = new FileStream(packagePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        packagePath = Path.GetFullPath(packagePath);
+        var packageDirectory = Path.GetDirectoryName(packagePath)!;
+        using var packageFence = DirectoryFence.Open(packageDirectory, enforceShare: true);
+        await using var source = YmmpxTransfer.OpenOrdinaryRead(packagePath);
         using var archive = OpenValidated(source, token);
         var package = await ReadPackageAsync(archive, token).ConfigureAwait(false);
-        var replacements = RewriteReferences(package.Project, package.Resources, final, token);
+        var manifestPath = Path.Combine(packageDirectory, YmmpxTransfer.ManifestName);
+        var isTransfer = requireTransfer || archive.Comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal) ||
+            package.Resources.Any(path => path.StartsWith(YmmpxTransfer.MediaPrefix, StringComparison.OrdinalIgnoreCase)) ||
+            ContainsTransferPlaceholder(package.Project, token);
+        await using var manifestInput = isTransfer ? YmmpxTransfer.OpenOrdinaryRead(manifestPath) : null;
+        var transfer = manifestInput is not null
+            ? await VerifyTransferAsync(source, manifestInput, archive.Comment, Path.GetFileName(packagePath), package, token).ConfigureAwait(false)
+            : null;
+        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer);
 
         var staging = Path.Combine(parent, ".ymmpx-" + Guid.NewGuid().ToString("N"));
         var files = new List<OwnedPath>();
+        var verifiedStagedFiles = new Dictionary<string, ProjectFileIdentity>(StringComparer.Ordinal);
         var directories = new List<OwnedPath>();
         var createdDirectories = new HashSet<string>(StringComparer.Ordinal);
-        using var subdirectoryFence = new DirectoryFence();
+        using var subdirectoryFence = new DirectoryFence(enforceShare: true);
         token.ThrowIfCancellationRequested();
         RequireOrdinaryDirectory(parent);
         ReserveDirectory(staging);
         SafeFileHandle? stagingHandle = null;
+        var published = false;
+        ProjectFileIdentity? restoredIdentity = null;
         try
         {
             stagingHandle = OpenOrdinaryDirectory(staging, allowRename: true);
@@ -88,25 +111,62 @@ internal static class YmmpxPackageReader
                 var target = Path.Combine(staging, name.Replace('/', Path.DirectorySeparatorChar));
                 EnsureParents(Path.GetDirectoryName(target)!);
                 RequireOrdinaryDirectory(Path.GetDirectoryName(target)!);
-                await using var output = CreateOwnedOutputFile(target);
+                await using var output = OwnedFilePublication.CreateOwnedOutputFile(target,
+                    readBack: name == package.ProjectName || transfer is not null);
                 files.Add(new OwnedPath(target, ReadIdentity(output.SafeFileHandle)));
                 if (name == package.ProjectName)
+                {
                     await JsonSerializer.SerializeAsync(output, package.Project, cancellationToken: token).ConfigureAwait(false);
+                }
                 else
                 {
                     await using var input = entry.Open();
                     await CopyEntryAsync(input, output, entry.Length, entry.Crc32, token).ConfigureAwait(false);
                 }
+                if (name == package.ProjectName || transfer is not null)
+                {
+                    var evidence = await ReadOwnedOutputEvidenceAsync(output, token).ConfigureAwait(false);
+                    verifiedStagedFiles.Add(target, evidence);
+                    if (name == package.ProjectName) restoredIdentity = evidence;
+                }
                 progress?.Report((double)files.Count / package.Files.Count * 0.99);
             }
+            if (manifestInput is not null)
+            {
+                var target = Path.Combine(staging, YmmpxTransfer.ManifestName);
+                await using var manifestOutput = OwnedFilePublication.CreateOwnedOutputFile(target, readBack: true);
+                files.Add(new OwnedPath(target, ReadIdentity(manifestOutput.SafeFileHandle)));
+                manifestInput.Position = 0;
+                await manifestInput.CopyToAsync(manifestOutput, token).ConfigureAwait(false);
+                verifiedStagedFiles.Add(target, await ReadOwnedOutputEvidenceAsync(manifestOutput, token).ConfigureAwait(false));
+            }
             token.ThrowIfCancellationRequested();
+            await VerifyStagedFilesAsync(staging, token).ConfigureAwait(false);
             // Windows may require child directory handles to be closed before renaming.
             // Keep the staging root open and publish that exact object without replacement.
             subdirectoryFence.Dispose();
+            token.ThrowIfCancellationRequested();
+            var stagingIdentity = ProjectFileEvidence.ReadPhysicalIdentity(stagingHandle);
             RenameOpenedPath(stagingHandle, final);
+            published = true;
+            stagingHandle.Dispose();
+            stagingHandle = null;
+            try
+            {
+                using var publishedFence = DirectoryFence.Open(final, enforceShare: true);
+                using var openedFinal = OpenOrdinaryDirectory(final);
+                if (ProjectFileEvidence.ReadPhysicalIdentity(openedFinal) != stagingIdentity)
+                    throw new IOException("展開したフォルダーが変更されました。");
+                await VerifyStagedFilesAsync(final, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                throw new InvalidDataException("公開後の展開ファイルが変更されたか再検証できません。出力したフォルダーを使用しないでください。", ex);
+            }
         }
         catch (Exception ex)
         {
+            if (published) throw;
             var removed = false;
             if (stagingHandle is not null)
             {
@@ -118,15 +178,21 @@ internal static class YmmpxPackageReader
             if (!removed) ex.Data[RetainedStagingPath] = staging;
             throw;
         }
-        finally { stagingHandle?.Dispose(); }
+        finally
+        {
+            stagingHandle?.Dispose();
+        }
 
         return new YmmpxExtractResult
         {
             Success = true,
             OutputDirectory = final,
             RestoredProjectPath = Path.Combine(final, package.ProjectName),
+            RestoredProjectIdentity = restoredIdentity,
             ExtractedResourceCount = package.Resources.Count,
             ReplacedPathCount = replacements,
+            TransferEvidenceVerified = transfer is not null,
+            MissingMaterials = transfer?.Missing.Select(missing => missing.OriginalFileName).ToArray() ?? [],
         };
 
         void EnsureParents(string path)
@@ -138,6 +204,105 @@ internal static class YmmpxPackageReader
             var handle = subdirectoryFence.Add(path);
             directories.Add(new OwnedPath(path, ReadIdentity(handle)));
             createdDirectories.Add(path);
+        }
+
+        async Task VerifyStagedFilesAsync(string actualRoot, CancellationToken verificationToken)
+        {
+            // NTFS requires child file handles to close before the folder rename.
+            // Reopen by relative name on each side of publication and compare the owned bytes and identity.
+            foreach (var (original, evidence) in verifiedStagedFiles)
+            {
+                var path = Path.Combine(actualRoot, Path.GetRelativePath(staging, original));
+                using var fence = actualRoot == staging ? null : DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
+                await using var current = YmmpxTransfer.OpenOrdinaryRead(path);
+                if (await ProjectFileEvidence.ReadAsync(current, verificationToken).ConfigureAwait(false) != evidence)
+                    throw new IOException("復元したファイルが公開時に変更されました。");
+            }
+        }
+    }
+
+    private static async Task<ProjectFileIdentity> ReadOwnedOutputEvidenceAsync(FileStream output, CancellationToken token)
+    {
+        await output.FlushAsync(token).ConfigureAwait(false);
+        output.Position = 0;
+        return await ProjectFileEvidence.ReadAsync(output, token).ConfigureAwait(false);
+    }
+
+    private static bool ContainsTransferPlaceholder(JsonNode node, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        return node switch
+        {
+            JsonObject obj => obj.Any(property => property.Value is not null &&
+                ((YmmpxTransfer.IsReferenceProperty(property.Key) && property.Value is JsonValue value &&
+                    value.TryGetValue<string>(out var path) &&
+                    Normalize(path).StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.OrdinalIgnoreCase)) ||
+                    ContainsTransferPlaceholder(property.Value, token))),
+            JsonArray array => array.Any(child => child is not null && ContainsTransferPlaceholder(child, token)),
+            _ => false,
+        };
+    }
+
+    private static async Task<YmmpxTransfer.Manifest> VerifyTransferAsync(Stream source, Stream manifestInput, string comment,
+        string packageName, Package package, CancellationToken token)
+    {
+        if (!comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal))
+            throw new InvalidDataException("受け渡し情報に対応した YMMPX が必要です。");
+        var manifest = await YmmpxTransfer.ReadManifestAsync(manifestInput, packageName, token).ConfigureAwait(false);
+        if (comment != YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing))
+            throw new InvalidDataException("受け渡し情報のハッシュが YMMPX の記録と一致しません。");
+        var position = source.Position;
+        source.Position = 0;
+        var archiveHash = Convert.ToHexString(await SHA256.HashDataAsync(source, token).ConfigureAwait(false));
+        source.Position = position;
+        if (!archiveHash.Equals(manifest.PackageSha256, StringComparison.OrdinalIgnoreCase) ||
+            manifest.Assets.Length != package.Resources.Count)
+            throw new InvalidDataException("受け渡し情報と YMMPX の内容が一致しません。");
+
+        var references = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var asset in manifest.Assets)
+        {
+            token.ThrowIfCancellationRequested();
+            if (!package.Resources.Contains(asset.ArchivePath) || package.Files[asset.ArchivePath].Length != asset.Length)
+                throw new InvalidDataException("素材名またはサイズが受け渡し情報と一致しません。");
+            var entry = package.Files[asset.ArchivePath];
+            await using var data = entry.Open();
+            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            await CopyEntryAsync(data, Stream.Null, entry.Length, entry.Crc32, token, digest).ConfigureAwait(false);
+            if (!Convert.ToHexString(digest.GetHashAndReset()).Equals(asset.Sha256, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("素材の SHA-256 が受け渡し情報と一致しません。");
+            references.Add(asset.ArchivePath);
+        }
+        foreach (var item in manifest.Missing) references.Add(item.ReferencePath);
+        var referenced = new HashSet<string>(StringComparer.Ordinal);
+        CheckReferences(package.Project);
+        if (!referenced.SetEquals(references))
+            throw new InvalidDataException("プロジェクトで参照されていない受け渡し素材があります。");
+        return manifest;
+
+        void CheckReferences(JsonNode node)
+        {
+            token.ThrowIfCancellationRequested();
+            if (node is JsonObject obj)
+            {
+                var propertyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var (property, value) in obj)
+                {
+                    if (!propertyNames.Add(property))
+                        throw new InvalidDataException("受け渡しプロジェクトに重複した JSON 名があります。");
+                    if (YmmpxTransfer.IsReferenceProperty(property) && value is JsonValue pathValue &&
+                        pathValue.TryGetValue<string>(out var path) && !string.IsNullOrWhiteSpace(path))
+                    {
+                        if (!references.Contains(path) || (ReferenceEquals(obj, package.Project) &&
+                            property.Equals("FilePath", StringComparison.OrdinalIgnoreCase)))
+                            throw new InvalidDataException("許可されていない素材参照がプロジェクトにあります。");
+                        referenced.Add(path);
+                    }
+                    else if (value is not null) CheckReferences(value);
+                }
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) if (child is not null) CheckReferences(child);
         }
     }
 
@@ -267,24 +432,27 @@ internal static class YmmpxPackageReader
             foreach (var child in element.EnumerateArray()) ValidateProjectJson(child, resources, token);
     }
 
-    private static int RewriteReferences(JsonNode node, HashSet<string> resources, string final, CancellationToken token)
+    private static int RewriteReferences(JsonNode node, HashSet<string> resources, string final, CancellationToken token,
+        YmmpxTransfer.Manifest? transfer = null)
     {
         token.ThrowIfCancellationRequested();
         var count = 0;
         if (node is JsonObject obj)
         {
-            if (obj["FilePath"] is JsonValue value && value.TryGetValue<string>(out var path) &&
-                TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath))
-            {
-                obj["FilePath"] = Path.Combine(final, internalPath.Replace('/', Path.DirectorySeparatorChar));
-                count++;
-            }
-            foreach (var property in obj)
-                if (property.Value is not null) count += RewriteReferences(property.Value, resources, final, token);
+            foreach (var (name, value) in obj.ToArray())
+                if ((transfer is not null ? YmmpxTransfer.IsReferenceProperty(name) : name == "FilePath") &&
+                    value is JsonValue pathValue && pathValue.TryGetValue<string>(out var path) &&
+                    ((TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath)) ||
+                        (transfer is not null && path.StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal))))
+                {
+                    obj[name] = Path.Combine(final, internalPath.Replace('/', Path.DirectorySeparatorChar));
+                    count++;
+                }
+                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer);
         }
         else if (node is JsonArray array)
             foreach (var child in array)
-                if (child is not null) count += RewriteReferences(child, resources, final, token);
+                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer);
         return count;
     }
 

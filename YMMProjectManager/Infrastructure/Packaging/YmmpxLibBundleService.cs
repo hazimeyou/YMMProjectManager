@@ -5,9 +5,11 @@ namespace YMMProjectManager.Infrastructure.Packaging;
 public sealed class YmmpxLibBundleService
 {
     private readonly YmmpxLibBridge bridge;
+    private readonly FileLogger logger;
 
     public YmmpxLibBundleService(FileLogger logger, string? explicitAssemblyPath = null, string? baseDirectory = null)
     {
+        this.logger = logger;
         bridge = new YmmpxLibBridge(logger, explicitAssemblyPath, baseDirectory);
     }
 
@@ -36,5 +38,32 @@ public sealed class YmmpxLibBundleService
         IProgress<double>? progress = null)
     {
         return bridge.ExtractPackageAsync(ymmpxPath, outputDirectory, token, progress);
+    }
+
+    public Task<YmmpxTransferPlan> InspectTransferAsync(
+        string projectPath,
+        CancellationToken token,
+        IReadOnlyList<string>? allowedMaterialRoots = null)
+    {
+        return Task.Run(() => YmmpxTransfer.InspectAsync(projectPath, token, allowedMaterialRoots), token);
+    }
+
+    public Task<YmmpxPackageResult> CreateTransferAsync(
+        YmmpxTransferPlan plan,
+        IReadOnlyDictionary<string, YmmpxTransferPermission> approvals,
+        string newOutputDirectory,
+        CancellationToken token,
+        IProgress<double>? progress = null)
+    {
+        return Task.Run(() => YmmpxTransfer.CreateAsync(plan, approvals, newOutputDirectory, token, progress, logger), token);
+    }
+
+    public Task<YmmpxExtractResult> ExtractTransferAsync(
+        string packagePath,
+        string outputDirectory,
+        CancellationToken token,
+        IProgress<double>? progress = null)
+    {
+        return bridge.ExtractPackageAsync(packagePath, outputDirectory, token, progress, requireTransfer: true);
     }
 }

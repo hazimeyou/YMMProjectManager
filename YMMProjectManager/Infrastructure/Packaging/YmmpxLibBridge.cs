@@ -245,12 +245,13 @@ public sealed class YmmpxLibBridge
         string ymmpxPath,
         string outputDirectory,
         CancellationToken token,
-        IProgress<double>? progress = null)
+        IProgress<double>? progress = null,
+        bool requireTransfer = false)
     {
         token.ThrowIfCancellationRequested();
         try
         {
-            return await Task.Run(() => YmmpxPackageReader.ExtractAsync(ymmpxPath, outputDirectory, token, progress), token).ConfigureAwait(false);
+            return await Task.Run(() => YmmpxPackageReader.ExtractAsync(ymmpxPath, outputDirectory, token, progress, requireTransfer), token).ConfigureAwait(false);
         }
         catch (OperationCanceledException ex)
         {
@@ -270,7 +271,9 @@ public sealed class YmmpxLibBridge
                 Success = false,
                 ErrorMessage = retained is not null
                     ? $"展開に失敗しました。公開していない作業フォルダーが保持されています。\n{retained}"
-                    : "展開に失敗しました。現行の YMMPX 形式と未使用の展開先を確認してください。",
+                    : ex is InvalidDataException
+                        ? ex.Message
+                        : "展開に失敗しました。現行の YMMPX 形式と未使用の展開先を確認してください。",
             };
         }
     }
