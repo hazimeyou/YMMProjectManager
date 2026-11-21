@@ -175,7 +175,22 @@ public static class AssetPool
         token.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(match);
         ValidateExpectation(expectedOriginalFileName, expectedSha256);
-        var directory = Path.GetDirectoryName(match.CandidatePath)!;
+        var candidatePath = FullOrdinaryPath(match.CandidatePath);
+        if (candidatePath != match.CandidatePath)
+            throw new InvalidDataException("候補のパスが確認時の形式と一致しません。");
+        var directory = Path.GetDirectoryName(candidatePath)!;
+        if (match.ManifestPath is { } recordedManifest)
+        {
+            var manifestPath = FullOrdinaryPath(recordedManifest);
+            ValidateManifestName(manifestPath);
+            if (manifestPath != recordedManifest || Path.GetDirectoryName(manifestPath) != directory ||
+                string.Equals(candidatePath, manifestPath, StringComparison.OrdinalIgnoreCase) ||
+                match.ManifestSha256 is not { Length: 64 } digest || !digest.All(Uri.IsHexDigit))
+                throw new InvalidDataException("候補と素材プールの記録の位置または照合証拠が無効です。");
+        }
+        else if (match.ManifestSha256 is not null)
+            throw new InvalidDataException("素材プールの記録パスのない照合証拠です。");
+
         var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         FileStream? manifest = null;
         FileStream? payload = null;
@@ -194,10 +209,10 @@ public static class AssetPool
             else if (!SameName(Path.GetFileName(match.CandidatePath), expectedOriginalFileName))
                 throw new InvalidDataException("選択した素材のファイル名が記録と一致しません。");
 
-            payload = OpenRead(match.CandidatePath);
+            payload = OpenRead(candidatePath);
             if (!await MatchesStreamAsync(payload, expectedSha256, size, token).ConfigureAwait(false))
                 throw new InvalidDataException("選択した素材の内容が記録と一致しません。");
-            return new AssetPoolVerification(match.CandidatePath, fence, payload, manifest);
+            return new AssetPoolVerification(candidatePath, fence, payload, manifest);
         }
         catch
         {
@@ -242,6 +257,7 @@ public static class AssetPool
             await FlushAsync(manifest, token).ConfigureAwait(false);
             beforePublish?.Invoke();
             token.ThrowIfCancellationRequested();
+            VerifyEntryContents(stage.Path, entry.Record.DistributionFileName);
             payloadIdentity = ProjectFileEvidence.ReadPhysicalIdentity(payload.SafeFileHandle);
             manifestIdentity = ProjectFileEvidence.ReadPhysicalIdentity(manifest.SafeFileHandle);
             // Windows refuses to rename the parent while these child handles are open.
@@ -304,12 +320,22 @@ public static class AssetPool
 
     private static async Task<AssetPoolEntry> VerifyExistingAsync(AssetPoolEntry entry, CancellationToken token)
     {
-        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(entry.ManifestPath)!, enforceShare: true);
+        var directory = Path.GetDirectoryName(entry.ManifestPath)!;
+        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
         await using var manifest = OpenRead(entry.ManifestPath);
+        await using var payload = OpenRead(entry.PayloadPath);
         if ((await ReadManifestAsync(manifest, token).ConfigureAwait(false)).Record != entry.Record ||
-            !await MatchesFileAsync(entry.PayloadPath, entry.Record.Sha256, entry.Record.Size, token).ConfigureAwait(false))
+            !await MatchesStreamAsync(payload, entry.Record.Sha256, entry.Record.Size, token).ConfigureAwait(false))
             throw new IOException("同じ保管先に内容の異なる素材プール項目があります。既存内容を保持しました。");
+        VerifyEntryContents(directory, entry.Record.DistributionFileName);
         return entry;
+    }
+
+    private static void VerifyEntryContents(string directory, string payloadName)
+    {
+        var names = Directory.EnumerateFileSystemEntries(directory).Take(3).Select(Path.GetFileName).ToHashSet(StringComparer.Ordinal);
+        if (!names.SetEquals([ManifestFileName, payloadName]))
+            throw new IOException("素材プール項目に予定外のファイルがあります。既存内容を保持しました。");
     }
 
     private static async Task<AssetPoolMatch?> MatchManifestAsync(string manifestPath, string originalFileName, string sha256, CancellationToken token)

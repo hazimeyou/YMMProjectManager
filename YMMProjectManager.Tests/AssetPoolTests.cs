@@ -10,7 +10,10 @@ using YMMProjectManager.Infrastructure.Relink;
 
 internal static class AssetPoolTests
 {
+    internal const string ChildArgument = "--r22-asset-pool-collector";
     private const string CommitId = "0123456789abcdef0123456789abcdef01234567";
+    private const string ChildReady = "asset-pool-before-publication";
+    private static readonly TimeSpan ChildDeadline = TimeSpan.FromSeconds(20);
 
     internal static async Task RunAsync(string workRoot)
     {
@@ -59,6 +62,81 @@ internal static class AssetPoolTests
             var entries = await Task.WhenAll(Collect(), Collect());
             Check(entries[0] == entries[1] && Directory.EnumerateDirectories(pool).Count() == 1);
             Check(await File.ReadAllTextAsync(entries[0].PayloadPath) == "parallel asset");
+        });
+
+        await Program.RunNamedCaseAsync("Independent asset collectors publish the exact same complete entry", async () =>
+        {
+            var (fixture, pool, source) = await PrepareChildAsync(root, "process-race", "multi-process");
+            using var first = StartCollector(fixture);
+            using var second = StartCollector(fixture);
+            try
+            {
+                await Task.WhenAll(WaitForPublicationAsync(first), WaitForPublicationAsync(second));
+                Check(Directory.GetDirectories(pool, ".asset-pool-pending-*").Length == 2);
+                Check(Directory.GetDirectories(pool, "asset-*").Length == 0);
+                await Task.WhenAll(PublishAsync(first), PublishAsync(second));
+                var entries = Directory.GetDirectories(pool);
+                Check(entries.Length == 1);
+                var manifest = Path.Combine(entries[0], AssetPool.ManifestFileName);
+                var record = await AssetPool.LoadAsync(manifest);
+                Check(record.Sha256 == Hash("multi-process"));
+                Check(await File.ReadAllTextAsync(Path.Combine(entries[0], record.DistributionFileName)) == "multi-process");
+                Check(await File.ReadAllTextAsync(source) == "multi-process");
+            }
+            finally
+            {
+                await Task.WhenAll(StopIfRunningAsync(first), StopIfRunningAsync(second));
+            }
+        });
+
+        await Program.RunNamedCaseAsync("Terminated collector leaves unowned pending data and retry publishes safely", async () =>
+        {
+            var (fixture, pool, source) = await PrepareChildAsync(root, "process-crash", "interrupted process");
+            using var child = StartCollector(fixture);
+            try
+            {
+                await WaitForPublicationAsync(child);
+                var pending = Directory.GetDirectories(pool, ".asset-pool-pending-*").Single();
+                var pendingFiles = Directory.GetFiles(pending);
+                Check(pendingFiles.Length == 2 && Directory.GetDirectories(pool, "asset-*").Length == 0);
+                child.Kill();
+                await child.WaitForExitAsync().WaitAsync(ChildDeadline);
+                Check(child.ExitCode != 0);
+                var pendingSnapshot = new Dictionary<string, byte[]>();
+                foreach (var file in pendingFiles) pendingSnapshot.Add(file, await ReadAfterReleaseAsync(file));
+                Check((await AssetPool.FindAsync("clip.wav", Hash("interrupted process"), [pool])).Count == 0);
+                var entry = await AssetPool.CollectAsync(pool, source, "clip.wav", CommitId);
+                Check((await AssetPool.FindAsync("clip.wav", entry.Record.Sha256, [pool])).Single().CandidatePath == entry.PayloadPath);
+                Check(Directory.GetDirectories(pool, "asset-*").Length == 1);
+                Check(pendingSnapshot.All(item => File.ReadAllBytes(item.Key).AsSpan().SequenceEqual(item.Value)));
+                Check(await File.ReadAllTextAsync(source) == "interrupted process");
+            }
+            finally
+            {
+                await StopIfRunningAsync(child);
+            }
+        });
+
+        await Program.RunNamedCaseAsync("Asset pool preserves third-party staging entries and refuses to publish them", async () =>
+        {
+            var pool = Directory.CreateDirectory(Path.Combine(root, "unexpected-stage")).FullName;
+            var source = await CreateFileAsync(root, "unexpected-source", "clip.wav", "unchanged");
+            string? unknown = null;
+            await ThrowsAsync<IOException>(() => AssetPool.CollectCoreAsync(pool, source, "clip.wav", CommitId, null, null, () =>
+            {
+                var stage = Directory.GetDirectories(pool, ".asset-pool-pending-*").Single();
+                unknown = Path.Combine(stage, "other-owner.txt");
+                File.WriteAllText(unknown, "belongs to another process");
+            }, default));
+            Check(unknown is not null && File.ReadAllText(unknown) == "belongs to another process");
+            Check(Directory.GetFiles(Path.GetDirectoryName(unknown!)!).SequenceEqual([unknown!]));
+            Check(Directory.GetDirectories(pool, "asset-*").Length == 0);
+            var entry = await AssetPool.CollectAsync(pool, source, "clip.wav", CommitId);
+            var extra = Path.Combine(Path.GetDirectoryName(entry.ManifestPath)!, "recording.txt");
+            await File.WriteAllTextAsync(extra, "preserve this extra entry");
+            await ThrowsAsync<IOException>(() => AssetPool.CollectAsync(pool, source, "clip.wav", CommitId));
+            Check(await File.ReadAllTextAsync(extra) == "preserve this extra entry");
+            Check(await File.ReadAllTextAsync(source) == "unchanged");
         });
 
         await Program.RunNamedCaseAsync("Asset pool refuses overwriting an existing modified entry", async () =>
@@ -126,6 +204,63 @@ internal static class AssetPoolTests
             await File.WriteAllTextAsync(entry.ManifestPath, omitted.ToJsonString());
             await ThrowsAsync<JsonException>(() => AssetPool.LoadAsync(entry.ManifestPath));
             await ThrowsAsync<JsonException>(() => AssetPool.FindAsync("empty.wav", Hash(""), [pool], entry.ManifestPath));
+        });
+
+        await Program.RunNamedCaseAsync("Asset pool switches storage roots and preserves an unreadable existing entry", async () =>
+        {
+            var first = Directory.CreateDirectory(Path.Combine(root, "storage-first")).FullName;
+            var second = Directory.CreateDirectory(Path.Combine(root, "storage-second")).FullName;
+            var source = await CreateFileAsync(root, "storage-source", "clip.wav", "preserve bytes");
+            var oldEntry = await AssetPool.CollectAsync(first, source, "clip.wav", CommitId);
+            var newEntry = await AssetPool.CollectAsync(second, source, "clip.wav", CommitId);
+            var manifestBefore = await File.ReadAllBytesAsync(newEntry.ManifestPath);
+            var payloadBefore = await File.ReadAllBytesAsync(newEntry.PayloadPath);
+            Check(newEntry.Record == oldEntry.Record && newEntry.PayloadPath != oldEntry.PayloadPath);
+            using (File.Open(newEntry.ManifestPath, FileMode.Open, FileAccess.Read, FileShare.None))
+            {
+                await ThrowsAsync<IOException>(() => AssetPool.LoadAsync(newEntry.ManifestPath));
+                await ThrowsAsync<IOException>(() => AssetPool.FindAsync("clip.wav", newEntry.Record.Sha256, [second]));
+                await ThrowsAsync<IOException>(() => AssetPool.CollectAsync(second, source, "clip.wav", CommitId));
+            }
+            using (File.Open(newEntry.PayloadPath, FileMode.Open, FileAccess.Read, FileShare.None))
+                await ThrowsAsync<IOException>(() => AssetPool.FindAsync("clip.wav", newEntry.Record.Sha256, [second]));
+            Check(File.ReadAllBytes(newEntry.ManifestPath).AsSpan().SequenceEqual(manifestBefore));
+            Check(File.ReadAllBytes(newEntry.PayloadPath).AsSpan().SequenceEqual(payloadBefore));
+            Check(File.ReadAllBytes(oldEntry.PayloadPath).AsSpan().SequenceEqual(payloadBefore));
+            Check(await AssetPool.CollectAsync(second, source, "clip.wav", CommitId) == newEntry);
+        });
+
+        await Program.RunNamedCaseAsync("Ordinary UNC syntax is checked lexically before manifest scope and any I/O", async () =>
+        {
+            var localManifest = Path.Combine(root, AssetPool.ManifestFileName);
+            await ThrowsAsync<InvalidDataException>(() => AssetPool.FindAsync("clip.wav", Hash("expected"),
+                [@"\\asset-pool-fixture.invalid\synthetic-share\assets"], localManifest));
+            await ThrowsAsync<ArgumentException>(() => AssetPool.FindAsync("clip.wav", Hash("expected"),
+                [@"\\asset-pool-fixture.invalid"], localManifest));
+        });
+
+        await Program.RunNamedCaseAsync("Rehydrated asset proof rejects noncanonical and disjoint manifest paths", async () =>
+        {
+            var pool = Directory.CreateDirectory(Path.Combine(root, "rehydrated-proof")).FullName;
+            var source = await CreateFileAsync(root, "rehydrated-source", "clip.wav", "exact");
+            var entry = await AssetPool.CollectAsync(pool, source, "clip.wav", CommitId);
+            var match = (await AssetPool.FindAsync("clip.wav", Hash("exact"), [pool], entry.ManifestPath)).Single();
+            var leaf = Path.GetFileName(match.CandidatePath);
+            var directory = Path.GetDirectoryName(match.CandidatePath)!;
+            foreach (var candidate in new[]
+            {
+                new AssetPoolMatch(Path.Combine(directory, ".", leaf), match.ManifestPath, match.ManifestSha256),
+                new AssetPoolMatch(match.CandidatePath, Path.Combine(root, AssetPool.ManifestFileName), match.ManifestSha256),
+                new AssetPoolMatch(match.CandidatePath, null, match.ManifestSha256),
+            })
+            {
+                await ThrowsAsync<InvalidDataException>(async () =>
+                {
+                    await using var held = await AssetPool.OpenVerifiedAsync(candidate, "clip.wav", Hash("exact"));
+                });
+            }
+            await using var approved = await AssetPool.OpenVerifiedAsync(match, "clip.wav", Hash("exact"));
+            Check(approved.CandidatePath == entry.PayloadPath);
         });
 
         await Program.RunNamedCaseAsync("Asset pool rejects device namespace spellings and case-ambiguous manifest scope", async () =>
@@ -216,6 +351,84 @@ internal static class AssetPoolTests
         var path = Path.Combine(Directory.CreateDirectory(Path.Combine(root, folder)).FullName, name);
         await File.WriteAllTextAsync(path, content);
         return path;
+    }
+
+    internal static async Task RunChildAsync(string fixture)
+    {
+        var testBase = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests"));
+        var full = Path.GetFullPath(fixture);
+        var relative = Path.GetRelativePath(testBase, full).Split(Path.DirectorySeparatorChar);
+        if (fixture != full || relative.Length != 3 || !Guid.TryParseExact(relative[0], "N", out _) ||
+            relative[1] != "asset-pool" || relative[2] is not ("process-race" or "process-crash") ||
+            !full.StartsWith(testBase + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InvalidOperationException("Asset collector fixture is outside the isolated test directory.");
+        using var directories = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        var source = Path.Combine(full, "original", "clip.wav");
+        var pool = Path.Combine(full, "pool");
+        await AssetPool.CollectCoreAsync(pool, source, "clip.wav", CommitId, null, null, () =>
+        {
+            Console.WriteLine(ChildReady);
+            if (Console.ReadLine() != "publish") throw new InvalidOperationException("Asset collector did not receive publication consent.");
+        }, default);
+    }
+
+    private static async Task<(string Fixture, string Pool, string Source)> PrepareChildAsync(string root, string name, string text)
+    {
+        var fixture = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        var pool = Directory.CreateDirectory(Path.Combine(fixture, "pool")).FullName;
+        var source = await CreateFileAsync(fixture, "original", "clip.wav", text);
+        return (fixture, pool, source);
+    }
+
+    private static Process StartCollector(string fixture)
+    {
+        var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true };
+        if (string.Equals(Path.GetFileNameWithoutExtension(start.FileName), "dotnet", StringComparison.OrdinalIgnoreCase))
+            start.ArgumentList.Add(typeof(AssetPoolTests).Assembly.Location);
+        start.ArgumentList.Add(ChildArgument);
+        start.ArgumentList.Add(fixture);
+        return Process.Start(start) ?? throw new InvalidOperationException("Asset collector fixture could not start.");
+    }
+
+    private static async Task WaitForPublicationAsync(Process child)
+    {
+        var readiness = await child.StandardOutput.ReadLineAsync().WaitAsync(ChildDeadline);
+        if (readiness != ChildReady)
+            throw new InvalidOperationException($"Asset collector missed the publication barrier: {readiness}");
+    }
+
+    private static async Task PublishAsync(Process child)
+    {
+        await child.StandardInput.WriteLineAsync("publish");
+        child.StandardInput.Close();
+        var stdout = child.StandardOutput.ReadToEndAsync();
+        var stderr = child.StandardError.ReadToEndAsync();
+        await Task.WhenAll(child.WaitForExitAsync(), stdout, stderr).WaitAsync(ChildDeadline);
+        if (child.ExitCode != 0)
+            throw new InvalidOperationException($"Asset collector exited with {child.ExitCode}: {await stderr}");
+    }
+
+    private static async Task StopIfRunningAsync(Process child)
+    {
+        try { if (!child.HasExited) child.Kill(); }
+        catch (InvalidOperationException) when (child.HasExited) { }
+        await child.WaitForExitAsync().WaitAsync(ChildDeadline);
+    }
+
+    private static async Task<byte[]> ReadAfterReleaseAsync(string path)
+    {
+        using var deadline = new CancellationTokenSource(ChildDeadline);
+        while (true)
+        {
+            // On Windows a terminated process can signal before all its owned
+            // handles have detached. Observe release before taking the snapshot.
+            try { return await File.ReadAllBytesAsync(path, deadline.Token); }
+            catch (IOException ex) when ((ex.HResult & 0xffff) == 32)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(20), deadline.Token);
+            }
+        }
     }
 
     private static string Hash(string content) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
