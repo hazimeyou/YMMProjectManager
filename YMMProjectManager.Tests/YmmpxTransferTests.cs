@@ -164,6 +164,21 @@ internal static class YmmpxTransferTests
             Check(injected && !outcome.Success && !Directory.Exists(final), "Modified staged asset was published");
         });
 
+        await Program.RunNamedCaseAsync("R23 refuses to publish unknown staging files and keeps them intact", async () =>
+        {
+            var final = Path.Combine(root, "unowned-entry");
+            string? sentinel = null;
+            var outcome = await service.ExtractTransferAsync(created!.OutputPath!, final, default, new InlineProgress(() =>
+            {
+                if (sentinel is not null) return;
+                var directory = Directory.EnumerateDirectories(root, ".ymmpx-*").Single();
+                sentinel = Path.Combine(directory, "unowned.txt");
+                File.WriteAllText(sentinel, "external staged data");
+            }));
+            Check(!outcome.Success && !Directory.Exists(final) && sentinel is not null &&
+                await File.ReadAllTextAsync(sentinel) == "external staged data", "An unowned staging file was published or deleted");
+        });
+
         await Program.RunNamedCaseAsync("R23 transfer rejects approved asset replacement and leaves no partial public output", async () =>
         {
             var oldContent = await File.ReadAllBytesAsync(left);

@@ -90,21 +90,20 @@ internal static class YmmpxPackageReader
             : null;
         var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer);
 
-        var staging = Path.Combine(parent, ".ymmpx-" + Guid.NewGuid().ToString("N"));
+        token.ThrowIfCancellationRequested();
+        using var stage = OwnedStagingDirectory.Reserve(parent, ".ymmpx-");
+        var staging = stage.Path;
         var files = new List<OwnedPath>();
         var verifiedStagedFiles = new Dictionary<string, ProjectFileIdentity>(StringComparer.Ordinal);
         var directories = new List<OwnedPath>();
-        var createdDirectories = new HashSet<string>(StringComparer.Ordinal);
+        var createdDirectories = new Dictionary<string, SafeFileHandle>(StringComparer.Ordinal);
         using var subdirectoryFence = new DirectoryFence(enforceShare: true);
-        token.ThrowIfCancellationRequested();
-        RequireOrdinaryDirectory(parent);
-        ReserveDirectory(staging);
         SafeFileHandle? stagingHandle = null;
         var published = false;
         ProjectFileIdentity? restoredIdentity = null;
         try
         {
-            stagingHandle = OpenOrdinaryDirectory(staging, allowRename: true);
+            stagingHandle = stage.PinRecoveryPath();
             foreach (var (name, entry) in package.Files)
             {
                 token.ThrowIfCancellationRequested();
@@ -141,22 +140,24 @@ internal static class YmmpxPackageReader
                 verifiedStagedFiles.Add(target, await ReadOwnedOutputEvidenceAsync(manifestOutput, token).ConfigureAwait(false));
             }
             token.ThrowIfCancellationRequested();
+            VerifyStagedTree(staging, token);
             await VerifyStagedFilesAsync(staging, token).ConfigureAwait(false);
             // Windows may require child directory handles to be closed before renaming.
             // Keep the staging root open and publish that exact object without replacement.
             subdirectoryFence.Dispose();
             token.ThrowIfCancellationRequested();
             var stagingIdentity = ProjectFileEvidence.ReadPhysicalIdentity(stagingHandle);
-            RenameOpenedPath(stagingHandle, final);
-            published = true;
             stagingHandle.Dispose();
             stagingHandle = null;
+            stage.Publish(final, token);
+            published = true;
             try
             {
                 using var publishedFence = DirectoryFence.Open(final, enforceShare: true);
                 using var openedFinal = OpenOrdinaryDirectory(final);
                 if (ProjectFileEvidence.ReadPhysicalIdentity(openedFinal) != stagingIdentity)
                     throw new IOException("展開したフォルダーが変更されました。");
+                VerifyStagedTree(final, CancellationToken.None);
                 await VerifyStagedFilesAsync(final, CancellationToken.None).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -168,12 +169,20 @@ internal static class YmmpxPackageReader
         {
             if (published) throw;
             var removed = false;
-            if (stagingHandle is not null)
+            try
             {
-                foreach (var path in files) TryCleanup(path, isDirectory: false);
+                using (stagingHandle ??= stage.PinRecoveryPath())
+                {
+                    foreach (var path in files) TryCleanup(path, isDirectory: false);
+                    subdirectoryFence.Dispose();
+                    foreach (var path in directories.AsEnumerable().Reverse()) TryCleanup(path, isDirectory: true);
+                }
+                stagingHandle = null;
+                removed = stage.DeleteIfEmpty();
+            }
+            catch (Exception cleanupError) when (cleanupError is IOException or UnauthorizedAccessException)
+            {
                 subdirectoryFence.Dispose();
-                foreach (var path in directories.AsEnumerable().Reverse()) TryCleanup(path, isDirectory: true);
-                removed = TryDeleteOpenedPath(stagingHandle);
             }
             if (!removed) ex.Data[RetainedStagingPath] = staging;
             throw;
@@ -197,13 +206,52 @@ internal static class YmmpxPackageReader
 
         void EnsureParents(string path)
         {
-            if (path == staging || createdDirectories.Contains(path)) return;
-            EnsureParents(Path.GetDirectoryName(path)!);
-            RequireOrdinaryDirectory(Path.GetDirectoryName(path)!);
-            ReserveDirectory(path);
+            if (path == staging || createdDirectories.ContainsKey(path)) return;
+            var directory = Path.GetDirectoryName(path)!;
+            EnsureParents(directory);
+            var parentHandle = directory == staging ? stagingHandle! : createdDirectories[directory];
+            using var created = OwnedStagingDirectory.CreateAndPin(parentHandle, Path.GetFileName(path));
+            var identity = ReadIdentity(created) ?? throw new IOException("展開用フォルダーを識別できません。");
             var handle = subdirectoryFence.Add(path);
-            directories.Add(new OwnedPath(path, ReadIdentity(handle)));
-            createdDirectories.Add(path);
+            if (ReadIdentity(handle) != identity) throw new IOException("展開用フォルダーが変更されました。");
+            directories.Add(new OwnedPath(path, identity));
+            createdDirectories.Add(path, handle);
+        }
+
+        void VerifyStagedTree(string actualRoot, CancellationToken verificationToken)
+        {
+            var fileIds = files.ToDictionary(file => MapFromStaging(file.Path), file => file.Identity, StringComparer.Ordinal);
+            var directoryIds = directories.ToDictionary(directory => MapFromStaging(directory.Path), directory => directory.Identity, StringComparer.Ordinal);
+            CheckDirectory(actualRoot);
+            if (fileIds.Count > 0 || directoryIds.Count > 0)
+                throw new IOException("展開した項目が不足しています。");
+
+            string MapFromStaging(string path) => Path.Combine(actualRoot, Path.GetRelativePath(staging, path));
+
+            void CheckDirectory(string directory)
+            {
+                using var fence = DirectoryFence.Open(directory, enforceShare: true);
+                foreach (var child in Directory.EnumerateFileSystemEntries(directory))
+                {
+                    verificationToken.ThrowIfCancellationRequested();
+                    if (directoryIds.Remove(child, out var expectedId))
+                    {
+                        using var handle = OpenOrdinaryDirectory(child);
+                        if (expectedId is null || ReadIdentity(handle) != expectedId)
+                            throw new IOException("展開したフォルダーが変更されました。");
+                        CheckDirectory(child);
+                    }
+                    else if (!fileIds.Remove(child, out expectedId) || expectedId is null)
+                    {
+                        throw new IOException("展開先に所有を確認できない項目があります。");
+                    }
+                    else
+                    {
+                        using var handle = OpenOrdinaryPath(child, expectDirectory: false, allowRename: false);
+                        if (ReadIdentity(handle) != expectedId) throw new IOException("展開ファイルが変更されました。");
+                    }
+                }
+            }
         }
 
         async Task VerifyStagedFilesAsync(string actualRoot, CancellationToken verificationToken)
@@ -531,12 +579,6 @@ internal static class YmmpxPackageReader
         }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
-    }
-
-    private static void ReserveDirectory(string path)
-    {
-        if (!CreateDirectory(@"\\?\" + path, IntPtr.Zero))
-            throw new IOException("展開用フォルダーを確保できません。", new Win32Exception(Marshal.GetLastWin32Error()));
     }
 
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]

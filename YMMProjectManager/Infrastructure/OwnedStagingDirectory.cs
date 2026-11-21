@@ -143,8 +143,10 @@ internal sealed class OwnedStagingDirectory : IDisposable
         for (var index = handles.Count - 1; index >= 0; index--) handles[index].Dispose();
     }
 
-    private static SafeFileHandle CreateAndPin(SafeFileHandle parent, string name)
+    internal static SafeFileHandle CreateAndPin(SafeFileHandle parent, string name)
     {
+        if (!AssetInventory.IsOrdinaryPathComponent(name))
+            throw new ArgumentException("A staging directory name must be one ordinary path component.", nameof(name));
         var text = Marshal.StringToHGlobalUni(name);
         var namePointer = IntPtr.Zero;
         try

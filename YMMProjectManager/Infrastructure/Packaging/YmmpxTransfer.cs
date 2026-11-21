@@ -198,9 +198,13 @@ internal static class YmmpxTransfer
                 manifestFile.Flush(flushToDisk: true);
             }
 
+            (ulong Volume, Guid FileId) stagingIdentity;
+            using (var stagePin = stage.PinRecoveryPath())
             await using (var archiveInput = OpenOrdinaryRead(packagePath))
             await using (var manifestInput = OpenOrdinaryRead(manifestPath))
             {
+                stagingIdentity = ProjectFileEvidence.ReadPhysicalIdentity(stagePin);
+                CheckTransferFiles(stage.Path, packageName);
                 if (ProjectFileEvidence.ReadPhysicalIdentity(archiveInput) != owned[packagePath] ||
                     ProjectFileEvidence.ReadPhysicalIdentity(manifestInput) != owned[manifestPath])
                     throw new IOException("検証中に作業ファイルが変更されました。");
@@ -211,6 +215,10 @@ internal static class YmmpxTransfer
             stage.Publish(final, token);
             published = true;
             using var publishedFence = DirectoryFence.Open(final, enforceShare: true);
+            using var publishedDirectory = OpenOrdinaryPath(final, expectDirectory: true, allowRename: false);
+            if (ProjectFileEvidence.ReadPhysicalIdentity(publishedDirectory) != stagingIdentity)
+                throw new IOException("公開後の出力フォルダーを検証できません。出力したフォルダーを使用しないでください。");
+            CheckTransferFiles(final, packageName);
             await using var publishedArchive = OpenOrdinaryRead(Path.Combine(final, packageName));
             await using var publishedManifest = OpenOrdinaryRead(Path.Combine(final, ManifestName));
             var publishedManifestHash = await SHA256.HashDataAsync(publishedManifest, CancellationToken.None).ConfigureAwait(false);
@@ -235,6 +243,14 @@ internal static class YmmpxTransfer
                 OriginalPath = asset.OriginalFileName, Status = "excluded",
             }).ToArray(),
         };
+    }
+
+    private static void CheckTransferFiles(string directory, string packageName)
+    {
+        var names = Directory.EnumerateFileSystemEntries(directory).Select(Path.GetFileName).Take(3)
+            .ToHashSet(StringComparer.Ordinal);
+        if (names.Count != 2 || !names.Contains(packageName) || !names.Contains(ManifestName))
+            throw new IOException("受け渡し用フォルダーに所有を確認できない項目があります。");
     }
 
     internal static async Task<Manifest> ReadManifestAsync(Stream stream, string packageName, CancellationToken token)
