@@ -151,7 +151,15 @@ public sealed class RelinkScanService
         this.logger = logger;
     }
 
-    public async Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanAsync(string ymmpPath, CancellationToken token)
+    public Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanAsync(string ymmpPath, CancellationToken token) =>
+        ScanCoreAsync(ymmpPath, probeOriginalPath: true, token);
+
+    // A received project can contain paths to unapproved drives, shares, or devices.
+    public Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanForStrictRelinkAsync(string ymmpPath, CancellationToken token) =>
+        ScanCoreAsync(ymmpPath, probeOriginalPath: false, token);
+
+    private async Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanCoreAsync(string ymmpPath,
+        bool probeOriginalPath, CancellationToken token)
     {
         var result = new RelinkResult();
         try
@@ -163,7 +171,9 @@ public sealed class RelinkScanService
                 return (null, result);
             }
 
-            var bytes = await File.ReadAllBytesAsync(ymmpPath, token).ConfigureAwait(false);
+            var bytes = probeOriginalPath
+                ? await File.ReadAllBytesAsync(ymmpPath, token).ConfigureAwait(false)
+                : await ReadSelectedProjectAsync(ymmpPath, token).ConfigureAwait(false);
             var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
             var text = new UTF8Encoding(false, true).GetString(bytes, offset, bytes.Length - offset);
             var root = JsonNode.Parse(text);
@@ -193,7 +203,13 @@ public sealed class RelinkScanService
 
                 try
                 {
-                    if (File.Exists(node.Path))
+                    if (!probeOriginalPath)
+                    {
+                        row.Status = RelinkStatus.Missing;
+                        row.Message = "元の参照先は未確認";
+                        result.MissingCount++;
+                    }
+                    else if (File.Exists(node.Path))
                     {
                         row.Status = RelinkStatus.Existing;
                         row.Message = "既存パス";
@@ -233,6 +249,18 @@ public sealed class RelinkScanService
             result.ErrorMessage = "読み込み中にエラーが発生しました。";
             return (null, result);
         }
+    }
+
+    private static async Task<byte[]> ReadSelectedProjectAsync(string ymmpPath, CancellationToken token)
+    {
+        var full = Path.GetFullPath(ymmpPath);
+        using var directories = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true);
+        using var handle = OwnedFilePublication.OpenOrdinaryPath(full, expectDirectory: false, allowRename: false);
+        await using var stream = new FileStream(handle, FileAccess.Read);
+        if (stream.Length > 32 * 1024 * 1024) throw new InvalidDataException("プロジェクトが大きすぎます。");
+        var bytes = new byte[checked((int)stream.Length)];
+        await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        return bytes;
     }
 
     private static void CollectFilePathNodes(JsonNode node, bool insideItems, string? currentTypeHint, List<FilePathNode> target)

@@ -260,13 +260,7 @@ public static class AssetInventory
         var current = root;
         foreach (var segment in Path.GetRelativePath(root, full).Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
         {
-            var stem = segment.Split('.')[0].TrimEnd();
-            if (segment.EndsWith('.') || segment.EndsWith(' ') || segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                stem.Equals("CON", StringComparison.OrdinalIgnoreCase) || stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
-                stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) || stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
-                stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) || stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) ||
-                (stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
-                    && "0123456789¹²³".Contains(stem[3])))
+            if (!IsOrdinaryPathComponent(segment))
                 throw new ArgumentException("Asset path contains an invalid or reserved name.", nameof(relativePath));
             current = Path.Combine(current, segment);
             if ((File.Exists(current) || Directory.Exists(current)) && (File.GetAttributes(current) & FileAttributes.ReparsePoint) != 0)
@@ -275,7 +269,19 @@ public static class AssetInventory
         return full;
     }
 
-    private static void ValidateUrl(string? value)
+    internal static bool IsOrdinaryPathComponent(string name)
+    {
+        var stem = name.Split('.')[0].TrimEnd();
+        return name.Length is > 0 and <= 255 &&
+            !name.EndsWith('.') && !name.EndsWith(' ') && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
+            !stem.Equals("CON", StringComparison.OrdinalIgnoreCase) && !stem.Equals("PRN", StringComparison.OrdinalIgnoreCase) &&
+            !stem.Equals("AUX", StringComparison.OrdinalIgnoreCase) && !stem.Equals("NUL", StringComparison.OrdinalIgnoreCase) &&
+            !stem.Equals("CONIN$", StringComparison.OrdinalIgnoreCase) && !stem.Equals("CONOUT$", StringComparison.OrdinalIgnoreCase) &&
+            !(stem.Length == 4 && (stem.StartsWith("COM", StringComparison.OrdinalIgnoreCase) || stem.StartsWith("LPT", StringComparison.OrdinalIgnoreCase))
+                && "0123456789¹²³".Contains(stem[3]));
+    }
+
+    internal static void ValidateUrl(string? value)
     {
         if (value is null) return;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps || (!string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment)))

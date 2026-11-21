@@ -79,6 +79,23 @@ internal sealed class OwnedStagingDirectory : IDisposable
         return OwnedFilePublication.TryDeleteOpenedPath(publication);
     }
 
+    internal SafeFileHandle PinRecoveryPath()
+    {
+        var handle = OwnedFilePublication.OpenOrdinaryPath(Path, expectDirectory: true, allowRename: false,
+            FileShare.ReadWrite, enforceDirectoryShare: true);
+        try
+        {
+            if (ProjectFileEvidence.ReadPhysicalIdentity(handle) != identity)
+                throw new IOException("Staging directory identity changed.");
+            return handle;
+        }
+        catch
+        {
+            handle.Dispose();
+            throw;
+        }
+    }
+
     internal string? CheckRecoveryPath()
     {
         try
