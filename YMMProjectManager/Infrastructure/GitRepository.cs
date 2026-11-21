@@ -382,11 +382,7 @@ public sealed partial class GitRepository
         var target = approvedTarget ?? current!;
         using var config = ProjectListReplacement.Open(Path.Combine(directory, ".git", "config"));
         using var registry = OpenAssetRegistryLease();
-        var remoteNames = await RunDirectAsync(["config", "--local", "--no-includes", "--name-only", "-z", "--list"],
-            token, pullSettings: [], outputLimit: 1024 * 1024).ConfigureAwait(false);
-        if (!remoteNames.Success || remoteNames.StandardError.Length != 0 || remoteNames.StandardOutput
-            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Any(name => name.StartsWith("remote." + target.Endpoint + ".", StringComparison.OrdinalIgnoreCase)))
+        if (!await VerifyLiteralTransportEndpointAsync(target.Endpoint, token).ConfigureAwait(false))
             return UnsafeRemote("The Push endpoint can also resolve as a configured remote name.");
         if (!HasOrdinaryPublicationObjectStore())
             return PublicationRefusal("This Git object store cannot be inspected safely.");
@@ -780,7 +776,10 @@ public sealed partial class GitRepository
                  !name.Equals("GIT_ALLOW_PROTOCOL", StringComparison.OrdinalIgnoreCase)) ||
                 name.Equals("HTTP_PROXY", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("HTTPS_PROXY", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("ALL_PROXY", StringComparison.OrdinalIgnoreCase)).ToArray())
+                name.Equals("ALL_PROXY", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("SSLKEYLOGFILE", StringComparison.OrdinalIgnoreCase) ||
+                name.Equals("CURL_CA_BUNDLE", StringComparison.OrdinalIgnoreCase) ||
+                name.StartsWith("SSL_CERT_", StringComparison.OrdinalIgnoreCase)).ToArray())
                 start.Environment.Remove(name);
             start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";

@@ -27,6 +27,13 @@ public sealed partial class GitRepository
                 using var head = ProjectListReplacement.Open(Path.Combine(gitDirectory, "HEAD"));
                 using var original = ProjectListReplacement.TryOpen(indexPath);
                 if (!stage && original is null) return UnsafeRemote("There are no staged files to unstage.");
+                using var registry = stage ? OpenAssetRegistryLease() : null;
+                if (stage)
+                {
+                    if (!HasOrdinaryPublicationObjectStore()) return PublicationRefusal("This Git object store cannot be inspected safely.");
+                    var known = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
+                    if (known is not null) return known;
+                }
                 using var scratch = OwnedStagingDirectory.Reserve(gitDirectory, ".ymm-stage-");
                 var proposedPath = Path.Combine(scratch.Path, "index");
                 (ulong Volume, Guid FileId)? observed = null;
@@ -56,8 +63,8 @@ public sealed partial class GitRepository
                         if (!write.Success || !IsObjectId(tree)) return UnsafeRemote("The proposed staged tree could not be verified.");
                         if (OnStageTreePrepared is { } inspect && await inspect(tree, token).ConfigureAwait(false) is { } refusal)
                             return refusal;
-                        // The controller's publication policy validates this exact
-                        // immutable tree before the candidate index can be published.
+                        var mediaError = await CheckPublicationTreeAsync(tree, token).ConfigureAwait(false);
+                        if (mediaError is not null) return mediaError;
                     }
                     await candidate.CopyToAsync(indexLock, token).ConfigureAwait(false);
                     await indexLock.FlushAsync(token).ConfigureAwait(false);
@@ -125,7 +132,10 @@ public sealed partial class GitRepository
                 if (!HasGitEntry(full)) { absent.Add(path); continue; }
                 if (!IsRegularFile(full)) return UnsafeRemote("Select individual files. Folders and links cannot be staged.");
                 inputs.Add(OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true));
-                inputs.Add(ProjectListReplacement.Open(full));
+                var file = ProjectListReplacement.Open(full);
+                inputs.Add(file);
+                var mediaError = await CheckStagePublicationFileAsync(path, file, token).ConfigureAwait(false);
+                if (mediaError is not null) return mediaError;
                 var ignored = await RunDirectAsync(["check-ignore", "--quiet", "--", path], token,
                     pullSettings: session.Settings, privateIndex: index).ConfigureAwait(false);
                 if (ignored.ExitCode != 1) return UnsafeRemote("Git ignored the selected file or could not verify its tracking status.");

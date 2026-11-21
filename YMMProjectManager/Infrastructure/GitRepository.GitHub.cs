@@ -64,11 +64,22 @@ public sealed partial class GitRepository
     private static GitResult UnsupportedGitHubRepository() =>
         UnsafeRemote("GitHub requires a verified main repository without unsupported configuration.");
 
+    private async Task<bool> VerifyLiteralTransportEndpointAsync(string endpoint, CancellationToken token)
+    {
+        var names = await RunDirectAsync(["config", "--local", "--no-includes", "--name-only", "-z", "--list"],
+            token, pullSettings: [], outputLimit: 1024 * 1024).ConfigureAwait(false);
+        return names.Success && names.StandardError.Length == 0 && !names.StandardOutput
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Any(name => name.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase));
+    }
+
     private async Task<GitResult> RunGitHubTransportAsync(string endpoint, string[] arguments, CancellationToken token,
         GitHubAuthentication authentication, string[] settings, string? cloneStage = null)
     {
         if (!IsSupportedGitHubEndpoint(endpoint) || !Enum.IsDefined(authentication))
             return UnsupportedGitHubEndpoint();
+        if (cloneStage is null && !await VerifyLiteralTransportEndpointAsync(endpoint, token).ConfigureAwait(false))
+            return UnsafeRemote("The GitHub URL can also resolve as a configured remote name.");
         var installation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git");
         var native = Path.Combine(installation, "mingw64", "bin");
         var executable = Path.Combine(native, "git.exe");

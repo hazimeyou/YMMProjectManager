@@ -165,11 +165,13 @@ public sealed partial class GitRepository
     private Task<GitResult> RunPullCommandAsync(PullSession session, string[] arguments, CancellationToken token, Action<Process>? afterStart = null) =>
         RunDirectAsync(arguments, token, pullSettings: session.Settings, afterStart: afterStart);
 
-    private Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token,
+    private async Task<GitResult> RunPullTransportAsync(PullSession session, string endpoint, string[] arguments, CancellationToken token,
         GitHubAuthentication authentication)
     {
         if (HasGitHubHost(endpoint) || authentication != GitHubAuthentication.Anonymous)
-            return RunGitHubTransportAsync(endpoint, arguments, token, authentication, session.Settings);
+            return await RunGitHubTransportAsync(endpoint, arguments, token, authentication, session.Settings).ConfigureAwait(false);
+        if (!await VerifyLiteralTransportEndpointAsync(endpoint, token).ConfigureAwait(false))
+            return UnsafeRemote("The Pull endpoint can also resolve as a configured remote name.");
         var local = Path.IsPathFullyQualified(endpoint);
         var settings = local ? Array.Empty<string>() :
             new[] { "-c", "http.followRedirects=false", "-c", "http.sslVerify=true", "-c", "http.proxy=" };
@@ -179,8 +181,8 @@ public sealed partial class GitRepository
             IPAddress.TryParse(uri.DnsSafeHost, out var address) &&
             (address.Equals(IPAddress.Loopback) || address.Equals(IPAddress.IPv6Loopback)))
             settings = [.. settings, "-c", $"http.sslCAInfo={Path.GetFullPath(authority)}"];
-        return RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. settings, .. arguments],
-            token, allowedProtocol: local ? "file" : "https", trustedProcess: true, pullSettings: session.Settings);
+        return await RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. settings, .. arguments],
+            token, allowedProtocol: local ? "file" : "https", trustedProcess: true, pullSettings: session.Settings).ConfigureAwait(false);
     }
 
     private async Task<GitResult?> VerifyIncomingPullPathsAsync(PullSession session, GitPullTarget approved, CancellationToken token)

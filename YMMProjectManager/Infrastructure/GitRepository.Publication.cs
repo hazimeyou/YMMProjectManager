@@ -36,6 +36,17 @@ public sealed partial class GitRepository
 
     private static GitResult PublicationRefusal(string reason) => new(1, "", reason, GitFailure.MediaPublication);
 
+    private async Task<GitResult?> CheckStagePublicationFileAsync(string path, FileStream file, CancellationToken token)
+    {
+        if (IsBlockedPublicationPath(path) || file.Length > PublicationObjectLimit)
+            return PublicationRefusal("The selected file is a known asset or exceeds the media inspection limit.");
+        var bytes = new byte[(int)file.Length];
+        await file.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        var reason = InspectPublicationBlob(bytes, new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase),
+            new(StringComparer.OrdinalIgnoreCase));
+        return reason is null ? null : PublicationRefusal(reason);
+    }
+
     private bool HasOrdinaryPublicationObjectStore()
     {
         var git = Path.Combine(directory, ".git");
