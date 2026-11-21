@@ -82,6 +82,7 @@ internal static class GitRepositoryTests
         Console.WriteLine("Offline Git local operations passed.");
         await Program.RunNamedCaseAsync("Reviewed Commit preserves staged and unstaged changes across a ref compare-and-swap", () => VerifyReviewedCommitAsync(workRoot));
         await Program.RunNamedCaseAsync("Reviewed Commit rejects changed staging, branch moves and cancellation", () => VerifyCommitInterferenceAsync(workRoot));
+        await Program.RunNamedCaseAsync("R22 Commit reports uncertainty when the verified Git child stops after publication", () => VerifyInterruptedCommitAsync(workRoot));
         await Program.RunNamedCaseAsync("GitHub scope and helper isolation preserve auth, permission and cancellation categories", () => VerifyGitHubProfileAsync(workRoot));
         await Program.RunNamedCaseAsync("Stage validates the exact proposed tree before publishing the index", () => VerifyGuardedIndexAsync(workRoot));
     }
@@ -348,6 +349,33 @@ internal static class GitRepositoryTests
         Require((await git.StageAsync(["keep.txt", "scène.txt"])).Success, "prepare fixture first stage");
         Require((await git.CommitAsync("first reviewed fixture commit")).Success, "create reviewed root commit");
         return root;
+    }
+
+    private static async Task VerifyInterruptedCommitAsync(string workRoot)
+    {
+        var root = await MakeCommitFixtureAsync(workRoot, "r22-commit-stop");
+        await File.WriteAllTextAsync(Path.Combine(root, "scène.txt"), "staged fixture");
+        var git = new GitRepository(root);
+        Require((await git.StageAsync(["scène.txt"])).Success, "fixture stage failed");
+        var target = (await git.InspectCommitAsync()).CommitTarget!;
+        var indexPath = Path.Combine(root, ".git", "index");
+        var indexBefore = await File.ReadAllBytesAsync(indexPath);
+        var interrupted = false;
+        var actor = new GitRepository(root)
+        {
+            AfterCommitAcknowledged = process =>
+            {
+                // Native Git acknowledged the ref update and is waiting for more input.
+                process.Kill();
+                interrupted = true;
+            },
+        };
+        var result = await actor.CommitAsync(target, "synthetic acknowledged update");
+        var actual = (await CommandAsync(root, "rev-parse", "HEAD")).Trim();
+        var actualTree = (await CommandAsync(root, "rev-parse", "HEAD^{tree}")).Trim();
+        var indexAfter = await File.ReadAllBytesAsync(indexPath);
+        Require(interrupted && result.Failure == GitFailure.OutcomeUnknown && actual != target.ParentObjectId &&
+            actualTree == target.TreeObjectId && indexBefore.SequenceEqual(indexAfter), "interrupted native Commit outcome or data was lost");
     }
 
     private static Task<string> CommandAsync(string root, params string[] args) => CommandAsync(root, 0, args);

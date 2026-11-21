@@ -8,6 +8,7 @@ namespace YMMProjectManager.Infrastructure.Git;
 public sealed partial class GitRepository
 {
     internal Action? BeforeCommitRefUpdate { get; init; }
+    internal Action<Process>? AfterCommitAcknowledged { get; init; }
 
     public Task<GitResult> InspectCommitAsync(CancellationToken token = default) =>
         WithAppWriteLeaseAsync(() => RunCommitCoreAsync(null, null, token), token);
@@ -133,18 +134,20 @@ public sealed partial class GitRepository
 
     private async Task<GitResult> PublishCommitRefAsync(PullSession session, string branch, string parent, string commit)
     {
+        var commitRequested = false;
         try
         {
             // From here native Git owns the branch CAS. Late UI cancellation cannot
             // change the reported result of a published commit.
             var update = await RunDirectAsync(["update-ref", "-m", "YMMProjectManager commit", "--stdin"], CancellationToken.None,
                 pullSettings: session.Settings, interaction: (process, deadline) =>
-                    PrepareAndCommitRefAsync(session, process, branch, parent, commit, deadline)).ConfigureAwait(false);
+                    PrepareAndCommitRefAsync(session, process, branch, parent, commit, () => commitRequested = true, deadline))
+                .ConfigureAwait(false);
             var observed = await RunPullCommandAsync(session, ["rev-parse", "--verify", "--quiet", branch + "^{commit}"],
                 CancellationToken.None).ConfigureAwait(false);
             if (update.Success && update.StandardOutput == "commit: ok" && observed.Success && observed.StandardOutput.Trim() == commit)
                 return new GitResult(0, commit, "");
-            if (!update.Success || update.StandardOutput == "abort: ok")
+            if (!commitRequested && (!update.Success || update.StandardOutput == "abort: ok"))
                 return new(1, "", "Git refused the branch update. Refresh Git state before retrying.", GitFailure.ConcurrentOperation);
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or Win32Exception or InvalidOperationException)
@@ -155,7 +158,7 @@ public sealed partial class GitRepository
     }
 
     private async Task<(string Text, bool Truncated)> PrepareAndCommitRefAsync(PullSession session, Process process,
-        string branch, string parent, string commit, CancellationToken token)
+        string branch, string parent, string commit, Action markCommitRequested, CancellationToken token)
     {
         try
         {
@@ -168,8 +171,14 @@ public sealed partial class GitRepository
             // dereferenced old OID. Check its raw kind while native Git owns the lock.
             var raw = await RunPullCommandAsync(session, ["symbolic-ref", "--quiet", "--no-recurse", branch], token).ConfigureAwait(false);
             var ordinary = raw.ExitCode == 1 && raw.StandardOutput.Length == 0 && raw.StandardError.Length == 0;
-            await SendAsync(ordinary && !HasPendingPullEvidence() ? "commit\n" : "abort\n").ConfigureAwait(false);
-            return (await process.StandardOutput.ReadLineAsync(token).ConfigureAwait(false) ?? "", false);
+            var publish = ordinary && !HasPendingPullEvidence();
+            // A failed write or nonzero exit can follow native publication.
+            // Once requested, report an unverified outcome for manual inspection.
+            if (publish) markCommitRequested();
+            await SendAsync(publish ? "commit\n" : "abort\n").ConfigureAwait(false);
+            var response = await process.StandardOutput.ReadLineAsync(token).ConfigureAwait(false);
+            if (response == "commit: ok") AfterCommitAcknowledged?.Invoke(process);
+            return (response ?? "", false);
         }
         finally
         {
