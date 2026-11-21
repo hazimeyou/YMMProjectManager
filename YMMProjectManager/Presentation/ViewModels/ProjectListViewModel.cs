@@ -78,6 +78,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             if (SetProperty(ref selectedProject, value))
             {
+                GitChanges.Clear();
+                GitPath = "";
                 GitStatus = string.Empty;
                 AssetStatus = string.Empty;
                 inspectedAssets = null;
@@ -188,6 +190,9 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         // The external extractor's destination and cleanup guarantees are not yet verified.
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
+        ReviewProjectCleanupCommand = new AsyncRelayCommand(ReviewProjectCleanupAsync, () => !IsBusy && SelectedProject is not null);
+        CollectAssetToPoolCommand = new AsyncRelayCommand(CollectAssetToPoolAsync, () => !IsBusy && SelectedProject is not null);
+        InspectGitHubAccessCommand = new AsyncRelayCommand(InspectGitHubAccessAsync, () => !IsBusy && SelectedProject is not null);
         RefreshGitStatusCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(false), () => !IsBusy && SelectedProject is not null);
         InitializeGitCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(true), () => !IsBusy && SelectedProject is not null);
         StageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("stage"), () => !IsBusy && SelectedProject is not null);
@@ -283,13 +288,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var dialog = new OpenFolderDialog { Title = "clone 先の親フォルダーを選択" };
         if (dialog.ShowDialog() != true) return;
         var destination = Path.Combine(dialog.FolderName, name);
-        if (!ConfirmGitTrust("Clone", destination, inspected.StandardOutput)) return;
+        var authentication = AuthenticationFor(remote);
+        if (!ConfirmGitTrust("Clone", destination, inspected.StandardOutput + AuthenticationNotice(authentication))) return;
         await ExecuteToolAsync("Git clone", async token =>
         {
             GitStatus = "Clone を実行中です。";
             try
             {
-                var result = await GitRepository.CloneTrustedAsync(remote, destination, token);
+                var result = await GitRepository.CloneTrustedAsync(remote, destination, authentication, token);
                 GitStatus = result.Success ? $"Clone が完了しました。{destination}" : DescribeRemoteFailure(result);
             }
             catch (ArgumentException)
@@ -313,12 +319,25 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         if (push is null && fetch is null) throw new InvalidDataException("承認対象のリポジトリと接続先を確認できません。");
         var details = push is null ? fetch!.Endpoint :
             $"{push.Endpoint}\n対象 {push.BranchRef}\nコミット {push.ObjectId}";
-        if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), directory, details)) return;
+        if (push is not null && Path.IsPathFullyQualified(push.Endpoint))
+            details += "\nローカルの送信先では受信側Gitの設定と受信hookが適用されます。管理している送信先だけを承認してください。";
+        var authentication = AuthenticationFor(push?.Endpoint ?? fetch!.Endpoint);
+        if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), directory,
+                details + AuthenticationNotice(authentication))) return;
         token.ThrowIfCancellationRequested();
         GitStatus = $"{operation} を実行中です。";
+        if (push is not null)
+        {
+            try { await RegisterKnownPublicationAssetsAsync(git, project, token); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
+            {
+                GitStatus = "プロジェクトまたは素材メタデータを確認できないため、Pushを中止しました。";
+                return;
+            }
+        }
         var result = push is null
-            ? await git.FetchTrustedAsync(fetch!, token)
-            : await git.PushTrustedAsync(push, token);
+            ? await git.FetchTrustedAsync(fetch!, authentication, token)
+            : await git.PushTrustedAsync(push, authentication, token);
         GitStatus = result.Success ? $"{operation} が完了しました。" : DescribeRemoteFailure(result);
     });
 
@@ -336,6 +355,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             GitFailure.Divergence => "送信先の履歴が変更されています。Fetch してブランチの状態を確認してください。",
             GitFailure.Timeout => "制限時間に達しました。接続状況と操作結果を確認してください。",
             GitFailure.PathTooLong => "より短い親フォルダーを選んでください。",
+            GitFailure.MediaPublication => "素材・パッケージが含まれるか、送信内容を検証できないため拒否しました。過去のコミットも確認してください。",
             GitFailure.UnsafeOperation => "接続先・ブランチ・リポジトリの状態または Git 設定を確認し、再度承認してください。",
             _ => "接続先、Git 設定またはブランチを確認してください。",
         };
@@ -400,7 +420,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 seriesDirectory = association.Directory;
                 resolve = token => ResolveMetadataBranchAsync(id, association, token);
             }
-            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, selected.ProjectId, resolve, seriesDirectory)
+            OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, resolve, seriesDirectory)
             {
                 ExpectedSourceIdentity = selected.FileIdentity,
                 TransferAssociationAsync = selected.MetadataAssociation is { } metadata
@@ -547,36 +567,56 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var requestedBranch = GitBranch;
         await ExecuteToolAsync("Git", async token =>
         {
-            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
-            if (directory is null || !Directory.Exists(directory)) { GitStatus = "プロジェクトのフォルダーが見つかりません。"; return; }
-            if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(requestedPath)) { GitStatus = "プロジェクトフォルダーからの相対パスを入力してください。"; return; }
+            var located = await LocateProjectGitRootAsync(selected, token);
+            if (located is null || !ReferenceEquals(selected, SelectedProject)) { GitStatus = "Gitリポジトリを確認できません。"; return; }
+            var (git, directory) = located.Value;
+            if ((operation == "stage" || operation == "unstage") && string.IsNullOrWhiteSpace(requestedPath)) { GitStatus = "Gitルートからの相対パスを指定してください。"; return; }
             if (operation == "commit" && string.IsNullOrWhiteSpace(requestedMessage)) { GitStatus = "コミットメッセージを入力してください。"; return; }
             if ((operation == "branch-create" || operation == "branch-switch") && string.IsNullOrWhiteSpace(requestedBranch)) { GitStatus = "ブランチ名を入力してください。"; return; }
-            if (operation is "stage" or "branch-switch")
+            if (operation == "branch-switch")
             {
-                var action = operation == "stage" ? "ステージ" : "ブランチ切替";
-                if (MessageBox.Show($"{action}時に、このリポジトリで設定された Git フィルターなどの外部プログラムが実行される場合があります。設定を信頼できる場合のみ続行してください。", "Git", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+                if (MessageBox.Show("ブランチ切替時に、このリポジトリで設定された Git フィルターなどの外部プログラムが実行される場合があります。設定を信頼できる場合のみ続行してください。", "Git", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
             }
-            var git = new GitRepository(directory);
+            if (operation is "commit" or "stage")
+            {
+                try { await RegisterKnownPublicationAssetsAsync(git, selected, token); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidDataException)
+                {
+                    GitStatus = "プロジェクトまたは素材メタデータを確認できないため、Git操作を中止しました。";
+                    return;
+                }
+            }
+            GitCommitTarget? commitTarget = null;
             if (operation == "commit")
             {
-                var repositoryRoot = await git.DetectAsync(token);
-                if (!repositoryRoot.Success) { GitStatus = "Git リポジトリを確認できませんでした。"; return; }
-                if (!ReferenceEquals(selected, SelectedProject)) return;
-                const string message = "このリポジトリのステージ済みの変更をすべてコミットします。設定された Git hook が実行される場合があります。";
-                if (MessageBox.Show($"{message}\n{repositoryRoot.StandardOutput.Trim()}\n続行しますか？", "Git", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) return;
+                var inspected = await git.InspectCommitAsync(token);
+                if (!inspected.Success || inspected.CommitTarget is not { } target) { GitStatus = DescribeCommitFailure(inspected); return; }
+                if (!ReferenceEquals(selected, SelectedProject) || !ConfirmGitCommit(target, requestedMessage)) return;
+                commitTarget = target;
             }
+            if (!ReferenceEquals(selected, SelectedProject)) return;
             var result = operation switch
             {
                 "stage" => await git.StageAsync([requestedPath], token),
                 "unstage" => await git.UnstageAsync([requestedPath], token),
-                "commit" => await git.CommitAsync(requestedMessage, token),
+                "commit" => await git.CommitAsync(commitTarget!, requestedMessage, token),
                 "branch-create" => await git.CreateBranchAsync(requestedBranch, token),
                 "branch-switch" => await git.SwitchBranchAsync(requestedBranch, token),
                 _ => throw new InvalidOperationException("Unknown Git operation."),
             };
-            if (ReferenceEquals(selected, SelectedProject))
-                GitStatus = result.Success ? "Git 操作が完了しました。状態を更新してください。" : $"Git 操作に失敗しました ({(result.Failure == GitFailure.None ? GitFailure.Unknown : result.Failure)})。パス、認証、通信、リポジトリ状態を確認してください。";
+            if (!ReferenceEquals(selected, SelectedProject)) return;
+            if (!result.Success) { GitStatus = DescribeCommitFailure(result); return; }
+            GitStatus = operation == "commit" ? $"コミットしました。\n{result.StandardOutput.Trim()}" : "Git 操作が完了しました。";
+            if (operation == "commit" && GitCommitMessage == requestedMessage) GitCommitMessage = "";
+            try
+            {
+                var status = await git.StatusAsync(token);
+                if (status.Success && ReferenceEquals(selected, SelectedProject)) UpdateGitChanges(status.StandardOutput);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                // The mutation already succeeded. Cancellation affects only the display refresh.
+            }
         });
     }
 
@@ -617,8 +657,9 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             var status = await git.StatusAsync(token);
             var branches = await git.BranchesAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
+            if (status.Success) UpdateGitChanges(status.StandardOutput);
             GitStatus = status.Success && branches.Success
-                ? $"Git: {detected.StandardOutput.Trim()}\n{branches.StandardOutput.Trim()}\n{(string.IsNullOrEmpty(status.StandardOutput) ? "変更なし" : status.StandardOutput.Replace('\0', '\n'))}"
+                ? $"Git: {detected.StandardOutput.Trim()}\n{branches.StandardOutput.Trim()}\n{(GitChanges.Count == 0 ? "変更なし" : $"変更 {GitChanges.Count} 件")}"
                 : "Git の状態を取得できませんでした。";
         });
     }

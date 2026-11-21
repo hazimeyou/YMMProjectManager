@@ -64,6 +64,7 @@
                     MinWidth="90"
                     Margin="0,0,8,0"
                     Command="{Binding ExtractBundleCommand}" />
+                <Button Content="PF 整理" Margin="8,0,0,0" Command="{Binding ReviewProjectCleanupCommand}" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
@@ -97,6 +98,11 @@
             </StackPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding GitStatus}" TextWrapping="Wrap" Margin="0,4,0,6" />
             <TextBlock Text="{Binding GitRemoteOperationsHelp}" TextWrapping="Wrap" Margin="0,0,0,4" />
+            <WrapPanel Margin="0,0,0,4">
+                <CheckBox Content="GitHubにWindowsの保存済み資格情報を使う" IsChecked="{Binding UseCachedGitHubAuthentication}"
+                    VerticalAlignment="Center" Margin="0,0,8,0" />
+                <Button Content="GitHubのアクセスを確認" Command="{Binding InspectGitHubAccessCommand}" />
+            </WrapPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
                 <Button Content="Pull (fast-forward)" Command="{Binding PullGitCommand}"
@@ -111,11 +117,13 @@
                 <Button Content="clone" Command="{Binding GitCloneCommand}" />
             </StackPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
-                <TextBlock Text="プロジェクトからの相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBlock Text="Gitルートからの相対パス" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitPath, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
                 <Button Content="ステージ" Command="{Binding StageGitPathCommand}" Margin="0,0,4,0" />
                 <Button Content="解除" Command="{Binding UnstageGitPathCommand}" />
             </StackPanel>
+            <ListBox ItemsSource="{Binding GitChanges}" SelectedItem="{Binding SelectedGitChange}" DisplayMemberPath="Display"
+                MaxHeight="105" MinHeight="22" AutomationProperties.Name="Git の変更ファイル" Margin="0,0,0,4" />
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
                 <TextBlock Text="メッセージ" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="150" Text="{Binding GitCommitMessage, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,4,0" />
@@ -137,6 +145,11 @@
                 <TextBlock Text="HTTPS URL (任意)" VerticalAlignment="Center" Margin="0,0,4,0" />
                 <TextBox Width="220" Text="{Binding AssetUrl, UpdateSourceTrigger=PropertyChanged}" />
             </StackPanel>
+            <WrapPanel Margin="0,0,0,4">
+                <TextBlock Text="再配布許諾の記録（任意）" VerticalAlignment="Center" Margin="0,0,4,0" />
+                <TextBox Width="220" Text="{Binding AssetRedistributionNote, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Content="素材プールに収集" Margin="4,0,0,0" Command="{Binding CollectAssetToPoolCommand}" />
+            </WrapPanel>
             <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedProject.ProjectId, StringFormat='Project ID: {0}', TargetNullValue='Project ID: 未設定'}" Margin="0,4,0,0" />
             <WrapPanel Margin="0,4,0,4">
                 <TextBlock Text="保管先名" Margin="0,0,4,0" />

@@ -16,7 +16,7 @@ internal static partial class AssetRelinkRecovery
         var evidencePath = Path.GetFullPath(evidence);
         await using var stream = OpenVerifiedPath(evidencePath);
         var intent = await ReadIntentAsync(stream.Stream, evidencePath, context.YmmpPath, token).ConfigureAwait(false);
-        if (intent.Version != 4 || context.OriginalBytes is not { } original || original.Length > MaxSourceBytes ||
+        if (intent.Version < 4 || context.OriginalBytes is not { } original || original.Length > MaxSourceBytes ||
             Hash(original) != intent.SourceSha256)
             throw new InvalidDataException("The managed relink save does not match its prepared source.");
 
@@ -55,7 +55,7 @@ internal static partial class AssetRelinkRecovery
     private static async Task<(VerifiedFileLease Lease, bool NeedsPublication)> OpenOutputAsync(Intent intent, string evidencePath,
         bool resume, CancellationToken token)
     {
-        if (intent.Version != 4) return (OpenVerifiedPath(intent.Output), false);
+        if (intent.Version < 4) return (OpenVerifiedPath(intent.Output), false);
 
         await using var proofLease = OpenVerifiedPath(PublicationPath(evidencePath));
         var proof = proofLease.Stream;

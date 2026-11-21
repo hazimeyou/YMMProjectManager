@@ -555,7 +555,6 @@ public sealed class RelinkSaveService
     private async Task<(bool Success, string? ErrorMessage)> SaveAsCoreAsync(RelinkDocumentContext context, string destination,
         string? stage, Func<FileStream, CancellationToken, Task>? persistPublication, CancellationToken token)
     {
-        string? temporary = null;
         try
         {
             token.ThrowIfCancellationRequested();
@@ -566,13 +565,17 @@ public sealed class RelinkSaveService
                 return (false, "再リンク対象を確認できません。");
             var source = Path.GetFullPath(context.YmmpPath);
             var output = Path.GetFullPath(destination);
-            if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.Ordinal))
                 return (false, "相対素材パスを保護するため、元のプロジェクトと同じフォルダーに別名保存してください。");
             if (File.Exists(output) || Directory.Exists(output)) return (false, "既存ファイルは上書きできません。別名を選択してください。");
+            using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(source)!, enforceShare: true);
             var expected = SHA256.HashData(original);
-            var current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
-            if (!expected.SequenceEqual(SHA256.HashData(current)))
-                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            using (var initial = new FileStream(OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false, allowRename: false), FileAccess.Read))
+            {
+                var initialHash = await SHA256.HashDataAsync(initial, token).ConfigureAwait(false);
+                if (!expected.SequenceEqual(initialHash))
+                    return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+            }
             var updated = RelinkJsonUpdate.Apply(original, rows);
             using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
             if (persistPublication is not null)
@@ -580,22 +583,30 @@ public sealed class RelinkSaveService
                 await WritePreparedStageAsync(stage!, updated, persistPublication, token).ConfigureAwait(false);
                 return (true, null);
             }
-            var candidate = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileName(output) + ".tmp-" + Guid.NewGuid().ToString("N"));
-            await using (var stream = new FileStream(candidate, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            var candidate = Path.Combine(Path.GetDirectoryName(output)!, $".ymmpm-relink.tmp-{Guid.NewGuid():N}");
+            await using var stream = OwnedFilePublication.CreateOwnedOutputFile(candidate, readBack: true);
+            var published = false;
+            try
             {
-                temporary = candidate;
                 await write(stream, updated, token).ConfigureAwait(false);
                 await stream.FlushAsync(token).ConfigureAwait(false);
                 flush(stream);
+                stream.Position = 0;
+                var stagedHash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
+                if (!SHA256.HashData(updated).SequenceEqual(stagedHash))
+                    return (false, "書き込んだ再リンク結果を検証できません。");
+                beforeCommit?.Invoke();
+                token.ThrowIfCancellationRequested();
+                using var current = new FileStream(OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false, allowRename: false), FileAccess.Read);
+                var currentHash = await SHA256.HashDataAsync(current, token).ConfigureAwait(false);
+                if (!expected.SequenceEqual(currentHash))
+                    return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
+                token.ThrowIfCancellationRequested();
+                OwnedFilePublication.RenameOpenedPath(stream.SafeFileHandle, output);
+                published = true;
+                return (true, null);
             }
-            beforeCommit?.Invoke();
-            token.ThrowIfCancellationRequested();
-            current = await File.ReadAllBytesAsync(source, token).ConfigureAwait(false);
-            if (!expected.SequenceEqual(SHA256.HashData(current)))
-                return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
-            File.Move(temporary, output);
-            temporary = null;
-            return (true, null);
+            finally { if (!published) OwnedFilePublication.TryDeleteOpenedPath(stream.SafeFileHandle); }
         }
         catch (OperationCanceledException) { throw; }
         catch (InvalidDataException ex) { return (false, ex.Message); }
@@ -603,10 +614,6 @@ public sealed class RelinkSaveService
         {
             logger.Error(ex, "Relink save-as failed.");
             return (false, "別名保存に失敗しました。出力先とログを確認してください。");
-        }
-        finally
-        {
-            if (temporary is not null) { try { File.Delete(temporary); } catch (Exception ex) { logger.Error(ex, "Relink save-as cleanup failed."); } }
         }
     }
 

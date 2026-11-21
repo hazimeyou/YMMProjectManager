@@ -13,6 +13,7 @@ using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Diagnostics;
 using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Thumbnails;
+using YMMProjectManager.Tests;
 using CurrentPreviewCaptureResult = YMMProjectManager.Infrastructure.Output.CurrentPreviewCaptureResult;
 using CurrentPreviewCaptureService = YMMProjectManager.Infrastructure.Output.CurrentPreviewCaptureService;
 using YmmPreviewBitmapCaptureAdapter = YMMProjectManager.Infrastructure.Output.YmmPreviewBitmapCaptureAdapter;
@@ -134,6 +135,9 @@ internal static class Program
         await RunGroupAsync(nameof(SceneComparisonHandoffTests), SceneComparisonHandoffTests.RunAsync);
         await RunGroupAsync(nameof(SceneRenderCoordinatorTests), SceneRenderCoordinatorTests.RunAsync);
         await RunGroupAsync(nameof(GitPublicationTests), () => GitPublicationTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(AssetPoolTests), () => AssetPoolTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(ProjectFileCleanupTests), ProjectFileCleanupTests.RunAsync);
+        await RunGroupAsync(nameof(StrictRelinkWorkflowTests), () => StrictRelinkWorkflowTests.RunAsync(workRoot));
         await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
         await RunGroupAsync("TestCreateAndListAsync", () => TestCreateAndListAsync(workRoot));
         await RunGroupAsync("TestMultipleGenerationsAsync", () => TestMultipleGenerationsAsync(workRoot));
@@ -274,6 +278,21 @@ internal static class Program
                     break;
                 case nameof(GitPublicationTests):
                     await GitPublicationTests.RunAsync(workRoot);
+                    break;
+                case nameof(AssetPoolTests):
+                    await AssetPoolTests.RunAsync(workRoot);
+                    break;
+                case nameof(ProjectFileCleanupTests):
+                    await ProjectFileCleanupTests.RunAsync();
+                    break;
+                case nameof(StrictRelinkWorkflowTests):
+                    await StrictRelinkWorkflowTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitRepositoryTests):
+                    await GitRepositoryTests.RunAsync(workRoot);
+                    break;
+                case nameof(RelinkIntegrityTests):
+                    await RelinkIntegrityTests.RunAsync(workRoot);
                     break;
                 case nameof(GitNativeInterruptionTests):
                     await GitNativeInterruptionTests.RunAsync(workRoot);

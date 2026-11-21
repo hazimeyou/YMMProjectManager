@@ -1,5 +1,6 @@
 using System.IO;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using YMMProjectManager.Infrastructure.Relink;
@@ -24,10 +25,11 @@ internal static partial class AssetRelinkRecovery
     }
 
     internal sealed record PhysicalFileId(ulong Volume, Guid FileId);
+    internal sealed record StrictAssetProof(int RowIndex, string Name, string? ManifestPath, string? ManifestSha256);
 
     internal sealed record Intent(int Version, Guid OperationId, string Source, string SourceSha256, string Output, string OutputSha256,
         AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetManifest Next, Comparison[] Approved,
-        AssetRevisionSeries.Head[]? ObservedTips = null, PhysicalFileId? SourceIdentity = null);
+        AssetRevisionSeries.Head[]? ObservedTips = null, PhysicalFileId? SourceIdentity = null, StrictAssetProof[]? StrictAssets = null);
 
     internal sealed record OutputReceipt(AssetRevisionSeries.Head Revision, Guid OperationId, string Source, string SourceSha256,
         string Output, string OutputSha256, PhysicalFileId SourceIdentity, PhysicalFileId OutputIdentity);
@@ -38,11 +40,13 @@ internal static partial class AssetRelinkRecovery
 
     internal static async Task<IReadOnlyList<Comparison>> ReviewAsync(RelinkDocumentContext context, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips,
-        CancellationToken token)
+        CancellationToken token, bool requireStrict = false)
     {
         var selected = await ResolveTipAsync(seriesDirectory, root, parent, observedTips, token).ConfigureAwait(false);
         var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated));
-        var (review, _) = await InspectRowsAsync(Path.GetDirectoryName(Path.GetFullPath(context.YmmpPath))!, selected, rows, token).ConfigureAwait(false);
+        var strict = requireStrict ? new StrictRelinkAssets(context.YmmpPath, context.OriginalJsonText, selected) : null;
+        var (review, _) = await InspectRowsAsync(Path.GetDirectoryName(Path.GetFullPath(context.YmmpPath))!, selected, rows, token,
+            strict: strict).ConfigureAwait(false);
         return review;
     }
 
@@ -60,9 +64,15 @@ internal static partial class AssetRelinkRecovery
         IReadOnlyList<Comparison> reviewed, bool confirmedMismatches, CancellationToken token)
         => PrepareCoreAsync(context, destination, seriesDirectory, root, parent, observedTips, reviewed, confirmedMismatches, 4, token);
 
+    internal static Task<string> PrepareStrictManagedOutputAsync(RelinkDocumentContext context, string destination, string seriesDirectory,
+        AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips,
+        IReadOnlyList<Comparison> reviewed, StrictAssetProof[] proofs, CancellationToken token) =>
+        PrepareCoreAsync(context, destination, seriesDirectory, root, parent, observedTips, reviewed, false, 5, token, proofs);
+
     private static async Task<string> PrepareCoreAsync(RelinkDocumentContext context, string destination, string seriesDirectory,
         AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent, IReadOnlyList<AssetRevisionSeries.Head> observedTips,
-        IReadOnlyList<Comparison> reviewed, bool confirmedMismatches, int version, CancellationToken token)
+        IReadOnlyList<Comparison> reviewed, bool confirmedMismatches, int version, CancellationToken token,
+        StrictAssetProof[]? proofs = null)
     {
         token.ThrowIfCancellationRequested();
         var expectedTips = observedTips.ToArray();
@@ -75,7 +85,8 @@ internal static partial class AssetRelinkRecovery
         var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated));
         var selected = await ResolveTipAsync(seriesDirectory, root, parent, expectedTips, token).ConfigureAwait(false);
         var sourceDirectory = Path.GetDirectoryName(source)!;
-        var (review, candidates) = await InspectRowsAsync(sourceDirectory, selected, rows, token).ConfigureAwait(false);
+        var strict = proofs is null ? null : new StrictRelinkAssets(source, context.OriginalJsonText, selected);
+        var (review, candidates) = await InspectRowsAsync(sourceDirectory, selected, rows, token, strict: strict).ConfigureAwait(false);
         if (!review.SequenceEqual(reviewed)) throw new InvalidDataException("A relink candidate changed after review.");
         if (review.Any(item => item.RequiresConfirmation) && !confirmedMismatches)
             throw new InvalidDataException("Missing or different asset hashes require confirmation.");
@@ -87,7 +98,8 @@ internal static partial class AssetRelinkRecovery
         if (await HashAsync(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
         var intent = new Intent(version, next.RevisionId, source, sourceHash, output, Hash(RelinkJsonUpdate.Apply(original, rows)),
-            root, parent, next, review, expectedTips, GetPhysicalId(sourceLease.Stream));
+            root, parent, next, review, expectedTips, GetPhysicalId(sourceLease.Stream), proofs);
+        if (proofs is not null) ValidateStrictProofs(intent);
         var evidence = EvidencePath(source, intent.OperationId);
         await WriteEvidenceAsync(evidence, intent, MaxIntentBytes, token).ConfigureAwait(false);
         return evidence;
@@ -104,7 +116,7 @@ internal static partial class AssetRelinkRecovery
     }
 
     private static async Task<(Comparison[], AssetMetadata[])> InspectRowsAsync(string sourceDirectory, AssetManifest manifest,
-        List<RelinkRow> rows, CancellationToken token, List<VerifiedFileLease>? heldCandidates = null)
+        List<RelinkRow> rows, CancellationToken token, List<VerifiedFileLease>? heldCandidates = null, StrictRelinkAssets? strict = null)
     {
         if (rows.Count is 0 or > 10) throw new InvalidDataException("A managed relink must have between one and ten candidate rows.");
         var expectedPaths = manifest.Assets.ToDictionary(
@@ -132,7 +144,9 @@ internal static partial class AssetRelinkRecovery
                 }
                 candidates.Add(candidate, actual);
             }
-            expectedPaths.TryGetValue(Path.GetFullPath(row.OriginalPath, sourceDirectory), out var expected);
+            AssetMetadata? expected;
+            if (strict is null) expectedPaths.TryGetValue(Path.GetFullPath(row.OriginalPath, sourceDirectory), out expected);
+            else expected = strict.FindExpected(row.OriginalPath);
             review.Add(new Comparison(row.RowIndex, row.OriginalPath, row.SelectedCandidate, expected?.Sha256, actual.Sha256, row.TypeHint));
         }
         return (review.ToArray(), candidates.Values.ToArray());
@@ -143,7 +157,7 @@ internal static partial class AssetRelinkRecovery
         => (await CompleteForTransferAsync(evidence, seriesDirectory, associatedRoot, token, expectedSource).ConfigureAwait(false)).Revision;
 
     internal static async Task<OutputReceipt> CompleteForTransferAsync(string evidence, string seriesDirectory, AssetRevisionSeries.Head associatedRoot,
-        CancellationToken token, string? expectedSource = null, bool resumePreparedOutput = false)
+        CancellationToken token, string? expectedSource = null, bool resumePreparedOutput = false, bool requireStrictPrepared = false)
     {
         var evidencePath = Path.GetFullPath(evidence);
         await using var intentStream = OpenVerifiedPath(evidencePath);
@@ -173,6 +187,8 @@ internal static partial class AssetRelinkRecovery
             throw new InvalidDataException("The source project or relink recovery evidence changed.");
         var (openedOutput, needsPublication) = await OpenOutputAsync(intent, evidencePath, resumePreparedOutput, token).ConfigureAwait(false);
         await using var outputLease = openedOutput;
+        if (requireStrictPrepared && needsPublication && intent.StrictAssets is null)
+            throw new InvalidDataException("Prepared output predates strict name and SHA-256 evidence. Re-run relink while retaining the old record.");
         var output = outputLease.Stream;
         var outputIdentity = GetPhysicalId(output);
         if (outputIdentity == sourceIdentity || output.Length != expectedOutput.Length ||
@@ -180,11 +196,23 @@ internal static partial class AssetRelinkRecovery
             throw new InvalidDataException("The relink output differs from its saved recovery evidence.");
 
         var leases = new List<VerifiedFileLease>();
+        var strictLeases = new List<AssetPoolVerification>();
         try
         {
             var directory = Path.GetDirectoryName(intent.Output)!;
+            var strict = intent.StrictAssets is null ? null
+                : new StrictRelinkAssets(intent.Source, Encoding.UTF8.GetString(original), history.Selected.Manifest);
+            if (intent.StrictAssets is { } proofs)
+            {
+                foreach (var proof in proofs)
+                {
+                    var comparison = intent.Approved.Single(item => item.RowIndex == proof.RowIndex);
+                    var match = new AssetPoolMatch(comparison.CandidatePath, proof.ManifestPath, proof.ManifestSha256);
+                    strictLeases.Add(await AssetPool.OpenVerifiedAsync(match, proof.Name, comparison.ExpectedSha256!, token).ConfigureAwait(false));
+                }
+            }
             // Keep exactly the bytes used to derive the revision leased until its publication completes.
-            var (review, candidates) = await InspectRowsAsync(directory, history.Selected.Manifest, rows, token, leases).ConfigureAwait(false);
+            var (review, candidates) = await InspectRowsAsync(directory, history.Selected.Manifest, rows, token, leases, strict).ConfigureAwait(false);
             var derived = AssetManifestStore.Create(intent.Output, candidates, intent.Next.VerifiedAtUtc,
                 history.Selected.Manifest, confirmedProjectAssociation: true, confirmedHashChanges: true, projectId: associatedRoot.ProjectId)
                 with { RevisionId = intent.OperationId };
@@ -205,6 +233,7 @@ internal static partial class AssetRelinkRecovery
         finally
         {
             foreach (var lease in leases) await lease.DisposeAsync().ConfigureAwait(false);
+            foreach (var lease in strictLeases) await lease.DisposeAsync().ConfigureAwait(false);
         }
     }
 
@@ -213,7 +242,7 @@ internal static partial class AssetRelinkRecovery
     {
         if (stream.Length > MaxIntentBytes) throw new InvalidDataException("The relink recovery record is too large.");
         var intent = await JsonSerializer.DeserializeAsync<Intent>(stream, JsonOptions, token).ConfigureAwait(false);
-        if (intent is null || intent.Version is not (1 or 2 or 3 or 4) || intent.Root is null || intent.Next is null ||
+        if (intent is null || intent.Version is not (1 or 2 or 3 or 4 or 5) || intent.Root is null || intent.Next is null ||
             intent.OperationId == Guid.Empty || intent.OperationId != intent.Next.RevisionId || intent.Parent?.ProjectId != intent.Root.ProjectId ||
             intent.Next.ProjectId != intent.Root.ProjectId || intent.Next.ParentRevisionId != intent.Parent.RevisionId ||
             intent.Approved is not { Length: > 0 and <= 10 } ||
@@ -225,6 +254,8 @@ internal static partial class AssetRelinkRecovery
         if (intent.Version >= 3 ? intent.SourceIdentity is null || intent.SourceIdentity.FileId == Guid.Empty : intent.SourceIdentity is not null)
             throw new InvalidDataException("The relink recovery record has invalid source identity evidence.");
         ValidatePaths(intent.Source, intent.Output);
+        if (intent.Version == 5) ValidateStrictProofs(intent);
+        else if (intent.StrictAssets is not null) throw new InvalidDataException("Unexpected strict asset evidence.");
         if (expectedSource is not null && !string.Equals(Path.GetFullPath(expectedSource), intent.Source, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("This recovery record belongs to a different source project file.");
         AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(intent.Next));
@@ -233,6 +264,34 @@ internal static partial class AssetRelinkRecovery
         if (intent.Next.ProjectFileName != Path.GetFileName(intent.Output))
             throw new InvalidDataException("The metadata revision targets a different output.");
         return intent;
+    }
+
+    private static void ValidateStrictProofs(Intent intent)
+    {
+        var directory = Path.GetDirectoryName(intent.Source)!;
+        if (intent.StrictAssets is not { } proofs || proofs.Length != intent.Approved.Length ||
+            proofs.Any(proof => proof is null) || proofs.Select(proof => proof.RowIndex).Distinct().Count() != proofs.Length ||
+            intent.Approved.Select(item => item.RowIndex).Distinct().Count() != proofs.Length)
+            throw new InvalidDataException("Incomplete strict relink evidence.");
+        foreach (var proof in proofs)
+        {
+            var comparison = intent.Approved.SingleOrDefault(item => item.RowIndex == proof.RowIndex);
+            if (comparison is null || !IsHash(comparison.ExpectedSha256) || comparison.RequiresConfirmation ||
+                !string.Equals(proof.Name, AssetPool.GetOriginalFileName(comparison.OriginalPath), StringComparison.OrdinalIgnoreCase) ||
+                !IsExactOrdinaryDescendant(directory, comparison.CandidatePath) ||
+                (proof.ManifestPath is null ? proof.ManifestSha256 is not null :
+                    !IsHash(proof.ManifestSha256) || !IsExactOrdinaryDescendant(directory, proof.ManifestPath) ||
+                    !string.Equals(Path.GetDirectoryName(proof.ManifestPath), Path.GetDirectoryName(comparison.CandidatePath), StringComparison.Ordinal) ||
+                    !string.Equals(Path.GetFileName(proof.ManifestPath), AssetPool.ManifestFileName, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("Invalid or unapproved strict relink asset evidence.");
+        }
+    }
+
+    private static bool IsExactOrdinaryDescendant(string directory, string path)
+    {
+        if (!StrictRelinkAssets.IsDescendant(directory, path)) return false;
+        var relative = Path.GetRelativePath(directory, path);
+        return AssetInventory.ResolveRelativePath(directory, relative) == path;
     }
 
     private static bool ValidTipEvidence(AssetRevisionSeries.Head[]? tips, AssetRevisionSeries.Head parent)

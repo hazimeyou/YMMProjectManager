@@ -10,7 +10,7 @@ public sealed partial class ProjectListViewModel
     private const string PullWorkflowOperation = "Git Pull";
 
     public string PullHelp =>
-        "承認後に fast-forward のみ実行します。作業ツリーは固定ローカル NTFS が必要です。接続先はローカル Git または認証不要の HTTPS を指定できます。";
+        "承認後に fast-forward のみ実行します。作業ツリーには固定ローカルNTFSが必要です。GitHubでは保存済みのWindows資格情報を選べます。";
 
     public string GitRemoteOperationsHelp =>
         "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は接続の承認と更新先の確認が必要です。";
@@ -21,9 +21,10 @@ public sealed partial class ProjectListViewModel
     private Task RunConfirmedGitPullAsync() =>
         RunConfirmedGitPullAsync(
             (root, remote) => ConfirmGitTrust("更新先コミットを確認するためリモートへ接続します。Pull の実行は次の画面で選べます。", root, remote),
-            ConfirmPull);
+            ConfirmPull, UseCachedGitHubAuthentication);
 
-    internal Task RunConfirmedGitPullAsync(Func<string, string, bool> approveTransport, Func<PullApprovalDetails, bool> approveTarget)
+    internal Task RunConfirmedGitPullAsync(Func<string, string, bool> approveTransport, Func<PullApprovalDetails, bool> approveTarget,
+        bool useCachedGitHubAuthentication = false)
         => RunGitPullWorkflowAsync<GitPullRemote, GitPullTarget>(
             async (project, token) =>
             {
@@ -34,13 +35,17 @@ public sealed partial class ProjectListViewModel
                     return null;
                 }
                 var result = await located.Value.Repository.InspectPullRemoteAsync(token);
+                if (useCachedGitHubAuthentication && result.PullRemote is { } anonymous &&
+                    GitRepository.IsSupportedGitHubEndpoint(anonymous.Endpoint))
+                    result = await located.Value.Repository.InspectPullRemoteAsync(GitHubAuthentication.CachedWindows, token);
                 if (result.Success && result.PullRemote is { } remote &&
                     string.Equals(located.Value.Root, remote.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
                     return remote;
                 GitStatus = DescribePullFailure(located.Value.Root, result);
                 return null;
             },
-            remote => approveTransport(remote.RepositoryRoot, $"{remote.RemoteName} / {remote.UpstreamRef}\n{remote.Endpoint}"),
+            remote => approveTransport(remote.RepositoryRoot, $"{remote.RemoteName} / {remote.UpstreamRef}\n{remote.Endpoint}" +
+                AuthenticationNotice(remote.Authentication)),
             async (remote, token) =>
             {
                 var result = await new GitRepository(remote.RepositoryRoot).InspectPullTargetAsync(remote, token);
@@ -48,7 +53,8 @@ public sealed partial class ProjectListViewModel
                     string.Equals(remote.RepositoryRoot, target.RepositoryRoot, StringComparison.OrdinalIgnoreCase) &&
                     remote.BranchRef == target.BranchRef && remote.StartObjectId == target.StartObjectId &&
                     remote.RemoteName == target.RemoteName && remote.UpstreamRef == target.UpstreamRef &&
-                    remote.Endpoint == target.Endpoint && remote.Identity == target.Identity)
+                    remote.Endpoint == target.Endpoint && remote.Identity == target.Identity &&
+                    remote.Authentication == target.Remote.Authentication)
                     return target;
                 GitStatus = DescribePullFailure(remote.RepositoryRoot, result);
                 return null;
