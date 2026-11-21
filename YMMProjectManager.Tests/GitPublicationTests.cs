@@ -104,10 +104,15 @@ internal static class GitPublicationTests
             {
                 var operation = Guid.NewGuid().ToString("N");
                 var derived = ".ymmpm-derived-" + operation;
+                var pendingDerived = ".ymmpm-derived-pending-" + operation;
                 Directory.CreateDirectory(Path.Combine(source, derived));
-                foreach (var path in new[] { $".ymmpm-relink-{operation}.json", $"{derived}/revision-synthetic.json" })
+                Directory.CreateDirectory(Path.Combine(source, pendingDerived));
+                var pendingOutput = $".ymmpm-relink-external-{operation}.json.output.tmp";
+                foreach (var path in new[] { $".ymmpm-relink-{operation}.json", pendingOutput, $"{derived}/revision-synthetic.json",
+                    $"{pendingDerived}/revision-synthetic.json" })
                 {
-                    await File.WriteAllTextAsync(Path.Combine(source, path), "synthesized local-only metadata");
+                    await File.WriteAllTextAsync(Path.Combine(source, path), path == pendingOutput
+                        ? """{"Items":[{"FilePath":"C:\\synthetic\\private\\clip.wav"}]}""" : "synthesized local-only metadata");
                     var refusal = await git.StageAsync([path]);
                     var publishedIndex = File.Exists(Path.Combine(source, ".git", "index"));
                     if (refusal.Failure != GitFailure.MediaPublication || publishedIndex)

@@ -140,8 +140,10 @@ public sealed partial class GitRepository
         path.Split('/').Any(component =>
             component.Equals(".ymmpm-lineage.json", StringComparison.OrdinalIgnoreCase) ||
             HasOperationName(component, ".ymmpm-relink-") ||
+            HasOperationName(component, ".ymmpm-relink-external-") ||
             HasOperationName(component, ".ymmpm-relink.tmp-") ||
-            HasOperationName(component, ".ymmpm-derived-"));
+            HasOperationName(component, ".ymmpm-derived-") ||
+            HasOperationName(component, ".ymmpm-derived-pending-"));
 
     private static bool HasOperationName(string component, string prefix) =>
         component.Length >= prefix.Length + 32 &&

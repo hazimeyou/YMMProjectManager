@@ -392,7 +392,7 @@ public static class AssetPool
         catch { handle.Dispose(); throw; }
     }
 
-    private static string FullOrdinaryPath(string path)
+    internal static string FullOrdinaryPath(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
         var normalized = path.Replace('/', '\\');

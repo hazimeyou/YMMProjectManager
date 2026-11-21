@@ -304,11 +304,9 @@ internal static partial class AssetRelinkRecovery
 
     private static bool IsCanonicalOrdinaryPath(string? path)
     {
-        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path) || path != Path.GetFullPath(path) ||
-            path.StartsWith(@"\\?\", StringComparison.Ordinal) || path.StartsWith(@"\\.\", StringComparison.Ordinal))
-            return false;
-        var root = Path.GetPathRoot(path)!;
-        return path[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).All(AssetInventory.IsOrdinaryPathComponent);
+        if (path is null) return false;
+        try { return AssetPool.FullOrdinaryPath(path) == path; }
+        catch (ArgumentException) { return false; }
     }
 
     private static void ValidateExternalOutputPaths(string source, string output)
