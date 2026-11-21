@@ -95,7 +95,7 @@ public sealed partial class ProjectListViewModel
             Width = 1020, Height = 560, MinWidth = 680, MinHeight = 360,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
         };
-        var owner = System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(candidate => candidate.IsActive);
+        var owner = GetActiveWindow();
         if (owner is not null) window.Owner = owner;
         var panel = new DockPanel { Margin = new Thickness(12) };
         var instruction = new TextBlock
