@@ -210,6 +210,54 @@ public static class AssetRevisionSeries
     internal static bool SameTips(IReadOnlyList<Head> current, IReadOnlyList<Head> expected)
         => current.Count == expected.Count && current.ToHashSet().SetEquals(expected);
 
+    /// <summary>Verifies the original branch while permitting a derived series at a distinct location.</summary>
+    internal static async Task<T> WithVerifiedSourceTipAsync<T>(string directory, Head expectedRoot, Head expectedTip,
+        IReadOnlyList<Head> expectedTips, Func<AssetManifest, CancellationToken, Task<T>> operation, CancellationToken token)
+    {
+        var full = ValidateDirectory(directory);
+        using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        await using var gate = AcquireLock(full);
+        using var pins = new RevisionReadPins();
+        var graph = InspectGraph(await ReadNodesAsync(full, token, pins).ConfigureAwait(false));
+        if (graph.Root != expectedRoot || !graph.Heads.Contains(expectedTip) || !SameTips(graph.Heads, expectedTips))
+            throw new InvalidDataException("The original metadata branch changed. Inspect the current branch before continuing.");
+        return await operation(graph.Revisions.Single(revision => revision.Receipt == expectedTip).Manifest, token).ConfigureAwait(false);
+    }
+
+    /// <summary>Publishes an exact derived root into an unoccupied directory or verifies a previous publication.</summary>
+    internal static async Task<Head> PublishOrVerifyDerivedRootAsync(string directory, AssetManifest root, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        root = Snapshot(root);
+        if (root.ParentRevisionId is not null || root.DerivedFrom is null)
+            throw new InvalidDataException("A derived series needs a root with original project provenance.");
+        var destination = Path.GetFullPath(directory);
+        var parent = ValidateDirectory(Path.GetDirectoryName(destination) ?? throw new InvalidDataException("A derived directory is required."));
+        using var fence = OwnedFilePublication.DirectoryFence.Open(parent, enforceShare: true);
+        var expected = MakeHead(root);
+        if (!Path.Exists(destination))
+        {
+            using var staging = OwnedStagingDirectory.Reserve(parent, ".ymmpm-derived-pending-");
+            try
+            {
+                await AssetManifestStore.SaveNewAsync(RevisionPath(staging.Path, root.RevisionId), root, token).ConfigureAwait(false);
+                if (Directory.EnumerateFileSystemEntries(staging.Path).Take(2).Count() != 1 ||
+                    (await ReadNodesAsync(staging.Path, token).ConfigureAwait(false)).Values.Single().Hash != expected.Sha256)
+                    throw new InvalidDataException("The staged derived metadata has unexpected entries.");
+                staging.Publish(destination, token);
+            }
+            catch (IOException) when (Path.Exists(destination))
+            {
+                // A competing recovery may have published the same derived root.
+                // Never overwrite this path or delete an unverified staging directory.
+            }
+        }
+        var graph = await InspectGraphAsync(destination, token).ConfigureAwait(false);
+        if (graph.Root != expected)
+            throw new InvalidDataException("The derived metadata destination is occupied by different history.");
+        return expected;
+    }
+
     private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head[]? observedTips, Head expected, AssetManifest next,
         bool acceptCommittedRevision, CancellationToken token, Action? publishPreparedOutput = null)
     {
@@ -282,6 +330,8 @@ public static class AssetRevisionSeries
 
     private static Head MakeHead(AssetManifest manifest) => new(manifest.ProjectId, manifest.RevisionId,
         Convert.ToHexString(SHA256.HashData(SerializeRevision(manifest))));
+
+    internal static Head DescribeRevision(AssetManifest manifest) => MakeHead(Snapshot(manifest));
 
     private sealed record Node(AssetManifest Manifest, string Hash, int ByteCount);
 

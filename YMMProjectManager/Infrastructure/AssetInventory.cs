@@ -8,10 +8,13 @@ using YMMProjectManager.Infrastructure.Packaging;
 namespace YMMProjectManager.Infrastructure;
 
 public sealed record ExternalAssetLocation(string StorageName, string RelativePath);
+public sealed record ExternalRelinkBinding(string OriginalFileName, string ReferenceSha256, string? ManifestSha256);
 public sealed record AssetMetadata(string RelativePath, long Size, string Sha256, string? DownloadUrl)
 {
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public ExternalAssetLocation? ExternalLocation { get; init; }
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ExternalRelinkBinding? ExternalRelink { get; init; }
 }
 public enum AssetVerification { Valid, Missing, SizeMismatch, HashMismatch, ExternalUnverified, Unreadable }
 public enum AssetReferenceStatus { Present, Missing, Changed, External, Unavailable }
@@ -33,11 +36,14 @@ public static class AssetInventory
         using var reader = new StreamReader(stream);
         var json = await reader.ReadToEndAsync(token).ConfigureAwait(false);
         var expectedByPath = new Dictionary<string, AssetMetadata>(StringComparer.OrdinalIgnoreCase);
+        var expectedExternal = new Dictionary<string, AssetMetadata>(StringComparer.OrdinalIgnoreCase);
         foreach (var asset in expected ?? [])
         {
             ValidateMetadata(asset);
             if (!expectedByPath.TryAdd(Path.GetFullPath(asset.RelativePath, directory), asset))
                 throw new InvalidDataException("Duplicate expected asset path.");
+            if (asset.ExternalRelink is { } binding && !expectedExternal.TryAdd(binding.ReferenceSha256, asset))
+                throw new InvalidDataException("Duplicate external relink asset reference.");
         }
 
         using var projectJson = JsonDocument.Parse(json);
@@ -56,6 +62,11 @@ public static class AssetInventory
             if (path is null)
             {
                 results.Add(new AssetReference(reference, AssetReferenceStatus.Unavailable, null, null));
+                continue;
+            }
+            if (expectedExternal.TryGetValue(StrictRelinkAssets.ReferenceSha256(path), out var relocated))
+            {
+                results.Add(new AssetReference(path, AssetReferenceStatus.External, null, relocated));
                 continue;
             }
             if (!path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
@@ -233,7 +244,13 @@ public static class AssetInventory
             throw new InvalidDataException("Invalid asset metadata.");
         ValidateUrl(asset.DownloadUrl);
         if (asset.ExternalLocation is { } location) ValidateExternalLocation(location);
+        if (asset.ExternalRelink is { } binding && (asset.ExternalLocation is null ||
+            binding.OriginalFileName is null || !IsOrdinaryPathComponent(binding.OriginalFileName) ||
+            !IsFullSha256(binding.ReferenceSha256) || (binding.ManifestSha256 is not null && !IsFullSha256(binding.ManifestSha256))))
+            throw new InvalidDataException("Invalid external relink asset binding.");
     }
+
+    internal static bool IsFullSha256(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 
     private static void ValidateExternalLocation(ExternalAssetLocation location)
     {

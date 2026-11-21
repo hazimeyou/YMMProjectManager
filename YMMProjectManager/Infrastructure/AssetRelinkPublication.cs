@@ -37,14 +37,8 @@ internal static partial class AssetRelinkRecovery
                 if (await HashAsync(candidate.Stream, token).ConfigureAwait(false) != comparison.CandidateSha256)
                     throw new InvalidDataException("A candidate changed after relink preparation.");
             }
-            return await saver.StagePreparedAsync(context, intent.Output, StagedOutputPath(evidencePath),
-                async (staged, stagedToken) =>
-                {
-                    if (await HashAsync(staged, stagedToken).ConfigureAwait(false) != intent.OutputSha256)
-                        throw new InvalidDataException("The staged relink project differs from its prepared bytes.");
-                    var publication = new OutputPublication(1, intent.OperationId, intent.OutputSha256, GetPhysicalId(staged));
-                    await WriteEvidenceAsync(PublicationPath(evidencePath), publication, MaxPublicationBytes, stagedToken).ConfigureAwait(false);
-                }, token).ConfigureAwait(false);
+            return await StageOwnedOutputAsync(evidencePath, context, intent.Output, intent.OperationId, intent.OutputSha256,
+                saver, token).ConfigureAwait(false);
         }
         finally
         {
@@ -56,18 +50,36 @@ internal static partial class AssetRelinkRecovery
         bool resume, CancellationToken token)
     {
         if (intent.Version < 4) return (OpenVerifiedPath(intent.Output), false);
+        return await OpenProvenOutputAsync(evidencePath, intent.Output, intent.OperationId, intent.OutputSha256,
+            resume, token).ConfigureAwait(false);
+    }
 
+    private static Task<(bool Success, string? ErrorMessage)> StageOwnedOutputAsync(string evidencePath,
+        RelinkDocumentContext context, string destination, Guid operationId, string outputSha256, RelinkSaveService saver,
+        CancellationToken token) =>
+        saver.StagePreparedAsync(context, destination, StagedOutputPath(evidencePath),
+            async (staged, stagedToken) =>
+            {
+                if (await HashAsync(staged, stagedToken).ConfigureAwait(false) != outputSha256)
+                    throw new InvalidDataException("The staged relink project differs from its prepared bytes.");
+                var publication = new OutputPublication(1, operationId, outputSha256, GetPhysicalId(staged));
+                await WriteEvidenceAsync(PublicationPath(evidencePath), publication, MaxPublicationBytes, stagedToken).ConfigureAwait(false);
+            }, token);
+
+    private static async Task<(VerifiedFileLease Lease, bool NeedsPublication)> OpenProvenOutputAsync(string evidencePath, string destination,
+        Guid operationId, string outputSha256, bool resume, CancellationToken token)
+    {
         await using var proofLease = OpenVerifiedPath(PublicationPath(evidencePath));
         var proof = proofLease.Stream;
         if (proof.Length > MaxPublicationBytes) throw new InvalidDataException("The relink publication record is too large.");
         var publication = await JsonSerializer.DeserializeAsync<OutputPublication>(proof, JsonOptions, token).ConfigureAwait(false);
-        if (publication is not { Version: 1 } || publication.OperationId != intent.OperationId ||
-            publication.OutputSha256 != intent.OutputSha256 || publication.Identity is null || publication.Identity.FileId == Guid.Empty)
+        if (publication is not { Version: 1 } || publication.OperationId != operationId ||
+            publication.OutputSha256 != outputSha256 || publication.Identity is null || publication.Identity.FileId == Guid.Empty)
             throw new InvalidDataException("The relink publication record does not match the managed output.");
 
         var pending = false;
         VerifiedFileLease output;
-        try { output = OpenVerifiedPath(intent.Output); }
+        try { output = OpenVerifiedPath(destination); }
         catch (FileNotFoundException) when (resume)
         {
             output = OpenVerifiedPath(StagedOutputPath(evidencePath), allowRename: true);

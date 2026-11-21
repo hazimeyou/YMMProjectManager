@@ -254,13 +254,13 @@ internal static partial class AssetRelinkRecovery
         if (intent.Version >= 3 ? intent.SourceIdentity is null || intent.SourceIdentity.FileId == Guid.Empty : intent.SourceIdentity is not null)
             throw new InvalidDataException("The relink recovery record has invalid source identity evidence.");
         ValidatePaths(intent.Source, intent.Output);
-        if (intent.Version == 5) ValidateStrictProofs(intent);
-        else if (intent.StrictAssets is not null) throw new InvalidDataException("Unexpected strict asset evidence.");
         if (expectedSource is not null && !string.Equals(Path.GetFullPath(expectedSource), intent.Source, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("This recovery record belongs to a different source project file.");
-        AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(intent.Next));
         if (!string.Equals(evidencePath, EvidencePath(intent.Source, intent.OperationId), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The relink recovery record was moved or renamed.");
+        if (intent.Version == 5) ValidateStrictProofs(intent);
+        else if (intent.StrictAssets is not null) throw new InvalidDataException("Unexpected strict asset evidence.");
+        AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(intent.Next));
         if (intent.Next.ProjectFileName != Path.GetFileName(intent.Output))
             throw new InvalidDataException("The metadata revision targets a different output.");
         return intent;
@@ -289,9 +289,7 @@ internal static partial class AssetRelinkRecovery
 
     private static bool IsExactOrdinaryDescendant(string directory, string path)
     {
-        if (!StrictRelinkAssets.IsDescendant(directory, path)) return false;
-        var relative = Path.GetRelativePath(directory, path);
-        return AssetInventory.ResolveRelativePath(directory, relative) == path;
+        return IsCanonicalOrdinaryPath(path) && StrictRelinkAssets.IsDescendant(directory, path);
     }
 
     private static bool ValidTipEvidence(AssetRevisionSeries.Head[]? tips, AssetRevisionSeries.Head parent)

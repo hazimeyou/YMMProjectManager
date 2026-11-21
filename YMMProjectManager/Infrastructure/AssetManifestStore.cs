@@ -4,6 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace YMMProjectManager.Infrastructure;
 
+public sealed record AssetDerivation(Guid SourceProjectId, Guid SourceRootRevisionId, string SourceRootSha256,
+    Guid SourceRevisionId, string SourceRevisionSha256, string SourceProjectSha256);
+
 public sealed record AssetManifest(
     int SchemaVersion,
     Guid ProjectId,
@@ -11,7 +14,11 @@ public sealed record AssetManifest(
     Guid RevisionId,
     Guid? ParentRevisionId,
     DateTimeOffset VerifiedAtUtc,
-    IReadOnlyList<AssetMetadata> Assets);
+    IReadOnlyList<AssetMetadata> Assets)
+{
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public AssetDerivation? DerivedFrom { get; init; }
+}
 
 /// <summary>Writes immutable project-associated revisions; existing metadata is never replaced.</summary>
 public static class AssetManifestStore
@@ -121,6 +128,12 @@ public static class AssetManifestStore
             string.IsNullOrWhiteSpace(manifest.ProjectFileName) || Path.GetFileName(manifest.ProjectFileName) != manifest.ProjectFileName ||
             manifest.VerifiedAtUtc == default || manifest.Assets is null)
             throw new InvalidDataException("Invalid or unsupported project asset metadata.");
+        if (manifest.DerivedFrom is { } source && (manifest.ParentRevisionId is not null ||
+            source.SourceProjectId == Guid.Empty || source.SourceProjectId == manifest.ProjectId ||
+            source.SourceRootRevisionId == Guid.Empty || source.SourceRevisionId == Guid.Empty ||
+            !AssetInventory.IsFullSha256(source.SourceRootSha256) || !AssetInventory.IsFullSha256(source.SourceRevisionSha256) ||
+            !AssetInventory.IsFullSha256(source.SourceProjectSha256)))
+            throw new InvalidDataException("Invalid source provenance for derived project metadata.");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var asset in manifest.Assets)
         {
