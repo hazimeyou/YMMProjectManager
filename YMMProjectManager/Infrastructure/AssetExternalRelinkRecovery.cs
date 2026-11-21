@@ -58,12 +58,13 @@ internal static partial class AssetRelinkRecovery
                     return new Comparison(row.RowIndex, row.OriginalPath,
                         row.SelectedCandidate ?? throw new InvalidDataException("A selected relink file is missing."), hash, hash, row.TypeHint);
                 }).ToArray();
+                var outputBytes = RelinkJsonUpdate.Apply(original, rows);
                 var intent = new ExternalIntent(1, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow,
-                    source, sourceHash, GetPhysicalId(sourceLease.Stream), output, Hash(RelinkJsonUpdate.Apply(original, rows)),
+                    source, sourceHash, GetPhysicalId(sourceLease.Stream), output, Hash(outputBytes),
                     root, parent, observed, roots, comparisons, strictProofs);
                 ValidateExternalIntent(intent, requireDerivedRootHash: false);
                 await VerifyExternalAssetsAsync(intent, roots, media, heldToken).ConfigureAwait(false);
-                var derived = BuildDerivedManifest(intent, original, manifest, media);
+                var derived = BuildDerivedManifest(intent, original, outputBytes, manifest, media);
                 intent = intent with { DerivedRootSha256 = AssetRevisionSeries.DescribeRevision(derived).Sha256 };
                 var path = ExternalEvidencePath(source, intent.OperationId);
                 await WriteEvidenceAsync(path, intent, MaxIntentBytes, heldToken).ConfigureAwait(false);
@@ -138,7 +139,7 @@ internal static partial class AssetRelinkRecovery
         return await AssetRevisionSeries.WithVerifiedSourceTipAsync(seriesDirectory, associatedRoot,
             intent.Parent, intent.ObservedTips, async (manifest, heldToken) =>
             {
-                var derived = BuildDerivedManifest(intent, original, manifest, media);
+                var derived = BuildDerivedManifest(intent, original, expectedOutput, manifest, media);
                 if (AssetRevisionSeries.DescribeRevision(derived).Sha256 != intent.DerivedRootSha256)
                     throw new InvalidDataException("The rederived manifest no longer matches the prepared root SHA-256.");
                 var (lease, publish) = await OpenProvenOutputAsync(path, intent.Output, intent.OperationId, intent.OutputSha256,
@@ -167,11 +168,12 @@ internal static partial class AssetRelinkRecovery
             }, token).ConfigureAwait(false);
     }
 
-    private static AssetManifest BuildDerivedManifest(ExternalIntent intent, byte[] original, AssetManifest sourceManifest,
+    private static AssetManifest BuildDerivedManifest(ExternalIntent intent, byte[] original, byte[] output, AssetManifest sourceManifest,
         ExternalAssetPins media)
     {
         var expected = new StrictRelinkAssets(intent.Source, Encoding.UTF8.GetString(original), sourceManifest);
         var changes = new Dictionary<string, AssetMetadata>(StringComparer.OrdinalIgnoreCase);
+        var expectedDestinations = new List<(string Path, AssetMetadata Asset)>();
         foreach (var row in intent.Approved)
         {
             var proof = intent.StrictAssets.Single(item => item.RowIndex == row.RowIndex);
@@ -192,6 +194,7 @@ internal static partial class AssetRelinkRecovery
             if (changes.TryGetValue(asset.RelativePath, out var previous) && previous != replacement)
                 throw new InvalidDataException("Select one consistent destination for every occurrence of the same asset.");
             changes[asset.RelativePath] = replacement;
+            expectedDestinations.Add((row.CandidatePath, replacement));
         }
         var assets = sourceManifest.Assets.Select(asset => changes.GetValueOrDefault(asset.RelativePath) ?? asset).ToArray();
         var derived = AssetManifestStore.Create(intent.Output, assets, intent.CreatedAt, projectId: intent.DerivedProjectId) with
@@ -200,7 +203,9 @@ internal static partial class AssetRelinkRecovery
             DerivedFrom = new AssetDerivation(intent.Root.ProjectId, intent.Root.RevisionId, intent.Root.Sha256,
                 intent.Parent.RevisionId, intent.Parent.Sha256, intent.SourceSha256),
         };
-        _ = new StrictRelinkAssets(intent.Output, Encoding.UTF8.GetString(original), derived);
+        var resolved = new StrictRelinkAssets(intent.Output, Encoding.UTF8.GetString(output), derived);
+        if (expectedDestinations.Any(item => resolved.FindExpected(item.Path) != item.Asset))
+            throw new InvalidDataException("The derived project would resolve an asset to an incompatible metadata entry.");
         return derived;
     }
 

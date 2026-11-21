@@ -71,6 +71,14 @@ internal static class ExternalRelinkRecoveryTests
             Ensure(File.Exists((await fixture.CompleteAsync(evidence)).Output.Output), "An exact authorized retry did not complete.");
             await fixture.CheckOriginalsAsync();
         });
+        await Program.RunNamedCaseAsync("R22 rejects a destination whose new reference conflicts with existing asset metadata", async () =>
+        {
+            var fixture = await Fixture.CreateAsync(workRoot, "metadata-alias", cataloguedCandidate: true);
+            await RefusedAsync(() => fixture.PrepareAsync());
+            Ensure(!File.Exists(fixture.Output) && !Directory.EnumerateFiles(Path.GetDirectoryName(fixture.Source)!, ".ymmpm-relink-*").Any(),
+                "An ambiguous derived metadata mapping published an intent or output.");
+            await fixture.CheckOriginalsAsync();
+        });
         await Program.RunNamedCaseAsync("R22 detects output and derived-directory collisions without replacing them", async () =>
         {
             var fixture = await Fixture.CreateAsync(workRoot, "collision");
@@ -185,11 +193,11 @@ internal static class ExternalRelinkRecoveryTests
     private sealed record Fixture(string Source, string Output, string SourceJson, string Pool, string Series,
         AssetRevisionSeries.Head Head, RelinkDocumentContext Context, AssetPoolMatch Match, FileLogger Logger)
     {
-        internal static async Task<Fixture> CreateAsync(string workRoot, string name)
+        internal static async Task<Fixture> CreateAsync(string workRoot, string name, bool cataloguedCandidate = false)
         {
             var root = Directory.CreateDirectory(Path.Combine(workRoot, "r22-ext-" + name)).FullName;
             var project = Directory.CreateDirectory(Path.Combine(root, "project")).FullName;
-            var pool = Directory.CreateDirectory(Path.Combine(root, "pool")).FullName;
+            var pool = Directory.CreateDirectory(Path.Combine(cataloguedCandidate ? project : root, "pool")).FullName;
             var series = Directory.CreateDirectory(Path.Combine(root, "metadata")).FullName;
             var media = Path.Combine(root, "clip.wav");
             await File.WriteAllTextAsync(media, "approved media");
@@ -199,8 +207,11 @@ internal static class ExternalRelinkRecoveryTests
             var source = Path.Combine(project, "source.ymmp");
             var json = JsonSerializer.Serialize(new { Items = new[] { new { FilePath = reference } }, Unknown = "original field" });
             await File.WriteAllTextAsync(source, json);
-            var start = AssetManifestStore.Create(source, [new AssetMetadata(reference, collected.Record.Size, collected.Record.Sha256, null)],
-                DateTimeOffset.UtcNow);
+            var assets = new List<AssetMetadata> { new(reference, collected.Record.Size, collected.Record.Sha256, null) };
+            if (cataloguedCandidate)
+                assets.Add(new AssetMetadata(Path.GetRelativePath(project, match.CandidatePath),
+                    collected.Record.Size, collected.Record.Sha256, null));
+            var start = AssetManifestStore.Create(source, assets, DateTimeOffset.UtcNow);
             var head = await AssetRevisionSeries.InitializeAsync(series, start);
             var logger = new FileLogger(Path.Combine(root, "test.log"));
             var (context, _) = await new RelinkScanService(logger).ScanForStrictRelinkAsync(source, default);
