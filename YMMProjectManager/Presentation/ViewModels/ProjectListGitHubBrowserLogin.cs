@@ -63,7 +63,7 @@ public sealed partial class ProjectListViewModel
         {
             GitFailure.OutcomeUnknown => "GitHub認証の結果を確認できません。Windowsの保存済み資格情報が更新された可能性があります。再試行する前に、使用するアカウントと対象リポジトリへのアクセスを確認してください。",
             GitFailure.ConcurrentOperation => "別のGitHub認証が進行中です。完了してから再試行してください。",
-            GitFailure.Timeout => "GitHub認証の待機時間を超えました。ブラウザの表示と対象リポジトリへのアクセスを確認してから再試行してください。",
+            GitFailure.Timeout => "GitHub認証の待機時間を超えました。Windowsの保存済み資格情報が更新された可能性があります。対象リポジトリへのアクセスを確認してから再試行してください。",
             GitFailure.UnsafeOperation => "GitHubブラウザ認証を開始できません。対応するGCMのインストールと検証状態を確認してください。",
             _ => "GitHubブラウザ認証に失敗しました。既定のブラウザ、ネットワーク、使用するGitHubアカウントを確認してください。",
         };
