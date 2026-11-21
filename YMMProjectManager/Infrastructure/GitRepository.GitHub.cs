@@ -32,14 +32,29 @@ public sealed partial class GitRepository
 
     /// <summary>Checks access to one GitHub repository. A public repository can succeed anonymously.</summary>
     public Task<GitResult> ProbeGitHubAccessAsync(string endpoint, GitHubAuthentication authentication, CancellationToken token = default) =>
+        ProbeGitHubAccessCoreAsync(endpoint, null, authentication, token);
+
+    /// <summary>Checks the exact repository origin selected for the user's access approval.</summary>
+    public Task<GitResult> ProbeGitHubAccessAsync(GitFetchTarget target, GitHubAuthentication authentication, CancellationToken token = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+        return ProbeGitHubAccessCoreAsync(target.Endpoint, target, authentication, token);
+    }
+
+    private Task<GitResult> ProbeGitHubAccessCoreAsync(string endpoint, GitFetchTarget? approvedTarget,
+        GitHubAuthentication authentication, CancellationToken token) =>
         WithinRemoteDeadlineAsync("GitHub access", async deadline =>
         {
             if (!IsSupportedGitHubEndpoint(endpoint) || !Enum.IsDefined(authentication))
                 return UnsupportedGitHubEndpoint();
+            if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
+                return UnsafeRemote("This access approval belongs to a different repository.");
             using var session = await OpenPullSessionAsync(deadline, requireIndex: false).ConfigureAwait(false);
             if (session is null) return UnsupportedGitHubRepository();
+            if (approvedTarget is not null && session.Identity != approvedTarget.Identity)
+                return UnsafeRemote("The approved repository or its Git directory changed. Review the access target again.");
             var result = await RunGitHubTransportAsync(endpoint, ["ls-remote", "--symref", "--", endpoint, "HEAD"],
-                deadline, authentication, session.Settings).ConfigureAwait(false);
+                deadline, authentication, session.Settings, verifyApprovedOrigin: true).ConfigureAwait(false);
             return SanitizeRemote(result, classifyPushStatus: false, cloneStage: null);
         }, token, RemoteTimeout);
 
@@ -80,7 +95,7 @@ public sealed partial class GitRepository
     private static string MachineGitInstallation() => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git");
 
     private async Task<GitResult> RunGitHubTransportAsync(string endpoint, string[] arguments, CancellationToken token,
-        GitHubAuthentication authentication, string[] settings, string? cloneStage = null)
+        GitHubAuthentication authentication, string[] settings, string? cloneStage = null, bool verifyApprovedOrigin = false)
     {
         if (!IsSupportedGitHubEndpoint(endpoint) || !Enum.IsDefined(authentication))
             return UnsupportedGitHubEndpoint();
@@ -115,6 +130,15 @@ public sealed partial class GitRepository
                     githubTransport: profile with { Cached = false }).ConfigureAwait(false);
                 if (!VerifiedRemoteNames(names, endpoint, rejectUnsupported: true))
                     return UnsupportedGitHubRepository();
+                if (verifyApprovedOrigin)
+                {
+                    var origin = await RunAsync([.. destination, "config", "--local", "--no-includes", "-z", "--get-all", "remote.origin.url"],
+                        token, trustedProcess: true, pullSettings: [], outputLimit: 1024 * 1024,
+                        githubTransport: profile with { Cached = false }).ConfigureAwait(false);
+                    if (!origin.Success || origin.StandardError.Length != 0 || origin.StandardOutput != endpoint + '\0')
+                        return UnsafeRemote("The origin differs from the approved endpoint. Review the access target again.");
+                    BeforeRemoteExecution?.Invoke(token);
+                }
             }
             var transportSettings = BuildGitHubTransportSettings(settings, managerFile is null ? null : manager);
             return await RunAsync([.. destination, .. arguments], token, allowedProtocol: "https",
@@ -142,10 +166,10 @@ public sealed partial class GitRepository
 
     internal static void RemoveGitHubChildOverrides(IDictionary<string, string?> environment)
     {
-        string[] prefixes = ["GCM_", "DOTNET_", "COMPlus_", "CORECLR_", "COR_", "BASH_FUNC_", "SSL_CERT_"];
+        string[] prefixes = ["GCM_", "DOTNET_", "COMPlus_", "CORECLR_", "COR_", "APPDOMAIN_MANAGER_", "BASH_FUNC_", "SSL_CERT_"];
         string[] names = ["GH_TOKEN", "GITHUB_TOKEN", "SSLKEYLOGFILE", "CURL_CA_BUNDLE", "CURL_HOME",
             "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-            "NETRC", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "LD_PRELOAD", "LD_LIBRARY_PATH"];
+            "DEVPATH", "NETRC", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "LD_PRELOAD", "LD_LIBRARY_PATH"];
         foreach (var key in environment.Keys.Where(key => names.Contains(key, StringComparer.OrdinalIgnoreCase) ||
             prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))).ToArray())
             environment.Remove(key);

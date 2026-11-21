@@ -84,6 +84,7 @@ internal static class GitRepositoryTests
         await Program.RunNamedCaseAsync("Reviewed Commit rejects changed staging, branch moves and cancellation", () => VerifyCommitInterferenceAsync(workRoot));
         await Program.RunNamedCaseAsync("R22 Commit reports uncertainty when the verified Git child stops after publication", () => VerifyInterruptedCommitAsync(workRoot));
         await Program.RunNamedCaseAsync("GitHub scope and helper isolation preserve auth, permission and cancellation categories", () => VerifyGitHubProfileAsync(workRoot));
+        await Program.RunNamedCaseAsync("GitHub access requires the same repository and exact locked origin as the approval", () => VerifyGitHubAccessApprovalAsync(workRoot));
         await Program.RunNamedCaseAsync("Stage validates the exact proposed tree before publishing the index", () => VerifyGuardedIndexAsync(workRoot));
     }
 
@@ -146,6 +147,9 @@ internal static class GitRepositoryTests
             ["Gh_Token"] = "synthetic",
             ["DOTNET_STARTUP_HOOKS"] = "synthetic",
             ["CORECLR_PROFILER_PATH"] = "synthetic",
+            ["APPDOMAIN_MANAGER_ASM"] = "synthetic",
+            ["appdomain_manager_type"] = "synthetic",
+            ["DevPath"] = "synthetic",
             ["bash_env"] = "synthetic",
             ["SSLKEYLOGFILE"] = "synthetic",
             ["https_proxy"] = "synthetic",
@@ -250,6 +254,64 @@ internal static class GitRepositoryTests
             Require(safe.Failure == failure && safe.StandardOutput == "" && !safe.StandardError.Contains(marker),
                 "remote error was not classified or helper output leaked");
         }
+    }
+
+    private static async Task VerifyGitHubAccessApprovalAsync(string workRoot)
+    {
+        const string approvedEndpoint = "https://github.com/Synthetic/approved.git";
+        const string changedEndpoint = "https://github.com/Synthetic/changed.git";
+        var root = Path.Combine(workRoot, "github-access");
+        Directory.CreateDirectory(root);
+        var git = new GitRepository(root);
+        Require((await git.InitializeAsync()).Success, "init GitHub access approval fixture");
+        await CommandAsync(root, "remote", "add", "origin", approvedEndpoint);
+        var approved = (await git.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget;
+        Require(approved is not null && approved.Endpoint == approvedEndpoint, "capture the literal origin");
+        var target = approved!;
+        var config = Path.Combine(root, ".git", "config");
+
+        using var cancellation = new CancellationTokenSource();
+        var reachedTransport = false;
+        git.BeforeRemoteExecution = _ =>
+        {
+            reachedTransport = true;
+            cancellation.Cancel();
+            try
+            {
+                using var writer = File.Open(config, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
+                throw new InvalidOperationException("the approved origin config could be modified before the probe");
+            }
+            catch (IOException) { }
+        };
+
+        await CommandAsync(root, "remote", "set-url", "origin", changedEndpoint);
+        var changed = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous, cancellation.Token);
+        Require(changed.Failure == GitFailure.UnsafeOperation && changed.StandardError.Contains("origin differs") && !reachedTransport,
+            "changed origin reached the transport");
+
+        await CommandAsync(root, "remote", "set-url", "origin", approvedEndpoint);
+        await CommandAsync(root, "config", "--local", "--add", "remote.origin.url", changedEndpoint);
+        var multiple = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous, cancellation.Token);
+        Require(multiple.Failure == GitFailure.UnsafeOperation && !reachedTransport, "ambiguous origin reached the transport");
+        await CommandAsync(root, "config", "--local", "--unset-all", "remote.origin.url");
+        await CommandAsync(root, "config", "--local", "remote.origin.url", approvedEndpoint);
+        try
+        {
+            await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous, cancellation.Token);
+            throw new InvalidOperationException("approved probe ignored cancellation before network execution");
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        Require(reachedTransport, "unchanged origin did not reach the pre-network boundary");
+
+        // The replacement has the same absolute path and literal URL, but not the approved identity.
+        Directory.Move(root, root + "-original");
+        Directory.CreateDirectory(root);
+        git = new GitRepository(root) { BeforeRemoteExecution = _ => throw new InvalidOperationException("replacement reached the transport") };
+        Require((await git.InitializeAsync()).Success, "init replacement GitHub access fixture");
+        await CommandAsync(root, "remote", "add", "origin", approvedEndpoint);
+        var replacement = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous);
+        Require(replacement.Failure == GitFailure.UnsafeOperation && replacement.StandardError.Contains("its Git directory changed"),
+            "same-path replacement did not invalidate the access approval");
     }
 
     private static async Task VerifyReviewedCommitAsync(string workRoot)
