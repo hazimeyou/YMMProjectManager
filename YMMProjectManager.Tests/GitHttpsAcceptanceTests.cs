@@ -66,6 +66,43 @@ internal static class GitHttpsAcceptanceTests
             }
             finally { await ConfigureEndpointAsync(verifiedPeer.Endpoint); }
         });
+        await Program.RunNamedCaseAsync("HTTPS Pull distinguishes HTTP 401 and 403 without changing the checkout", async () =>
+        {
+            var remote = await RequireRemoteAsync(git);
+            try
+            {
+                foreach (var (status, failure) in new[] { ("401", GitFailure.Authentication), ("403", GitFailure.Permission) })
+                {
+                    var before = verifiedPeer.RequestCount;
+                    verifiedPeer.SetMode(status);
+                    var refusal = await git.InspectPullTargetAsync(remote);
+                    Check(!refusal.Success && refusal.Failure == failure && verifiedPeer.RequestCount > before,
+                        $"HTTP {status} returned {refusal.Failure}");
+                    Check(refusal.StandardOutput.Length == 0, "remote output was returned");
+                    await AssertPreservedAsync($"HTTP {status}", refusal);
+                }
+            }
+            finally { verifiedPeer.SetMode("normal"); }
+        });
+        await Program.RunNamedCaseAsync("HTTPS Pull refuses an HTTPS redirect without changing the checkout", async () =>
+        {
+            // Both peers have valid fixture trust, so a TLS failure cannot mask a followed redirect.
+            await using var redirectPeer = await HttpsServer.StartAsync(modeRoot, serverRoot, "verified", "redirect-target");
+            var remote = await RequireRemoteAsync(git);
+            var before = verifiedPeer.RequestCount;
+            verifiedPeer.SetMode($"redirect {new Uri(redirectPeer.Endpoint).Port}");
+            try
+            {
+                var refusal = await git.InspectPullTargetAsync(remote);
+                Check(!refusal.Success && refusal.Failure == GitFailure.RemoteRedirect &&
+                    verifiedPeer.RequestCount > before && redirectPeer.RequestCount == 0,
+                    $"redirect returned {refusal.Failure} or reached the replacement endpoint");
+                Check(refusal.StandardOutput.Length == 0 && !refusal.StandardError.Contains(redirectPeer.Endpoint),
+                    "redirect exposed peer-controlled output");
+                await AssertPreservedAsync("HTTP 307", refusal);
+            }
+            finally { verifiedPeer.SetMode("normal"); }
+        });
         await Program.RunNamedCaseAsync("HTTPS Pull cannot use a stopped loopback endpoint", async () =>
         {
             await wrongPeer.DisposeAsync();
@@ -304,16 +341,17 @@ internal static class GitHttpsAcceptanceTests
         public int RequestCount => AccessLog.Count(c => c == '\n');
         public void SetMode(string value) => File.WriteAllText(mode, value);
 
-        public static async Task<HttpsServer> StartAsync(string root, string serverRoot, string name)
+        public static async Task<HttpsServer> StartAsync(string root, string serverRoot, string certificateName, string? instanceName = null)
         {
             var script = Path.GetFullPath(Path.Combine("scripts", "r20-https-git-fixture.py"));
             Check(File.Exists(script), "Run HTTPS acceptance from the repository root.");
+            var name = instanceName ?? certificateName;
             var mode = Path.Combine(root, name + ".mode");
             var ready = Path.Combine(root, name + ".ready");
             var accesses = Path.Combine(root, name + ".access");
             File.WriteAllText(mode, "normal");
             var python = Environment.GetEnvironmentVariable("YMMPM_R20_PYTHON") ?? "python.exe";
-            var child = Start(python, root, script, serverRoot, Path.Combine(root, name + ".crt"), Path.Combine(root, name + ".key"),
+            var child = Start(python, root, script, serverRoot, Path.Combine(root, certificateName + ".crt"), Path.Combine(root, certificateName + ".key"),
                 mode, ready, accesses, "git.exe");
             var errors = child.StandardError.ReadToEndAsync();
             var elapsed = Stopwatch.StartNew();

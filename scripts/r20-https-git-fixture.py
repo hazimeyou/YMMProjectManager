@@ -44,6 +44,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if mode == "error":
             self.send_error(503)
             return
+        if mode in ("401", "403"):
+            self.send_error(int(mode))
+            return
+        if mode.startswith("redirect "):
+            _, _, port_text = mode.partition(" ")
+            if port_text.isascii() and port_text.isdigit() and 1 <= int(port_text) <= 65535:
+                self.send_response(307)
+                self.send_header("Location", f"https://127.0.0.1:{port_text}{self.path}")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
         if mode != "normal":
             self.send_error(500)
             return

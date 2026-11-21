@@ -148,6 +148,8 @@ internal static class GitRepositoryTests
             ["CORECLR_PROFILER_PATH"] = "synthetic",
             ["bash_env"] = "synthetic",
             ["SSLKEYLOGFILE"] = "synthetic",
+            ["https_proxy"] = "synthetic",
+            ["nO_PrOxY"] = "synthetic",
             ["SystemRoot"] = "fixture",
         };
         GitRepository.RemoveGitHubChildOverrides(environment);
@@ -235,6 +237,12 @@ internal static class GitRepositoryTests
             ("The requested URL returned error: 401", GitFailure.Authentication),
             ("The requested URL returned error: 403", GitFailure.Permission),
             ("permission denied", GitFailure.Permission),
+            ("The requested URL returned error: 301", GitFailure.RemoteRedirect),
+            ("The requested URL returned error: 302", GitFailure.RemoteRedirect),
+            ("The requested URL returned error: 303", GitFailure.RemoteRedirect),
+            ("The requested URL returned error: 307", GitFailure.RemoteRedirect),
+            ("The requested URL returned error: 308", GitFailure.RemoteRedirect),
+            ("unable to update url base from redirection", GitFailure.RemoteRedirect),
         })
         {
             const string marker = "synthetic-private-diagnostic";

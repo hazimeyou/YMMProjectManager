@@ -144,6 +144,7 @@ public sealed partial class GitRepository
     {
         string[] prefixes = ["GCM_", "DOTNET_", "COMPlus_", "CORECLR_", "COR_", "BASH_FUNC_", "SSL_CERT_"];
         string[] names = ["GH_TOKEN", "GITHUB_TOKEN", "SSLKEYLOGFILE", "CURL_CA_BUNDLE", "CURL_HOME",
+            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
             "NETRC", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "LD_PRELOAD", "LD_LIBRARY_PATH"];
         foreach (var key in environment.Keys.Where(key => names.Contains(key, StringComparer.OrdinalIgnoreCase) ||
             prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))).ToArray())

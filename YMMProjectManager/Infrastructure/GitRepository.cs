@@ -669,6 +669,7 @@ public sealed partial class GitRepository
             GitFailure.PathTooLong => "Git could not represent a filesystem path. Use a shorter repository or clone destination path.",
             GitFailure.Authentication => "GitHub or the remote could not authenticate this request. Check the selected credential mode and account access.",
             GitFailure.Permission => "The current account or remote denied permission for this operation.",
+            GitFailure.RemoteRedirect => "The HTTPS endpoint requested a redirect. Confirm the new canonical repository URL before retrying.",
             _ => "Remote operation failed. Check authentication, connectivity and branch state.",
         };
         return new GitResult(result.ExitCode, "", message, category);
@@ -683,6 +684,9 @@ public sealed partial class GitRepository
         if (cloneStage is { Length: >= 260 } && Contains("Clone succeeded, but checkout failed") &&
             Contains("this operation must be run in a work tree"))
             return GitFailure.PathTooLong;
+        if (Contains("unable to update url base from redirection") ||
+            new[] { 301, 302, 303, 307, 308 }.Any(status => Contains($"requested URL returned error: {status}")))
+            return GitFailure.RemoteRedirect;
         if (Contains("permission denied") || Contains("requested URL returned error: 403")) return GitFailure.Permission;
         if (Contains("authentication failed") || Contains("could not read Username") || Contains("requested URL returned error: 401") ||
             Contains("interactive authentication has been disabled") || Contains("cannot prompt because user interactivity has been disabled"))
@@ -896,7 +900,7 @@ public sealed partial class GitRepository
     }
 }
 
-public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong, ConcurrentOperation, OutcomeUnknown, MediaPublication }
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong, ConcurrentOperation, OutcomeUnknown, MediaPublication, RemoteRedirect }
 public enum GitRemoteOperation { Fetch, Push }
 public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision, HistoryNotVerifiable }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,
