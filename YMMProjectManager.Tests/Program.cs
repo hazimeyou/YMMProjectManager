@@ -42,6 +42,11 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == AssetPoolTests.ChildArgument)
+        {
+            await AssetPoolTests.RunChildAsync(args[1]);
+            return;
+        }
         if (args.Length == 2 && args[0] is ProjectListWpfFixtureProcess.ChildArgument or ProjectListWpfFixtureProcess.StalledChildArgument)
         {
             await ProjectListWpfFixtureProcess.RunChildAsync(args[1], stalled: args[0] == ProjectListWpfFixtureProcess.StalledChildArgument);
@@ -136,6 +141,8 @@ internal static class Program
         await RunGroupAsync(nameof(SceneRenderCoordinatorTests), SceneRenderCoordinatorTests.RunAsync);
         await RunGroupAsync(nameof(GitPublicationTests), () => GitPublicationTests.RunAsync(workRoot));
         await RunGroupAsync(nameof(AssetPoolTests), () => AssetPoolTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(DerivedRelinkAssociationTests), () => DerivedRelinkAssociationTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(ExternalRelinkRecoveryTests), () => ExternalRelinkRecoveryTests.RunAsync(workRoot));
         await RunGroupAsync(nameof(ProjectFileCleanupTests), ProjectFileCleanupTests.RunAsync);
         await RunGroupAsync(nameof(StrictRelinkWorkflowTests), () => StrictRelinkWorkflowTests.RunAsync(workRoot));
         await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
@@ -281,6 +288,12 @@ internal static class Program
                     break;
                 case nameof(AssetPoolTests):
                     await AssetPoolTests.RunAsync(workRoot);
+                    break;
+                case nameof(DerivedRelinkAssociationTests):
+                    await DerivedRelinkAssociationTests.RunAsync(workRoot);
+                    break;
+                case nameof(ExternalRelinkRecoveryTests):
+                    await ExternalRelinkRecoveryTests.RunAsync(workRoot);
                     break;
                 case nameof(ProjectFileCleanupTests):
                     await ProjectFileCleanupTests.RunAsync();

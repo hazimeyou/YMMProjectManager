@@ -219,7 +219,7 @@ public sealed partial class ProjectListViewModel
 
     private static string DescribeCommitFailure(GitResult result) => result.Failure switch
     {
-        GitFailure.MediaPublication => "素材またはパッケージを含むか、内容を確認できないため、Git操作を中止しました。",
+        GitFailure.MediaPublication => "素材、パッケージ、ローカル専用の回復記録が含まれるか、内容を確認できないためGit操作を中止しました。",
         GitFailure.ConcurrentOperation => "別のGit操作で状態が変わりました。変更一覧を更新し、再確認してください。",
         GitFailure.OutcomeUnknown => "コミットの結果を確認できません。再試行前に履歴とステージ済みの状態を確認してください。",
         _ => "Git操作を完了できません。リポジトリ、Gitの利用者設定、選択したファイル、ステージ済みの状態を確認してください。",

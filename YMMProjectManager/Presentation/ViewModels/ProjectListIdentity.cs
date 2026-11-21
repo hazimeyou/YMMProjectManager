@@ -217,13 +217,19 @@ public sealed partial class ProjectListViewModel
         var selection = await ResolveMetadataBranchAsync(id, association, token);
         var directory = Path.GetDirectoryName(Path.GetFullPath(project.FullPath))!;
         var lines = new List<string> { $"選択版 {selection.Selected.Receipt.RevisionId}", $"先端 {selection.Graph.Heads.Count} 件" };
+        var root = selection.Graph.Revisions.Single(revision => revision.Receipt == selection.Graph.Root);
+        if (root.Manifest.DerivedFrom is { } origin)
+            lines.Add($"派生元プロジェクト {origin.SourceProjectId}\n派生元の版 {origin.SourceRevisionId}\n版のSHA-256 {origin.SourceRevisionSha256}");
         lines.AddRange(selection.Graph.Heads.Select(head => head.RevisionId.ToString()));
         if (!selection.Graph.Heads.Any(head => head.RevisionId == association.ObservedHeadRevisionId && head.Sha256 == association.ObservedHeadSha256))
             lines.Add("関連付け時に選んだ分岐の先端が変わりました。");
         foreach (var asset in selection.Selected.Manifest.Assets)
         {
             token.ThrowIfCancellationRequested();
-            lines.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset, token)}");
+            if (asset.ExternalRelink is { } external)
+                lines.Add($"{external.OriginalFileName} / SHA-256 {asset.Sha256} / 外部素材。許可したフォルダーで再照合してください。");
+            else
+                lines.Add($"{asset.RelativePath}: {await AssetInventory.VerifyAsync(directory, asset, token)}");
         }
         if (ReferenceEquals(project, SelectedProject)) AssetStatus = string.Join("\n", lines);
     });

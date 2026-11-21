@@ -63,6 +63,7 @@ public partial class RelinkMainWindow : Window
 
     public string? YmmpPath { get; }
     internal Func<AssetRelinkRecovery.OutputReceipt, CancellationToken, Task>? TransferAssociationAsync { get; init; }
+    internal Func<AssetRelinkRecovery.DerivedOutputReceipt, CancellationToken, Task>? RegisterDerivedAsync { get; init; }
     internal YMMProjectManager.Domain.ProjectFileIdentity? ExpectedSourceIdentity { get; init; }
     public ObservableCollection<RelinkRow> Rows => rows;
     private bool IsRuntimeTimelineMode => timelineInfo?.Timeline is not null;
@@ -355,6 +356,8 @@ public partial class RelinkMainWindow : Window
             if (dialog.ShowDialog() != true) return;
             await using var sourceFile = ProjectFileEvidence.OpenRead(source);
             await VerifyManagedIdentityAsync(sourceFile, cancellation.Token);
+            try { if (await TryRecoverExternalRelinkAsync(dialog.FileName, source, cancellation.Token)) return; }
+            catch (DerivedRegistrationException ex) { ShowPendingDerivedRegistration(dialog.FileName, ex); return; }
             if (MessageBox.Show("選んだ記録から再リンクを回復しますか？\n未公開の出力は、元の名前とSHA-256の照合記録を再検証してから公開します。既存の出力は上書きしません。",
                 "再リンクの回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) != MessageBoxResult.Yes) return;
             var selection = await resolveMetadata(cancellation.Token);

@@ -355,7 +355,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             GitFailure.Divergence => "送信先の履歴が変更されています。Fetch してブランチの状態を確認してください。",
             GitFailure.Timeout => "制限時間に達しました。接続状況と操作結果を確認してください。",
             GitFailure.PathTooLong => "より短い親フォルダーを選んでください。",
-            GitFailure.MediaPublication => "素材・パッケージが含まれるか、送信内容を検証できないため拒否しました。過去のコミットも確認してください。",
+            GitFailure.MediaPublication => "素材・パッケージ・ローカル専用の回復記録が含まれるか、送信内容を検証できないため拒否しました。過去のコミットも確認してください。",
             GitFailure.UnsafeOperation => "接続先・ブランチ・リポジトリの状態または Git 設定を確認し、再度承認してください。",
             _ => "接続先、Git 設定またはブランチを確認してください。",
         };
@@ -420,11 +420,15 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 seriesDirectory = association.Directory;
                 resolve = token => ResolveMetadataBranchAsync(id, association, token);
             }
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, resolve, seriesDirectory)
             {
                 ExpectedSourceIdentity = selected.FileIdentity,
                 TransferAssociationAsync = selected.MetadataAssociation is { } metadata
                     ? (receipt, token) => ApplyRelinkOutputAsync(selected, metadata, receipt, token) : null,
+                RegisterDerivedAsync = selected.MetadataAssociation is { } sourceMetadata
+                    ? (receipt, token) => dispatcher.InvokeAsync(() => ApplyDerivedRelinkAsync(selected, sourceMetadata, receipt, token)).Task.Unwrap()
+                    : null,
             });
         });
     }

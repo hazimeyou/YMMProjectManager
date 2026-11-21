@@ -8,7 +8,9 @@ namespace YMMProjectManager.Presentation.Relink;
 
 public partial class RelinkMainWindow
 {
-    private sealed record StrictMatch(string ExpectedName, string ExpectedSha256, AssetPoolMatch Candidate);
+    private sealed class DerivedRegistrationException(Exception inner) : IOException("The derived output was verified before registration.", inner);
+    private sealed record StrictMatch(string ExpectedName, string ExpectedSha256, string ApprovedRoot,
+        bool HasExternalMetadata, AssetPoolMatch Candidate);
     private readonly Dictionary<int, StrictMatch[]> strictCandidates = [];
     private AssetRevisionSeries.Head? searchedRevision;
 
@@ -67,7 +69,7 @@ public partial class RelinkMainWindow
                     row.Message = "期待SHA-256が未登録";
                     continue;
                 }
-                var name = AssetPool.GetOriginalFileName(row.OriginalPath);
+                var name = metadata.ExternalRelink?.OriginalFileName ?? AssetPool.GetOriginalFileName(row.OriginalPath);
                 var key = metadata.Sha256 + ":" + name;
                 if (!jobs.TryGetValue(key, out var job))
                 {
@@ -75,7 +77,8 @@ public partial class RelinkMainWindow
                     jobs.Add(key, job);
                 }
                 var matches = await job;
-                var candidates = matches.Select(match => new StrictMatch(name, metadata.Sha256, match)).ToArray();
+                var candidates = matches.Select(match => new StrictMatch(name, metadata.Sha256, root.FolderName,
+                    metadata.ExternalRelink is not null, match)).ToArray();
                 strictCandidates.Add(row.RowIndex, candidates);
                 foreach (var candidate in candidates) row.Candidates.Add(candidate.Candidate.CandidatePath);
                 row.CandidateCount = candidates.Length;
@@ -118,6 +121,8 @@ public partial class RelinkMainWindow
             throw new InvalidDataException("操作は候補1件以上10件以下に分けてください。");
         var verified = new List<AssetPoolVerification>();
         var proofs = new List<AssetRelinkRecovery.StrictAssetProof>();
+        var approvedRoots = new HashSet<string>(StringComparer.Ordinal);
+        var hasExternalMetadata = false;
         try
         {
             foreach (var row in selection)
@@ -129,12 +134,14 @@ public partial class RelinkMainWindow
                     choice.ExpectedName, choice.ExpectedSha256, token), token));
                 proofs.Add(new AssetRelinkRecovery.StrictAssetProof(row.RowIndex, choice.ExpectedName,
                     choice.Candidate.ManifestPath, choice.Candidate.ManifestSha256));
+                approvedRoots.Add(choice.ApprovedRoot);
+                hasExternalMetadata |= choice.HasExternalMetadata;
             }
             var projectDirectory = Path.GetDirectoryName(snapshot.YmmpPath)!;
-            if (verified.All(asset => StrictRelinkAssets.IsDescendant(projectDirectory, asset.CandidatePath)))
+            if (!hasExternalMetadata && verified.All(asset => StrictRelinkAssets.IsDescendant(projectDirectory, asset.CandidatePath)))
                 await SaveManagedRelinkAsync(snapshot, association, proofs.ToArray(), token);
             else
-                await SaveStrictExternalOutputAsync(snapshot, association, token);
+                await SaveStrictExternalOutputAsync(snapshot, association, proofs.ToArray(), approvedRoots.ToArray(), token);
         }
         finally
         {
@@ -143,9 +150,12 @@ public partial class RelinkMainWindow
     }
 
     private async Task SaveStrictExternalOutputAsync(RelinkDocumentContext snapshot,
-        AssetRevisionSeries.BranchSelection reviewed, CancellationToken token)
+        AssetRevisionSeries.BranchSelection reviewed, AssetRelinkRecovery.StrictAssetProof[] proofs,
+        IReadOnlyList<string> approvedRoots, CancellationToken token)
     {
-        const string notice = "プロジェクト外の素材を使うため、結果を別名のPFに保存します。素材はコピーしません。元のメタデータ履歴と関連付けは保持され、出力には引き継ぎません。";
+        if (RegisterDerivedAsync is null)
+            throw new InvalidDataException("一覧への派生登録を開始できません。登録済みの元プロジェクトから再度開いてください。");
+        const string notice = "結果は別名のPFとして保存し、独立した派生IDで一覧に登録します。元PF・登録・メタデータ履歴と素材は維持されます。";
         var rowsToSave = snapshot.Rows.Where(row => row.Status == RelinkStatus.Updated && row.SelectedCandidate is not null);
         var details = string.Join("\n\n", rowsToSave.Select(row => $"{row.OriginalPath}\n→ {row.SelectedCandidate}"));
         if (MessageBox.Show($"{notice}\n\n{details}\n\n続けますか？", "厳格な素材再リンク",
@@ -162,7 +172,87 @@ public partial class RelinkMainWindow
         if (reviewed.Selected.Receipt != current.Selected.Receipt ||
             !AssetRevisionSeries.SameTips(reviewed.Graph.Heads, current.Graph.Heads))
             throw new InvalidDataException("メタデータ履歴が変わりました。素材を検索し直してください。");
-        var (saved, error) = await saveService.SaveAsAsync(snapshot, output.FileName, token);
-        SetSummaryText(saved ? $"別名で保存しました。元の関連付けは保持されます。\n{output.FileName}" : error ?? "別名保存を確認できません。");
+        var evidence = await AssetRelinkRecovery.PrepareExternalOutputAsync(snapshot, output.FileName, metadataDirectory!,
+            reviewed.Graph.Root, reviewed.Selected.Receipt, reviewed.Graph.Heads, proofs, approvedRoots, token);
+        try
+        {
+            var (staged, error) = await AssetRelinkRecovery.StageExternalOutputAsync(evidence, snapshot, saveService, approvedRoots, token);
+            if (!staged)
+            {
+                SetSummaryText($"出力の準備を確認できません。{error}\n回復記録 {evidence}");
+                return;
+            }
+            await CompleteExternalRelinkAsync(evidence, reviewed.Graph.Root, snapshot.YmmpPath, approvedRoots, token);
+        }
+        catch (DerivedRegistrationException ex) { ShowPendingDerivedRegistration(evidence, ex); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            SetSummaryText($"処理を中止しました。出力と一覧の状況は「再リンクの回復」で確認できます。\n{evidence}");
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException
+            or System.Text.Json.JsonException or InvalidOperationException)
+        {
+            logger.Error(ex, "Derived relink did not finish.");
+            SetSummaryText($"出力または一覧登録の完了を確認できません。「再リンクの回復」と一覧の状態を確認してください。\n{evidence}");
+        }
+    }
+
+    private async Task CompleteExternalRelinkAsync(string evidence, AssetRevisionSeries.Head sourceRoot, string source,
+        IReadOnlyList<string> approvedRoots, CancellationToken token)
+    {
+        if (RegisterDerivedAsync is not { } register)
+            throw new InvalidDataException("元プロジェクトの一覧登録を確認できません。");
+        var receipt = await AssetRelinkRecovery.CompleteExternalOutputAsync(evidence, metadataDirectory!, sourceRoot, source,
+            approvedRoots, token, async (item, heldToken) =>
+            {
+                try { await register(item, heldToken); }
+                catch (Exception ex) { throw new DerivedRegistrationException(ex); }
+            });
+        SetSummaryText($"別名PFと履歴を確認し、派生プロジェクトを登録しました。\n{receipt.Output.Output}\n派生ID {receipt.Output.Revision.ProjectId}\n回復記録 {evidence}");
+    }
+
+    private async Task<bool> TryRecoverExternalRelinkAsync(string evidence, string source, CancellationToken token)
+    {
+        var review = await AssetRelinkRecovery.InspectExternalRecoveryAsync(evidence, source, token);
+        if (review is null) return false;
+        if (review.State == AssetRelinkRecovery.ExternalRecoveryState.NotStaged)
+        {
+            SetSummaryText($"作業ファイルの作成前に中断されました。この記録は保持しました。最初から再リンクしてください。\n{evidence}");
+            return true;
+        }
+        if (review.State == AssetRelinkRecovery.ExternalRecoveryState.Unknown)
+        {
+            SetSummaryText($"出力を確認する証拠が不足しています。出力や記録は保持しました。\n{evidence}");
+            return true;
+        }
+        if (RegisterDerivedAsync is null)
+            throw new InvalidDataException("元プロジェクトの一覧登録を確認できません。");
+        if (MessageBox.Show($"出力 {review.Output}\n派生ID {review.DerivedProjectId}\n\n素材の検索先を再指定して派生登録を回復しますか？",
+                "外部素材の再リンク回復", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return true;
+        var approved = new List<string>();
+        foreach (var root in review.ApprovedRoots)
+        {
+            token.ThrowIfCancellationRequested();
+            // A saved network path is displayed as text. The picker only opens the location selected by the user.
+            var picker = new OpenFolderDialog { Title = $"今回も許可するフォルダーを指定してください — {root}" };
+            if (picker.ShowDialog() != true) return true;
+            var chosen = Path.TrimEndingDirectorySeparator(Path.GetFullPath(picker.FolderName));
+            if (!string.Equals(chosen, root, StringComparison.Ordinal))
+            {
+                SetSummaryText("回復記録と同じ検索先を指定してください。外部素材を確認する前に停止しました。");
+                return true;
+            }
+            approved.Add(chosen);
+        }
+        var association = await resolveMetadata!(token);
+        await CompleteExternalRelinkAsync(evidence, association.Graph.Root, source, approved, token);
+        return true;
+    }
+
+    private void ShowPendingDerivedRegistration(string evidence, DerivedRegistrationException ex)
+    {
+        logger.Error(ex, "Derived output and history verified; list registration did not return a known success.");
+        SetSummaryText($"別名PFと派生履歴は確認済みです。一覧登録の完了を確認できません。「再リンクの回復」で確認してください。\n{evidence}");
     }
 }
