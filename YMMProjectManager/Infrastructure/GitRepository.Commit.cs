@@ -84,6 +84,7 @@ public sealed partial class GitRepository
 
                 if (!HasOrdinaryPublicationObjectStore())
                     return PublicationRefusal("This Git object store cannot be inspected safely.");
+                using var registry = OpenAssetRegistryLease();
                 var mediaError = await CheckPublicationTreeAsync(tree, token).ConfigureAwait(false);
                 if (mediaError is not null) return mediaError;
                 var identitySettings = await ReadCommitIdentityAsync(token).ConfigureAwait(false);

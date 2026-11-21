@@ -48,9 +48,14 @@ public sealed partial class GitRepository
             return false;
         try
         {
-            return Directory.EnumerateDirectories(objects).All(IsOrdinaryDirectory) &&
-                Directory.EnumerateFiles(objects, "*", SearchOption.AllDirectories)
-                    .All(path => IsRegularFile(path) && !path.EndsWith(".promisor", StringComparison.OrdinalIgnoreCase));
+            if (Directory.EnumerateFiles(objects).Any()) return false;
+            foreach (var folder in Directory.EnumerateDirectories(objects))
+            {
+                if (!IsOrdinaryDirectory(folder) || Directory.EnumerateDirectories(folder).Any()) return false;
+                if (Directory.EnumerateFiles(folder).Any(path =>
+                    !IsRegularFile(path) || path.EndsWith(".promisor", StringComparison.OrdinalIgnoreCase))) return false;
+            }
+            return true;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return false; }
     }
@@ -59,11 +64,14 @@ public sealed partial class GitRepository
     // Inspect all reachable history before opening a network connection.
     private async Task<GitResult?> CheckPushPublicationAsync(string commit, CancellationToken token)
     {
+        var knownFailure = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
+        if (knownFailure is not null) return knownFailure;
         var complete = await InspectPublicationGitAsync(["rev-parse", "--is-shallow-repository"], token).ConfigureAwait(false);
         if (!complete.Success || complete.StandardOutput.Trim() != "false")
             return PublicationRefusal("Complete local Git history is required to check outgoing media.");
         var paths = await InspectPublicationGitAsync(
-            ["log", "--full-history", "--root", "-m", "--format=", "--raw", "-z", "--no-renames", "--no-ext-diff",
+            ["log", "--full-history", "--root", "--diff-merges=separate", "--format=", "--raw", "-z",
+                "--no-show-signature", "--no-notes", "--no-decorate", "--no-renames", "--no-ext-diff",
                 "--no-textconv", "--diff-filter=AMT", commit, "--"], token).ConfigureAwait(false);
         var objects = await InspectPublicationGitAsync(["rev-list", "--objects", "--no-object-names", commit, "--"], token).ConfigureAwait(false);
         if (!paths.Success || !objects.Success)
@@ -88,6 +96,8 @@ public sealed partial class GitRepository
     // A commit is checked against the immutable tree the caller will publish.
     private async Task<GitResult?> CheckPublicationTreeAsync(string tree, CancellationToken token)
     {
+        var knownFailure = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
+        if (knownFailure is not null) return knownFailure;
         var listing = await InspectPublicationGitAsync(["ls-tree", "-r", "-z", tree, "--"], token).ConfigureAwait(false);
         if (!listing.Success) return PublicationRefusal("Cannot verify the staged tree.");
         var ids = new HashSet<string>(StringComparer.Ordinal);
@@ -111,7 +121,23 @@ public sealed partial class GitRepository
     private bool IsBlockedPublicationPath(string path) =>
         path.EndsWith(".ymmpx", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ymme", StringComparison.OrdinalIgnoreCase) ||
-        publicationAssetNames.Contains(Path.GetFileName(path));
+        publicationAssetNames.Contains(Path.GetFileName(path)) ||
+        IsAssetPoolPayload(path);
+
+    private static bool IsAssetPoolPayload(string path)
+    {
+        var components = path.Split('/');
+        for (var i = 0; i < components.Length - 1; i++)
+        {
+            var component = components[i];
+            if (component.StartsWith(".asset-pool-pending-", StringComparison.OrdinalIgnoreCase)) return true;
+            if (component.Length == 87 && component.StartsWith("asset-", StringComparison.OrdinalIgnoreCase) && component[22] == '-' &&
+                component.AsSpan(6, 16).IndexOfAnyExcept("0123456789abcdefABCDEF") < 0 &&
+                component.AsSpan(23).IndexOfAnyExcept("0123456789abcdefABCDEF") < 0)
+                return i != components.Length - 2 || !components[^1].Equals(AssetPool.ManifestFileName, StringComparison.OrdinalIgnoreCase);
+        }
+        return false;
+    }
 
     private Task<GitResult> InspectPublicationGitAsync(string[] arguments, CancellationToken token, string? input = null,
         Func<Stream, CancellationToken, Task>? rawOutput = null) =>
@@ -202,18 +228,13 @@ public sealed partial class GitRepository
             content.StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal))
             return "Git contains binary content or an external large file pointer.";
 
-        // FilePath entries are evidence even when the material itself is ordinary text.
-        if (content.Contains("\"FilePath\"", StringComparison.Ordinal) && content.AsSpan().TrimStart('\uFEFF').TrimStart().StartsWith("{"))
-            foreach (var reference in PackagingDetector.FindFilePaths(content.TrimStart('\uFEFF')))
-                historicalAssetNames.Add(Path.GetFileName(PackagingDetector.NormalizeFilePathKey(reference)));
-
-        if (content.Contains("\"Sha256\"", StringComparison.OrdinalIgnoreCase) &&
-            content.AsSpan().TrimStart('\uFEFF').TrimStart().StartsWith("{"))
+        if (content.AsSpan().TrimStart('\uFEFF').TrimStart().StartsWith("{"))
         {
             try
             {
                 using var document = JsonDocument.Parse(content.TrimStart('\uFEFF'));
                 var root = document.RootElement;
+                ReadProjectAssetNames(root, historicalAssetNames);
                 if (root.TryGetProperty("Assets", out var assets) && assets.ValueKind == JsonValueKind.Array &&
                     root.TryGetProperty("ProjectId", out _))
                     foreach (var asset in assets.EnumerateArray())
@@ -227,6 +248,22 @@ public sealed partial class GitRepository
             catch (JsonException) { /* Ordinary text may contain a JSON fragment. */ }
         }
         return null;
+    }
+
+    private static void ReadProjectAssetNames(JsonElement node, HashSet<string> names)
+    {
+        if (node.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in node.EnumerateObject())
+            {
+                if (property.NameEquals("FilePath") && property.Value.ValueKind == JsonValueKind.String &&
+                    property.Value.GetString() is { } reference)
+                    names.Add(Path.GetFileName(PackagingDetector.NormalizeFilePathKey(reference)));
+                else ReadProjectAssetNames(property.Value, names);
+            }
+        }
+        else if (node.ValueKind == JsonValueKind.Array)
+            foreach (var item in node.EnumerateArray()) ReadProjectAssetNames(item, names);
     }
 
     private static void ReadAsset(JsonElement entry, string nameProperty, HashSet<string> names, HashSet<string> hashes)

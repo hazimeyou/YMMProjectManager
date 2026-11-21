@@ -30,7 +30,7 @@ internal static class GitPublicationTests
         await Program.RunNamedCaseAsync("R21 Push refuses PF-referenced plain text media", () =>
             TestAsync(root, "pf", async (source, _) =>
             {
-                await CommitFileAsync(source, "scene.ymmp", """{"Timelines":[{"Items":[{"FilePath":"private-captions.txt"}]}]}"""u8.ToArray());
+                await CommitFileAsync(source, "scene.ymmp", """{"Timelines":[{"Items":[{"File\u0050ath":"private-captions.txt"}]}]}"""u8.ToArray());
                 await CommitFileAsync(source, "private-captions.txt", "a caption is still an asset"u8.ToArray());
                 return (false, null);
             }));
@@ -59,6 +59,30 @@ internal static class GitPublicationTests
                 return (false, null);
             });
         });
+        await Program.RunNamedCaseAsync("R21 asset registry persists across repository objects and blocks Commit and Push", () =>
+            TestAsync(root, "registry", async (source, git) =>
+            {
+                var bytes = "known UTF-8 material stored without its pool manifest"u8.ToArray();
+                var actor = new GitRepository(source);
+                await actor.RememberPublicationAssetAsync("captions.txt", Convert.ToHexString(SHA256.HashData(bytes)), CancellationToken.None);
+                await File.WriteAllBytesAsync(Path.Combine(source, "other-name.txt"), bytes);
+                await CommandAsync(source, "add", "--", "other-name.txt");
+                var preview = (await git.InspectCommitAsync()).CommitTarget!;
+                var refused = await git.CommitAsync(preview, "should be blocked");
+                if (refused.Failure != GitFailure.MediaPublication ||
+                    File.Exists(Path.Combine(source, ".git", "refs", "heads", "main")))
+                    throw new InvalidOperationException("Commit accepted the protected data or changed the branch.");
+                await CommandAsync(source, "commit", "-m", "synthetic legacy input");
+                return (false, null);
+            }));
+        await Program.RunNamedCaseAsync("R21 Push refuses pool payload even when its pool record was never committed", () =>
+            TestAsync(root, "pool", async (source, _) =>
+            {
+                var folder = "asset-" + new string('A', 16) + "-" + new string('B', 64);
+                Directory.CreateDirectory(Path.Combine(source, folder));
+                await CommitFileAsync(source, folder + "/sample_1234567890123456.txt", "ordinary-looking media"u8.ToArray());
+                return (false, null);
+            }));
     }
 
     private static async Task TestAsync(string root, string name, Func<string, GitRepository, Task<(bool Allow, string? ForbiddenMarker)>> prepare)

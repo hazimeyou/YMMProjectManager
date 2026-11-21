@@ -379,6 +379,13 @@ public sealed partial class GitRepository
         // after the final observation. Never ask Git to resolve a mutable source ref.
         var target = approvedTarget ?? current!;
         using var config = ProjectListReplacement.Open(Path.Combine(directory, ".git", "config"));
+        using var registry = OpenAssetRegistryLease();
+        var remoteNames = await RunDirectAsync(["config", "--local", "--no-includes", "--name-only", "-z", "--list"],
+            token, pullSettings: [], outputLimit: 1024 * 1024).ConfigureAwait(false);
+        if (!remoteNames.Success || remoteNames.StandardError.Length != 0 || remoteNames.StandardOutput
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Any(name => name.StartsWith("remote." + target.Endpoint + ".", StringComparison.OrdinalIgnoreCase)))
+            return UnsafeRemote("The Push endpoint can also resolve as a configured remote name.");
         if (!HasOrdinaryPublicationObjectStore())
             return PublicationRefusal("This Git object store cannot be inspected safely.");
         var publicationError = await CheckPushPublicationAsync(target.ObjectId, token).ConfigureAwait(false);
@@ -442,6 +449,20 @@ public sealed partial class GitRepository
             return SanitizeRemote(result, classifyPushStatus, cloneStage);
         }
         if (authentication != GitHubAuthentication.Anonymous) return UnsupportedGitHubEndpoint();
+
+        if (classifyPushStatus)
+        {
+            using var session = await OpenPullSessionAsync(token, requireIndex: false).ConfigureAwait(false);
+            if (session is null) return UnsafeRemote("Push requires an ordinary repository without external transport settings.");
+            var local = Path.IsPathFullyQualified(url);
+            using var receiver = local ? OwnedFilePublication.DirectoryFence.Open(url, enforceShare: true) : null;
+            var transport = local ? arguments :
+                ["-c", "http.followRedirects=false", "-c", "http.sslVerify=true", "-c", "http.proxy=", .. arguments];
+            var result = await RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. transport],
+                token, allowedProtocol: local ? "file" : "https", trustedProcess: true, pullSettings: session.Settings,
+                noLazyFetch: true, preserveReceiverHooks: local).ConfigureAwait(false);
+            return SanitizeRemote(result, classifyPushStatus: true, cloneStage: null);
+        }
 
         var protocol = Path.IsPathFullyQualified(url) ? "file" : "https";
         if (trusted)
@@ -736,7 +757,7 @@ public sealed partial class GitRepository
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
         int? outputLimit = null, string? privateIndex = null, Func<Stream, CancellationToken, Task>? rawOutput = null,
-        bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null)
+        bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null, bool preserveReceiverHooks = false)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(githubTransport?.Executable ??
@@ -779,9 +800,14 @@ public sealed partial class GitRepository
             start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
             start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
             start.Environment["GIT_ATTR_NOSYSTEM"] = "1";
+            if (!preserveReceiverHooks)
+            {
+                start.ArgumentList.Add("-c");
+                start.ArgumentList.Add("core.hooksPath=/dev/null");
+            }
             foreach (var argument in new[]
             {
-                "--no-pager", "-c", "core.hooksPath=/dev/null", "-c", "core.attributesFile=NUL", "-c", "core.askPass=", "-c", "credential.helper=",
+                "--no-pager", "-c", "core.attributesFile=NUL", "-c", "core.askPass=", "-c", "credential.helper=",
                 "-c", "core.protectNTFS=true", "-c", "submodule.recurse=false", "-c", "gc.auto=0",
                 "-c", "advice.graftFileDeprecated=false",
             }.Concat(pullSettings))
