@@ -209,6 +209,7 @@ internal static class Program
         await RunGroupAsync(nameof(YmmpxTransferTests), () => YmmpxTransferTests.RunAsync(workRoot));
         await RunGroupAsync(nameof(YmmpxReleasedFormatTests), () => YmmpxReleasedFormatTests.RunAsync(workRoot));
         await RunGroupAsync("GitRepositoryTests.RunAsync", () => GitRepositoryTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(GitHubBrowserLoginTests), () => GitHubBrowserLoginTests.RunAsync(workRoot));
         await RunGroupAsync("GitRemoteTests.RunAsync", async () =>
         {
             await GitPullRecoveryTests.RunAsync(workRoot);
@@ -317,6 +318,9 @@ internal static class Program
                     break;
                 case nameof(GitNativeInterruptionTests):
                     await GitNativeInterruptionTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitHubBrowserLoginTests):
+                    await GitHubBrowserLoginTests.RunAsync(workRoot);
                     break;
                 case nameof(GitHttpsAcceptanceTests):
                     await GitHttpsAcceptanceTests.RunAsync(workRoot);
