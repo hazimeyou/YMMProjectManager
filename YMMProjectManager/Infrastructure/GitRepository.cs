@@ -350,13 +350,16 @@ public sealed partial class GitRepository
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Select the main repository root on a regular filesystem path.");
         if (approvedTarget is not null && !string.Equals(directory, approvedTarget.RepositoryRoot, StringComparison.OrdinalIgnoreCase))
             return UnsafeRemote("This push approval belongs to a different repository.");
-        using var lease = approvedTarget is null ? null : GitRepositoryLease.TryOpen(directory);
-        if (approvedTarget is not null && (lease is null || lease.Identity != approvedTarget.Identity))
+        if (!HasDirectRepository() || !OnFixedLocalNtfs(directory))
+            return UnsafeRemote("Push media inspection requires a direct repository on fixed local NTFS.");
+        using var fence = OwnedFilePublication.DirectoryFence.Open(Path.Combine(directory, ".git"), enforceShare: true);
+        using var lease = GitRepositoryLease.TryOpen(directory);
+        if (lease is null || (approvedTarget is not null && lease.Identity != approvedTarget.Identity))
             return UnsafeRemote("The approved repository or its Git directory changed. Review the push target again.");
         var (url, error) = await ResolveOriginAsync(push: true, token, literal: trusted).ConfigureAwait(false);
         if (error is not null) return error;
         if (!CanUseRemote(url!, expectedRemote)) return UnsafeRemote("The origin differs from the approved endpoint or requires explicit trust.");
-        var (current, tipError) = await ReadPushTargetAsync(url!, trusted, token, lease?.Identity).ConfigureAwait(false);
+        var (current, tipError) = await ReadPushTargetAsync(url!, trusted: true, token, lease.Identity).ConfigureAwait(false);
         if (tipError is not null) return tipError;
         if (approvedTarget is not null && approvedTarget != current)
             return UnsafeRemote("The branch or commit changed since approval. Review the push target again.");
@@ -364,7 +367,7 @@ public sealed partial class GitRepository
         if (trusted && !HasDirectRepository()) return UnsafeRemote("Repository path changed before push.");
         if (approvedTarget is not null)
         {
-            var (lastTarget, _) = await ReadPushTargetAsync(url!, trusted: true, token, lease!.Identity).ConfigureAwait(false);
+            var (lastTarget, _) = await ReadPushTargetAsync(url!, trusted: true, token, lease.Identity).ConfigureAwait(false);
             if (approvedTarget != lastTarget)
                 return UnsafeRemote("The branch or commit changed before push. Review the push target again.");
         }
@@ -372,8 +375,16 @@ public sealed partial class GitRepository
         // Pass the same approved object and full destination branch even if HEAD changes
         // after the final observation. Never ask Git to resolve a mutable source ref.
         var target = approvedTarget ?? current!;
+        using var config = ProjectListReplacement.Open(Path.Combine(directory, ".git", "config"));
+        if (!HasOrdinaryPublicationObjectStore())
+            return PublicationRefusal("This Git object store cannot be inspected safely.");
+        var publicationError = await CheckPushPublicationAsync(target.ObjectId, token).ConfigureAwait(false);
+        if (publicationError is not null) return publicationError;
+        if (!HasOrdinaryPublicationObjectStore())
+            return PublicationRefusal("The Git object store changed during inspection.");
         return await RunRemoteAsync(target.Endpoint,
-            ["-c", "push.followTags=false", "push", "--porcelain", "--no-follow-tags", "--recurse-submodules=no",
+            ["-c", "push.followTags=false", "-c", "push.negotiate=false",
+             "push", "--porcelain", "--no-follow-tags", "--no-verify", "--recurse-submodules=no",
              "--", target.Endpoint, target.ObjectId + ":" + target.BranchRef], token, trusted, classifyPushStatus: true).ConfigureAwait(false);
     }
 
@@ -440,7 +451,8 @@ public sealed partial class GitRepository
             if (!HasDirectRepository()) return UnsafeRemote("Repository path changed before execution.");
             arguments = [$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. arguments];
         }
-        return SanitizeRemote(await RunAsync(arguments, token, protocol).ConfigureAwait(false), classifyPushStatus, cloneStage);
+        return SanitizeRemote(await RunAsync(arguments, token, protocol, ignoreLegacyGrafts: classifyPushStatus,
+            noLazyFetch: classifyPushStatus).ConfigureAwait(false), classifyPushStatus, cloneStage);
     }
 
     public static GitResult InspectCloneRemote(string remote)
@@ -694,7 +706,7 @@ public sealed partial class GitRepository
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
-        int? outputLimit = null)
+        int? outputLimit = null, Func<Stream, CancellationToken, Task>? rawOutput = null, bool noLazyFetch = false)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -747,6 +759,7 @@ public sealed partial class GitRepository
         // A graft can appear after the filesystem observation. Ancestry checks always use
         // the real commit objects, even while that observation is being revalidated.
         if (ignoreLegacyGrafts || pullSettings is not null) start.Environment["GIT_GRAFT_FILE"] = "NUL";
+        if (noLazyFetch) start.Environment["GIT_NO_LAZY_FETCH"] = "1";
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
@@ -774,7 +787,15 @@ public sealed partial class GitRepository
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(Timeout);
-        var output = ReadGitTextAsync(process.StandardOutput, outputLimit, deadline.Token);
+        async Task<(string Text, bool Truncated)> ReadOutputAsync()
+        {
+            if (rawOutput is null) return await ReadGitTextAsync(process.StandardOutput, outputLimit, deadline.Token).ConfigureAwait(false);
+            // Closing the pipe on a parse error also releases a child blocked writing output.
+            using var stream = process.StandardOutput.BaseStream;
+            await rawOutput(stream, deadline.Token).ConfigureAwait(false);
+            return ("", false);
+        }
+        var output = ReadOutputAsync();
         var error = ReadGitTextAsync(process.StandardError, outputLimit, deadline.Token);
         var input = standardInput is null ? Task.CompletedTask : WriteGitInputAsync(process, standardInput, deadline.Token);
         try
@@ -825,7 +846,7 @@ public sealed partial class GitRepository
     }
 }
 
-public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong, ConcurrentOperation, OutcomeUnknown }
+public enum GitFailure { None, Authentication, Permission, Network, Divergence, Unknown, UnsafeOperation, Timeout, PathTooLong, ConcurrentOperation, OutcomeUnknown, MediaPublication }
 public enum GitRemoteOperation { Fetch, Push }
 public enum GitPullState { Unavailable, TrackingUnavailable, Dirty, UpToDate, FastForwardCandidate, LocalAhead, Diverged, Changed, OperationInProgress, IndexNotVerifiable, IgnoredPathCollision, HistoryNotVerifiable }
 public sealed record GitPullAssessment(GitPullState State, string? BranchRef = null, string? LocalObjectId = null,

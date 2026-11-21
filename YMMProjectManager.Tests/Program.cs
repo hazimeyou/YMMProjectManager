@@ -133,6 +133,7 @@ internal static class Program
         await RunGroupAsync(nameof(PreviewComparisonTests), PreviewComparisonTests.RunAsync);
         await RunGroupAsync(nameof(SceneComparisonHandoffTests), SceneComparisonHandoffTests.RunAsync);
         await RunGroupAsync(nameof(SceneRenderCoordinatorTests), SceneRenderCoordinatorTests.RunAsync);
+        await RunGroupAsync(nameof(GitPublicationTests), () => GitPublicationTests.RunAsync(workRoot));
         await RunGroupAsync("TestZeroGenerationsAsync", () => TestZeroGenerationsAsync(workRoot));
         await RunGroupAsync("TestCreateAndListAsync", () => TestCreateAndListAsync(workRoot));
         await RunGroupAsync("TestMultipleGenerationsAsync", () => TestMultipleGenerationsAsync(workRoot));
@@ -270,6 +271,9 @@ internal static class Program
                     break;
                 case nameof(GitRemoteTests):
                     await GitRemoteTests.RunAsync(workRoot);
+                    break;
+                case nameof(GitPublicationTests):
+                    await GitPublicationTests.RunAsync(workRoot);
                     break;
                 case nameof(GitNativeInterruptionTests):
                     await GitNativeInterruptionTests.RunAsync(workRoot);
