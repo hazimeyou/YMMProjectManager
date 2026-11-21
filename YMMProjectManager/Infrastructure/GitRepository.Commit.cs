@@ -37,6 +37,8 @@ public sealed partial class GitRepository
             // out another branch. Keep HEAD itself open to also stop symbolic-ref changes.
             using var indexLock = new FileStream(Path.Combine(gitDirectory, "index.lock"), FileMode.CreateNew,
                 FileAccess.Write, FileShare.None, 1, FileOptions.DeleteOnClose);
+            if (HasPendingPullEvidence()) return UnresolvedPull();
+            if (HasConcurrentCommitMarker(gitDirectory)) return BusyIndex();
             using var headFile = ProjectListReplacement.Open(Path.Combine(gitDirectory, "HEAD"));
             using var indexFile = ProjectListReplacement.TryOpen(Path.Combine(gitDirectory, "index"));
             if (indexFile is null) return UnsafeRemote("Stage at least one file before committing.");
@@ -60,10 +62,19 @@ public sealed partial class GitRepository
             // write-tree may refresh cache-tree metadata. Give it an owned copy so the
             // user's index bytes stay exactly as staged, even when validation fails.
             var snapshotPath = Path.Combine(gitDirectory, "ymm-index-" + Guid.NewGuid().ToString("N"));
+            (ulong Volume, Guid FileId)? snapshotIdentity = null;
             try
             {
-                await using (var snapshot = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                await using (var snapshot = OwnedFilePublication.CreateOwnedOutputFile(snapshotPath))
+                {
+                    snapshotIdentity = ProjectFileEvidence.ReadPhysicalIdentity(snapshot.SafeFileHandle);
                     await indexFile.CopyToAsync(snapshot, token).ConfigureAwait(false);
+                }
+                using var pinnedSnapshot = ProjectListReplacement.Open(snapshotPath);
+                if (ProjectFileEvidence.ReadPhysicalIdentity(pinnedSnapshot.SafeFileHandle) != snapshotIdentity)
+                    return UnsafeRemote("The private index changed while preparing Commit.");
+                // Git can read this copy to write the tree object. Its optional
+                // cache-tree refresh cannot replace the held snapshot file.
                 var treeResult = await RunDirectAsync(["write-tree"], token, pullSettings: session.Settings,
                     privateIndex: snapshotPath).ConfigureAwait(false);
                 var tree = treeResult.StandardOutput.Trim();
@@ -101,11 +112,13 @@ public sealed partial class GitRepository
 
                 BeforeCommitRefUpdate?.Invoke();
                 token.ThrowIfCancellationRequested();
+                if (HasPendingPullEvidence()) return UnresolvedPull();
+                if (HasConcurrentCommitMarker(gitDirectory)) return BusyIndex();
                 return await PublishCommitRefAsync(session, branch, parent ?? new string('0', tree.Length), objectId).ConfigureAwait(false);
             }
             finally
             {
-                TryCleanCommitIndex(snapshotPath);
+                if (snapshotIdentity is { } identity) TryCleanCommitIndex(snapshotPath, identity);
             }
         }
         catch (IOException) { return BusyIndex(); }
@@ -156,9 +169,17 @@ public sealed partial class GitRepository
         new(1, "", "Git index or repository state is busy. Finish any other Git operation, then review the staged changes.",
             GitFailure.ConcurrentOperation);
 
-    private static void TryCleanCommitIndex(string path)
+    private static bool HasConcurrentCommitMarker(string gitDirectory) =>
+        PullOperationMarkers.Any(marker => marker != "index.lock" && HasGitEntry(Path.Combine(gitDirectory, marker)));
+
+    private static void TryCleanCommitIndex(string path, (ulong Volume, Guid FileId) identity)
     {
-        try { File.Delete(path); }
+        try
+        {
+            using var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: true);
+            if (ProjectFileEvidence.ReadPhysicalIdentity(handle) == identity)
+                OwnedFilePublication.TryDeleteOpenedPath(handle);
+        }
         catch (IOException) { }
         catch (UnauthorizedAccessException) { }
     }

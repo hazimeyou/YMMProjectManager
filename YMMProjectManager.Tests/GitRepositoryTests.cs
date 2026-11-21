@@ -215,6 +215,15 @@ internal static class GitRepositoryTests
         catch (OperationCanceledException) { }
         Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == head, "HEAD changed after rejection or cancel");
         Require(!File.Exists(Path.Combine(root, ".git", "index.lock")), "cancelled index lock released");
+        Require(!Directory.EnumerateFiles(Path.Combine(root, ".git"), "ymm-index-*").Any(), "owned index snapshot was left behind");
+
+        var mergeMarker = Path.Combine(root, ".git", "MERGE_HEAD");
+        var merge = new GitRepository(root) { BeforeCommitRefUpdate = () => File.WriteAllText(mergeMarker, head + "\n") };
+        Require((await merge.CommitAsync(current, "must not publish during merge")).Failure == GitFailure.ConcurrentOperation,
+            "merge started at the publication boundary was ignored");
+        Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == head && await File.ReadAllTextAsync(mergeMarker) == head + "\n",
+            "merge evidence or branch ref was changed");
+        File.Delete(mergeMarker);
 
         var commit = (await CommandAsync(root, "commit-tree", current.TreeObjectId, "-p", head, "-m", "independent actor")).Trim();
         var raced = new GitRepository(root)
