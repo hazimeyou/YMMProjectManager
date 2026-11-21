@@ -39,7 +39,7 @@ public sealed partial class GitRepository
     private async Task<GitResult?> CheckStagePublicationFileAsync(string path, FileStream file, CancellationToken token)
     {
         if (IsBlockedPublicationPath(path) || file.Length > PublicationObjectLimit)
-            return PublicationRefusal("The selected file is a known asset or exceeds the media inspection limit.");
+            return PublicationRefusal("The selected file is an asset, private record or exceeds the media inspection limit.");
         var bytes = new byte[(int)file.Length];
         await file.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
         var reason = InspectPublicationBlob(bytes, new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase),
@@ -97,7 +97,7 @@ public sealed partial class GitRepository
                 return PublicationRefusal("Git history contains a link or unsupported Git entry.");
             var path = entries[i + 1];
             if (IsBlockedPublicationPath(path))
-                return PublicationRefusal("Git history contains a known asset path or YMMPX package.");
+                return PublicationRefusal("Git history contains an asset, package or private record path.");
             names.Add(path);
         }
         var ids = objects.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
@@ -122,7 +122,7 @@ public sealed partial class GitRepository
                 return PublicationRefusal("The staged tree contains a link or unsupported Git entry.");
             var path = record[(separator + 1)..];
             if (IsBlockedPublicationPath(path))
-                return PublicationRefusal("The staged tree contains a known asset path or YMMPX package.");
+                return PublicationRefusal("The staged tree contains an asset, package or private record path.");
             names.Add(path);
             ids.Add(fields[2]);
         }
@@ -133,7 +133,20 @@ public sealed partial class GitRepository
         path.EndsWith(".ymmpx", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ymme", StringComparison.OrdinalIgnoreCase) ||
         publicationAssetNames.Contains(Path.GetFileName(path)) ||
+        IsPrivateRelinkPath(path) ||
         IsAssetPoolPayload(path);
+
+    private static bool IsPrivateRelinkPath(string path) =>
+        path.Split('/').Any(component =>
+            component.Equals(".ymmpm-lineage.json", StringComparison.OrdinalIgnoreCase) ||
+            HasOperationName(component, ".ymmpm-relink-") ||
+            HasOperationName(component, ".ymmpm-relink.tmp-") ||
+            HasOperationName(component, ".ymmpm-derived-"));
+
+    private static bool HasOperationName(string component, string prefix) =>
+        component.Length >= prefix.Length + 32 &&
+        component.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
+        Guid.TryParseExact(component.AsSpan(prefix.Length, 32), "N", out _);
 
     private static bool IsAssetPoolPayload(string path)
     {
@@ -262,6 +275,8 @@ public sealed partial class GitRepository
             {
                 using var document = JsonDocument.Parse(content.TrimStart('\uFEFF'));
                 var root = document.RootElement;
+                if (IsPrivateRelinkRecord(root))
+                    return "Git contains a local relink recovery or publication record.";
                 ReadProjectAssetNames(root, historicalAssetNames);
                 if (root.TryGetProperty("Assets", out var assets) && assets.ValueKind == JsonValueKind.Array &&
                     root.TryGetProperty("ProjectId", out _))
@@ -269,6 +284,11 @@ public sealed partial class GitRepository
                         ReadAsset(asset, "RelativePath", historicalAssetNames, historicalAssetHashes);
                 if (root.TryGetProperty("DistributionFileName", out _))
                 {
+                    if (root.TryGetProperty("OriginalFileName", out _) &&
+                        root.TryGetProperty("OriginalReference", out var reference) &&
+                        reference.ValueKind == JsonValueKind.String && reference.GetString() is { } original &&
+                        IsMachineLocalReference(original))
+                        return "Git contains a pool record that exposes a non-portable original path.";
                     ReadAsset(root, "OriginalFileName", historicalAssetNames, historicalAssetHashes);
                     ReadAsset(root, "DistributionFileName", historicalAssetNames, historicalAssetHashes);
                 }
@@ -276,6 +296,20 @@ public sealed partial class GitRepository
             catch (JsonException) { /* Ordinary text may contain a JSON fragment. */ }
         }
         return null;
+    }
+
+    private static bool IsPrivateRelinkRecord(JsonElement root) =>
+        root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty("Version", out _) &&
+        root.TryGetProperty("OperationId", out _) &&
+        root.TryGetProperty("OutputSha256", out _) &&
+        (root.TryGetProperty("Identity", out _) ||
+            (root.TryGetProperty("SourceSha256", out _) && root.TryGetProperty("Approved", out _)));
+
+    private static bool IsMachineLocalReference(string reference)
+    {
+        var path = reference.Trim();
+        return Path.IsPathRooted(path) || (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.IsFile);
     }
 
     private static void ReadProjectAssetNames(JsonElement node, HashSet<string> names)

@@ -99,6 +99,67 @@ internal static class GitPublicationTests
                 !before.SequenceEqual(Directory.GetFiles(objects, "*", SearchOption.AllDirectories)))
                 throw new InvalidOperationException("Stage wrote a registered media blob or published the index.");
         });
+        await Program.RunNamedCaseAsync("R22 Stage rejects local relink and derived metadata artifacts", () =>
+            TestAsync(root, "r22-private-path", async (source, git) =>
+            {
+                var operation = Guid.NewGuid().ToString("N");
+                var derived = ".ymmpm-derived-" + operation;
+                Directory.CreateDirectory(Path.Combine(source, derived));
+                foreach (var path in new[] { $".ymmpm-relink-{operation}.json", $"{derived}/revision-synthetic.json" })
+                {
+                    await File.WriteAllTextAsync(Path.Combine(source, path), "synthesized local-only metadata");
+                    var refusal = await git.StageAsync([path]);
+                    var publishedIndex = File.Exists(Path.Combine(source, ".git", "index"));
+                    if (refusal.Failure != GitFailure.MediaPublication || publishedIndex)
+                        throw new InvalidOperationException($"Private path outcome ({path}): {refusal.Failure}; index={publishedIndex}; {refusal.StandardError}");
+                }
+
+                Directory.CreateDirectory(Path.Combine(source, "docs"));
+                await File.WriteAllTextAsync(Path.Combine(source, "docs", "readme.txt"), "portable repository content");
+                if (!(await git.StageAsync(["docs/readme.txt"])).Success ||
+                    !(await git.CommitAsync("ordinary nested file")).Success)
+                    throw new InvalidOperationException("An ordinary nested path could not be staged and committed.");
+                return (true, null);
+            }));
+        await Program.RunNamedCaseAsync("R22 Commit and Push refuse renamed private recovery metadata", () =>
+            TestAsync(root, "r22-private-history", async (source, git) =>
+            {
+                const string receipt = """{"Version":6,"OperationId":"d2edaef4-61bc-47bd-9cf6-6077611a1407","OutputSha256":"fixture","SourceSha256":"fixture","Approved":[]}""";
+                await File.WriteAllTextAsync(Path.Combine(source, "document.json"), receipt);
+                await CommandAsync(source, "add", "--", "document.json");
+                var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                var refused = await git.CommitAsync(approved, "prevent publishing user-private evidence");
+                if (refused.Failure != GitFailure.MediaPublication ||
+                    File.Exists(Path.Combine(source, ".git", "refs", "heads", "main")))
+                    throw new InvalidOperationException("Commit published private recovery metadata.");
+
+                // Simulate a historical commit made by another tool, then removed from the tip.
+                await CommandAsync(source, "commit", "-m", "synthetic old receipt");
+                await CommandAsync(source, "rm", "--", "document.json");
+                await CommandAsync(source, "commit", "-m", "synthetic removal");
+                return (false, null);
+            }));
+        await Program.RunNamedCaseAsync("R22 Push permits portable metadata and rejects local pool references", async () =>
+        {
+            var hash = new string('C', 64);
+            await TestAsync(root, "r22-portable-pool", async (source, git) =>
+            {
+                var pool = $$"""{"SchemaVersion":1,"OriginalFileName":"clip.txt","DistributionFileName":"clip_HASH.txt","Sha256":"{{hash}}","OriginalReference":"media/clip.txt","RedistributionNote":"Fixture approval"}""";
+                await File.WriteAllTextAsync(Path.Combine(source, "asset-pool.json"), pool);
+                if (!(await git.StageAsync(["asset-pool.json"])).Success || !(await git.CommitAsync("portable asset record only")).Success)
+                    throw new InvalidOperationException("Portable asset metadata could not be published.");
+                return (true, null);
+            });
+            await TestAsync(root, "r22-private-pool", async (source, git) =>
+            {
+                var pool = $$"""{"SchemaVersion":1,"OriginalFileName":"clip.txt","DistributionFileName":"clip_HASH.txt","Sha256":"{{hash}}","OriginalReference":"C:\\synthetic\\local\\clip.txt"}""";
+                await File.WriteAllTextAsync(Path.Combine(source, "private-pool.json"), pool);
+                if ((await git.StageAsync(["private-pool.json"])).Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Stage accepted a non-portable path in pool metadata.");
+                await CommitFileAsync(source, "private-pool.json", Encoding.UTF8.GetBytes(pool));
+                return (false, null);
+            });
+        });
     }
 
     private static async Task TestAsync(string root, string name, Func<string, GitRepository, Task<(bool Allow, string? ForbiddenMarker)>> prepare)

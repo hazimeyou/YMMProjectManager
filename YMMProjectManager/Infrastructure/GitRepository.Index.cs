@@ -128,7 +128,9 @@ public sealed partial class GitRepository
             foreach (var path in paths)
             {
                 token.ThrowIfCancellationRequested();
-                var full = Path.Combine(directory, path);
+                // Git expects slash-form paths. Native extended paths require the
+                // Windows separator when we pin the selected working-tree file.
+                var full = Path.GetFullPath(path, directory);
                 if (!HasGitEntry(full)) { absent.Add(path); continue; }
                 if (!IsRegularFile(full)) return UnsafeRemote("Select individual files. Folders and links cannot be staged.");
                 inputs.Add(OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true));
