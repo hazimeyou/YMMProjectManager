@@ -21,7 +21,8 @@ internal static class YmmpxPackageReader
     internal const string RetainedStagingPath = "YmmpxRetainedStagingPath";
     private static readonly uint[] CrcTable = MakeCrcTable();
 
-    private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project, HashSet<string> Resources);
+    private sealed record Package(Dictionary<string, ZipArchiveEntry> Files, string ProjectName, JsonObject Project,
+        HashSet<string> Resources, bool HasLegacyAliases);
     private sealed record OwnedPath(string Path, FileIdentity? Identity);
     private sealed record ProjectSource(string Directory, JsonElement Document)
     {
@@ -157,8 +158,7 @@ internal static class YmmpxPackageReader
                 using var openedFinal = OpenOrdinaryDirectory(final);
                 if (ProjectFileEvidence.ReadPhysicalIdentity(openedFinal) != stagingIdentity)
                     throw new IOException("展開したフォルダーが変更されました。");
-                VerifyStagedTree(final, CancellationToken.None);
-                await VerifyStagedFilesAsync(final, CancellationToken.None).ConfigureAwait(false);
+                await VerifyPublishedSetAsync().ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
@@ -256,15 +256,44 @@ internal static class YmmpxPackageReader
 
         async Task VerifyStagedFilesAsync(string actualRoot, CancellationToken verificationToken)
         {
-            // NTFS requires child file handles to close before the folder rename.
-            // Reopen by relative name on each side of publication and compare the owned bytes and identity.
             foreach (var (original, evidence) in verifiedStagedFiles)
             {
                 var path = Path.Combine(actualRoot, Path.GetRelativePath(staging, original));
-                using var fence = actualRoot == staging ? null : DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
                 await using var current = YmmpxTransfer.OpenOrdinaryRead(path);
                 if (await ProjectFileEvidence.ReadAsync(current, verificationToken).ConfigureAwait(false) != evidence)
                     throw new IOException("復元したファイルが公開時に変更されました。");
+            }
+        }
+
+        async Task VerifyPublishedSetAsync()
+        {
+            // NTFS requires child handles closed for rename. Reopen the published set, holding
+            // each verified file and its ordinary parent until every comparison completes.
+            using var heldDirectories = new DirectoryFence(enforceShare: true);
+            if (transfer is not null)
+                foreach (var directory in directories)
+                {
+                    var path = Path.Combine(final, Path.GetRelativePath(staging, directory.Path));
+                    if (ReadIdentity(heldDirectories.Add(path)) != directory.Identity)
+                        throw new IOException("公開後の展開フォルダーが変更されました。");
+                }
+
+            var heldFiles = new List<FileStream>(verifiedStagedFiles.Count);
+            try
+            {
+                foreach (var (original, evidence) in verifiedStagedFiles)
+                {
+                    var path = Path.Combine(final, Path.GetRelativePath(staging, original));
+                    var current = YmmpxTransfer.OpenOrdinaryRead(path);
+                    heldFiles.Add(current);
+                    if (await ProjectFileEvidence.ReadAsync(current).ConfigureAwait(false) != evidence)
+                        throw new IOException("公開後の展開ファイルが変更されました。");
+                }
+                VerifyStagedTree(final, CancellationToken.None);
+            }
+            finally
+            {
+                foreach (var stream in heldFiles) stream.Dispose();
             }
         }
     }
@@ -296,6 +325,8 @@ internal static class YmmpxPackageReader
     {
         if (!comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal))
             throw new InvalidDataException("受け渡し情報に対応した YMMPX が必要です。");
+        if (package.HasLegacyAliases)
+            throw new InvalidDataException("受け渡しパッケージに旧形式の素材名マップがあります。");
         var manifest = await YmmpxTransfer.ReadManifestAsync(manifestInput, packageName, token).ConfigureAwait(false);
         if (comment != YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing))
             throw new InvalidDataException("受け渡し情報のハッシュが YMMPX の記録と一致しません。");
@@ -384,33 +415,69 @@ internal static class YmmpxPackageReader
         var resources = files.Keys.Where(name => name.StartsWith("resources/", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal);
         if (files.Count != resources.Count + 3)
             throw new InvalidDataException("現行形式で未対応の項目があります。");
-        // The current packager records each resource using its archive-relative path
-        // as both key and value. Old alias maps require a separate compatibility contract.
+        // Current links store the archive-relative path as both key and value.
+        // Released v0.3.0 instead stores an exact basename mapped to resources/<same basename>.
         var linkBytes = await ReadBoundedAsync(links, MaxMetadataBytes, token).ConfigureAwait(false);
         using var document = JsonDocument.Parse(WithoutBom(linkBytes));
         if (document.RootElement.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("素材マップが JSON オブジェクトではありません。");
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (var property in document.RootElement.EnumerateObject())
         {
             token.ThrowIfCancellationRequested();
-            if (!resources.Contains(property.Name) || !seen.Add(property.Name) ||
-                property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() != property.Name)
+            if (property.Value.ValueKind != JsonValueKind.String || property.Value.GetString() is not string member ||
+                !resources.Contains(member) || !seen.Add(member))
                 throw new InvalidDataException("素材マップに対応する項目がありません。");
+            if (property.Name != member &&
+                (!AssetInventory.IsOrdinaryPathComponent(property.Name) || member != "resources/" + property.Name ||
+                    !aliases.TryAdd(property.Name, member)))
+                throw new InvalidDataException("旧形式の素材名マップが不正です。");
         }
-        if (seen.Count != resources.Count) throw new InvalidDataException("素材マップが不足しています。");
+        if (seen.Count != resources.Count || (aliases.Count != 0 && aliases.Count != resources.Count))
+            throw new InvalidDataException("素材マップが不足または混在しています。");
         var projectBytes = await ReadBoundedAsync(projectEntry, MaxProjectBytes, token).ConfigureAwait(false);
         using var projectDocument = JsonDocument.Parse(WithoutBom(projectBytes));
         ValidateProjectJson(projectDocument.RootElement, resources, token);
-        if (expectedProject is { } original && !SamePackagedProject(original.Document, projectDocument.RootElement, resources, original, token))
+        if (expectedProject is { } original &&
+            !SamePackagedProject(original.Document, projectDocument.RootElement, resources, aliases, original, token))
             throw new InvalidDataException("同梱したプロジェクトの内容が選択したプロジェクトと一致しません。");
         var project = JsonNode.Parse(WithoutBom(projectBytes).Span) as JsonObject
             ?? throw new InvalidDataException("プロジェクトが JSON オブジェクトではありません。");
-        return new Package(files, projectName, project, resources);
+        if (aliases.Count > 0) NormalizeLegacyAliases(project, aliases, token);
+        return new Package(files, projectName, project, resources, aliases.Count > 0);
+    }
+
+    private static void NormalizeLegacyAliases(JsonObject project, IReadOnlyDictionary<string, string> aliases, CancellationToken token)
+    {
+        var usedAliases = new HashSet<string>(StringComparer.Ordinal);
+        Visit(project);
+        if (usedAliases.Count != aliases.Count)
+            throw new InvalidDataException("旧形式の素材名マップに未使用の項目があります。");
+
+        void Visit(JsonNode node)
+        {
+            token.ThrowIfCancellationRequested();
+            if (node is JsonObject obj)
+            {
+                foreach (var (property, value) in obj.ToArray())
+                {
+                    if (property == "FilePath" && value is JsonValue path && path.TryGetValue<string>(out var key) &&
+                        aliases.TryGetValue(key, out var member))
+                    {
+                        obj[property] = member;
+                        usedAliases.Add(key);
+                    }
+                    else if (value is not null) Visit(value);
+                }
+            }
+            else if (node is JsonArray array)
+                foreach (var child in array) if (child is not null) Visit(child);
+        }
     }
 
     private static bool SamePackagedProject(JsonElement original, JsonElement packaged, HashSet<string> resources,
-        ProjectSource source, CancellationToken token)
+        IReadOnlyDictionary<string, string> aliases, ProjectSource source, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (original.ValueKind != packaged.ValueKind) return false;
@@ -431,7 +498,8 @@ internal static class YmmpxPackageReader
                     // Current YMMPX rewrites nonempty FilePath strings to members of its resource map.
                     if (property.Name == "FilePath" && previous.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(previous.GetString()) && property.Value.ValueKind == JsonValueKind.String &&
-                        TryGetInternalPath(property.Value.GetString()!, out var member) && resources.Contains(member))
+                        (aliases.TryGetValue(property.Value.GetString()!, out var member) ||
+                            (TryGetInternalPath(property.Value.GetString()!, out member) && resources.Contains(member))))
                     {
                         // Archive-assigned names do not identify the original media. Bind each
                         // referenced archive member to its source path for the byte check.
@@ -441,7 +509,7 @@ internal static class YmmpxPackageReader
                             return false;
                         continue;
                     }
-                    if (!SamePackagedProject(previous, property.Value, resources, source, token)) return false;
+                    if (!SamePackagedProject(previous, property.Value, resources, aliases, source, token)) return false;
                 }
                 return remaining.Count == 0;
 
@@ -451,7 +519,7 @@ internal static class YmmpxPackageReader
                     foreach (var item in original.EnumerateArray())
                     {
                         after.MoveNext();
-                        if (!SamePackagedProject(item, after.Current, resources, source, token)) return false;
+                        if (!SamePackagedProject(item, after.Current, resources, aliases, source, token)) return false;
                     }
                 return true;
 
