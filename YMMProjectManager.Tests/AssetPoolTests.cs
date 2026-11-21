@@ -19,6 +19,24 @@ internal static class AssetPoolTests
     {
         var root = Directory.CreateDirectory(Path.Combine(workRoot, "asset-pool")).FullName;
 
+        await Program.RunNamedCaseAsync("Asset hashing consumes the selected bytes and leaves stream ownership with the caller", async () =>
+        {
+            using var content = new MemoryStream(Encoding.UTF8.GetBytes("prefix:payload"));
+            content.Position = 7;
+            Check(await AssetContentHash.ReadSha256Async(content, CancellationToken.None) == Hash("payload"));
+            Check(content.CanRead && content.Position == content.Length);
+            content.Position = 0;
+            try
+            {
+                await AssetContentHash.ReadSha256Async(content, new CancellationToken(canceled: true));
+                throw new InvalidOperationException("A cancelled hash was accepted.");
+            }
+            catch (OperationCanceledException)
+            {
+                Check(content.CanRead);
+            }
+        });
+
         await Program.RunNamedCaseAsync("Asset pool keeps the selected source and publishes payload plus immutable manifest", async () =>
         {
             var pool = Directory.CreateDirectory(Path.Combine(root, "pool")).FullName;

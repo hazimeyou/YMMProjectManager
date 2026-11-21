@@ -23,7 +23,7 @@ internal static partial class AssetRelinkRecovery
         await using var sourceLease = OpenVerifiedPath(intent.Source);
         var source = sourceLease.Stream;
         if (GetPhysicalId(source) != intent.SourceIdentity || source.Length != original.Length ||
-            await HashAsync(source, token).ConfigureAwait(false) != intent.SourceSha256)
+            await AssetContentHash.ReadSha256Async(source, token).ConfigureAwait(false) != intent.SourceSha256)
             throw new InvalidDataException("The source project changed after relink preparation.");
 
         var candidates = new List<VerifiedFileLease>();
@@ -34,7 +34,7 @@ internal static partial class AssetRelinkRecovery
                 token.ThrowIfCancellationRequested();
                 var candidate = OpenVerifiedPath(comparison.CandidatePath);
                 candidates.Add(candidate);
-                if (await HashAsync(candidate.Stream, token).ConfigureAwait(false) != comparison.CandidateSha256)
+                if (await AssetContentHash.ReadSha256Async(candidate.Stream, token).ConfigureAwait(false) != comparison.CandidateSha256)
                     throw new InvalidDataException("A candidate changed after relink preparation.");
             }
             return await StageOwnedOutputAsync(evidencePath, context, intent.Output, intent.OperationId, intent.OutputSha256,
@@ -60,7 +60,7 @@ internal static partial class AssetRelinkRecovery
         saver.StagePreparedAsync(context, destination, StagedOutputPath(evidencePath),
             async (staged, stagedToken) =>
             {
-                if (await HashAsync(staged, stagedToken).ConfigureAwait(false) != outputSha256)
+                if (await AssetContentHash.ReadSha256Async(staged, stagedToken).ConfigureAwait(false) != outputSha256)
                     throw new InvalidDataException("The staged relink project differs from its prepared bytes.");
                 var publication = new OutputPublication(1, operationId, outputSha256, GetPhysicalId(staged));
                 await WriteEvidenceAsync(PublicationPath(evidencePath), publication, MaxPublicationBytes, stagedToken).ConfigureAwait(false);

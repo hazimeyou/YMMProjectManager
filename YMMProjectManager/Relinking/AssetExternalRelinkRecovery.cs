@@ -44,7 +44,7 @@ internal static partial class AssetRelinkRecovery
         await using var media = new ExternalAssetPins();
         await using var sourceLease = OpenVerifiedPath(source);
         var sourceHash = Hash(original);
-        if (await HashAsync(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
+        if (await AssetContentHash.ReadSha256Async(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
 
         var evidence = await AssetRevisionSeries.WithVerifiedSourceTipAsync(seriesDirectory, root, parent, observed,
@@ -148,7 +148,7 @@ internal static partial class AssetRelinkRecovery
                 var output = lease.Stream;
                 var id = GetPhysicalId(output);
                 if (id == intent.SourceIdentity || output.Length != expectedOutput.Length ||
-                    await HashAsync(output, heldToken).ConfigureAwait(false) != intent.OutputSha256)
+                    await AssetContentHash.ReadSha256Async(output, heldToken).ConfigureAwait(false) != intent.OutputSha256)
                     throw new InvalidDataException("Unknown external relink output. The prepared physical file and bytes are required.");
                 var child = await AssetRevisionSeries.PublishOrVerifyDerivedRootAsync(derivedDirectory, derived, heldToken).ConfigureAwait(false);
                 return await AssetRevisionSeries.WithVerifiedSourceTipAsync(derivedDirectory, child, child, [child], async (_, childToken) =>

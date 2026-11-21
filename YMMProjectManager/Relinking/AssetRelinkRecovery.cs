@@ -95,7 +95,7 @@ internal static partial class AssetRelinkRecovery
             selected, confirmedProjectAssociation: true, confirmedHashChanges: confirmedMismatches, projectId: root.ProjectId);
         await using var sourceLease = OpenVerifiedPath(source);
         var sourceHash = Hash(original);
-        if (await HashAsync(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
+        if (await AssetContentHash.ReadSha256Async(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
         var intent = new Intent(version, next.RevisionId, source, sourceHash, output, Hash(RelinkJsonUpdate.Apply(original, rows)),
             root, parent, next, review, expectedTips, GetPhysicalId(sourceLease.Stream), proofs);
@@ -140,7 +140,7 @@ internal static partial class AssetRelinkRecovery
                     var path = AssetInventory.ResolveRelativePath(sourceDirectory, relative);
                     var lease = OpenVerifiedPath(path);
                     heldCandidates.Add(lease);
-                    actual = new AssetMetadata(relative, lease.Stream.Length, await HashAsync(lease.Stream, token).ConfigureAwait(false), prior?.DownloadUrl);
+                    actual = new AssetMetadata(relative, lease.Stream.Length, await AssetContentHash.ReadSha256Async(lease.Stream, token).ConfigureAwait(false), prior?.DownloadUrl);
                 }
                 candidates.Add(candidate, actual);
             }
@@ -192,7 +192,7 @@ internal static partial class AssetRelinkRecovery
         var output = outputLease.Stream;
         var outputIdentity = GetPhysicalId(output);
         if (outputIdentity == sourceIdentity || output.Length != expectedOutput.Length ||
-            await HashAsync(output, token).ConfigureAwait(false) != intent.OutputSha256)
+            await AssetContentHash.ReadSha256Async(output, token).ConfigureAwait(false) != intent.OutputSha256)
             throw new InvalidDataException("The relink output differs from its saved recovery evidence.");
 
         var leases = new List<VerifiedFileLease>();
@@ -313,8 +313,8 @@ internal static partial class AssetRelinkRecovery
         var output = outputLease.Stream;
         if (source.Length > MaxSourceBytes || output.Length > MaxSourceBytes + MaxIntentBytes ||
             GetPhysicalId(source) != receipt.SourceIdentity || GetPhysicalId(output) != receipt.OutputIdentity ||
-            await HashAsync(source, token).ConfigureAwait(false) != receipt.SourceSha256 ||
-            await HashAsync(output, token).ConfigureAwait(false) != receipt.OutputSha256)
+            await AssetContentHash.ReadSha256Async(source, token).ConfigureAwait(false) != receipt.SourceSha256 ||
+            await AssetContentHash.ReadSha256Async(output, token).ConfigureAwait(false) != receipt.OutputSha256)
             throw new InvalidDataException("The source project or relink output changed before association transfer.");
         token.ThrowIfCancellationRequested();
         await persist(token).ConfigureAwait(false);
@@ -373,8 +373,6 @@ internal static partial class AssetRelinkRecovery
     }
 
     private static string Hash(byte[] bytes) => Convert.ToHexString(SHA256.HashData(bytes));
-    private static async Task<string> HashAsync(Stream stream, CancellationToken token)
-        => Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
 
     private static bool IsHash(string? value) => value is { Length: 64 } && value.All(Uri.IsHexDigit);
 

@@ -83,7 +83,7 @@ public static class AssetPool
         var root = FullOrdinaryPath(approvedPoolRoot);
         var sourcePath = FullOrdinaryPath(approvedSourceFile);
         var name = GetOriginalFileName(originalReference);
-        if (!SameName(name, Path.GetFileName(sourcePath)))
+        if (!SameFileName(name, Path.GetFileName(sourcePath)))
             throw new InvalidDataException("選択した素材と元の参照のファイル名が一致しません。");
         ValidateRecordFields(originalReference, commitId, downloadUrl, redistributionNote);
 
@@ -91,7 +91,7 @@ public static class AssetPool
         using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(sourcePath)!, enforceShare: true);
         await using var source = OpenRead(sourcePath);
         var size = source.Length;
-        var sha256 = await HashAsync(source, token).ConfigureAwait(false);
+        var sha256 = await AssetContentHash.ReadSha256Async(source, token).ConfigureAwait(false);
         source.Position = 0;
 
         var record = new AssetPoolRecord(1, name, FormatDistributionName(name, sha256), sha256, size,
@@ -201,12 +201,12 @@ public static class AssetPool
             {
                 manifest = OpenRead(match.ManifestPath);
                 var (record, manifestSha256) = await ReadManifestAsync(manifest, token).ConfigureAwait(false);
-                if (!SameName(manifestSha256, match.ManifestSha256) || !IsExpected(record, expectedOriginalFileName, expectedSha256) ||
-                    !SameName(record.DistributionFileName, Path.GetFileName(match.CandidatePath)))
+                if (!string.Equals(manifestSha256, match.ManifestSha256, StringComparison.OrdinalIgnoreCase) || !IsExpected(record, expectedOriginalFileName, expectedSha256) ||
+                    !SameFileName(record.DistributionFileName, Path.GetFileName(match.CandidatePath)))
                     throw new InvalidDataException("選択後に素材プールの記録が変更されました。候補を検索し直してください。");
                 size = record.Size;
             }
-            else if (!SameName(Path.GetFileName(match.CandidatePath), expectedOriginalFileName))
+            else if (!SameFileName(Path.GetFileName(match.CandidatePath), expectedOriginalFileName))
                 throw new InvalidDataException("選択した素材のファイル名が記録と一致しません。");
 
             payload = OpenRead(candidatePath);
@@ -360,8 +360,8 @@ public static class AssetPool
             throw new InvalidDataException("素材プールの記録形式を認識できません。");
         ValidateExpectation(record.OriginalFileName, record.Sha256);
         ValidateRecordFields(record.OriginalReference, record.CommitId, record.DownloadUrl, record.RedistributionNote);
-        if (!SameName(GetOriginalFileName(record.OriginalReference), record.OriginalFileName) ||
-            !SameName(FormatDistributionName(record.OriginalFileName, record.Sha256), record.DistributionFileName))
+        if (!SameFileName(GetOriginalFileName(record.OriginalReference), record.OriginalFileName) ||
+            !SameFileName(FormatDistributionName(record.OriginalFileName, record.Sha256), record.DistributionFileName))
             throw new InvalidDataException("素材プールの記録の元ファイル名または配布名が無効です。");
         return (record, Convert.ToHexString(SHA256.HashData(bytes)));
     }
@@ -379,11 +379,9 @@ public static class AssetPool
     private static async Task<bool> MatchesStreamAsync(FileStream stream, string sha256, long? size, CancellationToken token)
     {
         if (size is not null && stream.Length != size) return false;
-        return SameName(await HashAsync(stream, token).ConfigureAwait(false), sha256);
+        return string.Equals(await AssetContentHash.ReadSha256Async(stream, token).ConfigureAwait(false), sha256, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static async Task<string> HashAsync(FileStream stream, CancellationToken token) =>
-        Convert.ToHexString(await SHA256.HashDataAsync(stream, token).ConfigureAwait(false));
 
     private static FileStream OpenRead(string path)
     {
@@ -423,7 +421,7 @@ public static class AssetPool
 
     private static void ValidateManifestName(string path)
     {
-        if (!SameName(Path.GetFileName(path), ManifestFileName))
+        if (!SameFileName(Path.GetFileName(path), ManifestFileName))
             throw new InvalidDataException($"素材プールの記録は {ManifestFileName} を選択してください。");
     }
 
@@ -435,10 +433,10 @@ public static class AssetPool
     private static bool IsNameCollision(IOException exception) =>
         exception.InnerException is Win32Exception { NativeErrorCode: 80 or 183 };
 
-    private static bool SameName(string left, string? right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
+    private static bool SameFileName(string left, string? right) => string.Equals(left, right, StringComparison.OrdinalIgnoreCase);
 
     private static bool IsExpected(AssetPoolRecord record, string expectedName, string expectedSha256) =>
-        SameName(record.OriginalFileName, expectedName) && SameName(record.Sha256, expectedSha256);
+        SameFileName(record.OriginalFileName, expectedName) && string.Equals(record.Sha256, expectedSha256, StringComparison.OrdinalIgnoreCase);
 
     private static void ValidateExpectation(string? filename, string? sha256)
     {
