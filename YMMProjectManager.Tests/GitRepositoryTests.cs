@@ -139,6 +139,18 @@ internal static class GitRepositoryTests
         Directory.CreateDirectory(root);
         var git = new GitRepository(root);
         Require((await git.InitializeAsync()).Success, "init GitHub settings fixture");
+        var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
+        {
+            ["GcM_TRACE_SECRETS"] = "synthetic",
+            ["Gh_Token"] = "synthetic",
+            ["DOTNET_STARTUP_HOOKS"] = "synthetic",
+            ["CORECLR_PROFILER_PATH"] = "synthetic",
+            ["bash_env"] = "synthetic",
+            ["SSLKEYLOGFILE"] = "synthetic",
+            ["SystemRoot"] = "fixture",
+        };
+        GitRepository.RemoveGitHubChildOverrides(environment);
+        Require(environment.Keys.SequenceEqual(["SystemRoot"]), "managed helper or shell startup environment was inherited");
         Require(GitRepository.IsSupportedGitHubEndpoint("https://github.com/Synthetic/repo-name.git"), "literal repository URL accepted");
         foreach (var uri in new[]
         {

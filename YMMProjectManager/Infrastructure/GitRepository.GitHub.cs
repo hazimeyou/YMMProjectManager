@@ -78,13 +78,14 @@ public sealed partial class GitRepository
     {
         if (!IsSupportedGitHubEndpoint(endpoint) || !Enum.IsDefined(authentication))
             return UnsupportedGitHubEndpoint();
-        if (cloneStage is null && !await VerifyLiteralTransportEndpointAsync(endpoint, token).ConfigureAwait(false))
-            return UnsafeRemote("The GitHub URL can also resolve as a configured remote name.");
+        if (cloneStage is not null && directory.Contains(Path.PathSeparator))
+            return UnsupportedGitHubRepository();
         var installation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git");
         var native = Path.Combine(installation, "mingw64", "bin");
         var executable = Path.Combine(native, "git.exe");
         var manager = Path.Combine(native, "git-credential-manager.exe");
-        if (!Path.IsPathFullyQualified(installation) || HasHiddenText(installation) || installation.Contains('\''))
+        if (!Path.IsPathFullyQualified(installation) || HasHiddenText(installation) ||
+            installation.Contains('\'') || installation.Contains(Path.PathSeparator))
             return UnsupportedGitHubInstallation();
         try
         {
@@ -122,18 +123,23 @@ public sealed partial class GitRepository
     private static GitResult UnsupportedGitHubInstallation() =>
         UnsafeRemote("Verified Git for Windows and, for cached authentication, Git Credential Manager are required in the machine installation.");
 
+    internal static void RemoveGitHubChildOverrides(IDictionary<string, string?> environment)
+    {
+        string[] prefixes = ["GCM_", "DOTNET_", "COMPlus_", "CORECLR_", "COR_", "BASH_FUNC_", "SSL_CERT_"];
+        string[] names = ["GH_TOKEN", "GITHUB_TOKEN", "SSLKEYLOGFILE", "CURL_CA_BUNDLE", "CURL_HOME",
+            "NETRC", "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "LD_PRELOAD", "LD_LIBRARY_PATH"];
+        foreach (var key in environment.Keys.Where(key => names.Contains(key, StringComparer.OrdinalIgnoreCase) ||
+            prefixes.Any(prefix => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))).ToArray())
+            environment.Remove(key);
+    }
+
     private sealed record GitHubTransportProfile(string Installation, string Executable, string? CloneCeiling, bool Cached)
     {
         internal void Configure(IDictionary<string, string?> environment)
         {
-            foreach (var name in environment.Keys.Where(name =>
-                name.StartsWith("GCM_", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("GH_TOKEN", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("GITHUB_TOKEN", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("SSLKEYLOGFILE", StringComparison.OrdinalIgnoreCase) ||
-                name.Equals("CURL_CA_BUNDLE", StringComparison.OrdinalIgnoreCase) ||
-                name.StartsWith("SSL_CERT_", StringComparison.OrdinalIgnoreCase)).ToArray())
-                environment.Remove(name);
+            // Git invokes the helper through its shell, and GCM is a managed app.
+            // Startup/profiling and tracing overrides must not escape the Git policy.
+            RemoveGitHubChildOverrides(environment);
             environment["PATH"] = string.Join(Path.PathSeparator,
                 Path.Combine(Installation, "mingw64", "bin"), Path.Combine(Installation, "usr", "bin"), Environment.SystemDirectory);
             if (CloneCeiling is not null) environment["GIT_CEILING_DIRECTORIES"] = CloneCeiling;
