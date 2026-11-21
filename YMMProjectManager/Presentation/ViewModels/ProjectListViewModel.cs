@@ -249,6 +249,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                     ProjectListPublicationStatus = "中止しました。保存記録を確認するには、もう一度実行してください。";
                 else if (name == PullWorkflowOperation)
                     GitStatus = "Pull を中止しました。ブランチ、index、作業ファイルの更新は開始していません。";
+                else if (name == GitHubAccessOperation)
+                    GitStatus = "GitHubへのアクセス確認を中止しました。";
                 else if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
                 else if (name.StartsWith("Bundle", StringComparison.Ordinal)) BundleStatus = message;
                 else GitStatus = message;
@@ -264,15 +266,20 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         if (selected is null) return;
         await ExecuteToolAsync("Git", async token =>
         {
-            var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath)) ?? throw new InvalidOperationException("プロジェクトフォルダーがありません。");
-            var git = new GitRepository(directory);
-            var result = remote ? await git.OriginAsync(token) : await git.HistoryAsync(token);
+            var located = await LocateProjectGitRootAsync(selected, token);
+            if (located is null) { GitStatus = "プロジェクトの Git ルートを確認できません。"; return; }
+            var git = located.Value.Repository;
+            var result = remote ? await git.InspectRemoteAsync(GitRemoteOperation.Fetch, token) : await git.HistoryAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
             if (!result.Success) { GitStatus = "情報を取得できません。origin またはコミット履歴を確認してください。"; return; }
-            var details = result.StandardOutput.Replace('\0', ' ');
-            var github = remote && Uri.TryCreate(details, UriKind.Absolute, out var uri) &&
-                         uri.Scheme == Uri.UriSchemeHttps && uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase);
-            GitStatus = github ? "GitHub origin: " + details : details;
+            if (remote)
+            {
+                if (result.FetchTarget is not { } target) { GitStatus = "origin の接続先を確認できません。"; return; }
+                var label = GitRepository.IsSupportedGitHubEndpoint(target.Endpoint) ? "GitHub origin" : "origin";
+                GitStatus = $"{label}\n{target.Endpoint}";
+                return;
+            }
+            GitStatus = result.StandardOutput.Replace('\0', ' ');
         });
     }
 
@@ -295,7 +302,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             try
             {
                 var result = await GitRepository.CloneTrustedAsync(remote, destination, authentication, token);
-                GitStatus = result.Success ? $"Clone が完了しました。{destination}" : DescribeRemoteFailure(result);
+                GitStatus = result.Success ? $"Clone が完了しました。{destination}" :
+                    DescribeRemoteFailure(result, GitRepository.IsSupportedGitHubEndpoint(remote), authentication);
             }
             catch (ArgumentException)
             {
@@ -337,17 +345,23 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var result = push is null
             ? await git.FetchTrustedAsync(fetch!, authentication, token)
             : await git.PushTrustedAsync(push, authentication, token);
-        GitStatus = result.Success ? $"{operation} が完了しました。" : DescribeRemoteFailure(result);
+        GitStatus = result.Success ? $"{operation} が完了しました。" :
+            DescribeRemoteFailure(result, GitRepository.IsSupportedGitHubEndpoint(push?.Endpoint ?? fetch!.Endpoint), authentication);
     });
 
     private static bool ConfirmGitTrust(string operation, string directory, string endpoint) =>
         MessageBox.Show($"{operation}\n{directory}\n{endpoint}\n\nインストール済みの Git、システム・利用者・リポジトリの Git 設定、認証ヘルパーなどを信頼する場合に限り続行してください。",
             "Git 操作の確認", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
-    private static string DescribeRemoteFailure(GitResult result)
+    internal static string DescribeRemoteFailure(GitResult result, bool isGitHub = false,
+        GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         var action = result.Failure switch
         {
+            GitFailure.Authentication when isGitHub && authentication == GitHubAuthentication.Anonymous =>
+                "匿名接続では認証できませんでした。アクセス権のある保存済み資格情報があれば「GitHubにWindowsの保存済み資格情報を使う」を有効にし、操作を承認し直してください。",
+            GitFailure.Authentication when isGitHub =>
+                "保存済み資格情報で認証できませんでした。アカウントと有効期限を確認してください。この画面での再ログインは利用できません。",
             GitFailure.Authentication => "認証の有効期限、使用するアカウント、認証ヘルパーを確認してください。",
             GitFailure.Permission => "接続先と、対象リポジトリへの権限を確認してください。",
             GitFailure.Network => "接続先、ネットワーク、TLS 設定を確認してください。",

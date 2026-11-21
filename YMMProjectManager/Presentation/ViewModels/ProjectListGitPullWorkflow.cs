@@ -56,7 +56,7 @@ public sealed partial class ProjectListViewModel
                     remote.Endpoint == target.Endpoint && remote.Identity == target.Identity &&
                     remote.Authentication == target.Remote.Authentication)
                     return target;
-                GitStatus = DescribePullFailure(remote.RepositoryRoot, result);
+                GitStatus = DescribePullFailure(remote.RepositoryRoot, result, remote: remote);
                 return null;
             },
             target => approveTarget(new PullApprovalDetails(target.RepositoryRoot, target.BranchRef,
@@ -66,14 +66,14 @@ public sealed partial class ProjectListViewModel
             {
                 var result = await new GitRepository(target.RepositoryRoot).PullTrustedAsync(target, token);
                 logger.Info($"Pull outcome: exit={result.ExitCode}; failure={result.Failure}; elapsed={result.RemoteDiagnostic?.Elapsed}");
-                if (!result.Success) return DescribePullFailure(target.RepositoryRoot, result, target.BranchRef);
+                if (!result.Success) return DescribePullFailure(target.RepositoryRoot, result, target.BranchRef, target.Remote);
                 var action = target.ChangesWorktree
                     ? "Pull が完了しました。ブランチ、index、作業ファイルを確認しました。"
                     : "最新です。作業ファイルの更新はありません。";
                 return $"{action}\n対象リポジトリ {target.RepositoryRoot}\n現在のブランチ {target.BranchRef}\n確認したコミット {target.TargetObjectId}";
             });
 
-    internal static string DescribePullFailure(string repository, GitResult result, string? branch = null)
+    internal static string DescribePullFailure(string repository, GitResult result, string? branch = null, GitPullRemote? remote = null)
     {
         var action = result.Failure switch
         {
@@ -82,7 +82,9 @@ public sealed partial class ProjectListViewModel
             GitFailure.Divergence => "履歴が分岐しているため fast-forward できません。ローカルと追跡先の履歴を確認してください。",
             GitFailure.UnsafeOperation => "現在の状態では Pull できません。ブランチ、上流、未コミット・未追跡ファイル、Git 設定を確認してください。",
             _ when result.Success => "承認対象が変わったため Pull を停止しました。接続先から確認し直してください。",
-            _ => DescribeRemoteFailure(result with { RecoveryPath = null }),
+            _ => DescribeRemoteFailure(result with { RecoveryPath = null },
+                remote is not null && GitRepository.IsSupportedGitHubEndpoint(remote.Endpoint),
+                remote?.Authentication ?? GitHubAuthentication.Anonymous),
         };
         var affected = branch is null ? repository : $"{repository}\n対象ブランチ {branch}";
         var evidence = result.RecoveryPath is { } path ? $"\n回復記録 {path}" : string.Empty;

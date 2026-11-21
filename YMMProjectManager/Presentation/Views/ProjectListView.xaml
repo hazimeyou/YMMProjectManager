@@ -102,7 +102,7 @@
                 <CheckBox Content="GitHubにWindowsの保存済み資格情報を使う" IsChecked="{Binding UseCachedGitHubAuthentication}"
                     VerticalAlignment="Center" Margin="0,0,8,0" />
                 <Button Content="GitHubのアクセスを確認" Command="{Binding InspectGitHubAccessCommand}" Margin="0,0,4,0" />
-                <TextBlock Text="この画面からの初回ログインは現在利用できません。"
+                <TextBlock Text="この画面での初回ログイン・再ログインは利用できません。"
                            VerticalAlignment="Center" />
             </WrapPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">

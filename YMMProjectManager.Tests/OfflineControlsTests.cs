@@ -45,6 +45,115 @@ internal static class OfflineControlsTests
                 if (vm.GitPath != "project.ymmp") throw new InvalidOperationException("The selected change did not set the explicit Git path.");
                 return Task.CompletedTask;
             });
+            await Program.RunNamedCaseAsync("R24 GitHub access approval and origin display use literal validated configuration", async () =>
+            {
+                const string github = "https://github.com/example/project.git";
+                const string replacement = "https://rewritten.invalid/example/project.git";
+                const string credentialUrl = "https://fixture-user:fixture-secret@github.com/example/project.git";
+                var unapprovedProbes = 0;
+                Task<GitResult> UnexpectedProbe(GitRepository _, GitFetchTarget __, GitHubAuthentication ___, CancellationToken token)
+                {
+                    unapprovedProbes++;
+                    return Task.FromResult(new GitResult(1, "", "", GitFailure.UnsafeOperation));
+                }
+                await RunGitFixtureAsync(root, "config", "remote.origin.url", github);
+                await RunGitFixtureAsync(root, "config", "url." + replacement + ".insteadOf", github);
+                await Invoke("ShowGitDetailsAsync", true);
+                if (!vm.GitStatus.Contains(github) || vm.GitStatus.Contains(replacement))
+                    throw new InvalidOperationException("Displayed origin was not the validated literal setting.");
+
+                foreach (var cached in new[] { false, true })
+                {
+                    vm.UseCachedGitHubAuthentication = cached;
+                    var approvals = 0;
+                    var approvedDetails = "";
+                    await vm.InspectGitHubAccessAsync((_, details) =>
+                    {
+                        approvals++;
+                        approvedDetails = details;
+                        return false;
+                    }, UnexpectedProbe);
+                    if (approvals != 1 || !approvedDetails.Contains(github) || approvedDetails.Contains(replacement) ||
+                        (approvedDetails.Contains("Git Credential Manager") != cached) || !vm.GitStatus.Contains("取り消しました"))
+                        throw new InvalidOperationException("Approval details, credential choice or cancellation was incorrect.");
+                }
+
+                vm.UseCachedGitHubAuthentication = false;
+                var selected = vm.SelectedProject!;
+                var approvalsAfterChange = 0;
+                await vm.InspectGitHubAccessAsync((_, _) =>
+                {
+                    approvalsAfterChange++;
+                    selected.FullPath = Path.Combine(root, "different.ymmp");
+                    return true;
+                }, UnexpectedProbe);
+                selected.FullPath = project;
+                if (approvalsAfterChange != 1 || !vm.GitStatus.Contains("選択中のプロジェクトが変わりました"))
+                    throw new InvalidOperationException("Approval from a different project path was reused.");
+
+                await RunGitFixtureAsync(root, "config", "remote.origin.url", credentialUrl);
+                await Invoke("ShowGitDetailsAsync", true);
+                var originStatus = vm.GitStatus;
+                var unsafeApproval = false;
+                await vm.InspectGitHubAccessAsync((_, _) => { unsafeApproval = true; return false; }, UnexpectedProbe);
+                using var log = new StreamReader(new FileStream(Path.Combine(root, "test.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
+                var logged = await log.ReadToEndAsync();
+                if (unsafeApproval || unapprovedProbes != 0 || originStatus.Contains("fixture-secret") ||
+                    vm.GitStatus.Contains("fixture-secret") || logged.Contains("fixture-secret"))
+                    throw new InvalidOperationException("Configured URL credentials reached status or log.");
+
+                await RunGitFixtureAsync(root, "config", "--remove-section", "remote.origin");
+                await RunGitFixtureAsync(root, "config", "--remove-section", "url." + replacement);
+            });
+            await Program.RunNamedCaseAsync("R24 GitHub access check cancels and rejects a concurrent request", async () =>
+            {
+                const string github = "https://github.com/example/project.git";
+                await RunGitFixtureAsync(root, "config", "remote.origin.url", github);
+                vm.UseCachedGitHubAuthentication = true;
+                var approvals = 0;
+                bool Approve(string _, string __) { approvals++; return true; }
+                var started = new TaskCompletionSource<(string Endpoint, GitHubAuthentication Authentication)>(
+                    TaskCreationOptions.RunContinuationsAsynchronously);
+                var blocked = new TaskCompletionSource<GitResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                var operation = vm.InspectGitHubAccessAsync(Approve, (_, target, authentication, token) =>
+                {
+                    started.TrySetResult((target.Endpoint, authentication));
+                    return blocked.Task.WaitAsync(token);
+                });
+                try
+                {
+                    var request = await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (request != (github, GitHubAuthentication.CachedWindows) || !vm.IsBusy || !vm.CancelToolCommand.CanExecute(null))
+                        throw new InvalidOperationException("The approved request is not pending with the selected credential mode.");
+                    await vm.InspectGitHubAccessAsync(Approve, (_, _, _, _) => Task.FromResult(new GitResult(0, "", "")));
+                    if (approvals != 1) throw new InvalidOperationException("Concurrent access check reached approval.");
+                    vm.CancelToolCommand.Execute(null);
+                    await operation.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (vm.IsBusy || !vm.UseCachedGitHubAuthentication || !vm.GitStatus.Contains("中止しました"))
+                        throw new InvalidOperationException("Cancellation did not preserve the cached opt-in and restore the controls.");
+                }
+                finally
+                {
+                    blocked.TrySetCanceled();
+                    await operation;
+                    vm.UseCachedGitHubAuthentication = false;
+                    await RunGitFixtureAsync(root, "config", "--remove-section", "remote.origin");
+                }
+            });
+            await Program.RunNamedCaseAsync("R24 auth diagnostics distinguish retry modes without child output", () =>
+            {
+                var result = new GitResult(1, "fixture-output", "fixture-error", GitFailure.Authentication);
+                var anonymous = ProjectListViewModel.DescribeRemoteFailure(result, isGitHub: true);
+                var cached = ProjectListViewModel.DescribeRemoteFailure(result, isGitHub: true, GitHubAuthentication.CachedWindows);
+                var denied = ProjectListViewModel.DescribeRemoteFailure(result with { Failure = GitFailure.Permission },
+                    isGitHub: true, GitHubAuthentication.CachedWindows);
+                if (!anonymous.Contains("承認し直して") || !cached.Contains("有効期限") || !cached.Contains("再ログイン") ||
+                    !denied.Contains("権限") || denied.Contains("有効期限") ||
+                    (anonymous + cached + denied).Contains("fixture-", StringComparison.Ordinal))
+                    throw new InvalidOperationException("Authentication modes or child-output redaction were lost.");
+                return Task.CompletedTask;
+            });
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };

@@ -35,28 +35,47 @@ public sealed partial class ProjectListViewModel
             ? "\nGitHubへの接続に、Windowsに保存済みのGit Credential Manager資格情報を使用します。"
             : "";
 
-    private Task InspectGitHubAccessAsync() => ExecuteToolAsync("GitHub access", async token =>
+    private const string GitHubAccessOperation = "GitHub access";
+
+    private Task InspectGitHubAccessAsync() => InspectGitHubAccessAsync(
+        (root, summary) => ConfirmGitTrust("GitHubのアクセスを確認", root, summary),
+        (repository, target, authentication, token) => repository.ProbeGitHubAccessAsync(target, authentication, token));
+
+    internal Task InspectGitHubAccessAsync(Func<string, string, bool> approve,
+        Func<GitRepository, GitFetchTarget, GitHubAuthentication, CancellationToken, Task<GitResult>> probe) =>
+        ExecuteToolAsync(GitHubAccessOperation, async token =>
     {
         var project = SelectedProject;
         if (project is null) return;
+        var projectPath = project.FullPath;
         var located = await LocateProjectGitRootAsync(project, token);
         if (located is null) { GitStatus = "Gitリポジトリを確認できません。"; return; }
         var (git, root) = located.Value;
-        var origin = await git.OriginAsync(token);
-        var endpoint = origin.StandardOutput;
-        if (!origin.Success || !GitRepository.IsSupportedGitHubEndpoint(endpoint))
+        var origin = await git.InspectRemoteAsync(GitRemoteOperation.Fetch, token);
+        if (!origin.Success || origin.FetchTarget is not { } target || !GitRepository.IsSupportedGitHubEndpoint(target.Endpoint))
         {
             GitStatus = "このリポジトリのoriginに https://github.com/所有者/リポジトリ を指定してください。";
             return;
         }
-        var authentication = AuthenticationFor(endpoint);
-        if (!ReferenceEquals(project, SelectedProject) ||
-            !ConfirmGitTrust("GitHubのアクセスを確認", root, endpoint + AuthenticationNotice(authentication))) return;
+        if (!ReferenceEquals(project, SelectedProject) || projectPath != project.FullPath) return;
+        var authentication = AuthenticationFor(target.Endpoint);
+        if (!approve(root, target.Endpoint + AuthenticationNotice(authentication)))
+        {
+            GitStatus = "GitHubへの接続を取り消しました。";
+            return;
+        }
+        if (!ReferenceEquals(project, SelectedProject) || projectPath != project.FullPath)
+        {
+            GitStatus = "選択中のプロジェクトが変わりました。接続先を確認し直してください。";
+            return;
+        }
+        token.ThrowIfCancellationRequested();
         GitStatus = "GitHubへのアクセスを確認しています。";
-        var result = await git.ProbeGitHubAccessAsync(endpoint, authentication, token);
+        var result = await probe(git, target, authentication, token);
+        if (!ReferenceEquals(project, SelectedProject) || projectPath != project.FullPath) return;
         GitStatus = result.Success
             ? "対象リポジトリを読み取れます。公開リポジトリでは、応答だけでログイン済みかどうかを判定できません。"
-            : DescribeRemoteFailure(result);
+            : DescribeRemoteFailure(result, isGitHub: true, authentication: authentication);
     });
 
     private Task ReviewProjectCleanupAsync() => ExecuteToolAsync("Asset PF cleanup", async token =>
