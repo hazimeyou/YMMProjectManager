@@ -34,10 +34,22 @@ internal static class OfflineControlsTests
             if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
-            if (!vm.GitStatus.Contains("Git:") || !vm.GitStatus.Contains("project.ymmp")) throw new Exception("Git status not displayed");
+            await Program.RunNamedCaseAsync("R21 WPF lists Git changes as explicit selectable paths", () =>
+            {
+                if (!vm.GitStatus.Contains("Git:") || vm.GitChanges.SingleOrDefault(change => change.Path == "project.ymmp") is not { } projectChange ||
+                    !projectChange.Display.Contains("project.ymmp") || !vm.CommitGitCommand.CanExecute(null) ||
+                    !vm.ReviewProjectCleanupCommand.CanExecute(null) || !vm.CollectAssetToPoolCommand.CanExecute(null) ||
+                    !vm.InspectGitHubAccessCommand.CanExecute(null))
+                    throw new InvalidOperationException("The Git changes list or R21 commands are missing.");
+                vm.SelectedGitChange = projectChange;
+                if (vm.GitPath != "project.ymmp") throw new InvalidOperationException("The selected change did not set the explicit Git path.");
+                return Task.CompletedTask;
+            });
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
+            if (vm.GitChanges.Count != 0 || vm.GitPath != "")
+                throw new InvalidOperationException("A different project inherited the selected Git path.");
             await Program.RunNamedCaseAsync("Pull diagnostics identify the repository and explain command availability", async () =>
             {
                 await Invoke("InspectGitPullAsync");

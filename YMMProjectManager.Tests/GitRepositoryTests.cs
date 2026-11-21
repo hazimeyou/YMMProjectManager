@@ -174,7 +174,7 @@ internal static class GitRepositoryTests
         catch (OperationCanceledException) { }
 
         var script = Path.Combine(root, "manager.sh");
-        await File.WriteAllTextAsync(script, "#!/bin/sh\nprintf 'username=fixture\\npassword=synthetic-non-secret\\n'\n");
+        await File.WriteAllTextAsync(script, "#!/bin/sh\nif [ \"$1\" != get ]; then printf invoked > helper-mutation-ran; fi\nprintf 'username=fixture\\npassword=synthetic-non-secret\\n'\n");
         foreach (var candidate in new[]
         {
             (Helper: (string?)null, Host: "github.com", Expected: 128),
@@ -206,6 +206,26 @@ internal static class GitRepositoryTests
             Require(process.ExitCode == candidate.Expected && output.Contains("password=synthetic-non-secret") == (candidate.Expected == 0),
                 "helper selection did not match the approved host or auth mode");
             Require(!File.Exists(Path.Combine(root, "unsafe-helper-ran")), "lower-priority credential helper was executed");
+        }
+
+        foreach (var action in new[] { "approve", "reject" })
+        {
+            var start = new ProcessStartInfo("git")
+            {
+                WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+                RedirectStandardOutput = true, RedirectStandardError = true, RedirectStandardInput = true,
+            };
+            ConfigureFixtureGit(start);
+            foreach (var arg in GitRepository.BuildGitHubTransportSettings([], script).Concat(["credential", action]))
+                start.ArgumentList.Add(arg);
+            using var process = Process.Start(start)!;
+            var stdout = process.StandardOutput.ReadToEndAsync();
+            var stderr = process.StandardError.ReadToEndAsync();
+            await process.StandardInput.WriteAsync("protocol=https\nhost=github.com\nusername=fixture\npassword=synthetic-non-secret\n\n");
+            process.StandardInput.Close();
+            await Task.WhenAll(process.WaitForExitAsync(), stdout, stderr);
+            Require(process.ExitCode == 0 && !File.Exists(Path.Combine(root, "helper-mutation-ran")),
+                "Git could mutate saved credentials through the read-only helper profile.");
         }
 
         foreach (var (reason, failure) in new[]
