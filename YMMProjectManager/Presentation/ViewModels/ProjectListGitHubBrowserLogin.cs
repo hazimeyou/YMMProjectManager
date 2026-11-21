@@ -25,7 +25,7 @@ public sealed partial class ProjectListViewModel
             if (!await checkAvailability(token))
             {
                 token.ThrowIfCancellationRequested();
-                GitStatus = "GitHubブラウザ認証に対応するGCM 3.0.2（Windows x64）が見つかりません。公式版のシステムインストールを確認してください。";
+                GitStatus = "GitHubブラウザ認証に対応する、検証済みのGCM 3.0.2（Windows x64）が見つかりません。公式版のシステムインストールを確認してください。";
                 return;
             }
             token.ThrowIfCancellationRequested();
