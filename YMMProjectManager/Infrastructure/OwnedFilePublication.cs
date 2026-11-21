@@ -110,15 +110,16 @@ internal static class OwnedFilePublication
         return path.StartsWith(@"\\", StringComparison.Ordinal) ? @"\\?\UNC\" + path[2..] : @"\\?\" + path;
     }
 
-    internal static void RenameOpenedPath(SafeFileHandle handle, string final)
+    internal static void RenameOpenedPath(SafeFileHandle handle, string final, bool replaceExisting = false)
     {
         const int fileRenameInfo = 3;
         // FILE_RENAME_INFO has a native-sized RootDirectory and a trailing UTF-16 name.
-        // A null RootDirectory uses the complete destination path. ReplaceIfExists is false.
+        // A null RootDirectory uses the complete destination path.
         var name = Encoding.Unicode.GetBytes(ExtendedPath(final));
         var nameLengthOffset = 2 * IntPtr.Size;
         var nameOffset = nameLengthOffset + sizeof(int);
         var data = new byte[nameOffset + name.Length + sizeof(char)];
+        data[0] = replaceExisting ? (byte)1 : (byte)0;
         BitConverter.TryWriteBytes(data.AsSpan(nameLengthOffset), name.Length);
         name.CopyTo(data, nameOffset);
         if (!SetFileInformationByHandle(handle, fileRenameInfo, data, (uint)data.Length))

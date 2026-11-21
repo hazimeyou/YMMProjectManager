@@ -27,7 +27,8 @@ internal static class GitRepositoryTests
         Check(!File.Exists(marker), "untrusted fsmonitor was executed");
         await File.WriteAllTextAsync(Path.Combine(root, "one.txt"), "original");
         await File.WriteAllTextAsync(Path.Combine(root, "-special.txt"), "literal path");
-        Check((await git.StageAsync(["one.txt", "-special.txt"])).Success, "stage paths");
+        var staged = await git.StageAsync(["one.txt", "-special.txt"]);
+        Check(staged.Success, "stage paths: " + staged.StandardError);
         Check((await git.CommitAsync("first commit")).Success, "commit");
         var hooks = Path.Combine(root, "injected-hooks"); Directory.CreateDirectory(hooks);
         await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nprintf invoked > injected-hook-ran\n");
@@ -88,6 +89,54 @@ internal static class GitRepositoryTests
         await Program.RunNamedCaseAsync("Reviewed Commit preserves staged and unstaged changes across a ref compare-and-swap", () => VerifyReviewedCommitAsync(workRoot));
         await Program.RunNamedCaseAsync("Reviewed Commit rejects changed staging, branch moves and cancellation", () => VerifyCommitInterferenceAsync(workRoot));
         await Program.RunNamedCaseAsync("GitHub scope and helper isolation preserve auth, permission and cancellation categories", () => VerifyGitHubProfileAsync(workRoot));
+        await Program.RunNamedCaseAsync("Stage validates the exact proposed tree before publishing the index", () => VerifyGuardedIndexAsync(workRoot));
+    }
+
+    private static async Task VerifyGuardedIndexAsync(string workRoot)
+    {
+        var root = await MakeCommitFixtureAsync(workRoot, "guarded-index");
+        var indexPath = Path.Combine(root, ".git", "index");
+        var indexBefore = await File.ReadAllBytesAsync(indexPath);
+        var text = Path.Combine(root, "explicit.txt");
+        await File.WriteAllTextAsync(text, "approved staging payload");
+        var examined = false;
+        var refuse = new GitRepository(root)
+        {
+            OnStageTreePrepared = async (tree, _) =>
+            {
+                examined = (await CommandAsync(root, "show", tree + ":explicit.txt")).Trim() == "approved staging payload";
+                return new GitResult(1, "", "synthetic publication refusal", GitFailure.UnsafeOperation);
+            },
+        };
+        var result = await refuse.StageAsync(["explicit.txt"]);
+        Require(examined && !result.Success, "Stage did not inspect and refuse the exact tree");
+        Require((await File.ReadAllBytesAsync(indexPath)).SequenceEqual(indexBefore), "refused stage changed the original index");
+        Require(!File.Exists(indexPath + ".lock") && !Directory.EnumerateDirectories(Path.GetDirectoryName(indexPath)!, ".ymm-stage-*").Any(),
+            "refused stage failed to clean its owned files");
+
+        var accept = new GitRepository(root)
+        {
+            OnStageTreePrepared = async (_, _) =>
+            {
+                await File.WriteAllTextAsync(text, "later worktree edit");
+                return null;
+            },
+        };
+        Require((await accept.StageAsync(["explicit.txt"])).Success, "approved stage failed");
+        Require((await CommandAsync(root, "show", ":explicit.txt")).Trim() == "approved staging payload" &&
+            await File.ReadAllTextAsync(text) == "later worktree edit", "Stage did not publish exact reviewed index");
+        var folder = Directory.CreateDirectory(Path.Combine(root, "bulk")).FullName;
+        await File.WriteAllTextAsync(Path.Combine(folder, "secret.txt"), "bulk staging must not run");
+        Require(!(await accept.StageAsync(["bulk"])).Success, "Stage accidentally accepted a directory");
+        var rootCommit = Path.Combine(workRoot, "initial-index");
+        Directory.CreateDirectory(rootCommit);
+        var initial = new GitRepository(rootCommit);
+        Require((await initial.InitializeAsync()).Success, "first stage fixture init");
+        await File.WriteAllTextAsync(Path.Combine(rootCommit, "one.txt"), "initial payload");
+        Require((await initial.StageAsync(["one.txt"])).Success && (await initial.UnstageAsync(["one.txt"])).Success,
+            "could not unstage the selected first-commit path");
+        Require((await CommandAsync(rootCommit, "ls-files")).Length == 0 && File.Exists(Path.Combine(rootCommit, "one.txt")),
+            "first-commit unstage changed the worktree");
     }
 
     private static async Task VerifyGitHubProfileAsync(string workRoot)

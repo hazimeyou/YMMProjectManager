@@ -45,8 +45,10 @@ public sealed partial class GitRepository
         catch (ArgumentException) { return new GitResult(1, "", "Remote URL is unsupported or contains credentials."); }
         return new GitResult(0, urls[0], "");
     }
-    public Task<GitResult> StageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunPathsAsync(["add", "--"], paths, token), token);
-    public Task<GitResult> UnstageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunPathsAsync(["restore", "--staged", "--"], paths, token), token);
+    public Task<GitResult> StageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) =>
+        WithAppWriteLeaseAsync(() => RunIndexChangeAsync(paths, stage: true, token), token);
+    public Task<GitResult> UnstageAsync(IReadOnlyCollection<string> paths, CancellationToken token = default) =>
+        WithAppWriteLeaseAsync(() => RunIndexChangeAsync(paths, stage: false, token), token);
     public Task<GitResult> CommitAsync(string message, CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
@@ -710,23 +712,6 @@ public sealed partial class GitRepository
         ArgumentException.ThrowIfNullOrWhiteSpace(name);
         if (name.StartsWith('-') || name.Contains('\0')) throw new ArgumentException("Invalid branch name.", nameof(name));
         return RunAsync([.. command, name], token);
-    }
-
-    private Task<GitResult> RunPathsAsync(string[] prefix, IReadOnlyCollection<string> paths, CancellationToken token)
-    {
-        ArgumentNullException.ThrowIfNull(paths);
-        if (paths.Count == 0) throw new ArgumentException("At least one path is required.", nameof(paths));
-        var args = new List<string>(prefix);
-        foreach (var path in paths)
-        {
-            ArgumentException.ThrowIfNullOrWhiteSpace(path);
-            if (Path.IsPathRooted(path) || path.Contains('\0')) throw new ArgumentException("Paths must be relative to the repository.", nameof(paths));
-            var fullPath = Path.GetFullPath(path, directory);
-            if (!fullPath.StartsWith(Path.TrimEndingDirectorySeparator(directory) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("Path is outside the repository.", nameof(paths));
-            args.Add(":(literal)" + path.Replace('\\', '/'));
-        }
-        return RunAsync(args, token);
     }
 
     private string ResolveRemoteGitExecutable()
