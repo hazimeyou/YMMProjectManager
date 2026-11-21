@@ -50,7 +50,7 @@ public sealed partial class GitRepository
     public Task<GitResult> CommitAsync(string message, CancellationToken token = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
-        return WithAppWriteLeaseAsync(() => RunAsync(["commit", "-m", message], token), token);
+        return WithAppWriteLeaseAsync(() => RunCommitCoreAsync(null, message, token), token);
     }
     public Task<GitResult> CreateBranchAsync(string name, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunBranchAsync(["branch"], name, token), token);
     public Task<GitResult> SwitchBranchAsync(string name, CancellationToken token = default) => WithAppWriteLeaseAsync(() => RunBranchAsync(["switch", "--no-overwrite-ignore"], name, token), token);
@@ -414,10 +414,11 @@ public sealed partial class GitRepository
     }
 
     private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false,
-        string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null, int? outputLimit = null) =>
+        string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null, int? outputLimit = null,
+        string? privateIndex = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
             trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart,
-            standardInput: standardInput, outputLimit: outputLimit);
+            standardInput: standardInput, outputLimit: outputLimit, privateIndex: privateIndex);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -706,7 +707,8 @@ public sealed partial class GitRepository
 
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
-        int? outputLimit = null, Func<Stream, CancellationToken, Task>? rawOutput = null, bool noLazyFetch = false)
+        int? outputLimit = null, string? privateIndex = null, Func<Stream, CancellationToken, Task>? rawOutput = null,
+        bool noLazyFetch = false)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable())
@@ -760,6 +762,7 @@ public sealed partial class GitRepository
         // the real commit objects, even while that observation is being revalidated.
         if (ignoreLegacyGrafts || pullSettings is not null) start.Environment["GIT_GRAFT_FILE"] = "NUL";
         if (noLazyFetch) start.Environment["GIT_NO_LAZY_FETCH"] = "1";
+        if (privateIndex is not null) start.Environment["GIT_INDEX_FILE"] = privateIndex;
         start.Environment["GIT_TERMINAL_PROMPT"] = "0";
         start.Environment["GCM_INTERACTIVE"] = "Never";
         start.Environment["LC_ALL"] = "C";
@@ -894,4 +897,5 @@ public sealed record GitResult(int ExitCode, string StandardOutput, string Stand
     public GitFetchTarget? FetchTarget { get; init; }
     public GitPullRemote? PullRemote { get; init; }
     public GitPullTarget? PullTarget { get; init; }
+    public GitCommitTarget? CommitTarget { get; init; }
 }

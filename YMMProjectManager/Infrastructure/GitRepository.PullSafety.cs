@@ -25,7 +25,7 @@ public sealed partial class GitRepository
         }
     }
 
-    private async Task<PullSession?> OpenPullSessionAsync(CancellationToken token)
+    private async Task<PullSession?> OpenPullSessionAsync(CancellationToken token, bool requireIndex = true)
     {
         token.ThrowIfCancellationRequested();
         if (!OnFixedLocalNtfs(directory) || !HasDirectRepository()) return null;
@@ -37,7 +37,7 @@ public sealed partial class GitRepository
         {
             fence = OwnedFilePublication.DirectoryFence.Open(gitDirectory, enforceShare: true);
             repository = GitRepositoryLease.TryOpen(directory);
-            if (repository is null || !SafePullRepositoryMetadata(gitDirectory)) return null;
+            if (repository is null || !SafePullRepositoryMetadata(gitDirectory, requireIndex)) return null;
             config = ProjectListReplacement.Open(Path.Combine(gitDirectory, "config"));
 
             var configuration = await RunDirectAsync(["config", "--local", "--no-includes", "--name-only", "-z", "--list"],
@@ -127,9 +127,9 @@ public sealed partial class GitRepository
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
     }
 
-    private static bool SafePullRepositoryMetadata(string gitDirectory)
+    private static bool SafePullRepositoryMetadata(string gitDirectory, bool requireIndex)
     {
-        if (!IsRegularFile(Path.Combine(gitDirectory, "index")) || HasGitEntry(Path.Combine(gitDirectory, "shallow")) ||
+        if ((requireIndex && !IsRegularFile(Path.Combine(gitDirectory, "index"))) || HasGitEntry(Path.Combine(gitDirectory, "shallow")) ||
             HasGitEntry(Path.Combine(gitDirectory, "objects", "info", "alternates")) ||
             HasGitEntry(Path.Combine(gitDirectory, "info", "grafts")))
             return false;

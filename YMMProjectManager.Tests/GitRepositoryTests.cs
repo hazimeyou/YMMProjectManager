@@ -73,7 +73,7 @@ internal static class GitRepositoryTests
         using (var process = Process.Start(hookConfig)!) { await process.WaitForExitAsync(); Check(process.ExitCode == 0, "fixture local hook config"); }
         await File.WriteAllTextAsync(Path.Combine(root, "local-hook.txt"), "synthetic");
         Check((await git.StageAsync(["local-hook.txt"])).Success && (await git.CommitAsync("local hook fixture")).Success, "local hook commit");
-        Check(File.Exists(Path.Combine(root, "injected-hook-ran")), "intentionally configured repository hook was suppressed");
+        Check(!File.Exists(Path.Combine(root, "injected-hook-ran")), "reviewed Commit must not execute repository-configured hooks");
         Check((await git.DetectAsync()).Success && (await git.HistoryAsync()).StandardOutput.Contains("first commit"), "detect/history");
         Check((await git.CreateBranchAsync("feature/test")).Success && (await git.SwitchBranchAsync("feature/test")).Success, "branches");
         Check((await git.BranchesAsync()).StandardOutput.Contains("feature/test"), "branch list");
@@ -85,5 +85,115 @@ internal static class GitRepositoryTests
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { await git.StatusAsync(cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
         Console.WriteLine("Offline Git local operations passed.");
+        await Program.RunNamedCaseAsync("Reviewed Commit preserves staged and unstaged changes across a ref compare-and-swap", () => VerifyReviewedCommitAsync(workRoot));
+        await Program.RunNamedCaseAsync("Reviewed Commit rejects changed staging, branch moves and cancellation", () => VerifyCommitInterferenceAsync(workRoot));
+    }
+
+    private static async Task VerifyReviewedCommitAsync(string workRoot)
+    {
+        var root = await MakeCommitFixtureAsync(workRoot, "commit-review");
+        var git = new GitRepository(root);
+        var changed = Path.Combine(root, "scène.txt");
+        await File.WriteAllTextAsync(changed, "staged text");
+        await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "want to keep local");
+        Require((await git.StageAsync(["scène.txt", "keep.txt"])).Success, "stage reviewed paths");
+        Require((await git.UnstageAsync(["keep.txt"])).Success, "unstage independent path");
+        var plan = (await git.InspectCommitAsync()).CommitTarget;
+        Require(plan is not null && plan.Paths.SequenceEqual(["scène.txt"]), "exact staged path list");
+        var index = await File.ReadAllBytesAsync(Path.Combine(root, ".git", "index"));
+        await File.WriteAllTextAsync(changed, "later unstaged text");
+        var commit = await git.CommitAsync(plan!, "レビュー済み\n\nSecond paragraph");
+        Require(commit.Success && (await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit.StandardOutput,
+            "published commit OID");
+        Require((await CommandAsync(root, "show", "HEAD:scène.txt")).Trim() == "staged text", "published exact staged contents");
+        Require(await File.ReadAllTextAsync(changed) == "later unstaged text", "unstaged data retained");
+        Require((await CommandAsync(root, "show", "-s", "--format=%B")).Contains("Second paragraph"), "multi-line message retained");
+        Require((await File.ReadAllBytesAsync(Path.Combine(root, ".git", "index"))).SequenceEqual(index), "index bytes retained");
+        Require(!File.Exists(Path.Combine(root, ".git", "index.lock")), "index lock released");
+    }
+
+    private static async Task VerifyCommitInterferenceAsync(string workRoot)
+    {
+        var root = await MakeCommitFixtureAsync(workRoot, "commit-interference");
+        var git = new GitRepository(root);
+        var head = (await CommandAsync(root, "rev-parse", "HEAD")).Trim();
+        var file = Path.Combine(root, "scène.txt");
+        await File.WriteAllTextAsync(file, "approved");
+        Require((await git.StageAsync(["scène.txt"])).Success, "stage initial review");
+        var old = (await git.InspectCommitAsync()).CommitTarget!;
+        await File.WriteAllTextAsync(file, "different");
+        Require((await git.StageAsync(["scène.txt"])).Success, "change index after review");
+        Require(!(await git.CommitAsync(old, "must refuse stale review")).Success, "changed staged tree accepted");
+
+        var current = (await git.InspectCommitAsync()).CommitTarget!;
+        using var cancel = new CancellationTokenSource();
+        var cancellable = new GitRepository(root) { BeforeCommitRefUpdate = cancel.Cancel };
+        try
+        {
+            await cancellable.CommitAsync(current, "must cancel", cancel.Token);
+            throw new InvalidOperationException("cancellation was ignored before publication");
+        }
+        catch (OperationCanceledException) { }
+        Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == head, "HEAD changed after rejection or cancel");
+        Require(!File.Exists(Path.Combine(root, ".git", "index.lock")), "cancelled index lock released");
+
+        var commit = (await CommandAsync(root, "commit-tree", current.TreeObjectId, "-p", head, "-m", "independent actor")).Trim();
+        var raced = new GitRepository(root)
+        {
+            BeforeCommitRefUpdate = () =>
+            {
+                Require(CommandAsync(root, allowedExitCode: 1, "symbolic-ref", "HEAD", "refs/heads/interference")
+                    .GetAwaiter().GetResult().Length == 0, "HEAD could be changed during Commit");
+                CommandAsync(root, "update-ref", current.BranchRef, commit, head).GetAwaiter().GetResult();
+            },
+        };
+        var rejected = await raced.CommitAsync(current, "must not overwrite");
+        Require(rejected.Failure == GitFailure.ConcurrentOperation, "branch CAS accepted competing update");
+        Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit, "concurrent branch update preserved");
+        Require((await CommandAsync(root, "symbolic-ref", "HEAD")).Trim() == current.BranchRef, "HEAD pin was ineffective");
+    }
+
+    private static async Task<string> MakeCommitFixtureAsync(string workRoot, string name)
+    {
+        var root = Path.Combine(workRoot, name);
+        Directory.CreateDirectory(root);
+        var git = new GitRepository(root);
+        Require((await git.InitializeAsync()).Success, "init commit fixture");
+        await CommandAsync(root, "config", "--local", "user.name", "Synthetic Tester");
+        await CommandAsync(root, "config", "--local", "user.email", "synthetic@example.invalid");
+        await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "original");
+        await File.WriteAllTextAsync(Path.Combine(root, "scène.txt"), "original");
+        Require((await git.StageAsync(["keep.txt", "scène.txt"])).Success, "prepare fixture first stage");
+        Require((await git.CommitAsync("first reviewed fixture commit")).Success, "create reviewed root commit");
+        return root;
+    }
+
+    private static Task<string> CommandAsync(string root, params string[] args) => CommandAsync(root, 0, args);
+
+    private static async Task<string> CommandAsync(string root, int allowedExitCode, params string[] args)
+    {
+        var start = new ProcessStartInfo("git")
+        {
+            WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true,
+            RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
+            start.Environment.Remove(key);
+        start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";
+        start.Environment["GIT_CONFIG_NOSYSTEM"] = "1";
+        start.Environment["GIT_NO_LAZY_FETCH"] = "1";
+        start.Environment["GIT_ALLOW_PROTOCOL"] = "";
+        foreach (var arg in args) start.ArgumentList.Add(arg);
+        using var child = Process.Start(start)!;
+        var output = child.StandardOutput.ReadToEndAsync();
+        var error = child.StandardError.ReadToEndAsync();
+        await child.WaitForExitAsync();
+        Require(child.ExitCode == allowedExitCode, $"fixture {args[0]} returned {child.ExitCode}: {await error}");
+        return await output;
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
     }
 }
