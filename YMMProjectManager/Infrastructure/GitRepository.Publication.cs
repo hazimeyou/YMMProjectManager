@@ -238,8 +238,25 @@ public sealed partial class GitRepository
         if (content.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')) ||
             content.StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal))
             return "Git contains binary content or an external large file pointer.";
+        var start = content.AsSpan().TrimStart('\uFEFF').TrimStart();
+        if (start.StartsWith("WEBVTT", StringComparison.Ordinal) &&
+            (start.Length == 6 || char.IsWhiteSpace(start[6])))
+            return "Git contains a WebVTT media asset.";
 
-        if (content.AsSpan().TrimStart('\uFEFF').TrimStart().StartsWith("{"))
+        // Git may canonicalize text to LF. Compare exact bytes and uniform line-ending
+        // variants so a known caption does not escape inspection after normalization.
+        if (content.Contains('\n'))
+        {
+            var lf = content.Replace("\r\n", "\n", StringComparison.Ordinal);
+            var lfHash = Convert.ToHexString(SHA256.HashData(StrictPublicationUtf8.GetBytes(lf)));
+            var crlfHash = Convert.ToHexString(SHA256.HashData(StrictPublicationUtf8.GetBytes(lf.Replace("\n", "\r\n", StringComparison.Ordinal))));
+            blobHashes.Add(lfHash);
+            blobHashes.Add(crlfHash);
+            if (publicationAssetHashes.Contains(lfHash) || publicationAssetHashes.Contains(crlfHash))
+                return "Git contains a blob matching a registered asset after line-ending normalization.";
+        }
+
+        if (start.StartsWith("{"))
         {
             try
             {

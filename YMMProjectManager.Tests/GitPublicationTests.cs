@@ -83,6 +83,22 @@ internal static class GitPublicationTests
                 await CommitFileAsync(source, folder + "/sample_1234567890123456.txt", "ordinary-looking media"u8.ToArray());
                 return (false, null);
             }));
+        await Program.RunNamedCaseAsync("R21 Stage rejects a registered asset before writing the Git object", async () =>
+        {
+            var rootPath = Directory.CreateDirectory(Path.Combine(root, "pub-no-stage")).FullName;
+            await CommandAsync(rootPath, "init", "-b", "main");
+            var bytes = "registered material\r\nsecond line\r\n"u8.ToArray();
+            var worktree = Path.Combine(rootPath, "generic.txt");
+            await File.WriteAllBytesAsync(worktree, Encoding.UTF8.GetBytes("registered material\nsecond line\n"));
+            var git = new GitRepository(rootPath);
+            await git.RememberPublicationAssetAsync("disclosed-original.txt", Convert.ToHexString(SHA256.HashData(bytes)), default);
+            var objects = Path.Combine(rootPath, ".git", "objects");
+            var before = Directory.GetFiles(objects, "*", SearchOption.AllDirectories);
+            var refused = await new GitRepository(rootPath).StageAsync(["generic.txt"]);
+            if (refused.Failure != GitFailure.MediaPublication || File.Exists(Path.Combine(rootPath, ".git", "index")) ||
+                !before.SequenceEqual(Directory.GetFiles(objects, "*", SearchOption.AllDirectories)))
+                throw new InvalidOperationException("Stage wrote a registered media blob or published the index.");
+        });
     }
 
     private static async Task TestAsync(string root, string name, Func<string, GitRepository, Task<(bool Allow, string? ForbiddenMarker)>> prepare)

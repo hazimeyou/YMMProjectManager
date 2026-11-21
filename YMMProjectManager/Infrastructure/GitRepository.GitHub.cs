@@ -68,10 +68,16 @@ public sealed partial class GitRepository
     {
         var names = await RunDirectAsync(["config", "--local", "--no-includes", "--name-only", "-z", "--list"],
             token, pullSettings: [], outputLimit: 1024 * 1024).ConfigureAwait(false);
-        return names.Success && names.StandardError.Length == 0 && !names.StandardOutput
-            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
-            .Any(name => name.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase));
+        return VerifiedRemoteNames(names, endpoint, rejectUnsupported: false);
     }
+
+    private static bool VerifiedRemoteNames(GitResult names, string endpoint, bool rejectUnsupported) =>
+        names.Success && names.StandardError.Length == 0 && !names.StandardOutput
+            .Split('\0', StringSplitOptions.RemoveEmptyEntries)
+            .Any(name => name.StartsWith("remote." + endpoint + ".", StringComparison.OrdinalIgnoreCase) ||
+                (rejectUnsupported && UnsupportedPullSetting(name)));
+
+    private static string MachineGitInstallation() => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git");
 
     private async Task<GitResult> RunGitHubTransportAsync(string endpoint, string[] arguments, CancellationToken token,
         GitHubAuthentication authentication, string[] settings, string? cloneStage = null)
@@ -80,7 +86,7 @@ public sealed partial class GitRepository
             return UnsupportedGitHubEndpoint();
         if (cloneStage is not null && directory.Contains(Path.PathSeparator))
             return UnsupportedGitHubRepository();
-        var installation = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Git");
+        var installation = MachineGitInstallation();
         var native = Path.Combine(installation, "mingw64", "bin");
         var executable = Path.Combine(native, "git.exe");
         var manager = Path.Combine(native, "git-credential-manager.exe");
@@ -96,10 +102,21 @@ public sealed partial class GitRepository
             using var managerFile = authentication == GitHubAuthentication.CachedWindows ? ProjectListReplacement.Open(manager) : null;
             var profile = new GitHubTransportProfile(installation, executable, cloneStage is null ? null : directory,
                 authentication == GitHubAuthentication.CachedWindows);
-            var transportSettings = BuildGitHubTransportSettings(settings, managerFile is null ? null : manager);
             var destination = cloneStage is null
                 ? new[] { $"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}" }
                 : new[] { "-C", cloneStage };
+            using var configuration = cloneStage is null ? ProjectListReplacement.Open(Path.Combine(directory, ".git", "config")) : null;
+            if (cloneStage is null)
+            {
+                // Inspect the locked config with the same held machine Git that will
+                // start HTTPS and GCM. A different executable on PATH cannot attest it.
+                var names = await RunAsync([.. destination, "config", "--local", "--no-includes", "--name-only", "-z", "--list"],
+                    token, trustedProcess: true, pullSettings: [], outputLimit: 1024 * 1024,
+                    githubTransport: profile with { Cached = false }).ConfigureAwait(false);
+                if (!VerifiedRemoteNames(names, endpoint, rejectUnsupported: true))
+                    return UnsupportedGitHubRepository();
+            }
+            var transportSettings = BuildGitHubTransportSettings(settings, managerFile is null ? null : manager);
             return await RunAsync([.. destination, .. arguments], token, allowedProtocol: "https",
                 trustedProcess: true, pullSettings: transportSettings, githubTransport: profile).ConfigureAwait(false);
         }
@@ -116,8 +133,8 @@ public sealed partial class GitRepository
             "-c", "credential.helper=", "-c", "credential.interactive=false"];
         if (manager is null) return settings;
         // The helper argument is constructed exclusively from the held installation path.
-        return [.. settings, "-c", "credential.https://github.com.helper=!'"
-            + manager.Replace('\\', '/') + "'"];
+        return [.. settings, "-c", "credential.https://github.com.helper=!f() { if [ \"$1\" = get ]; then '"
+            + manager.Replace('\\', '/') + "' get; fi; }; f"];
     }
 
     private static GitResult UnsupportedGitHubInstallation() =>

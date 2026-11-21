@@ -712,6 +712,9 @@ public sealed partial class GitRepository
 
     private string ResolveRemoteGitExecutable()
     {
+        var machine = Path.Combine(MachineGitInstallation(), "mingw64", "bin", "git.exe");
+        if (Path.IsPathFullyQualified(machine) && IsOrdinaryDirectory(Path.GetDirectoryName(machine)!) && IsRegularFile(machine))
+            return machine;
         foreach (var entry in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
             var path = entry.Trim().Trim('"');
@@ -742,6 +745,8 @@ public sealed partial class GitRepository
         Func<Process, CancellationToken, Task<(string Text, bool Truncated)>>? interaction = null)
     {
         token.ThrowIfCancellationRequested();
+        if ((interaction is not null && (rawOutput is not null || standardInput is not null)))
+            throw new ArgumentException("Interactive Git commands must own their input and output.");
         var start = new ProcessStartInfo(githubTransport?.Executable ??
             (allowedProtocol is null && !trustedProcess ? "git" : ResolveRemoteGitExecutable()))
         {
