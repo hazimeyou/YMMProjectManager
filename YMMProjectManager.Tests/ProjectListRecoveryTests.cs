@@ -80,8 +80,20 @@ internal static class ProjectListRecoveryTests
             try { await RegisterExtract(verifiedIdentity); throw new Exception("registration swallowed failure"); }
             catch (IOException) { }
             if (!vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 0) throw new Exception("registration failure state");
-            fail = false; await vm.RetryProjectListSaveAsync();
-            if ((await repo.LoadAsync()).Projects.Single().FullPath != extracted || vm.HasUnsavedProjectList) throw new Exception("registration retry");
+            fail = false;
+            var verifiedFile = Path.Combine(root, "held-extraction.ymmp");
+            File.Move(extracted, verifiedFile);
+            await File.WriteAllTextAsync(extracted, "{}");
+            priorDialogs = dialogs;
+            timer.Start();
+            try { await vm.RetryProjectListSaveAsync(); } finally { timer.Stop(); }
+            if (dialogs == priorDialogs || !vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 0)
+                throw new Exception("retry registered a replacement for the verified extraction");
+            File.Delete(extracted);
+            File.Move(verifiedFile, extracted);
+            await vm.RetryProjectListSaveAsync();
+            if ((await repo.LoadAsync()).Projects.Single().FullPath != extracted || vm.HasUnsavedProjectList)
+                throw new Exception("verified registration retry");
             // Cancellation is not shown as an I/O error and remains retryable.
             cancel = true; var extra = Path.Combine(root,"cancelled.ymmp"); await File.WriteAllTextAsync(extra,"{}"); priorDialogs=dialogs; timer.Start();
             try { await vm.AddProjectsAsync([extra]); } finally { timer.Stop(); }

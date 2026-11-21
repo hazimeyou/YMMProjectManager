@@ -8,7 +8,7 @@ internal static class YmmpxReleasedFormatTests
     public static async Task RunAsync(string workRoot)
     {
         var fixtureRoot = Environment.GetEnvironmentVariable("YMM_TEST_YMMPX_RELEASED_FIXTURES");
-        foreach (var version in new[] { "v0.3.0", "v1.0.1" })
+        foreach (var version in new[] { "v0.2.1", "v0.3.0", "v1.0.1" })
         {
             var fixture = fixtureRoot is null ? null : Path.Combine(fixtureRoot, version, "sample.ymmpx");
             if (!File.Exists(fixture))

@@ -40,6 +40,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     private ProjectStore? retainedRecoverySnapshot;
     private ProjectStore? retainedScreenSnapshot;
     private readonly Dictionary<string, (Guid Id, string Hash)> pendingAdditionEvidence = new(StringComparer.OrdinalIgnoreCase);
+    private (Guid Id, string Path, ProjectFileIdentity Identity)? pendingExtractedProject;
     private bool isProjectListLossless;
     private bool hasUnsavedProjectList;
     private string bundleStatus = string.Empty;
@@ -1059,7 +1060,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var fullPath = Path.GetFullPath(restoredYmmpPath);
         if (Projects.Any(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase))) return;
         using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
-        await using var file = ProjectFileEvidence.OpenRead(fullPath);
+        await using var file = YmmpxTransfer.OpenOrdinaryRead(fullPath);
         var current = await ProjectFileEvidence.ReadAsync(file, token);
         if (current != extractedIdentity)
             throw new IOException("展開後にPFが変更されたため、一覧に登録できません。");
@@ -1074,7 +1075,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             DisplayName = Path.GetFileNameWithoutExtension(fullPath),
             FileIdentity = current,
         };
-        pendingAdditionEvidence[fullPath] = (id, entry.FileIdentity.Sha256);
+        pendingAdditionEvidence[fullPath] = (id, current.Sha256);
+        pendingExtractedProject = (id, fullPath, current);
         entry.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = fullPath, DisplayName = entry.DisplayName,
             Role = YmmpRole.Main, Exists = true, LastCheckedAt = DateTimeOffset.Now });
         Projects.Add(entry);
@@ -1354,6 +1356,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             if (!AdoptRecoveredStore(merged, local, null)) return;
             savedBaseline = ProjectListMerge.Snapshot(merged); pendingIdentity = null;
             pendingAdditionEvidence.Clear();
+            pendingExtractedProject = null;
             lastSavedFingerprint = CurrentStoreFingerprint(); HasUnsavedProjectList = false;
             PrepareThumbnailMetadata(Projects.ToList());
             AssetStatus = "最新一覧へ未保存変更を再適用しました。";
@@ -1437,6 +1440,20 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 IsRecoverySafe = isProjectListLossless,
             });
             var expectedFingerprint = ProjectListRecovery.Fingerprint(store);
+            var extracted = pendingExtractedProject;
+            if (extracted is { } pending)
+            {
+                var registration = store.Projects.SingleOrDefault(project => project.ProjectId == pending.Id);
+                if (registration is null)
+                    extracted = null; // The user removed the pending registration.
+                else if (registration.FullPath != pending.Path || registration.FileIdentity != pending.Identity)
+                    throw new IOException("展開したPFの一覧項目が変更されたため、登録できません。");
+            }
+            using var directory = extracted is { } destination
+                ? OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(destination.Path)!, enforceShare: true) : null;
+            await using var file = extracted is { } source ? YmmpxTransfer.OpenOrdinaryRead(source.Path) : null;
+            if (extracted is { } original && await ProjectFileEvidence.ReadAsync(file!) != original.Identity)
+                throw new IOException("展開したPFが変更されたため、一覧に登録できません。");
             await SavePendingDraftAsync(store);
             await SaveRepositoryWithPendingDraftAsync(store);
             projectListRevision = store.Revision;
@@ -1445,6 +1462,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             savedBaseline = store;
             pendingIdentity = null;
             pendingAdditionEvidence.Clear();
+            pendingExtractedProject = null;
             HasUnsavedProjectList = lastSavedFingerprint is null;
         }
         catch
