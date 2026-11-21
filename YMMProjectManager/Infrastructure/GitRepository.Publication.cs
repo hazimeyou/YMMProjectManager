@@ -133,12 +133,16 @@ public sealed partial class GitRepository
         path.EndsWith(".ymmpx", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ymme", StringComparison.OrdinalIgnoreCase) ||
         publicationAssetNames.Contains(Path.GetFileName(path)) ||
-        IsPrivateRelinkPath(path) ||
+        IsPrivateApplicationPath(path) ||
+        IsTransferAssetReference(path) ||
         IsAssetPoolPayload(path);
 
-    private static bool IsPrivateRelinkPath(string path) =>
+    private static bool IsPrivateApplicationPath(string path) =>
         path.Split('/').Any(component =>
             component.Equals(".ymmpm-lineage.json", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals("ymmpm-transfer.json", StringComparison.OrdinalIgnoreCase) ||
+            HasOperationName(component, ".ymmpm-transfer-") ||
+            HasOperationName(component, ".ymmpm-package-") ||
             HasOperationName(component, ".ymmpm-relink-") ||
             HasOperationName(component, ".ymmpm-relink-external-") ||
             HasOperationName(component, ".ymmpm-relink.tmp-") ||
@@ -279,7 +283,10 @@ public sealed partial class GitRepository
                 var root = document.RootElement;
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
-                ReadProjectAssetNames(root, historicalAssetNames);
+                if (IsTransferManifest(root))
+                    return "Git contains a local YMMPX asset-transfer manifest.";
+                if (ReadProjectAssetNames(root, historicalAssetNames))
+                    return "Git contains a project prepared for local YMMPX asset transfer.";
                 if (root.TryGetProperty("Assets", out var assets) && assets.ValueKind == JsonValueKind.Array &&
                     root.TryGetProperty("ProjectId", out _))
                     foreach (var asset in assets.EnumerateArray())
@@ -308,13 +315,21 @@ public sealed partial class GitRepository
         (root.TryGetProperty("Identity", out _) ||
             (root.TryGetProperty("SourceSha256", out _) && root.TryGetProperty("Approved", out _)));
 
+    private static bool IsTransferManifest(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        var properties = root.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return properties.Contains("Version") && properties.Contains("PackageName") &&
+            properties.Contains("PackageSha256") && properties.Contains("Assets");
+    }
+
     private static bool IsMachineLocalReference(string reference)
     {
         var path = reference.Trim();
         return Path.IsPathRooted(path) || (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.IsFile);
     }
 
-    private static void ReadProjectAssetNames(JsonElement node, HashSet<string> names)
+    private static bool ReadProjectAssetNames(JsonElement node, HashSet<string> names)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
@@ -322,12 +337,36 @@ public sealed partial class GitRepository
             {
                 if (property.NameEquals("FilePath") && property.Value.ValueKind == JsonValueKind.String &&
                     property.Value.GetString() is { } reference)
+                {
+                    if (IsTransferAssetReference(reference))
+                        return true;
                     names.Add(Path.GetFileName(PackagingDetector.NormalizeFilePathKey(reference)));
-                else ReadProjectAssetNames(property.Value, names);
+                }
+                else if (ReadProjectAssetNames(property.Value, names))
+                    return true;
             }
         }
         else if (node.ValueKind == JsonValueKind.Array)
-            foreach (var item in node.EnumerateArray()) ReadProjectAssetNames(item, names);
+            foreach (var item in node.EnumerateArray())
+                if (ReadProjectAssetNames(item, names))
+                    return true;
+        return false;
+    }
+
+    private static bool IsTransferAssetReference(string reference)
+    {
+        var components = reference.Replace('\\', '/').Split('/');
+        for (var i = 0; i < components.Length - 2; i++)
+        {
+            if (!components[i].Equals("ymmpm-missing", StringComparison.OrdinalIgnoreCase) &&
+                !(i > 0 && components[i - 1].Equals("resources", StringComparison.OrdinalIgnoreCase) &&
+                    components[i].Equals("ymmpm-transfer", StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var key = components[i + 1];
+            if (key.Length == 8 && key.All(Uri.IsHexDigit) && components[i + 2].Length > 0)
+                return true;
+        }
+        return false;
     }
 
     private static void ReadAsset(JsonElement entry, string nameProperty, HashSet<string> names, HashSet<string> hashes)

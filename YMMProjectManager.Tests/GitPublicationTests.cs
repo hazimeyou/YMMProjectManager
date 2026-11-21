@@ -165,6 +165,66 @@ internal static class GitPublicationTests
                 return (false, null);
             });
         });
+        await Program.RunNamedCaseAsync("R23 Stage refuses local transfer paths before writing a Git object", () =>
+            TestAsync(root, "r23-transfer-paths", async (source, git) =>
+            {
+                var operation = Guid.NewGuid().ToString("N");
+                var blockedPaths = new[] { "ymmpm-transfer.json", $".ymmpm-transfer-{operation}/new.ymmp",
+                    $".ymmpm-package-{operation}/copy.ymmp", "resources/ymmpm-transfer/00000001/clip.txt",
+                    "ymmpm-missing/00000001/clip.txt" };
+                var objects = Path.Combine(source, ".git", "objects");
+                var before = Directory.GetFiles(objects, "*", SearchOption.AllDirectories);
+                foreach (var path in blockedPaths)
+                {
+                    var file = Path.Combine(source, path);
+                    Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+                    await File.WriteAllTextAsync(file, "plain text synthetic fixture");
+                    var refused = await git.StageAsync([path]);
+                    if (refused.Failure != GitFailure.MediaPublication || File.Exists(Path.Combine(source, ".git", "index")) ||
+                        !before.SequenceEqual(Directory.GetFiles(objects, "*", SearchOption.AllDirectories)))
+                        throw new InvalidOperationException("Stage wrote an object or published an index for a local transfer.");
+                }
+
+                Directory.CreateDirectory(Path.Combine(source, "resources", "00000001"));
+                await File.WriteAllTextAsync(Path.Combine(source, "resources", "00000001", "notes.txt"), "ordinary repository notes");
+                if (!(await git.StageAsync(["resources/00000001/notes.txt"])).Success ||
+                    !(await git.CommitAsync("ordinary resources remain supported")).Success)
+                    throw new InvalidOperationException("Stage or Commit rejected ordinary resources.");
+                return (true, null);
+            }));
+        await Program.RunNamedCaseAsync("R23 publication refuses renamed local transfer documents and unpublished PFs", async () =>
+        {
+            var manifest = """{"version":1,"packageName":"fixture.ymmpx","packageSha256":"fixture","assets":[]}""";
+            var bundled = """{"Timelines":[{"Items":[{"FilePath":"C:\\synthetic\\resources\\ymmpm-transfer\\0000000a\\clip.txt"}]}]}""";
+            var missing = """{"Timelines":[{"Items":[{"FilePath":"ymmpm-missing/0000000b/clip.txt"}]}]}""";
+            foreach (var (name, contents) in new[] { ("manifest", manifest), ("bundled", bundled), ("missing", missing) })
+                await TestAsync(root, "r23-transfer-" + name, async (source, git) =>
+                {
+                    var file = Path.Combine(source, "notes.json");
+                    await File.WriteAllTextAsync(file, contents);
+                    if ((await git.StageAsync(["notes.json"])).Failure != GitFailure.MediaPublication)
+                        throw new InvalidOperationException("Stage accepted a renamed private transfer document.");
+                    await CommandAsync(source, "add", "--", "notes.json");
+                    var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                    if ((await git.CommitAsync(approved, "must refuse")).Failure != GitFailure.MediaPublication ||
+                        File.Exists(Path.Combine(source, ".git", "refs", "heads", "main")))
+                        throw new InvalidOperationException("Commit accepted a renamed private transfer document.");
+                    await CommandAsync(source, "commit", "-m", "synthetic historical input");
+                    await CommandAsync(source, "rm", "--", "notes.json");
+                    await CommandAsync(source, "commit", "-m", "synthetic removal");
+                    return (false, null);
+                });
+        });
+        await Program.RunNamedCaseAsync("R23 Push refuses transfer payload from old path without a sidecar", () =>
+            TestAsync(root, "r23-deleted-payload", async (source, _) =>
+            {
+                const string relative = "resources/ymmpm-transfer/00000001/transcript.txt";
+                Directory.CreateDirectory(Path.Combine(source, Path.GetDirectoryName(relative)!));
+                await CommitFileAsync(source, relative, "ordinary-looking local asset"u8.ToArray());
+                await CommandAsync(source, "mv", relative, "notes.txt");
+                await CommandAsync(source, "commit", "-m", "synthetic rename");
+                return (false, null);
+            }));
     }
 
     private static async Task TestAsync(string root, string name, Func<string, GitRepository, Task<(bool Allow, string? ForbiddenMarker)>> prepare)
