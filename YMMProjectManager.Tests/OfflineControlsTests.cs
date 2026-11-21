@@ -154,6 +154,107 @@ internal static class OfflineControlsTests
                     throw new InvalidOperationException("Authentication modes or child-output redaction were lost.");
                 return Task.CompletedTask;
             });
+            await Program.RunNamedCaseAsync("R24 browser login primes neither Git nor credential opt-in", async () =>
+            {
+                var savedProject = vm.SelectedProject;
+                var initialStatus = await RunGitFixtureAsync(root, "status", "--porcelain");
+                vm.SelectedProject = null;
+                vm.GitRemote = "https://example.invalid/not-a-login-target.git";
+                var approvals = new List<bool>();
+                var launches = new List<bool>();
+                bool Approve(bool reauthenticate) { approvals.Add(reauthenticate); return true; }
+                Task<GitResult> SignIn(bool reauthenticate, CancellationToken token)
+                {
+                    launches.Add(reauthenticate);
+                    return Task.FromResult(new GitResult(0, "fixture-browser-stdout", ""));
+                }
+
+                try
+                {
+                    if (!vm.GitHubBrowserLoginCommand.CanExecute(null) || !vm.GitHubBrowserReloginCommand.CanExecute(null))
+                        throw new InvalidOperationException("Browser login is inaccessible before clone.");
+                    await vm.RunGitHubBrowserLoginAsync(false, Approve, _ => Task.FromResult(false), SignIn);
+                    if (approvals.Count != 0 || launches.Count != 0 || !vm.GitStatus.Contains("検証済み"))
+                        throw new InvalidOperationException("An unsupported installation reached approval or launch.");
+
+                    await vm.RunGitHubBrowserLoginAsync(false, mode => { approvals.Add(mode); return false; },
+                        _ => Task.FromResult(true), SignIn);
+                    if (approvals.Count != 1 || launches.Count != 0 || !vm.GitStatus.Contains("取り消しました"))
+                        throw new InvalidOperationException("Declined approval reached launch.");
+
+                    foreach (var reauthenticate in new[] { false, true })
+                    {
+                        vm.UseCachedGitHubAuthentication = reauthenticate;
+                        await vm.RunGitHubBrowserLoginAsync(reauthenticate, Approve, _ => Task.FromResult(true), SignIn);
+                        if (vm.UseCachedGitHubAuthentication != reauthenticate || vm.IsBusy ||
+                            !vm.GitStatus.Contains("が完了しました") || vm.GitStatus.Contains("fixture-browser-") ||
+                            vm.SelectedProject is not null || vm.GitRemote != "https://example.invalid/not-a-login-target.git")
+                            throw new InvalidOperationException("Browser completion altered another Git decision or exposed helper output.");
+                    }
+                    if (!approvals.SequenceEqual(new[] { false, false, true }) ||
+                        !launches.SequenceEqual(new[] { false, true }) ||
+                        await RunGitFixtureAsync(root, "status", "--porcelain") != initialStatus)
+                        throw new InvalidOperationException("Initial/relogin modes or the pre-existing local working changes were lost.");
+                }
+                finally
+                {
+                    vm.SelectedProject = savedProject;
+                    vm.GitRemote = "";
+                    vm.UseCachedGitHubAuthentication = false;
+                }
+            });
+            await Program.RunNamedCaseAsync("R24 unexpected browser authentication failures stay out of status and logs", async () =>
+            {
+                const string marker = "fixture-browser-failure-secret";
+                await vm.RunGitHubBrowserLoginAsync(false, _ => true, _ => Task.FromResult(true),
+                    (_, _) => Task.FromException<GitResult>(new IOException(marker)));
+                using var log = new StreamReader(new FileStream(Path.Combine(root, "test.log"),
+                    FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
+                var logged = await log.ReadToEndAsync();
+                if (vm.IsBusy || !vm.GitStatus.Contains("結果を確認できません") || vm.GitStatus.Contains(marker) || logged.Contains(marker))
+                    throw new InvalidOperationException("An unexpected helper failure leaked details or was not shown to the user.");
+            });
+            await Program.RunNamedCaseAsync("R24 browser cancel distinguishes prelaunch from a possibly published credential", async () =>
+            {
+                var earlyApprovals = 0;
+                var earlyLaunches = 0;
+                await vm.RunGitHubBrowserLoginAsync(false, _ => { earlyApprovals++; return true; }, token =>
+                {
+                    vm.CancelGitHubBrowserLoginCommand.Execute(null);
+                    token.ThrowIfCancellationRequested();
+                    return Task.FromResult(true);
+                }, (_, _) => { earlyLaunches++; return Task.FromResult(new GitResult(0, "", "")); });
+                if (earlyApprovals != 0 || earlyLaunches != 0 || !vm.GitStatus.Contains("中止しました"))
+                    throw new InvalidOperationException("Prelaunch cancellation was not reported.");
+
+                var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                var operation = vm.RunGitHubBrowserLoginAsync(true, _ => true, _ => Task.FromResult(true),
+                    async (_, token) =>
+                    {
+                        using var cancelled = token.Register(() => completed.TrySetResult());
+                        entered.TrySetResult();
+                        await completed.Task;
+                        return new GitResult(1, "fixture-helper-stdout", "fixture-helper-error", GitFailure.OutcomeUnknown);
+                    });
+                try
+                {
+                    await entered.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (!vm.CancelGitHubBrowserLoginCommand.CanExecute(null) || vm.GitHubBrowserLoginCommand.CanExecute(null) ||
+                        vm.GitHubBrowserReloginCommand.CanExecute(null) || vm.FetchGitCommand.CanExecute(null))
+                        throw new InvalidOperationException("An in-flight login did not fence the Git commands.");
+                    vm.CancelGitHubBrowserLoginCommand.Execute(null);
+                    await operation.WaitAsync(TimeSpan.FromSeconds(10));
+                    if (!vm.GitStatus.Contains("更新された可能性") || vm.GitStatus.Contains("中止しました") ||
+                        vm.GitStatus.Contains("fixture-helper-") || vm.IsBusy || vm.CancelGitHubBrowserLoginCommand.CanExecute(null))
+                        throw new InvalidOperationException("Possibly published credentials were reported as definitely unchanged.");
+                }
+                finally
+                {
+                    completed.TrySetResult();
+                    await operation;
+                }
+            });
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };

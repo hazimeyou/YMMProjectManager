@@ -56,6 +56,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     private string assetUrl = string.Empty;
     private IReadOnlyList<AssetMetadata>? inspectedAssets;
     private CancellationTokenSource? toolCancellation;
+    private string? activeToolOperation;
 
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
@@ -192,6 +193,14 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         ReviewProjectCleanupCommand = new AsyncRelayCommand(ReviewProjectCleanupAsync, () => !IsBusy && SelectedProject is not null);
         CollectAssetToPoolCommand = new AsyncRelayCommand(CollectAssetToPoolAsync, () => !IsBusy && SelectedProject is not null);
         InspectGitHubAccessCommand = new AsyncRelayCommand(InspectGitHubAccessAsync, () => !IsBusy && SelectedProject is not null);
+        GitHubBrowserLoginCommand = new AsyncRelayCommand(() => RunGitHubBrowserLoginAsync(reauthenticate: false), () => !IsBusy);
+        GitHubBrowserReloginCommand = new AsyncRelayCommand(() => RunGitHubBrowserLoginAsync(reauthenticate: true), () => !IsBusy);
+        CancelGitHubBrowserLoginCommand = new RelayCommand(() =>
+        {
+            if (activeToolOperation == GitHubBrowserLoginOperation)
+                toolCancellation?.Cancel();
+        },
+            () => activeToolOperation == GitHubBrowserLoginOperation && toolCancellation is { IsCancellationRequested: false });
         RefreshGitStatusCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(false), () => !IsBusy && SelectedProject is not null);
         InitializeGitCommand = new AsyncRelayCommand(() => ShowGitStatusAsync(true), () => !IsBusy && SelectedProject is not null);
         StageGitPathCommand = new AsyncRelayCommand(() => ChangeGitAsync("stage"), () => !IsBusy && SelectedProject is not null);
@@ -237,6 +246,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             using var cancellation = new CancellationTokenSource();
             toolCancellation = cancellation;
+            activeToolOperation = name;
             CommandManager.InvalidateRequerySuggested();
             try { await action(cancellation.Token); }
             catch (OperationCanceledException ex)
@@ -251,12 +261,19 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                     GitStatus = "Pull を中止しました。ブランチ、index、作業ファイルの更新は開始していません。";
                 else if (name == GitHubAccessOperation)
                     GitStatus = "GitHubへのアクセス確認を中止しました。";
+                else if (name == GitHubBrowserLoginOperation)
+                    GitStatus = "GitHubブラウザ認証を中止しました。";
                 else if (name.StartsWith("Asset", StringComparison.Ordinal)) AssetStatus = message;
                 else if (name.StartsWith("Bundle", StringComparison.Ordinal)) BundleStatus = message;
                 else GitStatus = message;
                 throw;
             }
-            finally { toolCancellation = null; CommandManager.InvalidateRequerySuggested(); }
+            finally
+            {
+                toolCancellation = null;
+                activeToolOperation = null;
+                CommandManager.InvalidateRequerySuggested();
+            }
         });
     }
 
@@ -361,7 +378,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             GitFailure.Authentication when isGitHub && authentication == GitHubAuthentication.Anonymous =>
                 "匿名接続では認証できませんでした。アクセス権のある保存済み資格情報があれば「GitHubにWindowsの保存済み資格情報を使う」を有効にし、操作を承認し直してください。",
             GitFailure.Authentication when isGitHub =>
-                "保存済み資格情報で認証できませんでした。アカウントと有効期限を確認してください。この画面での再ログインは利用できません。",
+                "保存済み資格情報で認証できませんでした。アカウントと有効期限を確認してください。対応するGCMがあれば、GitHubのブラウザ再ログインを実行できます。",
             GitFailure.Authentication => "認証の有効期限、使用するアカウント、認証ヘルパーを確認してください。",
             GitFailure.Permission => "接続先と、対象リポジトリへの権限を確認してください。",
             GitFailure.Network => "接続先、ネットワーク、TLS 設定を確認してください。",
@@ -1539,6 +1556,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             logger.Error(ex, "世代 manifest の読み込みに失敗しました。");
             logger.Flush();
             MessageBox.Show("世代情報を読み込めません。既存データを保護するため保存を中止しました。ログを確認してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        catch (Exception) when (operationName == GitHubBrowserLoginOperation)
+        {
+            GitStatus = "GitHub認証の結果を確認できません。再試行の前に、使用する資格情報と対象リポジトリへのアクセスを確認してください。";
+            logger.Info("GitHub browser login: unexpected outcome.");
+            logger.Flush();
         }
         catch (Exception ex)
         {

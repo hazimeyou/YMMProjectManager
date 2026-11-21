@@ -102,8 +102,11 @@
                 <CheckBox Content="GitHubにWindowsの保存済み資格情報を使う" IsChecked="{Binding UseCachedGitHubAuthentication}"
                     VerticalAlignment="Center" Margin="0,0,8,0" />
                 <Button Content="GitHubのアクセスを確認" Command="{Binding InspectGitHubAccessCommand}" Margin="0,0,4,0" />
-                <TextBlock Text="この画面での初回ログイン・再ログインは利用できません。"
-                           VerticalAlignment="Center" />
+            </WrapPanel>
+            <WrapPanel Margin="0,0,0,4">
+                <Button Content="GitHubにブラウザでログイン" Command="{Binding GitHubBrowserLoginCommand}" Margin="0,0,4,0" />
+                <Button Content="GitHubにブラウザで再ログイン" Command="{Binding GitHubBrowserReloginCommand}" Margin="0,0,4,0" />
+                <Button Content="認証を中止" Command="{Binding CancelGitHubBrowserLoginCommand}" />
             </WrapPanel>
             <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,4">
                 <Button Content="Fetch" Command="{Binding FetchGitCommand}" Margin="0,0,4,0" />
