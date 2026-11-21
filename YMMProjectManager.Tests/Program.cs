@@ -206,6 +206,8 @@ internal static class Program
         await RunGroupAsync("YmmpxBundleTests.RunAsync", () => YmmpxBundleTests.RunAsync(workRoot));
         await RunGroupAsync("YmmpxFailureTests.RunAsync", () => YmmpxFailureTests.RunAsync(workRoot));
         await RunGroupAsync("YmmpxArchiveValidationTests.RunAsync", () => YmmpxArchiveValidationTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(YmmpxTransferTests), () => YmmpxTransferTests.RunAsync(workRoot));
+        await RunGroupAsync(nameof(YmmpxReleasedFormatTests), () => YmmpxReleasedFormatTests.RunAsync(workRoot));
         await RunGroupAsync("GitRepositoryTests.RunAsync", () => GitRepositoryTests.RunAsync(workRoot));
         await RunGroupAsync("GitRemoteTests.RunAsync", async () =>
         {
@@ -243,6 +245,12 @@ internal static class Program
                     break;
                 case nameof(PreviewComparisonTests):
                     await PreviewComparisonTests.RunAsync();
+                    break;
+                case nameof(YmmpxReleasedFormatTests):
+                    await YmmpxReleasedFormatTests.RunAsync(workRoot);
+                    break;
+                case nameof(YmmpxTransferTests):
+                    await YmmpxTransferTests.RunAsync(workRoot);
                     break;
                 case "RealYmmpxR5":
                     await RealYmmpxR5Tests.RunAsync(workRoot);

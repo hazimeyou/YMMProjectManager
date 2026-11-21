@@ -53,9 +53,32 @@ internal static class ProjectListRecoveryTests
             if (dialogs == priorDialogs || vm.Projects.Count != 0 || !vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 1) throw new Exception("remove failure state");
             fail = false; await vm.RetryProjectListSaveAsync();
             if (vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 0) throw new Exception("remove retry");
-            // The extracted-project registration must propagate its save exception to its caller.
-            var extracted = Path.Combine(root, "extracted.ymmp"); await File.WriteAllTextAsync(extracted, "{}"); fail = true;
-            try { await (Task)typeof(ProjectListViewModel).GetMethod("RegisterExtractedProjectAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.Invoke(vm, [extracted])!; throw new Exception("registration swallowed failure"); } catch (IOException) { }
+            var extracted = Path.Combine(root, "extracted.ymmp");
+            await File.WriteAllTextAsync(extracted, "{}");
+            var extractedIdentity = await ProjectFileEvidence.ReadAsync(extracted);
+            var register = typeof(ProjectListViewModel).GetMethod("RegisterExtractedProjectAsync",
+                System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+            Task RegisterExtract(YMMProjectManager.Domain.ProjectFileIdentity identity, CancellationToken token = default) =>
+                (Task)register.Invoke(vm, [extracted, identity, token])!;
+
+            // A replacement with exactly the original bytes is still a different physical file.
+            File.Move(extracted, Path.Combine(root, "original-extraction.ymmp"));
+            await File.WriteAllTextAsync(extracted, "{}");
+            try { await RegisterExtract(extractedIdentity); throw new Exception("replacement was registered"); }
+            catch (IOException) { }
+            if (vm.HasUnsavedProjectList || vm.Projects.Count != 0 || (await repo.LoadAsync()).Projects.Count != 0)
+                throw new Exception("rejected extraction replacement changed the project list");
+
+            var verifiedIdentity = await ProjectFileEvidence.ReadAsync(extracted);
+            try { await RegisterExtract(verifiedIdentity, new CancellationToken(canceled: true)); throw new Exception("cancelled registration succeeded"); }
+            catch (OperationCanceledException) { }
+            if (vm.HasUnsavedProjectList || vm.Projects.Count != 0)
+                throw new Exception("cancelled registration changed the project list");
+
+            // A verified extraction propagates any subsequent list save failure.
+            fail = true;
+            try { await RegisterExtract(verifiedIdentity); throw new Exception("registration swallowed failure"); }
+            catch (IOException) { }
             if (!vm.HasUnsavedProjectList || (await repo.LoadAsync()).Projects.Count != 0) throw new Exception("registration failure state");
             fail = false; await vm.RetryProjectListSaveAsync();
             if ((await repo.LoadAsync()).Projects.Single().FullPath != extracted || vm.HasUnsavedProjectList) throw new Exception("registration retry");

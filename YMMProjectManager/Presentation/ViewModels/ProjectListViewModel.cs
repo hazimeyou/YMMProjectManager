@@ -29,7 +29,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
     private readonly IProjectGenerationService generationService;
     private readonly YmmpxLibBundleService bundleService;
-    private readonly YmmpxLibInstallGuide ymmpxLibInstallGuide;
     private List<ProjectFolder> folders = [];
     private ProjectEntry? selectedProject;
     private bool isBusy;
@@ -170,7 +169,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpxLibBundleService(logger);
-        ymmpxLibInstallGuide = new YmmpxLibInstallGuide(logger);
 
         RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && retainedRecoverySnapshot is null);
         AssignLegacyProjectIdCommand = new AsyncRelayCommand(AssignLegacyProjectIdAsync, () => isInitialized && !IsBusy && !HasUnsavedProjectList && SelectedProject is { ProjectId: null });
@@ -352,6 +350,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             GitFailure.Authentication => "認証の有効期限、使用するアカウント、認証ヘルパーを確認してください。",
             GitFailure.Permission => "接続先と、対象リポジトリへの権限を確認してください。",
             GitFailure.Network => "接続先、ネットワーク、TLS 設定を確認してください。",
+            GitFailure.RemoteRedirect => "接続先がリダイレクトを要求したため停止しました。正式なURLを確認し、接続先を承認し直してください。",
             GitFailure.Divergence => "送信先の履歴が変更されています。Fetch してブランチの状態を確認してください。",
             GitFailure.Timeout => "制限時間に達しました。接続状況と操作結果を確認してください。",
             GitFailure.PathTooLong => "より短い親フォルダーを選んでください。",
@@ -717,7 +716,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             CommandManager.InvalidateRequerySuggested();
             logger.Info($"Load end. count={Projects.Count}");
             PrepareThumbnailMetadata(Projects.ToList());
-            UpdateYmmpxAvailabilityStatus();
         }).ConfigureAwait(true);
     }
 
@@ -1002,50 +1000,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         await PackageProjectAsync(currentProjectPath).ConfigureAwait(true);
     }
 
-    private Task PackageProjectAsync(string sourcePath) => ExecuteToolAsync("Bundle creation", async token =>
-    {
-        if (!TryGetOpenableProjectPath(sourcePath, out var ymmpPath, out var reason))
-        {
-            MessageBox.Show(reason, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        if (!await EnsureYmmpxLibAvailableAsync(token)) return;
-
-        var defaultOutput = Path.ChangeExtension(ymmpPath, ".ymmpx");
-        var dialog = new SaveFileDialog
-        {
-            Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
-            Title = "ymmpx の新しい保存先を選択（既存ファイルは上書きできません）",
-            FileName = Path.GetFileName(defaultOutput),
-            InitialDirectory = Path.GetDirectoryName(defaultOutput),
-            OverwritePrompt = false,
-        };
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        BundleStatus = "ymmpx を作成中...";
-        BundleProgress = 0;
-        var progress = new Progress<double>(value => BundleProgress = value * 100d);
-        var result = await bundleService.CreatePackageAsync(ymmpPath, dialog.FileName, token, progress);
-        if (!result.Success)
-        {
-            if (IsYmmpxLibMissing(result.ErrorMessage))
-            {
-                await ShowYmmpxLibInstallGuideAsync(token);
-                return;
-            }
-
-            BundleStatus = result.ErrorMessage ?? "YmmpxLib を使った同梱に失敗しました。";
-            MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Warning);
-            return;
-        }
-        BundleProgress = 100;
-        BundleStatus = $"作成完了: {result.OutputPath}\n検出: {result.DetectedMaterialCount} 件 / 同梱: {result.PackagedMaterialCount} 件 / 不足: {result.MissingMaterialCount} 件";
-        MessageBox.Show(BundleStatus, "ymmpx", MessageBoxButton.OK, MessageBoxImage.Information);
-    });
-
     private Task ExtractBundleAsync() => ExecuteToolAsync("Bundle extraction", async token =>
     {
         var bundle = new OpenFileDialog
@@ -1059,7 +1013,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         var parent = new OpenFolderDialog { Title = "新しい展開フォルダーを作成する場所を選択" };
         if (parent.ShowDialog() != true) return;
         var destination = Path.Combine(parent.FolderName, Path.GetFileNameWithoutExtension(bundle.FileName));
-        if (MessageBox.Show($"次の場所に新しいフォルダーを作成します。\n{destination}\n\n同梱されていない素材への参照はパッケージ内の記録を引き継ぎます。",
+        if (MessageBox.Show($"次の場所に新しいフォルダーを作成します。\n{destination}\n\n新しい受け渡し用YMMPXは、同じフォルダーの ymmpm-transfer.json と照合します。従来のYMMPXでは素材名とSHA-256の一致は証明できません。",
             "ymmpx 展開", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
 
         BundleStatus = "ymmpx を展開中...";
@@ -1075,11 +1029,22 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
         BundleProgress = 100;
         BundleStatus = $"展開完了 {result.RestoredProjectPath}\n素材参照の更新 {result.ReplacedPathCount} 件";
+        BundleStatus += result.TransferEvidenceVerified
+            ? $"\n素材名・サイズ・SHA-256 照合済み {result.ExtractedResourceCount} 件"
+            : "\n従来形式で展開しました。素材名・SHA-256 の照合記録はありません。";
+        if (result.MissingMaterials.Count > 0)
+        {
+            BundleStatus += $"\n不足・同梱対象外 {result.MissingMaterials.Count} 件";
+            MessageBox.Show(BundleStatus + "\n\n" + string.Join("\n", result.MissingMaterials.Take(20)) +
+                (result.MissingMaterials.Count > 20 ? "\n（先頭20件）" : ""),
+                "YMMPX の不足素材", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
         if (isInitialized && !HasUnsavedProjectList && retainedRecoverySnapshot is null &&
-            result.RestoredProjectPath is { } restored && MessageBox.Show($"{BundleStatus}\n一覧にも登録しますか？",
+            result.RestoredProjectPath is { } restored && result.RestoredProjectIdentity is { } extractedIdentity &&
+            MessageBox.Show($"{BundleStatus}\n一覧に新しいプロジェクトとして登録しますか？",
                 "ymmpx 展開", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
         {
-            try { await RegisterExtractedProjectAsync(restored); }
+            try { await RegisterExtractedProjectAsync(restored, extractedIdentity, token); }
             catch
             {
                 BundleStatus += "\n一覧への登録に失敗しました。展開済みファイルは保持されています。";
@@ -1088,13 +1053,27 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
     });
 
-    private async Task RegisterExtractedProjectAsync(string restoredYmmpPath)
+    private async Task RegisterExtractedProjectAsync(string restoredYmmpPath, ProjectFileIdentity extractedIdentity, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         var fullPath = Path.GetFullPath(restoredYmmpPath);
         if (Projects.Any(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase))) return;
+        using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
+        await using var file = ProjectFileEvidence.OpenRead(fullPath);
+        var current = await ProjectFileEvidence.ReadAsync(file, token);
+        if (current != extractedIdentity)
+            throw new IOException("展開後にPFが変更されたため、一覧に登録できません。");
+        if (Projects.Any(project => project.FileIdentity is { } known && known.IsSameFile(current)))
+            throw new IOException("同じPFが既に一覧にあります。");
+        token.ThrowIfCancellationRequested();
         var id = Guid.NewGuid();
-        var entry = new ProjectEntry { FullPath = fullPath, ProjectId = id, DisplayName = Path.GetFileNameWithoutExtension(fullPath) };
-        entry.FileIdentity = await ProjectFileEvidence.ReadAsync(fullPath);
+        var entry = new ProjectEntry
+        {
+            FullPath = fullPath,
+            ProjectId = id,
+            DisplayName = Path.GetFileNameWithoutExtension(fullPath),
+            FileIdentity = current,
+        };
         pendingAdditionEvidence[fullPath] = (id, entry.FileIdentity.Sha256);
         entry.LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = fullPath, DisplayName = entry.DisplayName,
             Role = YmmpRole.Main, Exists = true, LastCheckedAt = DateTimeOffset.Now });
@@ -1113,88 +1092,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
 
         window.ShowDialog();
-    }
-
-    private void UpdateYmmpxAvailabilityStatus()
-    {
-        if (bundleService.TryEnsureAvailable(out _))
-        {
-            if (BundleStatus.Contains("YmmpxLibPlugin が未導入です。", StringComparison.Ordinal))
-            {
-                BundleStatus = string.Empty;
-            }
-
-            return;
-        }
-
-        logger.Info($"YmmpxLibPlugin 未導入を検出しました。探索パス={string.Join(" | ", bundleService.SearchedPaths)}");
-        logger.Flush();
-        BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
-    }
-
-    private async Task<bool> EnsureYmmpxLibAvailableAsync(CancellationToken token)
-    {
-        if (bundleService.TryEnsureAvailable(out _))
-        {
-            return true;
-        }
-
-        logger.Info($"YmmpxLibPlugin 未導入を検出しました。探索パス={string.Join(" | ", bundleService.SearchedPaths)}");
-        logger.Flush();
-        BundleStatus = ymmpxLibInstallGuide.GetPassiveStatusMessage();
-        await ShowYmmpxLibInstallGuideAsync(token);
-
-        return false;
-    }
-
-    private async Task ShowYmmpxLibInstallGuideAsync(CancellationToken token)
-    {
-        var legacyPaths = ymmpxLibInstallGuide.FindLegacyFolders(AppContext.BaseDirectory);
-        var message = ymmpxLibInstallGuide.BuildMissingPluginMessage(bundleService.SearchedPaths, legacyPaths);
-
-        logger.Info("YmmpxLibPlugin の導入案内を表示しました。");
-        logger.Flush();
-
-        var answer = MessageBox.Show(
-            message,
-            "ymmpx",
-            MessageBoxButton.YesNo,
-            MessageBoxImage.Information,
-            MessageBoxResult.No);
-
-        if (answer is not MessageBoxResult.Yes)
-        {
-            logger.Info("YmmpxLibPlugin の導入案内でユーザーがキャンセルを選びました。");
-            logger.Flush();
-            return;
-        }
-
-        logger.Info("YmmpxLibPlugin の導入案内でユーザーがダウンロードを選びました。");
-        logger.Flush();
-
-        BundleStatus = "YmmpxLibPlugin のインストーラーをダウンロード中です。";
-        var installResult = await ymmpxLibInstallGuide.DownloadAndLaunchInstallerAsync(token);
-        if (!installResult.Success)
-        {
-            MessageBox.Show(
-                installResult.ErrorMessage ?? "YmmpxLibPlugin のダウンロードまたは起動に失敗しました。ログを確認してください。",
-                "ymmpx",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-            return;
-        }
-
-        MessageBox.Show(
-            "YmmpxLibPlugin のインストーラーを起動しました。\nインストール後に YMM4 を再起動してください。",
-            "ymmpx",
-            MessageBoxButton.OK,
-            MessageBoxImage.Information);
-    }
-
-    private static bool IsYmmpxLibMissing(string? errorMessage)
-    {
-        return !string.IsNullOrWhiteSpace(errorMessage) &&
-               errorMessage.Contains("YmmpxLib が見つかりません", StringComparison.Ordinal);
     }
 
     private async Task GenerateThumbnailsFastAsync()
