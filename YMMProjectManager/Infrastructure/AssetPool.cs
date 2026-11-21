@@ -8,7 +8,8 @@ using System.Text.Json.Serialization;
 namespace YMMProjectManager.Infrastructure;
 
 public sealed record AssetPoolRecord(int SchemaVersion, string OriginalFileName, string DistributionFileName,
-    string Sha256, long Size, string OriginalReference, string CommitId, string? DownloadUrl, string? RedistributionNote);
+    string Sha256, [property: JsonRequired] long Size, string OriginalReference, string CommitId, string? DownloadUrl,
+    string? RedistributionNote);
 
 public sealed record AssetPoolEntry(AssetPoolRecord Record, string ManifestPath, string PayloadPath);
 
@@ -134,8 +135,8 @@ public static class AssetPool
         ArgumentNullException.ThrowIfNull(approvedSearchRoots);
         if (string.IsNullOrEmpty(expectedSha256)) return [];
         ValidateExpectation(expectedOriginalFileName, expectedSha256);
-        var roots = approvedSearchRoots.Select(FullOrdinaryPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        var matches = new Dictionary<string, AssetPoolMatch>(StringComparer.OrdinalIgnoreCase);
+        var roots = approvedSearchRoots.Select(FullOrdinaryPath).Distinct(StringComparer.Ordinal).ToArray();
+        var matches = new Dictionary<string, AssetPoolMatch>(StringComparer.Ordinal);
         if (selectedManifestPath is not null)
         {
             var manifest = FullOrdinaryPath(selectedManifestPath);
@@ -368,14 +369,30 @@ public static class AssetPool
     private static string FullOrdinaryPath(string path)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
-        if (!Path.IsPathFullyQualified(path) || path.StartsWith(@"\\?\", StringComparison.Ordinal) ||
-            path.StartsWith(@"\\.\", StringComparison.Ordinal))
-            throw new ArgumentException("通常の絶対パスを選択してください。", nameof(path));
-        var full = Path.GetFullPath(path);
-        var root = Path.GetPathRoot(full)!;
-        foreach (var part in full[root.Length..].Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries))
+        var normalized = path.Replace('/', '\\');
+        ReadOrdinaryRoot(normalized);
+        var full = Path.GetFullPath(normalized);
+        var root = ReadOrdinaryRoot(full);
+        foreach (var part in full[root.Length..].Split('\\', StringSplitOptions.RemoveEmptyEntries))
             if (!AssetInventory.IsOrdinaryPathComponent(part)) throw new ArgumentException("パスに無効な名前が含まれています。", nameof(path));
         return full;
+    }
+
+    private static string ReadOrdinaryRoot(string path)
+    {
+        if (Path.IsPathFullyQualified(path) && !path.StartsWith(@"\\?\", StringComparison.Ordinal) &&
+            !path.StartsWith(@"\\.\", StringComparison.Ordinal))
+        {
+            var root = Path.GetPathRoot(path)!;
+            if (root.Length == 3 && char.IsAsciiLetter(root[0]) && root[1] == ':' && root[2] == '\\')
+                return root;
+            if (root.StartsWith(@"\\", StringComparison.Ordinal))
+            {
+                var unc = root[2..].TrimEnd('\\').Split('\\');
+                if (unc.Length == 2 && unc.All(AssetInventory.IsOrdinaryPathComponent)) return root;
+            }
+        }
+        throw new ArgumentException("通常のドライブまたは UNC の絶対パスを選択してください。", nameof(path));
     }
 
     private static void ValidateManifestName(string path)
@@ -385,7 +402,9 @@ public static class AssetPool
     }
 
     private static bool IsDescendant(string root, string path) =>
-        path.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        // Windows also supports case-sensitive directories. A case-insensitive string comparison
+        // would accept a path under an unapproved sibling on such a volume.
+        path.StartsWith(Path.EndsInDirectorySeparator(root) ? root : root + Path.DirectorySeparatorChar, StringComparison.Ordinal);
 
     private static bool IsNameCollision(IOException exception) =>
         exception.InnerException is Win32Exception { NativeErrorCode: 80 or 183 };

@@ -4,6 +4,7 @@ using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Relink;
 
@@ -111,6 +112,36 @@ internal static class AssetPoolTests
             var duplicate = JsonSerializer.Serialize(altered).Replace("{", "{\"Size\":0,", StringComparison.Ordinal);
             await File.WriteAllTextAsync(entry.ManifestPath, duplicate);
             await ThrowsAsync<JsonException>(() => AssetPool.LoadAsync(entry.ManifestPath));
+        });
+
+        await Program.RunNamedCaseAsync("Asset pool requires the recorded size even for an empty payload", async () =>
+        {
+            var pool = Directory.CreateDirectory(Path.Combine(root, "empty-pool")).FullName;
+            var source = await CreateFileAsync(root, "empty-source", "empty.wav", "");
+            var entry = await AssetPool.CollectAsync(pool, source, "empty.wav", CommitId);
+            Check((await AssetPool.LoadAsync(entry.ManifestPath)).Size == 0);
+            Check((await AssetPool.FindAsync("empty.wav", Hash(""), [pool], entry.ManifestPath)).Count == 1);
+            var omitted = JsonSerializer.SerializeToNode(entry.Record)!.AsObject();
+            Check(omitted.Remove(nameof(AssetPoolRecord.Size)));
+            await File.WriteAllTextAsync(entry.ManifestPath, omitted.ToJsonString());
+            await ThrowsAsync<JsonException>(() => AssetPool.LoadAsync(entry.ManifestPath));
+            await ThrowsAsync<JsonException>(() => AssetPool.FindAsync("empty.wav", Hash(""), [pool], entry.ManifestPath));
+        });
+
+        await Program.RunNamedCaseAsync("Asset pool rejects device namespace spellings and case-ambiguous manifest scope", async () =>
+        {
+            var pool = Directory.CreateDirectory(Path.Combine(root, "scope-lower")).FullName;
+            var source = await CreateFileAsync(root, "scope-source", "clip.wav", "scope check");
+            var entry = await AssetPool.CollectAsync(pool, source, "clip.wav", CommitId);
+            // Every spelling points only at the synthetic fixture, even if a namespace were accepted.
+            var ordinarySlashPath = entry.ManifestPath.Replace('\\', '/');
+            foreach (var prefix in new[] { "//?/", "//./", @"\\?\", @"\\.\" })
+                await ThrowsAsync<ArgumentException>(() => AssetPool.LoadAsync(prefix + ordinarySlashPath));
+
+            var caseDifferentApproval = Path.Combine(root, "SCOPE-LOWER");
+            await ThrowsAsync<InvalidDataException>(() =>
+                AssetPool.FindAsync("clip.wav", entry.Record.Sha256, [caseDifferentApproval], entry.ManifestPath));
+            Check((await AssetPool.FindAsync("clip.wav", entry.Record.Sha256, [pool], entry.ManifestPath)).Count == 1);
         });
 
         await Program.RunNamedCaseAsync("Strict relink refuses an unapproved directory alias", async () =>
