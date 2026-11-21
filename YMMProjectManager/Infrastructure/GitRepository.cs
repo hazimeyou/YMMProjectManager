@@ -424,10 +424,10 @@ public sealed partial class GitRepository
 
     private Task<GitResult> RunDirectAsync(string[] args, CancellationToken token, bool ignoreLegacyGrafts = false,
         string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null, int? outputLimit = null,
-        string? privateIndex = null) =>
+        string? privateIndex = null, Func<Process, CancellationToken, Task<(string Text, bool Truncated)>>? interaction = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. args], token,
             trustedProcess: true, ignoreLegacyGrafts: ignoreLegacyGrafts, pullSettings: pullSettings, afterStart: afterStart,
-            standardInput: standardInput, outputLimit: outputLimit, privateIndex: privateIndex);
+            standardInput: standardInput, outputLimit: outputLimit, privateIndex: privateIndex, interaction: interaction);
 
     private static bool IsObjectId(string value) => (value.Length == 40 || value.Length == 64) && value.All(Uri.IsHexDigit);
 
@@ -738,7 +738,8 @@ public sealed partial class GitRepository
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
         int? outputLimit = null, string? privateIndex = null, Func<Stream, CancellationToken, Task>? rawOutput = null,
-        bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null, bool preserveReceiverHooks = false)
+        bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null, bool preserveReceiverHooks = false,
+        Func<Process, CancellationToken, Task<(string Text, bool Truncated)>>? interaction = null)
     {
         token.ThrowIfCancellationRequested();
         var start = new ProcessStartInfo(githubTransport?.Executable ??
@@ -747,7 +748,7 @@ public sealed partial class GitRepository
             WorkingDirectory = directory,
             UseShellExecute = false,
             CreateNoWindow = true,
-            RedirectStandardInput = standardInput is not null,
+            RedirectStandardInput = standardInput is not null || interaction is not null,
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             // Git for Windows emits UTF-8 paths in NUL-terminated output.
@@ -832,6 +833,7 @@ public sealed partial class GitRepository
         deadline.CancelAfter(Timeout);
         async Task<(string Text, bool Truncated)> ReadOutputAsync()
         {
+            if (interaction is not null) return await interaction(process, deadline.Token).ConfigureAwait(false);
             if (rawOutput is null) return await ReadGitTextAsync(process.StandardOutput, outputLimit, deadline.Token).ConfigureAwait(false);
             // Closing the pipe on a parse error also releases a child blocked writing output.
             using var stream = process.StandardOutput.BaseStream;

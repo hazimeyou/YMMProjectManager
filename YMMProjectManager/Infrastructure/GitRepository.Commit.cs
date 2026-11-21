@@ -1,5 +1,7 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
@@ -98,6 +100,8 @@ public sealed partial class GitRepository
                 using var registry = OpenAssetRegistryLease();
                 var mediaError = await CheckPublicationTreeAsync(tree, token).ConfigureAwait(false);
                 if (mediaError is not null) return mediaError;
+                var signing = await ReadGitBooleanSettingAsync("commit.gpgSign", token).ConfigureAwait(false);
+                if (signing != false) return UnsafeRemote("Commit signing is required or could not be verified. Use the repository's signing workflow.");
                 var identitySettings = await ReadCommitIdentityAsync(token).ConfigureAwait(false);
                 if (identitySettings is null)
                     return UnsafeRemote("Configure a Git user.name and user.email before committing.");
@@ -133,13 +137,14 @@ public sealed partial class GitRepository
         {
             // From here native Git owns the branch CAS. Late UI cancellation cannot
             // change the reported result of a published commit.
-            var update = await RunPullCommandAsync(session, ["update-ref", "--no-deref", "-m", "YMMProjectManager commit",
-                branch, commit, parent], CancellationToken.None).ConfigureAwait(false);
+            var update = await RunDirectAsync(["update-ref", "-m", "YMMProjectManager commit", "--stdin"], CancellationToken.None,
+                pullSettings: session.Settings, interaction: (process, deadline) =>
+                    PrepareAndCommitRefAsync(session, process, branch, parent, commit, deadline)).ConfigureAwait(false);
             var observed = await RunPullCommandAsync(session, ["rev-parse", "--verify", "--quiet", branch + "^{commit}"],
                 CancellationToken.None).ConfigureAwait(false);
-            if (observed.Success && observed.StandardOutput.Trim() == commit)
+            if (update.Success && update.StandardOutput == "commit: ok" && observed.Success && observed.StandardOutput.Trim() == commit)
                 return new GitResult(0, commit, "");
-            if (!update.Success)
+            if (!update.Success || update.StandardOutput == "abort: ok")
                 return new(1, "", "Git refused the branch update. Refresh Git state before retrying.", GitFailure.ConcurrentOperation);
         }
         catch (Exception ex) when (ex is TimeoutException or IOException or Win32Exception or InvalidOperationException)
@@ -149,20 +154,63 @@ public sealed partial class GitRepository
         return new(1, "", "The Commit outcome could not be verified. Inspect branch history before retrying.", GitFailure.OutcomeUnknown);
     }
 
+    private async Task<(string Text, bool Truncated)> PrepareAndCommitRefAsync(PullSession session, Process process,
+        string branch, string parent, string commit, CancellationToken token)
+    {
+        try
+        {
+            await SendAsync($"start\noption no-deref\nupdate {branch} {commit} {parent}\nprepare\n").ConfigureAwait(false);
+            if (await process.StandardOutput.ReadLineAsync(token).ConfigureAwait(false) != "start: ok" ||
+                await process.StandardOutput.ReadLineAsync(token).ConfigureAwait(false) != "prepare: ok")
+                return ("", false);
+
+            // update-ref can otherwise replace a symbolic branch with the same
+            // dereferenced old OID. Check its raw kind while native Git owns the lock.
+            var raw = await RunPullCommandAsync(session, ["symbolic-ref", "--quiet", "--no-recurse", branch], token).ConfigureAwait(false);
+            var ordinary = raw.ExitCode == 1 && raw.StandardOutput.Length == 0 && raw.StandardError.Length == 0;
+            await SendAsync(ordinary && !HasPendingPullEvidence() ? "commit\n" : "abort\n").ConfigureAwait(false);
+            return (await process.StandardOutput.ReadLineAsync(token).ConfigureAwait(false) ?? "", false);
+        }
+        finally
+        {
+            // EOF also aborts a prepared update that has not received commit.
+            process.StandardInput.Close();
+        }
+
+        async Task SendAsync(string command)
+        {
+            await process.StandardInput.BaseStream.WriteAsync(Encoding.UTF8.GetBytes(command), token).ConfigureAwait(false);
+            await process.StandardInput.BaseStream.FlushAsync(token).ConfigureAwait(false);
+        }
+    }
+
     private async Task<string[]?> ReadCommitIdentityAsync(CancellationToken token)
     {
+        var useConfigOnly = await ReadGitBooleanSettingAsync("user.useConfigOnly", token).ConfigureAwait(false);
+        if (useConfigOnly is null) return null;
         var settings = new List<string>();
         foreach (var key in new[] { "user.name", "user.email" })
         {
             var value = await RunDirectAsync(["config", "-z", "--get", key], token, outputLimit: 2048).ConfigureAwait(false);
             if (!value.Success && value.ExitCode == 1 && value.StandardOutput.Length == 0 && value.StandardError.Length == 0)
+            {
+                if (useConfigOnly == true) return null;
                 continue; // Git may have a usable OS identity.
+            }
             if (!value.Success || value.StandardError.Length != 0 || !value.StandardOutput.EndsWith('\0') ||
                 HasHiddenText(value.StandardOutput[..^1])) return null;
             settings.Add("-c");
             settings.Add(key + "=" + value.StandardOutput[..^1]);
         }
         return settings.ToArray();
+    }
+
+    private async Task<bool?> ReadGitBooleanSettingAsync(string key, CancellationToken token)
+    {
+        var result = await RunDirectAsync(["config", "--type=bool", "--get", key], token, outputLimit: 2048).ConfigureAwait(false);
+        if (result.StandardError.Length != 0) return null;
+        if (result.ExitCode == 1 && result.StandardOutput.Length == 0) return false;
+        return result.Success && bool.TryParse(result.StandardOutput.Trim(), out var enabled) ? enabled : null;
     }
 
     private static GitResult BusyIndex() =>

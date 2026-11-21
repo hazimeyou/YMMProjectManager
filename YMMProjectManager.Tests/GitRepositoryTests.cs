@@ -12,17 +12,11 @@ internal static class GitRepositoryTests
         static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
         Check((await git.InitializeAsync()).Success, "git init");
         foreach (var (key, value) in new[] { ("user.name", "Synthetic Tester"), ("user.email", "synthetic@example.invalid") })
-        {
-            var start = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-            foreach (var arg in new[] { "config", "--local", key, value }) start.ArgumentList.Add(arg);
-            using var process = Process.Start(start)!; await process.WaitForExitAsync(); Check(process.ExitCode == 0, "git config");
-        }
+            await CommandAsync(root, "config", "--local", key, value);
         var marker = Path.Combine(root, "fsmonitor-ran");
         var monitor = Path.Combine(root, "monitor.sh");
         await File.WriteAllTextAsync(monitor, "#!/bin/sh\nprintf invoked > fsmonitor-ran\n");
-        var config = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var arg in new[] { "config", "--local", "core.fsmonitor", monitor.Replace('\\', '/') }) config.ArgumentList.Add(arg);
-        using (var process = Process.Start(config)!) { await process.WaitForExitAsync(); Check(process.ExitCode == 0, "fsmonitor config"); }
+        await CommandAsync(root, "config", "--local", "core.fsmonitor", monitor.Replace('\\', '/'));
         await git.StatusAsync();
         Check(!File.Exists(marker), "untrusted fsmonitor was executed");
         await File.WriteAllTextAsync(Path.Combine(root, "one.txt"), "original");
@@ -58,6 +52,8 @@ internal static class GitRepositoryTests
             Check((await git.StageAsync(["parameters.txt"])).Success, "stage for parameters test");
             Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", $"'core.hooksPath={hooks.Replace('\\', '/')}'");
             var probe = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+            ConfigureFixtureGit(probe);
+            probe.Environment["GIT_CONFIG_PARAMETERS"] = Environment.GetEnvironmentVariable("GIT_CONFIG_PARAMETERS");
             foreach (var arg in new[] { "config", "--get", "core.hooksPath" }) probe.ArgumentList.Add(arg);
             using (var process = Process.Start(probe)!)
             {
@@ -69,9 +65,7 @@ internal static class GitRepositoryTests
             Check(!File.Exists(Path.Combine(root, "injected-hook-ran")), "Git executed GIT_CONFIG_PARAMETERS-injected hook");
         }
         finally { Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", previousParameters); }
-        var hookConfig = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true };
-        foreach (var arg in new[] { "config", "--local", "core.hooksPath", hooks.Replace('\\', '/') }) hookConfig.ArgumentList.Add(arg);
-        using (var process = Process.Start(hookConfig)!) { await process.WaitForExitAsync(); Check(process.ExitCode == 0, "fixture local hook config"); }
+        await CommandAsync(root, "config", "--local", "core.hooksPath", hooks.Replace('\\', '/'));
         await File.WriteAllTextAsync(Path.Combine(root, "local-hook.txt"), "synthetic");
         Check((await git.StageAsync(["local-hook.txt"])).Success && (await git.CommitAsync("local hook fixture")).Success, "local hook commit");
         Check(!File.Exists(Path.Combine(root, "injected-hook-ran")), "reviewed Commit must not execute repository-configured hooks");
@@ -230,6 +224,10 @@ internal static class GitRepositoryTests
         Require(plan is not null && plan.Paths.SequenceEqual(["scène.txt"]), "exact staged path list");
         var index = await File.ReadAllBytesAsync(Path.Combine(root, ".git", "index"));
         await File.WriteAllTextAsync(changed, "later unstaged text");
+        await CommandAsync(root, "config", "--local", "commit.gpgSign", "true");
+        var signingRequired = await git.CommitAsync(plan!, "must not bypass required signing");
+        Require(!signingRequired.Success && signingRequired.StandardError.Contains("signing"), "required signing was silently bypassed");
+        await CommandAsync(root, "config", "--local", "--unset", "commit.gpgSign");
         var commit = await git.CommitAsync(plan!, "レビュー済み\n\nSecond paragraph");
         Require(commit.Success && (await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit.StandardOutput,
             "published commit OID");
@@ -288,6 +286,21 @@ internal static class GitRepositoryTests
         Require(rejected.Failure == GitFailure.ConcurrentOperation, "branch CAS accepted competing update");
         Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit, "concurrent branch update preserved");
         Require((await CommandAsync(root, "symbolic-ref", "HEAD")).Trim() == current.BranchRef, "HEAD pin was ineffective");
+
+        await File.WriteAllTextAsync(file, "new approved staging");
+        Require((await git.StageAsync(["scène.txt"])).Success, "stage current data for raw ref verification");
+        var actual = (await git.InspectCommitAsync()).CommitTarget!;
+        const string alternate = "refs/heads/alternate";
+        await CommandAsync(root, "update-ref", alternate, commit);
+        var alias = new GitRepository(root)
+        {
+            BeforeCommitRefUpdate = () =>
+                CommandAsync(root, "symbolic-ref", actual.BranchRef, alternate).GetAwaiter().GetResult(),
+        };
+        Require((await alias.CommitAsync(actual, "must preserve symbolic branch")).Failure == GitFailure.ConcurrentOperation,
+            "ref CAS overwrote an alias with the same dereferenced parent");
+        Require((await CommandAsync(root, "symbolic-ref", actual.BranchRef)).Trim() == alternate &&
+                (await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit, "symbolic branch or its commit changed");
     }
 
     private static async Task<string> MakeCommitFixtureAsync(string workRoot, string name)
