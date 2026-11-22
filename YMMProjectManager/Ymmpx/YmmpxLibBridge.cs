@@ -8,6 +8,7 @@ using YMMProjectManager.Domain.Packaging;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=YmmpxLibBridge,YMMPXライブラリ連携
 public sealed class YmmpxLibBridge
 {
     //CSJ,field=logger,ロガー

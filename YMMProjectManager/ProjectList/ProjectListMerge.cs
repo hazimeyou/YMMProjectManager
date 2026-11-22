@@ -16,6 +16,7 @@ internal sealed record ProjectListMergeResult(ProjectStore? Store, IReadOnlyList
 }
 
 // Index rows by known logical identity across moves, and reject ambiguous legacy moves.
+//CSJ,class=ProjectListMerge,プロジェクト一覧の三方向マージ
 internal static class ProjectListMerge
 {
     //CSJ,method=Snapshot,スナップショット

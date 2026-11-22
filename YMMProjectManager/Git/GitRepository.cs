@@ -6,6 +6,7 @@ using System.Text;
 namespace YMMProjectManager.Infrastructure.Git;
 
 /// <summary>Coordinates local and remote Git operations against the selected repository.</summary>
+//CSJ,class=GitRepository,Gitリポジトリ操作
 public sealed partial class GitRepository
 {
     //CSJ,field=Timeout,タイムアウト

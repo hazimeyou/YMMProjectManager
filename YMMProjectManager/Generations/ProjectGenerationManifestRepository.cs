@@ -4,6 +4,7 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Infrastructure.Generations;
 
+//CSJ,class=ProjectGenerationManifestRepository,世代目録の入出力
 public sealed class ProjectGenerationManifestRepository
 {
     //CSJ,field=storage,保管

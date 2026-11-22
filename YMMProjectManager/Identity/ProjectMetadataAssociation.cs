@@ -1,5 +1,6 @@
 namespace YMMProjectManager.Domain;
 
+//CSJ,record=ProjectMetadataAssociation,プロジェクトとメタデータの関連付け
 public sealed record ProjectMetadataAssociation(
     string Directory,
     Guid RootRevisionId,

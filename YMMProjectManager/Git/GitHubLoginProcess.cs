@@ -6,6 +6,7 @@ using Microsoft.Win32.SafeHandles;
 namespace YMMProjectManager.Infrastructure.Git;
 
 /// <summary>Keeps the helper inside a kill-on-close Windows job from its first instruction.</summary>
+//CSJ,class=GitHubLoginProcess,GitHub認証補助プロセス
 internal sealed class GitHubLoginProcess : IDisposable
 {
     //CSJ,field=HandleList,ハンドル一覧

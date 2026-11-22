@@ -13,6 +13,7 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Infrastructure.Generations;
 
+//CSJ,class=ProjectGenerationService,プロジェクトの世代管理
 public sealed class ProjectGenerationService : IProjectGenerationService
 {
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -47,6 +48,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     //CSJ,method=GetProjectDirectory,プロジェクトディレクトリを取得する
     public string GetProjectDirectory(string projectPath) => storage.GetProjectDirectory(hashService.ComputeProjectId(projectPath));
 
+    //CSJ,method=CreateGenerationAsync,新しい世代を保存する
     public async Task<ProjectGenerationRecord> CreateGenerationAsync(string projectPath, string displayName, string? memo, CancellationToken cancellationToken = default)
     {
         //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
@@ -282,6 +284,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         return diagnostics;
     }
 
+    //CSJ,method=RestoreGenerationAsync,指定世代から復元する
     public async Task<(bool Success, string? ErrorMessage, ProjectGenerationRecord? Generation)> RestoreGenerationAsync(string projectPath, string generationId, GenerationRestoreMode restoreMode, CancellationToken cancellationToken = default)
     {
         if (!ProjectGenerationStorage.IsValidGenerationId(generationId)) return (false, "世代 ID が不正です。", null);

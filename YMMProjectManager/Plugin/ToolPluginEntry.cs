@@ -9,6 +9,7 @@ using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Plugin;
 
+//CSJ,class=ToolPluginEntry,プロジェクト管理ツールの入口
 public sealed class ToolPluginEntry : IToolPlugin
 {
     //CSJ,field=Logger,ロガー

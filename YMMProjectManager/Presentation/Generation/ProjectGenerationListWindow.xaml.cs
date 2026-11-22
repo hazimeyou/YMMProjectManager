@@ -11,6 +11,7 @@ using YMMProjectManager.Infrastructure.Generations;
 
 namespace YMMProjectManager.Presentation.Generation;
 
+//CSJ,class=ProjectGenerationListWindow,保存世代の一覧画面
 public partial class ProjectGenerationListWindow : Window, INotifyPropertyChanged
 {
     //CSJ,field=logger,ロガー

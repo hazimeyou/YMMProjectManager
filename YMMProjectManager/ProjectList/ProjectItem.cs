@@ -27,6 +27,7 @@ public enum YmmpRole
     Unknown,
 }
 
+//CSJ,class=LinkedYmmpFile,関連YMMPファイル
 public sealed class LinkedYmmpFile : INotifyPropertyChanged
 {
     //CSJ,field=filePath,ファイルパス
@@ -150,6 +151,7 @@ public sealed class LinkedYmmpFile : INotifyPropertyChanged
     }
 }
 
+//CSJ,class=ProjectFolder,プロジェクト分類フォルダー
 public sealed class ProjectFolder : INotifyPropertyChanged
 {
     //CSJ,field=name,名前
@@ -208,6 +210,7 @@ public sealed class ProjectFolder : INotifyPropertyChanged
     }
 }
 
+//CSJ,class=ProjectEntry,登録プロジェクト
 public sealed class ProjectEntry : INotifyPropertyChanged
 {
     //CSJ,field=thumbnailSource,サムネイル元
@@ -262,6 +265,7 @@ public sealed class ProjectEntry : INotifyPropertyChanged
     }
     //CSJ,property=FolderId,フォルダーID
     public Guid? FolderId { get; set; }
+    //CSJ,property=LinkedYmmpFiles,関連YMMPファイル一覧
     public ObservableCollection<LinkedYmmpFile> LinkedYmmpFiles { get; } = [];
 
     //CSJ,property=ThumbnailSource,サムネイル元

@@ -13,6 +13,7 @@ using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Infrastructure;
 
+//CSJ,class=JsonProjectRepository,プロジェクト一覧のJSON入出力
 public sealed class JsonProjectRepository : IProjectRepository
 {
     //CSJ,field=PluginDirectoryName,プラグインディレクトリ名
@@ -91,6 +92,7 @@ public sealed class JsonProjectRepository : IProjectRepository
     //CSJ,property=RecoveryDirectory,復旧ディレクトリ
     internal string RecoveryDirectory => Path.GetFullPath(jsonPath) + ".recovery";
 
+    //CSJ,method=LoadAsync,プロジェクト一覧を読み込む
     public async Task<ProjectStore> LoadAsync(CancellationToken cancellationToken = default)
     {
         try
@@ -373,6 +375,7 @@ public sealed class JsonProjectRepository : IProjectRepository
         return false;
     }
 
+    //CSJ,method=SaveAsync,プロジェクト一覧を保存する
     public Task SaveAsync(ProjectStore store, CancellationToken cancellationToken = default) =>
         SaveCoreAsync(store, null, cancellationToken);
 

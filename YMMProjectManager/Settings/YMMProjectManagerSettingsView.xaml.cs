@@ -5,6 +5,7 @@ using Microsoft.Win32;
 
 namespace YMMProjectManager.Settings;
 
+//CSJ,class=YMMProjectManagerSettingsView,プロジェクト管理の設定画面
 public partial class YMMProjectManagerSettingsView : UserControl
 {
     //CSJ,field=settings,設定

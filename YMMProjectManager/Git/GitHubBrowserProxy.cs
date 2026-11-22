@@ -6,6 +6,7 @@ using System.Text;
 namespace YMMProjectManager.Infrastructure.Git;
 
 /// <summary>A private TLS tunnel for the two HTTPS origins used by the reviewed GCM GitHub flow.</summary>
+//CSJ,class=GitHubBrowserProxy,GitHub認証プロキシ
 internal sealed class GitHubBrowserProxy : IAsyncDisposable
 {
     private const int HeaderLimit = 8192;

@@ -68,6 +68,7 @@ public sealed class AssetPoolVerification : IAsyncDisposable
 }
 
 /// <summary>Collects selected assets into an existing folder and searches only approved folders.</summary>
+//CSJ,class=AssetPool,素材の収集と再利用
 public static class AssetPool
 {
     //CSJ,field=ManifestFileName,目録ファイル名

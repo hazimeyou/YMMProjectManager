@@ -8,6 +8,7 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Infrastructure.Generations;
 
+//CSJ,class=ProjectGenerationStorage,世代ファイルの保管
 public sealed class ProjectGenerationStorage
 {
     //CSJ,field=JsonOptions,JSONオプション

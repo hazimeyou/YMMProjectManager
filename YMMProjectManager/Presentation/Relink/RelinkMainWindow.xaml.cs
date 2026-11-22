@@ -10,6 +10,7 @@ using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Presentation.Relink;
 
+//CSJ,class=RelinkMainWindow,素材の再リンク画面
 public partial class RelinkMainWindow : Window
 {
     //CSJ,field=ProgressUiInterval,進捗UI間隔

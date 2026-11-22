@@ -29,8 +29,10 @@ public enum AssetReferenceStatus { Present, Missing, Changed, External, Unavaila
 public sealed record AssetReference(string Path, AssetReferenceStatus Status, AssetMetadata? Actual, AssetMetadata? Expected);
 
 /// <summary>Inspects explicitly selected local assets; it never modifies media files.</summary>
+//CSJ,class=AssetInventory,参照素材の調査
 public static class AssetInventory
 {
+    //CSJ,method=ScanProjectAsync,参照素材を調べる
     public static async Task<IReadOnlyList<AssetReference>> ScanProjectAsync(string projectPath,
         IReadOnlyList<AssetMetadata>? expected = null, CancellationToken token = default)
     {

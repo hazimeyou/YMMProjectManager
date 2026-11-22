@@ -24,6 +24,7 @@ public sealed class TimelineRelinkContext
     public required List<RelinkRow> Rows { get; init; }
 }
 
+//CSJ,class=TimelineMediaRelinkService,タイムライン内の素材再リンク
 public sealed class TimelineMediaRelinkService
 {
     //CSJ,field=logger,ロガー

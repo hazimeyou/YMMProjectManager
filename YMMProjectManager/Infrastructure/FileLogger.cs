@@ -4,6 +4,7 @@ using System.Text;
 
 namespace YMMProjectManager.Infrastructure;
 
+//CSJ,class=FileLogger,ファイルログ出力
 public sealed class FileLogger
 {
     //CSJ,field=logPath,ログパス

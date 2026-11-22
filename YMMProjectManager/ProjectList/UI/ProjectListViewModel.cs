@@ -22,6 +22,7 @@ using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 {
     //CSJ,field=logger,ロガー
@@ -98,6 +99,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
     }
 
+    //CSJ,property=SelectedProject,選択中のプロジェクト
     public ProjectEntry? SelectedProject
     {
         get => selectedProject;

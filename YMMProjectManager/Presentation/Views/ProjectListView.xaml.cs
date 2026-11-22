@@ -8,6 +8,7 @@ using YMMProjectManager.Presentation.ViewModels;
 
 namespace YMMProjectManager.Presentation.Views;
 
+//CSJ,class=ProjectListView,プロジェクト一覧画面
 public partial class ProjectListView : UserControl
 {
     private bool initialized;

@@ -9,6 +9,7 @@ namespace YMMProjectManager.Infrastructure;
 /// All cooperating writers must use this API and the same path. Appends hold the revision files read
 /// during validation until publication, while other writers can still add independent directory entries.
 /// </summary>
+//CSJ,class=AssetRevisionSeries,素材目録の版履歴
 public static class AssetRevisionSeries
 {
     //CSJ,record=Head,版系列の先端

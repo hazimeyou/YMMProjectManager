@@ -200,6 +200,7 @@ public sealed class RelinkDocumentContext
     internal byte[]? OriginalBytes { get; init; }
 }
 
+//CSJ,class=RelinkScanService,素材リンクの調査
 public sealed class RelinkScanService
 {
     //CSJ,field=logger,ロガー
@@ -397,6 +398,7 @@ public sealed class RelinkScanService
     }
 }
 
+//CSJ,class=RelinkSearchService,再リンク候補の検索
 public sealed class RelinkSearchService
 {
     //CSJ,field=logger,ロガー
@@ -628,6 +630,7 @@ public sealed class RelinkSearchService
     }
 }
 
+//CSJ,class=RelinkSaveService,再リンク結果の保存
 public sealed class RelinkSaveService
 {
     //CSJ,field=logger,ロガー

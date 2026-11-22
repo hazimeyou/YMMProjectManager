@@ -8,6 +8,7 @@ namespace YMMProjectManager.Infrastructure;
 public sealed record AssetDerivation(Guid SourceProjectId, Guid SourceRootRevisionId, string SourceRootSha256,
     Guid SourceRevisionId, string SourceRevisionSha256, string SourceProjectSha256);
 
+//CSJ,record=AssetManifest,素材目録
 public sealed record AssetManifest(
     int SchemaVersion,
     Guid ProjectId,
@@ -23,6 +24,7 @@ public sealed record AssetManifest(
 }
 
 /// <summary>Writes immutable project-associated revisions; existing metadata is never replaced.</summary>
+//CSJ,class=AssetManifestStore,素材目録の入出力
 public static class AssetManifestStore
 {
     //CSJ,method=Create,作成する

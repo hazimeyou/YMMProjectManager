@@ -5,6 +5,7 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Application;
 
+//CSJ,class=ProjectStore,プロジェクト一覧データ
 public sealed class ProjectStore
 {
     //CSJ,property=Projects,プロジェクト一覧

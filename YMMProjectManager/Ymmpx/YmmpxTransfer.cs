@@ -10,6 +10,7 @@ using static YMMProjectManager.Infrastructure.OwnedFilePublication;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=YmmpxTransfer,YMMPXパッケージの受け渡し
 internal static class YmmpxTransfer
 {
     //CSJ,field=ManifestName,目録名前

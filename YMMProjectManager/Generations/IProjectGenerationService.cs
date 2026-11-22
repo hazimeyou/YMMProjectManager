@@ -2,13 +2,16 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Application;
 
+//CSJ,interface=IProjectGenerationService,プロジェクト世代管理の契約
 public interface IProjectGenerationService
 {
+    //CSJ,method=CreateGenerationAsync,新しい世代を保存する
     Task<ProjectGenerationRecord> CreateGenerationAsync(string projectPath, string displayName, string? memo, CancellationToken cancellationToken = default);
     //CSJ,method=GetGenerationsAsync,世代を取得する（非同期）
     Task<IReadOnlyList<ProjectGenerationRecord>> GetGenerationsAsync(string projectPath, CancellationToken cancellationToken = default);
     //CSJ,method=GetDiagnosticsAsync,診断情報を取得する（非同期）
     Task<ProjectGenerationDiagnostics> GetDiagnosticsAsync(string projectPath, CancellationToken cancellationToken = default);
+    //CSJ,method=RestoreGenerationAsync,指定世代から復元する
     Task<(bool Success, string? ErrorMessage, ProjectGenerationRecord? Generation)> RestoreGenerationAsync(string projectPath, string generationId, GenerationRestoreMode restoreMode, CancellationToken cancellationToken = default);
     //CSJ,method=DeleteGenerationAsync,世代を削除する（非同期）
     Task<(bool Success, string? ErrorMessage)> DeleteGenerationAsync(string projectPath, string generationId, CancellationToken cancellationToken = default);

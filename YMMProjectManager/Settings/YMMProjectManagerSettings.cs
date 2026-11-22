@@ -6,6 +6,7 @@ using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Settings;
 
+//CSJ,class=YMMProjectManagerSettings,プロジェクト管理設定
 public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>
 {
     //CSJ,field=SettingsDirectoryName,設定ディレクトリ名
