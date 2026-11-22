@@ -17,7 +17,7 @@ public partial class ScrubThumbnailControl : UserControl
 {
     private const int ThumbCount = 64;
     //CSJ,field=Logger,ロガー
-    private static readonly FileLogger Logger = CreateLogger();
+    private static readonly FileLogger Logger = PluginDiagnostics.Logger;
 
     //CSJ,field=currentIndex,現在のインデックス
     private int currentIndex = -1;
@@ -149,15 +149,6 @@ public partial class ScrubThumbnailControl : UserControl
 
         control.currentIndex = -1;
         _ = control.SetIndexAsync(0);
-    }
-
-    //CSJ,method=CreateLogger,ロガーを作成する
-    private static FileLogger CreateLogger()
-    {
-        var assemblyDir = Path.GetDirectoryName(typeof(ScrubThumbnailControl).Assembly.Location) ?? AppContext.BaseDirectory;
-        //CSJ,variable=logPath,ログパス
-        var logPath = Path.Combine(assemblyDir, "logs", "YMMProjectManager.log");
-        return new FileLogger(logPath);
     }
 
     private static int Clamp(int value, int min, int max)

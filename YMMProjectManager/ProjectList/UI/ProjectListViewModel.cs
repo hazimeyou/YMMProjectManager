@@ -234,7 +234,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     public string AssetStatus { get => assetStatus; private set => SetProperty(ref assetStatus, value); }
 
     public ProjectListViewModel()
-        : this(CreateLogger(), null)
+        : this(PluginDiagnostics.Logger, null)
     {
     }
 
@@ -978,15 +978,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             IsBusy = false;
         }
-    }
-
-    //CSJ,method=CreateLogger,ロガーを作成する
-    private static FileLogger CreateLogger()
-    {
-        var assemblyDir = Path.GetDirectoryName(typeof(ProjectListViewModel).Assembly.Location) ?? AppContext.BaseDirectory;
-        //CSJ,variable=logPath,ログパス
-        var logPath = Path.Combine(assemblyDir, "logs", "YMMProjectManager.log");
-        return new FileLogger(logPath);
     }
 
     private static bool TryGetOpenableProjectPath(string sourcePath, out string fullPath, out string reason)
