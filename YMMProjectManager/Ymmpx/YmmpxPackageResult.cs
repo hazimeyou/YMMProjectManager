@@ -3,6 +3,8 @@ namespace YMMProjectManager.Domain.Packaging;
 //CSJ,class=YmmpxPackageResult,YMMPXパッケージ結果
 public sealed class YmmpxPackageResult
 {
+    internal (ulong, Guid)? PublishedIdentity { get; init; }
+
     //CSJ,property=Success,成功
     public bool Success { get; init; }
 

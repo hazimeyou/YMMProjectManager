@@ -23,6 +23,13 @@ public sealed partial class ProjectListViewModel
             return;
         }
 
+        if (!await Task.Run(() => bundleService.TryEnsureAvailable(out _), token))
+        {
+            BundleStatus = bundleService.MissingLibraryMessage;
+            MessageBox.Show(BundleStatus, "YMMPX 素材受け渡し", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         //CSJ,variable=location,場所
         var location = MessageBox.Show(
             $"対象PF\n{projectPath}\n\nPFのフォルダー内で、PFが参照する素材を確認します。追加の素材フォルダーも選ぶには「はい」を選択してください。「いいえ」ではPFのフォルダーだけを使います。",

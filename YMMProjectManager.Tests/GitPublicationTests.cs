@@ -195,7 +195,7 @@ internal static class GitPublicationTests
                 //CSJ,variable=blockedPaths,停止パス一覧
                 var blockedPaths = new[] { "ymmpm-transfer.json", $".ymmpm-transfer-{operation}/new.ymmp",
                     $".ymmpm-package-{operation}/copy.ymmp", $".ymmpx-{operation}/copy.ymmp",
-                    "resources/ymmpm-transfer/00000001/clip.txt",
+                    "resources/ymmpm-transfer/00000001/clip.txt", "resources/ymmpm-asset-00000001-file.txt",
                     "ymmpm-missing/00000001/clip.txt" };
                 var objects = Path.Combine(source, ".git", "objects");
                 var before = Directory.GetFiles(objects, "*", SearchOption.AllDirectories);
@@ -227,7 +227,7 @@ internal static class GitPublicationTests
             //CSJ,variable=missing,欠落
             var missing = """{"Timelines":[{"Items":[{"FilePath":"ymmpm-missing/0000000b/clip.txt"}]}]}""";
             var layers = """{"Timelines":[{"Items":[{"enableLayersFilePath":"resources/ymmpm-transfer/0000000c/layers.psd"}]}]}""";
-            foreach (var (name, contents) in new[] { ("manifest", manifest), ("bundled", bundled), ("missing", missing), ("layers", layers) })
+            foreach (var (name, contents) in new[] { ("manifest", manifest), ("v2", """{"YMMProjectManagerTransferV2":{},"Timelines":[]}"""), ("bundled", bundled), ("missing", missing), ("layers", layers) })
                 await TestAsync(root, "r23-transfer-" + name, async (source, git) =>
                 {
                     //CSJ,variable=file,ファイル

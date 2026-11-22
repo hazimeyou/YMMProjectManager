@@ -16,7 +16,7 @@ public sealed class YmmpxLibBundleService
     }
 
     //CSJ,property=MissingLibraryMessage,欠落ライブラリメッセージ
-    public string? MissingLibraryMessage => bridge.MissingLibraryMessage;
+    public string MissingLibraryMessage => bridge.MissingLibraryMessage;
 
     //CSJ,property=SearchedPaths,検索済みのパス一覧
     public IReadOnlyList<string> SearchedPaths => bridge.SearchedPaths;
@@ -74,7 +74,7 @@ public sealed class YmmpxLibBundleService
         //CSJ,parameter=progress,進捗
         IProgress<double>? progress = null)
     {
-        return Task.Run(() => YmmpxTransfer.CreateAsync(plan, approvals, newOutputDirectory, token, progress, logger), token);
+        return Task.Run(() => YmmpxTransfer.CreateAsync(plan, approvals, newOutputDirectory, token, progress, logger, bridge), token);
     }
 
     //CSJ,method=ExtractTransferAsync,受け渡しを抽出する（非同期）

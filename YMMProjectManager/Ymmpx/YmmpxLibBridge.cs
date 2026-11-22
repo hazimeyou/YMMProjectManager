@@ -52,14 +52,17 @@ public sealed class YmmpxLibBridge
     }
 
     //CSJ,method=CreatePackageAsync,パッケージを作成する（非同期）
-    public async Task<YmmpxPackageResult> CreatePackageAsync(
+    public Task<YmmpxPackageResult> CreatePackageAsync(
         //CSJ,parameter=ymmpPath,YMMPパス
         string ymmpPath,
         //CSJ,parameter=outputYmmpxPath,出力YMMPXパス
         string outputYmmpxPath,
         CancellationToken token,
         //CSJ,parameter=progress,進捗
-        IProgress<double>? progress = null)
+        IProgress<double>? progress = null) => CreatePackageAsync(ymmpPath, outputYmmpxPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), token, progress);
+
+    internal async Task<YmmpxPackageResult> CreatePackageAsync(string ymmpPath, string outputYmmpxPath,
+        ISet<string> excludedFiles, CancellationToken token, IProgress<double>? progress)
     {
         token.ThrowIfCancellationRequested();
         //CSJ,variable=assembly,アセンブリ
@@ -155,8 +158,8 @@ public sealed class YmmpxLibBridge
                 ?? throw new MissingMethodException("CreatePackageAsync が見つかりません。");
 
             var args = createMethod.GetParameters().Length >= 6
-                ? new object?[] { ymmpPath, temporaryPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter, token }
-                : new object?[] { ymmpPath, temporaryPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), options, reporter };
+                ? new object?[] { ymmpPath, temporaryPath, excludedFiles, options, reporter, token }
+                : new object?[] { ymmpPath, temporaryPath, excludedFiles, options, reporter };
 
             var taskObj = createMethod.Invoke(null, args) ?? throw new InvalidOperationException("CreatePackageAsync の戻り値が null です。");
             if (taskObj is not Task task)
@@ -186,6 +189,7 @@ public sealed class YmmpxLibBridge
                 Status = link.Exists ? "packaged" : "missing",
             }).ToArray();
             token.ThrowIfCancellationRequested();
+            var publishedIdentity = ProjectFileEvidence.ReadPhysicalIdentity(validatedPackage);
             try { YmmpxPackageReader.RenameOpenedPath(validatedPackage.SafeFileHandle, destination); }
             catch (IOException) when (File.Exists(destination) || Directory.Exists(destination))
             {
@@ -202,6 +206,7 @@ public sealed class YmmpxLibBridge
             {
                 Success = true,
                 OutputPath = packagedOutputPath,
+                PublishedIdentity = publishedIdentity,
                 DetectedMaterialCount = scan.DetectedCount,
                 PackagedMaterialCount = resourceCount,
                 MissingMaterialCount = scan.MissingCount,

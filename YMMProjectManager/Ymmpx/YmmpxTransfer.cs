@@ -1,5 +1,4 @@
 using System.IO;
-using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -15,6 +14,8 @@ internal static class YmmpxTransfer
 {
     //CSJ,field=ManifestName,目録名前
     internal const string ManifestName = "ymmpm-transfer.json";
+    internal const string EvidenceProperty = "YMMProjectManagerTransferV2";
+    internal const string LibraryMediaPrefix = "resources/ymmpm-asset-";
     internal const string ArchiveCommentPrefix = "YMMProjectManager transfer v1:";
     //CSJ,field=MediaPrefix,メディア接頭辞
     internal const string MediaPrefix = "resources/ymmpm-transfer/";
@@ -115,7 +116,7 @@ internal static class YmmpxTransfer
     //CSJ,method=CreateAsync,作成する（非同期）
     internal static async Task<YmmpxPackageResult> CreateAsync(YmmpxTransferPlan plan,
         IReadOnlyDictionary<string, YmmpxTransferPermission> approvals, string outputDirectory,
-        CancellationToken token, IProgress<double>? progress, FileLogger logger)
+        CancellationToken token, IProgress<double>? progress, FileLogger logger, YmmpxLibBridge bridge)
     {
         //CSJ,variable=final,最終
         var final = Path.TrimEndingDirectorySeparator(AssetPool.FullOrdinaryPath(Path.GetFullPath(outputDirectory)));
@@ -166,82 +167,25 @@ internal static class YmmpxTransfer
         var published = false;
         try
         {
-            //CSJ,variable=packageHash,パッケージハッシュ
+            if (!bridge.TryEnsureAvailable(out _))
+                return new YmmpxPackageResult { ErrorMessage = bridge.MissingLibraryMessage };
+            if (project.Any(field => field.Key.Equals(EvidenceProperty, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidDataException("プロジェクトに受け渡し用の予約項目があります。元ファイルを保持しました。");
+
+            var packed = await PackApprovedInputsAsync(parent, plan, confirmations, project, references, packagePath,
+                assets, missing, token, progress, bridge, logger).ConfigureAwait(false);
+            if (!packed.Success) return packed;
+            owned.Add(packagePath, packed.PublishedIdentity ?? throw new IOException("YMMPX 出力を識別できません。"));
             string packageHash;
-            //CSJ,variable=package,パッケージ
-            await using (var package = CreateOwnedOutputFile(packagePath, readBack: true))
+            await using (var package = OpenOrdinaryRead(packagePath))
             {
-                owned.Add(packagePath, ProjectFileEvidence.ReadPhysicalIdentity(package));
-                //CSJ,variable=archive,アーカイブ
-                using (var archive = new ZipArchive(package, ZipArchiveMode.Create, leaveOpen: true))
-                {
-                    var assigned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    //CSJ,variable=totalAssetBytes,合計素材バイト列
-                    long totalAssetBytes = 0;
-                    foreach (var candidate in plan.Assets)
-                    {
-                        token.ThrowIfCancellationRequested();
-                        var ordinal = assigned.Count.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
-                        if (confirmations.TryGetValue(candidate.SourcePath, out var permission) && IsApproved(permission))
-                        {
-                            //CSJ,variable=entryPath,項目パス
-                            var entryPath = MediaPrefix + ordinal + "/" + candidate.OriginalFileName;
-                            //CSJ,variable=assetFence,素材整合性境界
-                            using var assetFence = DirectoryFence.Open(Path.GetDirectoryName(candidate.SourcePath)!, enforceShare: true);
-                            //CSJ,variable=asset,素材
-                            await using var asset = OpenOrdinaryRead(candidate.SourcePath);
-                            if (asset.Length != candidate.Length || asset.Length > MaxPackageBytes - totalAssetBytes)
-                                throw new InvalidDataException("プレビュー後に素材のサイズが変更されたか、合計サイズが上限を超えました。");
-                            totalAssetBytes += asset.Length;
-                            using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                            //CSJ,variable=data,データ
-                            await using (var data = archive.CreateEntry(entryPath, CompressionLevel.NoCompression).Open())
-                            {
-                                //CSJ,variable=buffer,バッファー
-                                var buffer = new byte[81920];
-                                //CSJ,variable=count,件数
-                                int count;
-                                while ((count = await asset.ReadAsync(buffer, token).ConfigureAwait(false)) != 0)
-                                {
-                                    sha.AppendData(buffer, 0, count);
-                                    await data.WriteAsync(buffer.AsMemory(0, count), token).ConfigureAwait(false);
-                                }
-                            }
-                            var digest = Convert.ToHexString(sha.GetHashAndReset());
-                            if (digest != candidate.Sha256)
-                                throw new InvalidDataException("プレビュー後に素材の内容が変更されました。再確認してください。");
-                            assigned.Add(candidate.SourcePath, entryPath);
-                            assets.Add(new(entryPath, candidate.OriginalFileName, asset.Length, digest, permission));
-                        }
-                        else
-                        {
-                            //CSJ,variable=name,名前
-                            var name = IsPortableName(candidate.OriginalFileName) ? candidate.OriginalFileName : "unavailable";
-                            var placeholder = MissingPrefix + ordinal + "/" + name;
-                            assigned.Add(candidate.SourcePath, placeholder);
-                            missing.Add(new(placeholder, name, candidate.Length, candidate.Sha256, permission));
-                        }
-                        progress?.Report((double)assigned.Count / (plan.Assets.Count + 1) * 0.85);
-                    }
-
-                    //CSJ,variable=reference,参照
-                    foreach (var reference in references)
-                        reference.Owner[reference.Name] = assigned[reference.SourcePath];
-
-                    await WriteEntryAsync(archive, "_ymmpx_project_path.txt", Encoding.UTF8.GetBytes(projectName), token).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, projectName, JsonSerializer.SerializeToUtf8Bytes(project), token).ConfigureAwait(false);
-                    await WriteEntryAsync(archive, "links.json", JsonSerializer.SerializeToUtf8Bytes(assets.ToDictionary(asset => asset.ArchivePath,
-                        //CSJ,parameter=asset,素材
-                        asset => asset.ArchivePath, StringComparer.Ordinal)), token).ConfigureAwait(false);
-                    archive.Comment = MakeArchiveComment(packageName, assets, missing);
-                }
-                package.Flush(flushToDisk: true);
-                package.Position = 0;
+                if (ProjectFileEvidence.ReadPhysicalIdentity(package) != owned[packagePath])
+                    throw new IOException("YMMPX 出力が置換されました。");
                 packageHash = Convert.ToHexString(await SHA256.HashDataAsync(package, token).ConfigureAwait(false));
             }
 
             //CSJ,variable=manifest,目録
-            var manifest = new Manifest(1, packageName, packageHash, assets.ToArray(), missing.ToArray());
+            var manifest = new Manifest(2, packageName, packageHash, assets.ToArray(), missing.ToArray());
             //CSJ,variable=manifestBytes,目録バイト列
             var manifestBytes = JsonSerializer.SerializeToUtf8Bytes(manifest, JsonOptions);
             if (manifestBytes.Length > MaxManifestBytes) throw new InvalidDataException("受け渡し情報が大きすぎます。");
@@ -308,6 +252,116 @@ internal static class YmmpxTransfer
         };
     }
 
+    private static async Task<YmmpxPackageResult> PackApprovedInputsAsync(string parent, YmmpxTransferPlan plan,
+        IReadOnlyDictionary<string, YmmpxTransferPermission> confirmations, JsonObject project, IReadOnlyList<Reference> references,
+        string packagePath, List<Asset> assets, List<MissingAsset> missing, CancellationToken token,
+        IProgress<double>? progress, YmmpxLibBridge bridge, FileLogger logger)
+    {
+        using var inputs = OwnedStagingDirectory.Reserve(parent, ".ymmpm-transfer-");
+        var inputIds = new Dictionary<string, (ulong, Guid)>();
+        try
+        {
+            var assigned = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var libraryFiles = new JsonArray();
+            long totalBytes = 0;
+            foreach (var candidate in plan.Assets)
+            {
+                token.ThrowIfCancellationRequested();
+                var ordinal = assigned.Count.ToString("x8", System.Globalization.CultureInfo.InvariantCulture);
+                confirmations.TryGetValue(candidate.SourcePath, out var permission);
+                if (IsApproved(permission))
+                {
+                    // End the stem with a letter so a single VideoItem cannot discover a PNG sequence.
+                    var name = "ymmpm-asset-" + ordinal + "-file" + Path.GetExtension(candidate.OriginalFileName);
+                    var member = "resources/" + name;
+                    using var fence = DirectoryFence.Open(Path.GetDirectoryName(candidate.SourcePath)!, enforceShare: true);
+                    await using var asset = OpenOrdinaryRead(candidate.SourcePath);
+                    if (asset.Length != candidate.Length || asset.Length > MaxPackageBytes - totalBytes)
+                        throw new InvalidDataException("素材のサイズまたは合計サイズを再確認してください。");
+                    totalBytes += asset.Length;
+                    var copyPath = Path.Combine(inputs.Path, name);
+                    await using var copy = CreateOwnedOutputFile(copyPath, readBack: true);
+                    inputIds.Add(copyPath, ProjectFileEvidence.ReadPhysicalIdentity(copy));
+                    await asset.CopyToAsync(copy, token).ConfigureAwait(false);
+                    copy.Position = 0;
+                    var digest = Convert.ToHexString(await SHA256.HashDataAsync(copy, token).ConfigureAwait(false));
+                    if (digest != candidate.Sha256)
+                        throw new InvalidDataException("プレビュー後に素材の内容が変更されました。");
+                    assigned.Add(candidate.SourcePath, member);
+                    assets.Add(new(member, candidate.OriginalFileName, asset.Length, digest, permission));
+                    // YmmpxLib collects FilePath. Also expose materials referenced only by EnableLayersFilePath.
+                    libraryFiles.Add(new JsonObject { ["FilePath"] = name });
+                }
+                else
+                {
+                    var name = IsPortableName(candidate.OriginalFileName) ? candidate.OriginalFileName : "unavailable";
+                    var placeholder = MissingPrefix + ordinal + "/" + name;
+                    assigned.Add(candidate.SourcePath, placeholder);
+                    excluded.Add(Path.GetFullPath(placeholder, inputs.Path));
+                    missing.Add(new(placeholder, name, candidate.Length, candidate.Sha256, permission));
+                }
+                progress?.Report((double)assigned.Count / (plan.Assets.Count + 1) * 0.4);
+            }
+
+            SetPackageReferences(references, assigned);
+            project[EvidenceProperty] = new JsonObject
+            {
+                ["ManifestDigest"] = ManifestDigest(Path.GetFileName(packagePath), assets, missing),
+                ["Materials"] = libraryFiles,
+            };
+            var inputProject = Path.Combine(inputs.Path, Path.GetFileName(plan.ProjectPath));
+            var projectBytes = JsonSerializer.SerializeToUtf8Bytes(project);
+            await using (var snapshot = CreateOwnedOutputFile(inputProject))
+            {
+                inputIds.Add(inputProject, ProjectFileEvidence.ReadPhysicalIdentity(snapshot));
+                await snapshot.WriteAsync(projectBytes, token).ConfigureAwait(false);
+            }
+            // Pin the exact approved inputs while the path-based library is reading them.
+            var pins = new List<FileStream>();
+            try
+            {
+                foreach (var (path, id) in inputIds)
+                {
+                    var pin = OpenOrdinaryRead(path);
+                    pins.Add(pin);
+                    if (ProjectFileEvidence.ReadPhysicalIdentity(pin) != id)
+                        throw new IOException("同梱準備中のファイルが変更されました。");
+                    if (path == inputProject)
+                    {
+                        if (pin.Length != projectBytes.Length)
+                            throw new IOException("同梱前に受け渡し用プロジェクトのサイズが変更されました。");
+                        var actualHash = await SHA256.HashDataAsync(pin, token).ConfigureAwait(false);
+                        if (!SHA256.HashData(projectBytes).AsSpan().SequenceEqual(actualHash))
+                            throw new IOException("同梱前に受け渡し用プロジェクトが変更されました。");
+                    }
+                }
+
+                return await bridge.CreatePackageAsync(inputProject, packagePath, excluded, token,
+                    progress is null ? null : new PackagingProgress(progress)).ConfigureAwait(false);
+            }
+            finally { foreach (var pin in pins) pin.Dispose(); }
+        }
+        finally { CleanupStage(inputs, inputIds, logger); }
+    }
+
+    private static void SetPackageReferences(IReadOnlyList<Reference> references, IReadOnlyDictionary<string, string> assigned)
+    {
+        foreach (var reference in references)
+        {
+            var member = assigned[reference.SourcePath];
+            if (reference.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) &&
+                member.StartsWith(LibraryMediaPrefix, StringComparison.Ordinal) &&
+                Path.GetExtension(member).Equals(".psd", StringComparison.OrdinalIgnoreCase) &&
+                !reference.Owner.Any(p => p.Key.Equals("EnableLayersFilePath", StringComparison.OrdinalIgnoreCase)) &&
+                reference.Owner.Any(p => p.Key.Equals("EnableLayers", StringComparison.OrdinalIgnoreCase) ||
+                    p.Key.Equals("EnableLayerPaths", StringComparison.OrdinalIgnoreCase)))
+                reference.Owner["EnableLayersFilePath"] = member;
+            reference.Owner[reference.Name] = reference.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase)
+                && member.StartsWith(LibraryMediaPrefix, StringComparison.Ordinal) ? Path.GetFileName(member) : member;
+        }
+    }
+
     //CSJ,method=CheckTransferFiles,受け渡しファイル一覧を確認する
     private static void CheckTransferFiles(string directory, string packageName)
     {
@@ -326,7 +380,7 @@ internal static class YmmpxTransfer
         RejectDuplicateProperties(json.RootElement, token);
         //CSJ,variable=manifest,目録
         var manifest = json.RootElement.Deserialize<Manifest>(JsonOptions);
-        if (manifest is not { Version: 1, Assets: not null, Missing: not null } ||
+        if (manifest is not { Version: 1 or 2, Assets: not null, Missing: not null } ||
             !string.Equals(manifest.PackageName, packageName, StringComparison.OrdinalIgnoreCase) ||
             !IsSha256(manifest.PackageSha256) || (long)manifest.Assets.Length + manifest.Missing.Length > MaxAssets)
             throw new InvalidDataException("受け渡し情報がパッケージに対応しません。");
@@ -337,7 +391,9 @@ internal static class YmmpxTransfer
         foreach (var asset in manifest.Assets)
         {
             token.ThrowIfCancellationRequested();
-            if (asset is null || !IsTransferReference(asset.ArchivePath, MediaPrefix, asset.OriginalFileName) ||
+            if (asset is null || !(manifest.Version == 1
+                ? IsTransferReference(asset.ArchivePath, MediaPrefix, asset.OriginalFileName)
+                : IsLibraryMember(asset.ArchivePath, asset.OriginalFileName)) ||
                 !IsApproved(asset.Permission) || asset.Length is < 0 or > MaxPackageBytes || !IsSha256(asset.Sha256) ||
                 !names.Add(asset.ArchivePath))
                 throw new InvalidDataException("受け渡し素材の情報が不正です。");
@@ -357,10 +413,13 @@ internal static class YmmpxTransfer
     }
 
     internal static string MakeArchiveComment(string packageName, IReadOnlyList<Asset> assets, IReadOnlyList<MissingAsset> missing)
+        => ArchiveCommentPrefix + ManifestDigest(packageName, assets, missing);
+
+    internal static string ManifestDigest(string packageName, IReadOnlyList<Asset> assets, IReadOnlyList<MissingAsset> missing)
     {
         //CSJ,variable=content,内容
         var content = JsonSerializer.SerializeToUtf8Bytes(new ManifestContent(packageName, assets, missing), JsonOptions);
-        return ArchiveCommentPrefix + Convert.ToHexString(SHA256.HashData(content));
+        return Convert.ToHexString(SHA256.HashData(content));
     }
 
     //CSJ,method=IsReferenceProperty,参照プロパティかを判定する
@@ -497,11 +556,27 @@ internal static class YmmpxTransfer
         }
     }
 
-    //CSJ,method=WriteEntryAsync,項目を書き込む（非同期）
-    private static async Task WriteEntryAsync(ZipArchive archive, string name, byte[] data, CancellationToken token)
+    private sealed class PackagingProgress(IProgress<double> target) : IProgress<double>
     {
-        await using var output = archive.CreateEntry(name, CompressionLevel.Optimal).Open();
-        await output.WriteAsync(data, token).ConfigureAwait(false);
+        public void Report(double value) => target.Report(0.4 + 0.55 * Math.Clamp(value, 0, 1));
+    }
+
+    internal static bool IsLibraryMemberName(string name)
+    {
+        const string prefix = "ymmpm-asset-";
+        if (!name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) || !IsPortableName(name)) return false;
+        var stem = Path.GetFileNameWithoutExtension(name);
+        return stem.Length == prefix.Length + 13 && stem.EndsWith("-file", StringComparison.OrdinalIgnoreCase) &&
+            stem.Substring(prefix.Length, 8).All(Uri.IsHexDigit);
+    }
+
+    private static bool IsLibraryMember(string? member, string? originalName)
+    {
+        if (!IsPortableName(originalName) || member is null || !member.StartsWith(LibraryMediaPrefix, StringComparison.Ordinal))
+            return false;
+        var tail = member[LibraryMediaPrefix.Length..];
+        return tail.Length >= 13 && tail[..8].All(Uri.IsHexDigit) &&
+            tail[8..] == "-file" + Path.GetExtension(originalName);
     }
 
     //CSJ,method=CleanupStage,後片付け作業段階

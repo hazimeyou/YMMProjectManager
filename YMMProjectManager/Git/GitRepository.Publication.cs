@@ -390,6 +390,8 @@ public sealed partial class GitRepository
             //CSJ,variable=property,プロパティ
             foreach (var property in node.EnumerateObject())
             {
+                if (property.Name.Equals(YmmpxTransfer.EvidenceProperty, StringComparison.OrdinalIgnoreCase))
+                    return true;
                 if ((property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) ||
                     property.Name.Equals("EnableLayersFilePath", StringComparison.OrdinalIgnoreCase)) &&
                     property.Value.ValueKind == JsonValueKind.String &&
@@ -414,6 +416,8 @@ public sealed partial class GitRepository
     private static bool IsTransferAssetReference(string reference)
     {
         var components = reference.Replace('\\', '/').Split('/');
+        if (components.Length >= 2 && components[^2].Equals("resources", StringComparison.OrdinalIgnoreCase) &&
+            YmmpxTransfer.IsLibraryMemberName(components[^1])) return true;
         for (var i = 0; i < components.Length - 2; i++)
         {
             if (!components[i].Equals("ymmpm-missing", StringComparison.OrdinalIgnoreCase) &&

@@ -111,7 +111,10 @@ internal static class YmmpxPackageReader
         var manifestPath = Path.Combine(packageDirectory, YmmpxTransfer.ManifestName);
         //CSJ,variable=isTransfer,受け渡しかどうか
         var isTransfer = requireTransfer || archive.Comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal) ||
-            package.Resources.Any(path => path.StartsWith(YmmpxTransfer.MediaPrefix, StringComparison.OrdinalIgnoreCase)) ||
+            package.Project.ContainsKey(YmmpxTransfer.EvidenceProperty) ||
+            package.Resources.Any(path => path.StartsWith(YmmpxTransfer.MediaPrefix, StringComparison.OrdinalIgnoreCase) ||
+                (path.StartsWith("resources/", StringComparison.OrdinalIgnoreCase) &&
+                 YmmpxTransfer.IsLibraryMemberName(path["resources/".Length..]))) ||
             ContainsTransferPlaceholder(package.Project, token);
         //CSJ,variable=manifestInput,目録入力
         await using var manifestInput = isTransfer ? YmmpxTransfer.OpenOrdinaryRead(manifestPath) : null;
@@ -119,7 +122,15 @@ internal static class YmmpxPackageReader
         var transfer = manifestInput is not null
             ? await VerifyTransferAsync(source, manifestInput, archive.Comment, Path.GetFileName(packagePath), package, token).ConfigureAwait(false)
             : null;
-        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer, package.HasLegacyAliases);
+        // Restore the original basename for strict relink, including distinct generations of a same-named asset.
+        var restoredNames = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (transfer is { Version: 2 })
+            foreach (var asset in transfer.Assets)
+            {
+                var ordinal = asset.ArchivePath.Substring(YmmpxTransfer.LibraryMediaPrefix.Length, 8);
+                restoredNames.Add(asset.ArchivePath, YmmpxTransfer.MediaPrefix + ordinal + "/" + asset.OriginalFileName);
+            }
+        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer, package.HasLegacyAliases, restoredNames);
 
         token.ThrowIfCancellationRequested();
         //CSJ,variable=stage,作業段階
@@ -147,7 +158,7 @@ internal static class YmmpxPackageReader
             foreach (var (name, entry) in package.Files)
             {
                 token.ThrowIfCancellationRequested();
-                var target = Path.Combine(staging, name.Replace('/', Path.DirectorySeparatorChar));
+                var target = Path.Combine(staging, restoredNames.GetValueOrDefault(name, name).Replace('/', Path.DirectorySeparatorChar));
                 EnsureParents(Path.GetDirectoryName(target)!);
                 RequireOrdinaryDirectory(Path.GetDirectoryName(target)!);
                 await using var output = OwnedFilePublication.CreateOwnedOutputFile(target,
@@ -388,13 +399,22 @@ internal static class YmmpxPackageReader
         //CSJ,parameter=packageName,パッケージ名前
         string packageName, Package package, CancellationToken token)
     {
-        if (!comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal))
-            throw new InvalidDataException("受け渡し情報に対応した YMMPX が必要です。");
         if (package.HasLegacyAliases)
             throw new InvalidDataException("受け渡しパッケージに旧形式の素材名マップがあります。");
         //CSJ,variable=manifest,目録
         var manifest = await YmmpxTransfer.ReadManifestAsync(manifestInput, packageName, token).ConfigureAwait(false);
-        if (comment != YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing))
+        if (manifest.Version == 2)
+        {
+            if (package.Project[YmmpxTransfer.EvidenceProperty] is not JsonObject proof ||
+                proof["ManifestDigest"]?.GetValue<string>() != YmmpxTransfer.ManifestDigest(manifest.PackageName, manifest.Assets, manifest.Missing) ||
+                proof["Materials"] is not JsonArray materials || materials.Count != manifest.Assets.Length)
+                throw new InvalidDataException("受け渡し情報がプロジェクトの承認記録と一致しません。");
+            for (var i = 0; i < materials.Count; i++)
+                if (materials[i]?["FilePath"]?.GetValue<string>() != manifest.Assets[i].ArchivePath)
+                    throw new InvalidDataException("同梱素材の対応が承認記録と一致しません。");
+            package.Project.Remove(YmmpxTransfer.EvidenceProperty);
+        }
+        else if (comment != YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing))
             throw new InvalidDataException("受け渡し情報のハッシュが YMMPX の記録と一致しません。");
         //CSJ,variable=position,位置
         var position = source.Position;
@@ -589,7 +609,7 @@ internal static class YmmpxPackageReader
                     token.ThrowIfCancellationRequested();
                     if (!remaining.Remove(property.Name, out var previous)) return false;
                     // Current YMMPX rewrites nonempty FilePath strings to members of its resource map.
-                    if (property.Name.Equals("FilePath", aliases.Count > 0 ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal) &&
+                    if (property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) &&
                         previous.ValueKind == JsonValueKind.String &&
                         !string.IsNullOrWhiteSpace(previous.GetString()) && property.Value.ValueKind == JsonValueKind.String &&
                         (aliases.TryGetValue(property.Value.GetString()!, out var member) ||
@@ -648,7 +668,7 @@ internal static class YmmpxPackageReader
 
     private static int RewriteReferences(JsonNode node, HashSet<string> resources, string final, CancellationToken token,
         //CSJ,parameter=transfer,受け渡し
-        YmmpxTransfer.Manifest? transfer, bool hasLegacyAliases)
+        YmmpxTransfer.Manifest? transfer, bool hasLegacyAliases, IReadOnlyDictionary<string, string> restoredNames)
     {
         token.ThrowIfCancellationRequested();
         //CSJ,variable=count,件数
@@ -662,14 +682,14 @@ internal static class YmmpxPackageReader
                     ((TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath)) ||
                         (transfer is not null && path.StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal))))
                 {
-                    obj[name] = Path.Combine(final, internalPath.Replace('/', Path.DirectorySeparatorChar));
+                    obj[name] = Path.Combine(final, restoredNames.GetValueOrDefault(internalPath, internalPath).Replace('/', Path.DirectorySeparatorChar));
                     count++;
                 }
-                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer, hasLegacyAliases);
+                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer, hasLegacyAliases, restoredNames);
         }
         else if (node is JsonArray array)
             foreach (var child in array)
-                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer, hasLegacyAliases);
+                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer, hasLegacyAliases, restoredNames);
         return count;
     }
 

@@ -70,19 +70,52 @@ internal static class YmmpxTransferTests
             Check(!wrongCase.Assets.Single(asset => asset.SourcePath == external).CanInclude, "Case-variant root was implicitly authorized");
         });
 
-        await Program.RunNamedCaseAsync("R23 transfer publishes confirmed names and hashes with no overwrite", async () =>
+        // Captured from the R25 tested writer (398d09a), with synthetic materials only.
+        var golden = Directory.CreateDirectory(Path.Combine(root, "v1")).FullName;
+        var fixture = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TransferV1");
+        var legacyPackage = Path.Combine(golden, "作品.ymmpx");
+        File.Copy(Path.Combine(fixture, "package.fixture"), legacyPackage);
+        File.Copy(Path.Combine(fixture, "manifest.json"), Path.Combine(golden, YmmpxTransfer.ManifestName));
+        await Program.RunNamedCaseAsync("Transfer v1 fixture retains both same-name originals and exclusions", async () =>
+        {
+            var read = await service.ExtractPackageAsync(legacyPackage, Path.Combine(root, "v1-read"), default);
+            Check(read.Success && read.TransferEvidenceVerified && read.MissingMaterials.Count == 3, "Historical companion");
+            var items = JsonNode.Parse(await File.ReadAllTextAsync(read.RestoredProjectPath!))!["Items"]!.AsArray();
+            var first = items[0]!["FilePath"]!.GetValue<string>();
+            var second = items[1]!["FilePath"]!.GetValue<string>();
+            Check(Path.GetFileName(first) == "場面.png" && Path.GetFileName(second) == "場面.png" &&
+                File.ReadAllText(first) == "first version" && File.ReadAllText(second) == "second version", "Historical contents");
+        });
+        var hasLibrary = service.TryEnsureAvailable(out _);
+        Task WithLibrary(string name, Func<Task> run)
+        {
+            if (hasLibrary) return Program.RunNamedCaseAsync(name, run);
+            Program.ReportConditionalSkip(name + " (requires YmmpxLib)");
+            return Task.CompletedTask;
+        }
+        if (!hasLibrary)
+        {
+            var refused = await service.CreateTransferAsync(plan!, permissions, send, default);
+            Check(!refused.Success && refused.ErrorMessage == service.MissingLibraryMessage && !Directory.Exists(send),
+                "Missing YmmpxLib must not publish");
+            send = golden;
+            companion = Path.Combine(send, YmmpxTransfer.ManifestName);
+            created = new YmmpxPackageResult { Success = true, OutputPath = legacyPackage };
+        }
+
+        await WithLibrary("R23 transfer publishes confirmed names and hashes with no overwrite", async () =>
         {
             created = await service.CreateTransferAsync(plan!, permissions, send, default);
             Check(created.Success && created.PackagedMaterialCount == 3 && created.MissingMaterialCount == 3, "Pack counts");
             Check(Directory.GetFiles(send).Length == 2, "Package and companion only");
             //CSJ,variable=archive,アーカイブ
             using var archive = ZipFile.OpenRead(created.OutputPath!);
-            Check(archive.Comment.StartsWith(YmmpxTransfer.ArchiveCommentPrefix, StringComparison.Ordinal) &&
-                archive.Entries.Count == 6, "Existing YMMPX grammar only");
-            //CSJ,variable=assets,素材一覧
-            var assets = archive.Entries.Where(entry => entry.FullName.StartsWith(YmmpxTransfer.MediaPrefix, StringComparison.Ordinal)).ToArray();
-            Check(assets.Count(entry => entry.Name == "場面.png") == 2 &&
-                assets.Count(entry => entry.Name == "別名.png") == 1, "Original filenames preserved");
+            Check(archive.Comment == "" && archive.Entries.Count == 6, "Standard library archive with no custom ZIP comment");
+            await using var sidecar = File.OpenRead(companion);
+            var evidence = await YmmpxTransfer.ReadManifestAsync(sidecar, Path.GetFileName(created.OutputPath!), default);
+            Check(evidence.Version == 2 && evidence.Assets.Count(asset => asset.OriginalFileName == "場面.png") == 2 &&
+                evidence.Assets.Count(asset => asset.OriginalFileName == "別名.png") == 1 &&
+                evidence.Assets.All(asset => archive.GetEntry(asset.ArchivePath) is not null), "Original names bound to actual members");
             //CSJ,variable=metadata,メタデータ
             var metadata = await File.ReadAllTextAsync(companion);
             Check(!metadata.Contains(input, StringComparison.Ordinal) && !metadata.Contains(outside, StringComparison.Ordinal), "Local root leaked");
@@ -108,12 +141,38 @@ internal static class YmmpxTransferTests
             Check(await File.ReadAllTextAsync(restored[0]) == "first version" &&
                 await File.ReadAllTextAsync(restored[1]) == "second version" &&
                 await File.ReadAllTextAsync(restored[2]) == "first version", "Reference data restored");
+            Check(Path.GetFileName(restored[0]) == "場面.png" && Path.GetFileName(restored[1]) == "場面.png" &&
+                Path.GetFileName(restored[2]) == "別名.png" && project[YmmpxTransfer.EvidenceProperty] is null, "Original basenames restored");
             Check(restored[0] != restored[1] && restored[0] != restored[2], "Reference names and paths merged");
             Check(restored.Skip(3).All(path => path.StartsWith(destination + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !File.Exists(path)),
                 "Unapproved paths are not opened or retained in reference fields");
             Check(project["FutureData"]!["Keep"]!.GetValue<string>() == "保持" &&
                 project["FilePath"]!.GetValue<string>() == "", "Unknown fields and no source project path");
             Check(File.Exists(Path.Combine(destination, YmmpxTransfer.ManifestName)), "Evidence available for inspection");
+        });
+
+        await WithLibrary("Transfer v2 preserves independent PSD layer references and redacts rejected layers", async () =>
+        {
+            var source = Path.Combine(input, "layers.ymmp");
+            var layers = CreateMaterial(input, "layer.psd", "approved layer");
+            await File.WriteAllTextAsync(source, new JsonObject { ["Items"] = new JsonArray(
+                new JsonObject { ["FilePath"] = left, ["EnableLayersFilePath"] = layers },
+                new JsonObject { ["FilePath"] = right, ["EnableLayersFilePath"] = denied },
+                new JsonObject { ["FilePath"] = layers, ["EnableLayers"] = new JsonArray("Layer A") }) }.ToJsonString());
+            var choices = new Dictionary<string, YmmpxTransferPermission>(permissions) { [layers] = YmmpxTransferPermission.OwnWork };
+            choices.Remove(alias);
+            var packed = await service.CreateTransferAsync(await service.InspectTransferAsync(source, default), choices,
+                Path.Combine(root, "layers-send"), default);
+            Check(packed.Success, packed.ErrorMessage ?? "layer export");
+            var imported = await service.ExtractPackageAsync(packed.OutputPath!, Path.Combine(root, "layers-receive"), default);
+            Check(imported.Success && imported.MissingMaterials.Count == 1, imported.ErrorMessage ?? "layer import");
+            var text = await File.ReadAllTextAsync(imported.RestoredProjectPath!);
+            var items = JsonNode.Parse(text)!["Items"]!.AsArray();
+            var stored = items[0]!["EnableLayersFilePath"]!.GetValue<string>();
+            Check(Path.GetFileName(stored) == "layer.psd" && File.ReadAllText(stored) == "approved layer" &&
+                !File.Exists(items[1]!["EnableLayersFilePath"]!.GetValue<string>()) &&
+                items[2]!["EnableLayersFilePath"]!.GetValue<string>() == items[2]!["FilePath"]!.GetValue<string>() &&
+                !text.Contains(JsonSerializer.Serialize(denied), StringComparison.Ordinal), "wrong layer binding");
         });
 
         await Program.RunNamedCaseAsync("R23 transfer rejects missing and forged per-member evidence without publishing", async () =>
@@ -141,7 +200,20 @@ internal static class YmmpxTransferTests
             manifest.Assets[0] = manifest.Assets[0] with { Sha256 = new string('0', 64) };
             //CSJ,variable=archive,アーカイブ
             using (var archive = ZipFile.Open(package, ZipArchiveMode.Update))
-                archive.Comment = YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing);
+            {
+                if (manifest.Version == 1)
+                    archive.Comment = YmmpxTransfer.MakeArchiveComment(manifest.PackageName, manifest.Assets, manifest.Missing);
+                else
+                {
+                    var entry = archive.GetEntry("作品.ymmp")!;
+                    JsonNode doc;
+                    using (var input = entry.Open()) doc = JsonNode.Parse(input)!;
+                    doc[YmmpxTransfer.EvidenceProperty]!["ManifestDigest"] =
+                        YmmpxTransfer.ManifestDigest(manifest.PackageName, manifest.Assets, manifest.Missing);
+                    entry.Delete();
+                    WriteEntry(archive, "作品.ymmp", doc.ToJsonString());
+                }
+            }
             changed["assets"]![0]!["permission"] = manifest.Assets[0].Permission.ToString();
             changed["assets"]![0]!["sha256"] = manifest.Assets[0].Sha256;
             changed["packageSha256"] = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(package)));
@@ -157,16 +229,29 @@ internal static class YmmpxTransferTests
             //CSJ,variable=archive,アーカイブ
             using (var archive = ZipFile.Open(plain, ZipArchiveMode.Create))
             {
-                WriteEntry(archive, "legacy.ymmp", "{\"FutureData\":1}");
+                WriteEntry(archive, "legacy.ymmp", """{"FutureData":1,"Items":[{"FilePath":"resources/ymmpm-asset-logo.png"}]}""");
+                WriteEntry(archive, "resources/ymmpm-asset-logo.png", "ordinary asset");
                 WriteEntry(archive, "_ymmpx_project_path.txt", "legacy.ymmp");
-                WriteEntry(archive, "links.json", "{}");
+                WriteEntry(archive, "links.json", """{"resources/ymmpm-asset-logo.png":"resources/ymmpm-asset-logo.png"}""");
             }
             var imported = await service.ExtractPackageAsync(plain, Path.Combine(root, "legacy"), default);
             Check(imported.Success && !imported.TransferEvidenceVerified, "Unrelated sidecar obstructed legacy archive");
             var stripped = Path.Combine(root, "stripped.ymmpx");
             File.Copy(created!.OutputPath!, stripped);
             //CSJ,variable=archive,アーカイブ
-            using (var archive = ZipFile.Open(stripped, ZipArchiveMode.Update)) archive.Comment = "";
+            using (var archive = ZipFile.Open(stripped, ZipArchiveMode.Update))
+            {
+                archive.Comment = "";
+                if (hasLibrary)
+                {
+                    var entry = archive.GetEntry("作品.ymmp")!;
+                    JsonObject doc;
+                    using (var stream = entry.Open()) doc = JsonNode.Parse(stream)!.AsObject();
+                    Check(doc.Remove(YmmpxTransfer.EvidenceProperty), "Expected transfer marker");
+                    entry.Delete();
+                    WriteEntry(archive, "作品.ymmp", doc.ToJsonString());
+                }
+            }
             //CSJ,variable=final,最終
             var final = Path.Combine(root, "stripped-output");
             imported = await service.ExtractPackageAsync(stripped, final, default);
@@ -246,7 +331,7 @@ internal static class YmmpxTransferTests
                 await File.ReadAllTextAsync(sentinel) == "external staged data", "An unowned staging file was published or deleted");
         });
 
-        await Program.RunNamedCaseAsync("R23 transfer rejects approved asset replacement and leaves no partial public output", async () =>
+        await WithLibrary("R23 transfer rejects approved asset replacement and leaves no partial public output", async () =>
         {
             //CSJ,variable=oldContent,旧内容
             var oldContent = await File.ReadAllBytesAsync(left);
@@ -262,7 +347,7 @@ internal static class YmmpxTransferTests
             finally { await File.WriteAllBytesAsync(left, oldContent); }
         });
 
-        await Program.RunNamedCaseAsync("R23 transfer cancellation and late target creation preserve output and permit retry", async () =>
+        await WithLibrary("R23 transfer cancellation and late target creation preserve output and permit retry", async () =>
         {
             //CSJ,variable=retry,再試行
             var retry = Path.Combine(root, "retry");
@@ -341,7 +426,7 @@ internal static class YmmpxTransferTests
             var document = JsonNode.Parse(await File.ReadAllTextAsync(restored!))!;
             //CSJ,variable=references,参照一覧
             var references = document["Items"]!.AsArray().Select(item => item!["FilePath"]!.GetValue<string>()).ToArray();
-            Check(Path.GetFileName(references[0]) == "場面.png" && Path.GetFileName(references[1]) == "場面.png" &&
+            Check(references[0] != references[1] &&
                 await File.ReadAllTextAsync(references[0]) == "first version" &&
                 await File.ReadAllTextAsync(references[1]) == "second version", "Real extraction of namespaced resources");
             Check(references[3].StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal), "Real extraction preserves relative unresolved placeholder");
