@@ -6,18 +6,26 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,property=ReviewProjectCleanupCommand,レビュープロジェクト後片付けコマンド
     public ICommand ReviewProjectCleanupCommand { get; }
 
+    //CSJ,method=ReviewProjectCleanupAsync,レビュープロジェクト後片付け（非同期）
     private Task ReviewProjectCleanupAsync() => ExecuteToolAsync("Asset PF cleanup", async token =>
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null) return;
+        //CSJ,variable=path,パス
         var path = project.FullPath;
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService();
+        //CSJ,variable=preview,プレビュー
         var preview = await service.InspectAsync(path, token);
         if (!ReferenceEquals(project, SelectedProject) || project.FullPath != path) return;
+        //CSJ,variable=report,報告
         var report = preview.FormatForDisplay();
         if (!preview.CanSave)
         {

@@ -9,17 +9,25 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// YMM 本体のボタンを UI Automation で探し、サムネイルコピーやフレーム移動を呼び出します。
 /// </summary>
+//CSJ,class=UiaThumbnailCopyInvoker,UI自動化によるサムネイルコピー
 public sealed class UiaThumbnailCopyInvoker
 {
+    //CSJ,field=CopyButtonLabel,コピーボタンラベル
     private const string CopyButtonLabel = "\u30B5\u30E0\u30CD\u30A4\u30EB\u753B\u50CF\u3092\u30AF\u30EA\u30C3\u30D7\u30DC\u30FC\u30C9\u306B\u51FA\u529B";
+    //CSJ,field=NextEditPointLabel,次編集地点ラベル
     private const string NextEditPointLabel = "\u6B21\u306E\u7DE8\u96C6\u70B9\u3078\u79FB\u52D5";
+    //CSJ,field=NextFrameLabel,次フレームラベル
     private const string NextFrameLabel = "\u6B21\u306E\u30D5\u30EC\u30FC\u30E0\u3078\u79FB\u52D5";
     private const string PrevFrameLabel = "\u524D\u306E\u30D5\u30EC\u30FC\u30E0\u3078\u79FB\u52D5";
     private const string MainWindowTitlePrefix = "\u3086\u3063\u304F\u308AMovieMaker v4";
 
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
+    //CSJ,field=sync,同期
     private readonly object sync = new();
+    //CSJ,field=cachedElement,キャッシュ済み要素
     private AutomationElement? cachedElement;
+    //CSJ,field=cachedElementKind,キャッシュ済み要素種別
     private UiaButtonKind? cachedElementKind;
 
     public UiaThumbnailCopyInvoker(FileLogger logger)
@@ -27,21 +35,27 @@ public sealed class UiaThumbnailCopyInvoker
         this.logger = logger;
     }
 
+    //CSJ,method=InvokeCopyThumbnailToClipboard,サムネイルをクリップボードへコピーする
     public bool InvokeCopyThumbnailToClipboard()
         => TryInvoke(UiaButtonKind.CopyThumbnail, out _);
 
+    //CSJ,method=InvokeNextEditPoint,次編集地点を呼び出す
     public bool InvokeNextEditPoint(out string reason)
         => TryInvoke(UiaButtonKind.NextEditPoint, out reason);
 
+    //CSJ,method=InvokeNextFrame,次フレームを呼び出す
     public bool InvokeNextFrame(out string reason)
         => TryInvoke(UiaButtonKind.NextFrame, out reason);
 
+    //CSJ,method=InvokePrevFrame,前のフレームに移動する
     public bool InvokePrevFrame(out string reason)
         => TryInvoke(UiaButtonKind.PrevFrame, out reason);
 
+    //CSJ,method=ClickNextEditPoint,次の編集点への移動ボタンを押す
     public bool ClickNextEditPoint(out string reason)
         => TryClick(UiaButtonKind.NextEditPoint, out reason);
 
+    //CSJ,method=InvalidateNudgeCaches,フレームと編集点の移動ボタンのキャッシュを無効化する
     public void InvalidateNudgeCaches()
     {
         InvalidateCache(UiaButtonKind.NextFrame);
@@ -49,6 +63,7 @@ public sealed class UiaThumbnailCopyInvoker
         InvalidateCache(UiaButtonKind.NextEditPoint);
     }
 
+    //CSJ,method=TryInvoke,呼び出しを試みる
     private bool TryInvoke(UiaButtonKind kind, out string reason)
     {
         reason = string.Empty;
@@ -114,6 +129,7 @@ public sealed class UiaThumbnailCopyInvoker
 
         // InvokePattern が使えない環境向けに、実クリック fallback も用意している。
         _ = TryBringHostToForeground(button);
+        //CSJ,variable=point,地点
         var point = ResolveClickPoint(button);
         if (point is null)
         {
@@ -132,6 +148,7 @@ public sealed class UiaThumbnailCopyInvoker
         return true;
     }
 
+    //CSJ,method=TryGetButton,ボタンの取得を試みる
     private bool TryGetButton(UiaButtonKind kind, out AutomationElement button, out string reason)
     {
         button = null!;
@@ -151,6 +168,7 @@ public sealed class UiaThumbnailCopyInvoker
                 {
                     try
                     {
+                        //CSJ,variable=enabled,有効
                         var enabled = (bool)cachedElement.GetCurrentPropertyValue(AutomationElement.IsEnabledProperty);
                         var offscreen = (bool)cachedElement.GetCurrentPropertyValue(AutomationElement.IsOffscreenProperty);
                         if (enabled && !offscreen)
@@ -205,6 +223,7 @@ public sealed class UiaThumbnailCopyInvoker
             return false;
         }
 
+        //CSJ,variable=label,ラベル
         var label = GetLabel(kind);
         var condition = new AndCondition(
             new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
@@ -212,6 +231,7 @@ public sealed class UiaThumbnailCopyInvoker
                 new PropertyCondition(AutomationElement.AutomationIdProperty, label),
                 new PropertyCondition(AutomationElement.NameProperty, label)));
 
+        //CSJ,variable=candidates,候補一覧
         var candidates = window.FindAll(TreeScope.Descendants, condition);
         logger.Info($"UIA candidate scan kind={kind} count={candidates.Count}");
         logger.Flush();
@@ -227,18 +247,23 @@ public sealed class UiaThumbnailCopyInvoker
         {
             var c = candidates[i];
             var id = c.Current.AutomationId ?? string.Empty;
+            //CSJ,variable=name,名前
             var name = c.Current.Name ?? string.Empty;
             var className = c.Current.ClassName ?? string.Empty;
             var rect = c.Current.BoundingRectangle;
             var offscreen = c.Current.IsOffscreen;
+            //CSJ,variable=enabled,有効
             var enabled = c.Current.IsEnabled;
+            //CSJ,variable=runtimeId,実行環境ID
             var runtimeId = string.Join(",", c.GetRuntimeId() ?? []);
             logger.Info($"UIA candidate[{i}] kind={kind} name={name} id={id} class={className} rect={rect} offscreen={offscreen} enabled={enabled} runtimeId={runtimeId}");
             logger.Flush();
 
             var hasRect = rect.Width > 0 && rect.Height > 0;
+            //CSJ,variable=hasInvoke,呼び出しの有無
             var hasInvoke = c.TryGetCurrentPattern(InvokePattern.Pattern, out _);
             // 複数候補が見つかるため、押せる・見えている・矩形がある要素を優先する。
+            //CSJ,variable=score,得点
             var score = 0;
             if (enabled) score += 4;
             if (!offscreen) score += 4;
@@ -262,6 +287,7 @@ public sealed class UiaThumbnailCopyInvoker
         return true;
     }
 
+    //CSJ,method=GetLabel,ラベルを取得する
     private static string GetLabel(UiaButtonKind kind) => kind switch
     {
         UiaButtonKind.CopyThumbnail => CopyButtonLabel,
@@ -271,11 +297,13 @@ public sealed class UiaThumbnailCopyInvoker
         _ => string.Empty,
     };
 
+    //CSJ,method=TryFindMainWindow,メインウィンドウの検索を試みる
     private static bool TryFindMainWindow(out AutomationElement window, out string reason)
     {
         window = null!;
         reason = string.Empty;
 
+        //CSJ,variable=root,ルート
         var root = AutomationElement.RootElement;
         if (root is null)
         {
@@ -284,6 +312,7 @@ public sealed class UiaThumbnailCopyInvoker
         }
 
         // プラグインと同一プロセス内の YMM メインウィンドウだけを対象にする。
+        //CSJ,variable=processId,プロセスID
         var processId = Process.GetCurrentProcess().Id;
         var topLevelCondition = new AndCondition(
             new PropertyCondition(AutomationElement.ProcessIdProperty, processId),
@@ -310,6 +339,7 @@ public sealed class UiaThumbnailCopyInvoker
         return false;
     }
 
+    //CSJ,method=ResolveClickPoint,クリック地点を解決する
     private static Point? ResolveClickPoint(AutomationElement element)
     {
         try
@@ -367,6 +397,7 @@ public sealed class UiaThumbnailCopyInvoker
                 return false;
             }
 
+            //CSJ,variable=inputs,入力一覧
             var inputs = new[]
             {
                 new INPUT
@@ -391,21 +422,28 @@ public sealed class UiaThumbnailCopyInvoker
         }
     }
 
+    //CSJ,enum=UiaButtonKind,UI自動化ボタン種別
     private enum UiaButtonKind
     {
+        //CSJ,field=CopyThumbnail,コピーサムネイル
         CopyThumbnail,
+        //CSJ,field=NextEditPoint,次編集地点
         NextEditPoint,
+        //CSJ,field=NextFrame,次フレーム
         NextFrame,
         PrevFrame,
     }
 
+    //CSJ,struct=INPUT,入力
     [StructLayout(LayoutKind.Sequential)]
     private struct INPUT
     {
+        //CSJ,field=type,型
         public uint type;
         public InputUnion U;
     }
 
+    //CSJ,struct=InputUnion,入力データ共用体
     [StructLayout(LayoutKind.Explicit)]
     private struct InputUnion
     {
@@ -413,17 +451,21 @@ public sealed class UiaThumbnailCopyInvoker
         public MOUSEINPUT mi;
     }
 
+    //CSJ,struct=MOUSEINPUT,マウス入力情報
     [StructLayout(LayoutKind.Sequential)]
     private struct MOUSEINPUT
     {
         public int dx;
         public int dy;
+        //CSJ,field=mouseData,マウスデータ
         public uint mouseData;
         public uint dwFlags;
+        //CSJ,field=time,時刻
         public uint time;
         public IntPtr dwExtraInfo;
     }
 
+    //CSJ,struct=POINT,地点
     [StructLayout(LayoutKind.Sequential)]
     private struct POINT
     {

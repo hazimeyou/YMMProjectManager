@@ -9,8 +9,10 @@ namespace YMMProjectManager.Infrastructure.Diagnostics;
 /// <summary>
 /// YMM のプレビュー表示からビットマップ取得可否を調べる診断サービスです。
 /// </summary>
+//CSJ,class=PreviewBitmapDiagnostics,プレビュービットマップ診断情報
 public sealed class PreviewBitmapDiagnostics
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public PreviewBitmapDiagnostics(FileLogger logger)
@@ -18,6 +20,7 @@ public sealed class PreviewBitmapDiagnostics
         this.logger = logger;
     }
 
+    //CSJ,method=RunAsync,実行する（非同期）
     public async Task<PreviewBitmapDiagnosticsResult> RunAsync(CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
@@ -29,6 +32,7 @@ public sealed class PreviewBitmapDiagnostics
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
+            //CSJ,variable=dispatcher,ディスパッチャー
             var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
             if (dispatcher is null)
             {
@@ -52,9 +56,11 @@ public sealed class PreviewBitmapDiagnostics
         }
     }
 
+    //CSJ,method=FinalizeAsync,確定（非同期）
     private async Task<PreviewBitmapDiagnosticsResult> FinalizeAsync(
         PreviewBitmapDiagnosticsResult result,
         Stopwatch sw,
+        //CSJ,parameter=cancellationToken,キャンセルトークン
         CancellationToken cancellationToken)
     {
         sw.Stop();
@@ -63,8 +69,10 @@ public sealed class PreviewBitmapDiagnostics
         try
         {
             // 失敗結果も履歴として残し、環境依存の再現調査に使えるようにする。
+            //CSJ,variable=outputDirectory,出力ディレクトリ
             var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "PreviewDiagnostics");
             Directory.CreateDirectory(outputDirectory);
+            //CSJ,variable=path,パス
             var path = Path.Combine(outputDirectory, $"preview-diagnostics-{DateTime.Now:yyyyMMdd-HHmmss-fff}.json");
             var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
             await File.WriteAllTextAsync(path, json, cancellationToken).ConfigureAwait(false);

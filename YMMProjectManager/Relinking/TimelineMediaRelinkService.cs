@@ -4,21 +4,29 @@ using YukkuriMovieMaker.Project.Items;
 
 namespace YMMProjectManager.Infrastructure.Relink;
 
+//CSJ,class=TimelineRelinkTarget,タイムライン再リンク対象
 public sealed class TimelineRelinkTarget
 {
+    //CSJ,property=RowIndex,行インデックス
     public int RowIndex { get; init; }
+    //CSJ,property=Item,項目
     public required IItem Item { get; init; }
 }
 
+//CSJ,class=TimelineRelinkContext,タイムライン再リンクコンテキスト
 public sealed class TimelineRelinkContext
 {
+    //CSJ,property=Info,情報
     public required TimelineToolInfo Info { get; init; }
+    //CSJ,property=Targets,対象一覧
     public required List<TimelineRelinkTarget> Targets { get; init; }
+    //CSJ,property=Rows,行一覧
     public required List<RelinkRow> Rows { get; init; }
 }
 
 public sealed class TimelineMediaRelinkService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public TimelineMediaRelinkService(FileLogger logger)
@@ -26,6 +34,7 @@ public sealed class TimelineMediaRelinkService
         this.logger = logger;
     }
 
+    //CSJ,method=Scan,走査する
     public (TimelineRelinkContext? Context, RelinkResult Result) Scan(TimelineToolInfo? info)
     {
         var result = new RelinkResult();
@@ -38,6 +47,7 @@ public sealed class TimelineMediaRelinkService
         try
         {
             var targets = new List<TimelineRelinkTarget>();
+            //CSJ,variable=rows,行一覧
             var rows = new List<RelinkRow>();
 
             foreach (var item in info.Timeline.Items)
@@ -96,13 +106,16 @@ public sealed class TimelineMediaRelinkService
         }
     }
 
+    //CSJ,method=Save,保存する
     public (bool Success, string? ErrorMessage, int UpdatedCount) Save(TimelineRelinkContext context)
     {
         try
         {
             foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
                 RelinkJsonUpdate.EnsureSupported(row);
+            //CSJ,variable=updatedCount,更新済みの件数
             var updatedCount = 0;
+            //CSJ,variable=targetMap,対象対応表
             var targetMap = context.Targets.ToDictionary(x => x.RowIndex);
             foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
             {

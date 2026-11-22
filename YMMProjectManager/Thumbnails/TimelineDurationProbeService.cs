@@ -6,8 +6,10 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+//CSJ,class=TimelineDurationProbeService,タイムライン長の診断出力
 public sealed class TimelineDurationProbeService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public TimelineDurationProbeService(FileLogger logger)
@@ -15,14 +17,17 @@ public sealed class TimelineDurationProbeService
         this.logger = logger;
     }
 
+    //CSJ,method=WriteTimelineDurationProbeAsync,タイムライン長さ調査を書き込む（非同期）
     public async Task<TimelineDurationProbeResult> WriteTimelineDurationProbeAsync(CancellationToken cancellationToken)
     {
         var started = DateTimeOffset.Now;
         var sw = Stopwatch.StartNew();
         // 繰り返しの手動確認で作業ツリーが汚れないよう、プローブ出力はリポジトリ外に置く。
+        //CSJ,variable=outputDirectory,出力ディレクトリ
         var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "timeline-duration-probe");
         Directory.CreateDirectory(outputDirectory);
         var stamp = started.ToString("yyyyMMdd-HHmmss");
+        //CSJ,variable=jsonPath,JSONのパス
         var jsonPath = Path.Combine(outputDirectory, $"timeline-duration-probe-{stamp}.json");
 
         var result = new TimelineDurationProbeResult
@@ -34,6 +39,7 @@ public sealed class TimelineDurationProbeService
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            //CSJ,variable=timeline,タイムライン
             var timeline = TimelineContextService.Timeline;
             if (timeline is null)
             {
@@ -67,6 +73,7 @@ public sealed class TimelineDurationProbeService
         }
     }
 
+    //CSJ,method=GetCurrentFrame,現在のフレームを取得する
     private static int GetCurrentFrame(object? timeline)
     {
         if (timeline is null)
@@ -78,6 +85,7 @@ public sealed class TimelineDurationProbeService
         return TryConvertToInt(value, out var frame) ? frame : 0;
     }
 
+    //CSJ,method=TryResolveLastFrame,最後フレームの解決を試みる
     private bool TryResolveLastFrame(object timeline, out int lastFrame, out string methodUsed, out List<string> candidates)
     {
         candidates = [];
@@ -85,6 +93,7 @@ public sealed class TimelineDurationProbeService
         methodUsed = "Failed";
 
         // 明示的なフレーム数プロパティを最優先する。存在するなら最も曖昧さが少ない。
+        //CSJ,variable=propertyName,プロパティ名前
         foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount", "EndFrame" })
         {
             candidates.Add($"Timeline.{propertyName}");
@@ -126,12 +135,14 @@ public sealed class TimelineDurationProbeService
     {
         lastFrame = 0;
         // Timeline 自体に直接のフレーム数がなければ、VideoInfo をフォールバックに使う。
+        //CSJ,variable=videoInfo,動画情報
         var videoInfo = timeline.GetType().GetProperty("VideoInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(timeline);
         if (videoInfo is null)
         {
             return false;
         }
 
+        //CSJ,variable=propertyName,プロパティ名前
         foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount" })
         {
             if (!TryReadIntLikeProperty(videoInfo, propertyName, out var value))
@@ -171,6 +182,7 @@ public sealed class TimelineDurationProbeService
             return false;
         }
 
+        //CSJ,variable=maxEnd,最大終了
         var maxEnd = -1;
         foreach (var item in items)
         {
@@ -208,6 +220,7 @@ public sealed class TimelineDurationProbeService
     private static bool TryReadIntLikeProperty(object instance, string propertyName, out int value)
     {
         value = 0;
+        //CSJ,variable=property,プロパティ
         var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
         if (property is null)
         {
@@ -221,6 +234,7 @@ public sealed class TimelineDurationProbeService
     private static bool TryReadTimeSpanProperty(object instance, string propertyName, out TimeSpan value)
     {
         value = default;
+        //CSJ,variable=property,プロパティ
         var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
         if (property is null)
         {
@@ -287,14 +301,18 @@ public sealed class TimelineDurationProbeService
         }
     }
 
+    //CSJ,method=GetTimelineFps,タイムラインFPSを取得する
     private static double GetTimelineFps(object timeline)
     {
         try
         {
+            //CSJ,variable=videoInfoProperty,動画情報プロパティ
             var videoInfoProperty = timeline.GetType().GetProperty("VideoInfo", BindingFlags.Public | BindingFlags.Instance);
+            //CSJ,variable=videoInfo,動画情報
             var videoInfo = videoInfoProperty?.GetValue(timeline);
             if (videoInfo is not null)
             {
+                //CSJ,variable=fpsValue,FPS値
                 var fpsValue = GetPropertyDouble(videoInfo, "FPS");
                 if (fpsValue > 0)
                 {
@@ -324,6 +342,7 @@ public sealed class TimelineDurationProbeService
 
     private static double GetPropertyDouble(object instance, string propertyName)
     {
+        //CSJ,variable=property,プロパティ
         var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
         if (property is null)
         {
@@ -343,6 +362,7 @@ public sealed class TimelineDurationProbeService
         };
     }
 
+    //CSJ,method=FinalizeAsync,確定（非同期）
     private async Task<TimelineDurationProbeResult> FinalizeAsync(TimelineDurationProbeResult result, string jsonPath, Stopwatch sw)
     {
         sw.Stop();
@@ -364,13 +384,21 @@ public sealed class TimelineDurationProbeService
     }
 }
 
+//CSJ,class=TimelineDurationProbeResult,タイムライン長さ調査結果
 public sealed class TimelineDurationProbeResult
 {
+    //CSJ,property=Success,成功
     public bool Success { get; set; }
+    //CSJ,property=CurrentFrame,現在のフレーム
     public int CurrentFrame { get; set; }
+    //CSJ,property=LastFrame,最後フレーム
     public int LastFrame { get; set; }
+    //CSJ,property=MethodUsed,使用したメソッド
     public string MethodUsed { get; set; } = string.Empty;
+    //CSJ,property=FailureReason,失敗理由
     public string? FailureReason { get; set; }
+    //CSJ,property=CandidateProperties,候補プロパティ一覧
     public string[] CandidateProperties { get; set; } = [];
+    //CSJ,property=DurationMs,長さミリ秒
     public long DurationMs { get; set; }
 }

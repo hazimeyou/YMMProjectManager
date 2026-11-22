@@ -6,24 +6,31 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,field=InspectListPublicationOperation,点検一覧確定反映操作
     private const string InspectListPublicationOperation = "Inspect interrupted list publication";
+    //CSJ,property=RecoverProjectListPublicationCommand,復旧プロジェクト一覧確定反映コマンド
     public ICommand RecoverProjectListPublicationCommand { get; }
 
+    //CSJ,field=projectListPublicationStatus,プロジェクト一覧確定反映状態
     private string projectListPublicationStatus = string.Empty;
+    //CSJ,property=ProjectListPublicationStatus,プロジェクト一覧確定反映状態
     public string ProjectListPublicationStatus
     {
         get => projectListPublicationStatus;
         private set => SetProperty(ref projectListPublicationStatus, value);
     }
 
+    //CSJ,method=RecoverProjectListPublicationAsync,プロジェクト一覧確定反映を復旧する（非同期）
     private async Task RecoverProjectListPublicationAsync()
     {
         var reload = false;
         await ExecuteToolAsync(InspectListPublicationOperation, async token =>
         {
             if (repository is not JsonProjectRepository json) return;
+            //CSJ,variable=review,レビュー
             ProjectListReplacement.Recovery? review;
             try { review = await json.InspectInterruptedPublicationAsync(token); }
             catch (ProjectListBusyException ex)
@@ -47,6 +54,7 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
+            //CSJ,variable=action,アクション
             var action = review.State switch
             {
                 ProjectListReplacement.RecoveryState.CanRestore => "退避済みの元の一覧を、空いている現用パスへ戻します。",
@@ -56,6 +64,7 @@ public sealed partial class ProjectListViewModel
                 ProjectListReplacement.RecoveryState.Conflict => "外部から置換された現用一覧を保ち、元の一覧と保存候補も残します。",
                 _ => "安全に復旧できる版を確認できませんでした。以下の記録を保全してください。",
             };
+            //CSJ,variable=detail,詳細
             var detail = $"{action}\n現用一覧 {review.ActivePath}\n退避先 {review.ParkedPath}\n保存候補 {review.CandidatePath}\n公開記録 {review.JournalPath}";
             if (review.ActiveVersion is { } active)
                 detail += $"\n現用一覧 SHA-256 {active.Sha256}";

@@ -6,7 +6,9 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Application;
 
+//CSJ,record=ProjectListConflict,プロジェクト一覧競合
 internal sealed record ProjectListConflict(string Item, string Field, string Local, string Remote);
+//CSJ,record=ProjectListMergeResult,プロジェクト一覧マージ結果
 internal sealed record ProjectListMergeResult(ProjectStore? Store, IReadOnlyList<string> Changes, IReadOnlyList<string> Conflicts)
 {
     internal IReadOnlyList<ProjectListConflict> Choices { get; init; } = [];
@@ -16,12 +18,14 @@ internal sealed record ProjectListMergeResult(ProjectStore? Store, IReadOnlyList
 // Index rows by known logical identity across moves, and reject ambiguous legacy moves.
 internal static class ProjectListMerge
 {
+    //CSJ,method=Snapshot,スナップショット
     internal static ProjectStore Snapshot(ProjectStore source) => new()
     {
         Revision = source.Revision, IsRecoverySafe = source.IsRecoverySafe,
         Projects = source.Projects.Select(Clone).ToList(), Folders = source.Folders.Select(Clone).ToList(),
     };
 
+    //CSJ,method=Merge,マージする
     internal static ProjectListMergeResult Merge(ProjectStore baseline, ProjectStore local, ProjectStore remote,
         IReadOnlyDictionary<ProjectListConflict, bool>? useLocal = null)
     {
@@ -31,10 +35,13 @@ internal static class ProjectListMerge
             return new(null, changes, ["一覧に未知・不正な項目があるか、最新の版がありません。"]);
         if (!Valid(baseline) || !Valid(local) || !Valid(remote))
             return new(null, changes, ["パス、project ID、ファイル識別情報、folder ID の重複または不正があります。"]);
+        //CSJ,variable=originalPaths,元のパス一覧
         var originalPaths = baseline.Projects.Where(project => project.ProjectId.HasValue)
             .ToDictionary(project => project.ProjectId!.Value, project => project.FullPath);
+        //CSJ,method=Key,キー
         string Key(ProjectEntry project) => project.ProjectId is { } id && originalPaths.TryGetValue(id, out var original)
             ? original : project.FullPath;
+        //CSJ,variable=basePaths,基点パス一覧
         var basePaths = baseline.Projects.Select(p => p.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool AmbiguousLegacyMove(ProjectStore side) => baseline.Projects.Any(p => p.ProjectId is null && !side.Projects.Any(x => string.Equals(x.FullPath, p.FullPath, StringComparison.OrdinalIgnoreCase))) &&
             side.Projects.Any(p => !basePaths.Contains(p.FullPath));
@@ -43,9 +50,13 @@ internal static class ProjectListMerge
             conflicts.Add("移動前のパスが別の登録に使われているため、対象を区別できません。");
         if (conflicts.Count != 0) return new(null, changes, conflicts);
         var merged = Snapshot(remote);
+        //CSJ,variable=baseProjects,基点プロジェクト一覧
         var baseProjects = baseline.Projects.ToDictionary(p => p.FullPath, StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=localProjects,ローカルプロジェクト一覧
         var localProjects = local.Projects.ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=remoteProjects,リモートプロジェクト一覧
         var remoteProjects = remote.Projects.ToDictionary(Key, StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=key,キー
         foreach (var key in baseProjects.Keys.Union(localProjects.Keys, StringComparer.OrdinalIgnoreCase))
         {
             baseProjects.TryGetValue(key, out var b); localProjects.TryGetValue(key, out var l); remoteProjects.TryGetValue(key, out var r);
@@ -77,6 +88,7 @@ internal static class ProjectListMerge
                 // This compares an existing list registration. It never assigns a physical/logical identity.
                 if (!Same(b, r) && Decide(key, "ID 未設定の登録内容", l is null ? "登録を削除" : ProjectDetails(l),
                     ProjectDetails(r), conflicts, choices, useLocal) is not true) continue;
+                //CSJ,variable=index,インデックス
                 var index = merged.Projects.FindIndex(project => string.Equals(Key(project), key, StringComparison.OrdinalIgnoreCase));
                 if (l is null) merged.Projects.RemoveAt(index);
                 else merged.Projects[index] = Clone(l);
@@ -115,8 +127,11 @@ internal static class ProjectListMerge
             if (b.FullPath != l.FullPath || b.FullPath != r.FullPath)
             {
                 // A destination must stay associated with its own physical evidence, metadata and links.
+                //CSJ,variable=baseBinding,基点バインディング
                 var baseBinding = BindingDetails(b, bLinks);
+                //CSJ,variable=localBinding,ローカルバインディング
                 var localBinding = BindingDetails(l, lLinks);
+                //CSJ,variable=remoteBinding,リモートバインディング
                 var remoteBinding = BindingDetails(r, rLinks);
                 if (localBinding != baseBinding && localBinding != remoteBinding &&
                     (remoteBinding == baseBinding || Decide(key, "移動先と関連付け", localBinding, remoteBinding, conflicts, choices, useLocal) is true))
@@ -166,7 +181,9 @@ internal static class ProjectListMerge
 
     private static bool LosesExtensionFields(ProjectStore local, ProjectStore remote, ProjectStore merged)
     {
+        //CSJ,variable=localFields,ローカルフィールド一覧
         var localFields = local.Revision?.PreservedFieldAnchors;
+        //CSJ,variable=remoteFields,リモートフィールド一覧
         var remoteFields = remote.Revision?.PreservedFieldAnchors;
         if (localFields is null && remoteFields is null) return false;
         var mergedAnchors = ProjectListFieldAnchors.Enumerate(merged).ToHashSet(StringComparer.Ordinal);
@@ -176,11 +193,14 @@ internal static class ProjectListMerge
         return localFields.Split(';').Any(anchor => mergedAnchors.Contains(anchor) && !remoteAnchors.Contains(anchor));
     }
 
+    //CSJ,method=MergeLinks,リンク一覧をマージする
     private static void MergeLinks(ProjectEntry baseline, ProjectEntry local, ProjectEntry remote, ProjectEntry target, string key,
+        //CSJ,parameter=changes,変更一覧
         List<string> changes, List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
         var original = baseline.LinkedYmmpFiles.ToList();
         var edited = local.LinkedYmmpFiles.ToList();
+        //CSJ,variable=latest,最新
         var latest = remote.LinkedYmmpFiles.ToList();
         var merged = target.LinkedYmmpFiles.ToList();
         var bs = original.ToDictionary(link => link.Id);
@@ -191,6 +211,7 @@ internal static class ProjectListMerge
             bs.TryGetValue(id, out var b);
             ls.TryGetValue(id, out var l);
             rs.TryGetValue(id, out var r);
+            //CSJ,variable=linkKey,リンクキー
             var linkKey = $"{key} / link {id}";
             if (b is null)
             {
@@ -219,10 +240,13 @@ internal static class ProjectListMerge
         MergeOrder(original, edited, latest, merged, link => link.Id, EqualityComparer<Guid>.Default,
             $"{key} のリンク", changes, conflicts, choices, useLocal);
         target.LinkedYmmpFiles.Clear();
+        //CSJ,variable=link,リンク
         foreach (var link in merged) target.LinkedYmmpFiles.Add(link);
     }
 
+    //CSJ,method=MergeLink,リンクをマージする
     private static void MergeLink(LinkedYmmpFile baseline, LinkedYmmpFile local, LinkedYmmpFile remote, LinkedYmmpFile target,
+        //CSJ,parameter=key,キー
         string key, List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
         target.DisplayName = Field(baseline.DisplayName, local.DisplayName, remote.DisplayName, key, "DisplayName", conflicts, choices, useLocal);
@@ -231,6 +255,7 @@ internal static class ProjectListMerge
         target.RegisteredAt = Field(baseline.RegisteredAt, local.RegisteredAt, remote.RegisteredAt, key, "RegisteredAt", conflicts, choices, useLocal);
         if (baseline.FilePath != local.FilePath || baseline.FilePath != remote.FilePath)
         {
+            //CSJ,method=DescribeFile,ファイルを説明する
             static string DescribeFile(LinkedYmmpFile link) => System.Text.Json.JsonSerializer.Serialize(new { link.FilePath, link.LastCheckedAt, link.Exists });
             var b = DescribeFile(baseline); var l = DescribeFile(local); var r = DescribeFile(remote);
             if (l != b && l != r && (r == b || Decide(key, "リンク先と存在確認", l, r, conflicts, choices, useLocal) is true))
@@ -248,13 +273,16 @@ internal static class ProjectListMerge
         target.UpdatedAt = local.UpdatedAt >= remote.UpdatedAt ? local.UpdatedAt : remote.UpdatedAt;
     }
 
+    //CSJ,method=LinkDetails,リンク詳細
     private static string LinkDetails(LinkedYmmpFile link) => System.Text.Json.JsonSerializer.Serialize(new
     {
         link.Id, link.FilePath, link.DisplayName, link.Role, link.Memo, link.RegisteredAt, link.UpdatedAt, link.LastCheckedAt, link.Exists,
     });
 
+    //CSJ,method=SameLink,同一リンク
     private static bool SameLink(LinkedYmmpFile left, LinkedYmmpFile right) => LinkDetails(left) == LinkDetails(right);
 
+    //CSJ,method=Field,フィールド
     private static T Field<T>(T b, T l, T r, string key, string name, List<string> conflicts,
         List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
@@ -274,24 +302,29 @@ internal static class ProjectListMerge
         return null;
     }
 
+    //CSJ,method=ProjectDetails,プロジェクト詳細
     private static string ProjectDetails(ProjectEntry p) => System.Text.Json.JsonSerializer.Serialize(new
     {
         p.FullPath, p.ProjectId, p.DisplayName, p.Pinned, p.LastAccess, p.FolderId, p.MetadataAssociation, p.FileIdentity,
         LinkedYmmpFiles = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(LinksFingerprint(p)),
     });
 
+    //CSJ,method=BindingDetails,バインディング詳細
     private static string BindingDetails(ProjectEntry project, string links) => System.Text.Json.JsonSerializer.Serialize(new
     {
         project.FullPath, project.MetadataAssociation, project.FileIdentity,
         LinkedYmmpFiles = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(links),
     });
 
+    //CSJ,method=CopyLinks,リンク一覧をコピーする
     private static void CopyLinks(ProjectEntry source, ProjectEntry target)
     {
         target.LinkedYmmpFiles.Clear();
+        //CSJ,variable=link,リンク
         foreach (var link in source.LinkedYmmpFiles) target.LinkedYmmpFiles.Add(Clone(link));
     }
 
+    //CSJ,method=Describe,説明する
     private static void Describe<T>(T b, T l, T r, string key, string name, List<string> changes)
     {
         if (Equal(b, l)) return;
@@ -301,7 +334,9 @@ internal static class ProjectListMerge
     private static bool Equal<T>(T left, T right) => left is DateTimeOffset a && right is DateTimeOffset b
         ? a.EqualsExact(b) : EqualityComparer<T>.Default.Equals(left, right);
 
+    //CSJ,method=MergeOrder,順序をマージする
     private static void MergeOrder<T, TKey>(List<T> baseline, List<T> local, List<T> remote, List<T> merged,
+        //CSJ,parameter=key,キー
         Func<T, TKey> key, IEqualityComparer<TKey> comparer, string label, List<string> changes, List<string> conflicts,
         List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
         where TKey : notnull
@@ -309,6 +344,7 @@ internal static class ProjectListMerge
         var baseArray = baseline.Select(key).ToArray();
         var localArray = local.Select(key).ToArray();
         var remoteArray = remote.Select(key).ToArray();
+        //CSJ,variable=baseSet,基点設定
         var baseSet = baseArray.ToHashSet(comparer); var localSet = localArray.ToHashSet(comparer);
         if (localArray.SequenceEqual(remoteArray, comparer)) return;
         if (baseArray.SequenceEqual(remoteArray, comparer))
@@ -348,6 +384,7 @@ internal static class ProjectListMerge
             if (useEntered is null) return;
             var preferred = useEntered.Value ? localArray : remoteArray;
             var alternative = useEntered.Value ? remoteArray : localArray;
+            //CSJ,variable=entries,項目一覧
             var entries = merged.ToDictionary(key, comparer);
             var ordered = preferred.Concat(alternative).Concat(merged.Select(key)).Where(entries.ContainsKey).Distinct(comparer).ToArray();
             merged.Clear();
@@ -356,6 +393,7 @@ internal static class ProjectListMerge
         }
     }
 
+    //CSJ,method=MergeFolders,フォルダー一覧をマージする
     private static void MergeFolders(ProjectStore baseline, ProjectStore local, ProjectStore remote, ProjectStore merged, List<string> changes,
         List<string> conflicts, List<ProjectListConflict> choices, IReadOnlyDictionary<ProjectListConflict, bool>? useLocal)
     {
@@ -409,11 +447,13 @@ internal static class ProjectListMerge
         }
     }
 
+    //CSJ,method=FolderDetails,フォルダー詳細
     private static string FolderDetails(ProjectFolder folder) => System.Text.Json.JsonSerializer.Serialize(new
     {
         folder.Id, folder.Name, folder.DisplayOrder, folder.CreatedAt, folder.UpdatedAt,
     });
 
+    //CSJ,method=Valid,有効
     private static bool Valid(ProjectStore value)
     {
         try
@@ -421,29 +461,39 @@ internal static class ProjectListMerge
             if (value.Projects.Any(x => string.IsNullOrWhiteSpace(x.FullPath) || !Path.IsPathFullyQualified(x.FullPath) || x.ProjectId == Guid.Empty)) return false;
             if (value.Projects.Select(x => Path.GetFullPath(x.FullPath)).Distinct(StringComparer.OrdinalIgnoreCase).Count() != value.Projects.Count) return false;
             if (value.Projects.Where(x => x.ProjectId.HasValue).Select(x => x.ProjectId).Distinct().Count() != value.Projects.Count(x => x.ProjectId.HasValue)) return false;
+            //CSJ,variable=fileIds,ファイルID一覧
             var fileIds = new HashSet<(ulong Volume, Guid Id)>();
             if (value.Projects.Any(project => project.FileIdentity is { } file &&
                 (file.FileId == Guid.Empty || !fileIds.Add((file.Volume, file.FileId))))) return false;
             if (value.Projects.Any(project => project.LinkedYmmpFiles.Any(link => link.Id == Guid.Empty) ||
                 project.LinkedYmmpFiles.Select(link => link.Id).Distinct().Count() != project.LinkedYmmpFiles.Count)) return false;
             if (value.Folders.Any(x => x.Id == Guid.Empty || string.IsNullOrWhiteSpace(x.Name)) || value.Folders.Select(x => x.Id).Distinct().Count() != value.Folders.Count) return false;
+            //CSJ,variable=folderIds,フォルダーID一覧
             var folderIds = value.Folders.Select(x => x.Id).ToHashSet();
             return value.Projects.All(x => x.FolderId is null || folderIds.Contains(x.FolderId.Value));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { return false; }
     }
 
+    //CSJ,method=LinksFingerprint,リンク一覧フィンガープリント
     private static string LinksFingerprint(ProjectEntry p) => System.Text.Json.JsonSerializer.Serialize(p.LinkedYmmpFiles.Select(l => new { l.Id, l.FilePath, l.DisplayName, l.Role, l.Memo, l.RegisteredAt, l.UpdatedAt, l.LastCheckedAt, l.Exists }).ToArray());
+    //CSJ,method=Same,同一
     private static bool Same(ProjectEntry a, ProjectEntry b) => ProjectListRecovery.Fingerprint(new ProjectStore { Projects = [a] }) == ProjectListRecovery.Fingerprint(new ProjectStore { Projects = [b] });
+    //CSJ,method=Same,同一
     private static bool Same(ProjectFolder a, ProjectFolder b) => ProjectListRecovery.Fingerprint(new ProjectStore { Folders = [a] }) == ProjectListRecovery.Fingerprint(new ProjectStore { Folders = [b] });
+    //CSJ,method=Clone,クローンする
     private static ProjectEntry Clone(ProjectEntry x)
     {
+        //CSJ,variable=copy,コピー
         var copy = new ProjectEntry { FullPath = x.FullPath, ProjectId = x.ProjectId, DisplayName = x.DisplayName, Pinned = x.Pinned, LastAccess = x.LastAccess, FolderId = x.FolderId, ThumbnailCacheDirectory = x.ThumbnailCacheDirectory, ThumbnailSource = x.ThumbnailSource };
+        //CSJ,variable=link,リンク
         foreach (var link in x.LinkedYmmpFiles) copy.LinkedYmmpFiles.Add(Clone(link));
         copy.MetadataAssociation = x.MetadataAssociation;
         copy.FileIdentity = x.FileIdentity;
         return copy;
     }
+    //CSJ,method=Clone,クローンする
     private static LinkedYmmpFile Clone(LinkedYmmpFile x) => new() { Id = x.Id, FilePath = x.FilePath, DisplayName = x.DisplayName, Role = x.Role, Memo = x.Memo, RegisteredAt = x.RegisteredAt, LastCheckedAt = x.LastCheckedAt, Exists = x.Exists, UpdatedAt = x.UpdatedAt };
+    //CSJ,method=Clone,クローンする
     private static ProjectFolder Clone(ProjectFolder x) => new() { Id = x.Id, Name = x.Name, DisplayOrder = x.DisplayOrder, CreatedAt = x.CreatedAt, UpdatedAt = x.UpdatedAt };
 }

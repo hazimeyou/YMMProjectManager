@@ -7,12 +7,15 @@ using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
+//CSJ,class=EditorInfoLocator,編集画面情報の検索
 public static class EditorInfoLocator
 {
+    //CSJ,method=TryResolve,解決を試みる
     public static IEditorInfo? TryResolve(FileLogger logger)
     {
         try
         {
+            //CSJ,variable=app,アプリケーション
             var app = System.Windows.Application.Current;
             if (app is null)
             {
@@ -20,6 +23,7 @@ public static class EditorInfoLocator
                 return null;
             }
 
+            //CSJ,variable=window,ウィンドウ
             foreach (Window window in app.Windows)
             {
                 var editorInfo = TryResolveFromObject(window);
@@ -53,6 +57,7 @@ public static class EditorInfoLocator
             return null;
         }
 
+        //CSJ,variable=queue,キュー
         var queue = new Queue<object>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         queue.Enqueue(root);
@@ -110,7 +115,9 @@ public static class EditorInfoLocator
 
     private static IEditorInfo? TryGetEditorInfoMember(object current)
     {
+        //CSJ,variable=flags,フラグ
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        //CSJ,variable=type,型
         var type = current.GetType();
 
         foreach (var prop in type.GetProperties(flags))
@@ -131,6 +138,7 @@ public static class EditorInfoLocator
             }
         }
 
+        //CSJ,variable=field,フィールド
         foreach (var field in type.GetFields(flags))
         {
             if (!typeof(IEditorInfo).IsAssignableFrom(field.FieldType))
@@ -149,7 +157,9 @@ public static class EditorInfoLocator
 
     private static void EnqueueLikelyNestedObjects(object current, Queue<object> queue)
     {
+        //CSJ,variable=flags,フラグ
         var flags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
+        //CSJ,variable=type,型
         var type = current.GetType();
 
         foreach (var prop in type.GetProperties(flags))
@@ -191,11 +201,15 @@ public static class EditorInfoLocator
         }
     }
 
+    //CSJ,class=ReferenceEqualityComparer,参照等価比較比較器
     private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
     {
+        //CSJ,field=Instance,インスタンス
         public static readonly ReferenceEqualityComparer Instance = new();
 
+        //CSJ,method=Equals,等しいか判定する
         public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+        //CSJ,method=GetHashCode,ハッシュコードを取得する
         public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
     }
 }

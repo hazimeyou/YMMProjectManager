@@ -10,8 +10,10 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// 開いている WPF ウィンドウから YMM の PreviewViewModel を探索します。
 /// </summary>
+//CSJ,class=YmmPreviewDiscoveryService,YMMプレビュー検出サービス
 public sealed class YmmPreviewDiscoveryService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public YmmPreviewDiscoveryService(FileLogger logger)
@@ -19,8 +21,10 @@ public sealed class YmmPreviewDiscoveryService
         this.logger = logger;
     }
 
+    //CSJ,method=Discover,検出する
     public YmmPreviewDiscoveryResult Discover()
     {
+        //CSJ,variable=app,アプリケーション
         var app = System.Windows.Application.Current;
         if (app is null)
         {
@@ -36,6 +40,7 @@ public sealed class YmmPreviewDiscoveryService
         };
 
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+        //CSJ,variable=window,ウィンドウ
         foreach (Window window in app.Windows)
         {
             // 各トップレベルウィンドウから、VisualTree と DataContext の両方をたどる。
@@ -83,6 +88,7 @@ public sealed class YmmPreviewDiscoveryService
         result.VisualTreeElementCount++;
 
         // 具体型が別アセンブリへ移動しても追えるよう、型名ベースで候補を判定する。
+        //CSJ,variable=typeName,型名前
         var typeName = current.GetType().Name;
         if (!result.PreviewViewFound && typeName.Contains("PreviewView", StringComparison.OrdinalIgnoreCase))
         {
@@ -122,6 +128,7 @@ public sealed class YmmPreviewDiscoveryService
         if (current is DependencyObject dep && CanUseVisualTree(dep))
         {
             // VisualTreeHelper が扱える型だけを対象にして、AvalonDock 系の例外を避ける。
+            //CSJ,variable=childCount,子件数
             var childCount = VisualTreeHelper.GetChildrenCount(dep);
             for (var i = 0; i < childCount; i++)
             {
@@ -153,11 +160,15 @@ public sealed class YmmPreviewDiscoveryService
         }
     }
 
+    //CSJ,class=ReferenceEqualityComparer,参照等価比較比較器
     private sealed class ReferenceEqualityComparer : IEqualityComparer<object>
     {
+        //CSJ,field=Instance,インスタンス
         public static readonly ReferenceEqualityComparer Instance = new();
 
+        //CSJ,method=Equals,等しいか判定する
         public new bool Equals(object? x, object? y) => ReferenceEquals(x, y);
+        //CSJ,method=GetHashCode,ハッシュコードを取得する
         public int GetHashCode(object obj) => RuntimeHelpers.GetHashCode(obj);
     }
 
@@ -171,19 +182,33 @@ public sealed class YmmPreviewDiscoveryService
 /// <summary>
 /// プレビュー探索で見つかった View/ViewModel と GetBitmap 候補の情報です。
 /// </summary>
+//CSJ,class=YmmPreviewDiscoveryResult,YMMプレビュー検出結果
 public sealed class YmmPreviewDiscoveryResult
 {
+    //CSJ,property=DiscoverySucceeded,検出成功
     public bool DiscoverySucceeded { get; set; }
+    //CSJ,property=FailureStage,失敗した段階
     public string? FailureStage { get; set; }
+    //CSJ,property=PreviewView,プレビュービュー
     public object? PreviewView { get; set; }
+    //CSJ,property=PreviewViewModel,プレビュービューモデル
     public object? PreviewViewModel { get; set; }
+    //CSJ,property=WindowCount,ウィンドウ件数
     public int WindowCount { get; set; }
+    //CSJ,property=VisualTreeElementCount,表示ツリー要素件数
     public int VisualTreeElementCount { get; set; }
+    //CSJ,property=PreviewViewFound,プレビュービューを検出したか
     public bool PreviewViewFound { get; set; }
+    //CSJ,property=PreviewViewModelFound,プレビュービューモデルを検出したか
     public bool PreviewViewModelFound { get; set; }
+    //CSJ,property=GetBitmapMethodFound,GetBitmapメソッドを検出したか
     public bool GetBitmapMethodFound { get; set; }
+    //CSJ,property=GetBitmapParameterTypes,取得ビットマップ引数型一覧
     public string[] GetBitmapParameterTypes { get; set; } = [];
+    //CSJ,property=NextRecommendedCall,次に推奨する呼び出し
     public string NextRecommendedCall { get; set; } = string.Empty;
+    //CSJ,property=FailureReason,失敗理由
     public string? FailureReason { get; set; }
+    //CSJ,property=GetBitmapMethod,取得ビットマップメソッド
     public MethodInfo? GetBitmapMethod { get; set; }
 }

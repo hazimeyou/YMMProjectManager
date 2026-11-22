@@ -3,8 +3,10 @@ using System.IO;
 using System.Security.Cryptography;
 using YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitConfirmedPullTests,確認付きGitプルのテスト
 internal static class GitConfirmedPullTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
         await Program.RunNamedCaseAsync("Confirmed Pull fast-forwards the approved ref, index and Unicode worktree", () => FastForwardAsync(workRoot));
@@ -22,13 +24,17 @@ internal static class GitConfirmedPullTests
     }
 
     private const string Incoming = "素材.txt";
+    //CSJ,record=Fixture,テスト用データ
     private sealed record Fixture(string Local, string Bare, string Start, string Target, GitRepository Repository, string FixtureRoot);
 
+    //CSJ,method=CreateAsync,作成する（非同期）
     private static async Task<Fixture> CreateAsync(string workRoot, string caseName)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "cp", caseName);
         var seed = Path.Combine(root, "s");
         var bare = Path.Combine(root, "r");
+        //CSJ,variable=local,ローカル
         var local = Path.Combine(root, "l");
         Directory.CreateDirectory(seed);
         await GitAsync(seed, "init", "-b", "main");
@@ -52,6 +58,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task<GitPullTarget> ApproveAsync(Fixture fixture)
     {
+        //CSJ,variable=remote,リモート
         var remote = await fixture.Repository.InspectPullRemoteAsync();
         Check(remote.Success && remote.PullRemote is { BranchRef: "refs/heads/main", RemoteName: "origin", UpstreamRef: "refs/heads/main" },
             "local approval inspection: " + remote.StandardError);
@@ -62,6 +69,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task FastForwardAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "ff");
         await GitAsync(fixture.Local, "config", "merge.autostash", "true");
         var target = await ApproveAsync(fixture);
@@ -81,6 +89,7 @@ internal static class GitConfirmedPullTests
         await VerifyUpdatedAsync(fixture);
     }
 
+    //CSJ,method=VerifyUpdatedAsync,更新済みを検証する（非同期）
     private static async Task VerifyUpdatedAsync(Fixture fixture)
     {
         Check(await GitAsync(fixture.Local, "symbolic-ref", "HEAD") == "refs/heads/main" &&
@@ -93,19 +102,25 @@ internal static class GitConfirmedPullTests
 
     private static async Task ProtectedFilesAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "dirty");
         var target = await ApproveAsync(fixture);
+        //CSJ,variable=existing,既存
         var existing = Path.Combine(fixture.Local, "existing.txt");
         var incoming = Path.Combine(fixture.Local, Incoming);
+        //CSJ,variable=index,インデックス
         var index = Path.Combine(fixture.Local, ".git", "index");
         await GitAsync(fixture.Local, "config", "merge.autostash", "true");
+        //CSJ,variable=state,状態
         foreach (var state in new[] { "dirty", "staged", "untracked", "ignored" })
         {
+            //CSJ,variable=changed,変更済み
             var changed = state is "dirty" or "staged" ? existing : incoming;
             if (state == "ignored")
                 await File.AppendAllTextAsync(Path.Combine(fixture.Local, ".git", "info", "exclude"), "\n/" + Incoming + "\n");
             await File.WriteAllTextAsync(changed, "preserve " + state);
             if (state == "staged") await GitAsync(fixture.Local, "add", "--", "existing.txt");
+            //CSJ,variable=previousIndex,直前のインデックス
             var previousIndex = SHA256.HashData(await File.ReadAllBytesAsync(index));
             var result = await fixture.Repository.PullTrustedAsync(target);
             Check(!result.Success && result.Failure != GitFailure.OutcomeUnknown, $"protected file accepted: {state} {result.StandardError}");
@@ -120,6 +135,7 @@ internal static class GitConfirmedPullTests
             else File.Delete(changed);
         }
 
+        //CSJ,variable=indexLock,インデックスロック
         var indexLock = index + ".lock";
         await File.WriteAllTextAsync(indexLock, "external holder");
         Check(!(await fixture.Repository.PullTrustedAsync(target)).Success &&
@@ -128,24 +144,28 @@ internal static class GitConfirmedPullTests
 
     private static async Task DivergenceAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "diverge");
         await GitAsync(fixture.Local, "config", "user.name", "Synthetic Pull Tester");
         await GitAsync(fixture.Local, "config", "user.email", "synthetic@example.invalid");
         await File.WriteAllTextAsync(Path.Combine(fixture.Local, "own.txt"), "owned");
         await GitAsync(fixture.Local, "add", "own.txt");
         await GitAsync(fixture.Local, "commit", "-m", "local commit");
+        //CSJ,variable=local,ローカル
         var local = await GitAsync(fixture.Local, "rev-parse", "HEAD");
         var target = await ApproveAsync(fixture);
         Check((await fixture.Repository.PullTrustedAsync(target)).Failure == GitFailure.Divergence, "divergence was not classified");
         Check(await GitAsync(fixture.Local, "rev-parse", "HEAD") == local && await GitAsync(fixture.Local, "status", "--porcelain") == "",
             "divergence modified the checkout");
         await GitAsync(fixture.Local, "config", "--unset", "branch.main.merge");
+        //CSJ,variable=missing,欠落
         var missing = await fixture.Repository.InspectPullRemoteAsync();
         Check(!missing.Success && missing.PullRemote is null, "an unconfigured upstream was inferred");
     }
 
     private static async Task RemoteChangedAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "remote");
         var target = await ApproveAsync(fixture);
         await GitAsync(fixture.Bare, "update-ref", "-d", "refs/heads/main", fixture.Target);
@@ -160,6 +180,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task BranchSwitchAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "branch");
         await GitAsync(fixture.Local, "branch", "side");
         var target = await ApproveAsync(fixture);
@@ -174,6 +195,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task ConcurrentWritesAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "gate");
         var target = await ApproveAsync(fixture);
         var another = new GitRepository(fixture.Local);
@@ -193,10 +215,13 @@ internal static class GitConfirmedPullTests
         Check((await another.CreateBranchAsync("r19-allowed")).Success, "write gate was not released");
     }
 
+    //CSJ,method=CancelAsync,キャンセルする（非同期）
     private static async Task CancelAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "cancel");
         var target = await ApproveAsync(fixture);
+        //CSJ,variable=cancellation,キャンセル
         using (var cancellation = new CancellationTokenSource())
         {
             fixture.Repository.AfterPullJournalCreated = cancellation.Cancel;
@@ -221,6 +246,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task RecoveryAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "unknown");
         var target = await ApproveAsync(fixture);
         fixture.Repository.AfterPullProcessExit = () => File.WriteAllText(Path.Combine(fixture.Local, Incoming), "external concurrent edits");
@@ -229,6 +255,7 @@ internal static class GitConfirmedPullTests
             "concurrent edit allowed success or lost the durable record: " + result.StandardError);
         await GitAsync(fixture.Local, "config", "merge.verifySignatures", "true");
         var restarted = new GitRepository(fixture.Local);
+        //CSJ,variable=attempt,試行
         for (var attempt = 0; attempt < 2; attempt++)
         {
             Check((await restarted.InspectPullRemoteAsync()).Failure == GitFailure.OutcomeUnknown &&
@@ -240,6 +267,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task RefInterferenceAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "ref-race");
         await GitAsync(fixture.Local, "branch", "side");
         var target = await ApproveAsync(fixture);
@@ -255,8 +283,10 @@ internal static class GitConfirmedPullTests
 
     private static async Task RefSharingFailureAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "ref-share");
         var target = await ApproveAsync(fixture);
+        //CSJ,variable=external,外部
         FileStream? external = null;
         var launched = false;
         fixture.Repository.AfterPullJournalCreated = () =>
@@ -268,7 +298,9 @@ internal static class GitConfirmedPullTests
         finally { external?.Dispose(); }
         Check(launched && !result.Success, "the fixture did not exercise the native ref sharing failure");
         var head = await GitAsync(fixture.Local, "rev-parse", "HEAD");
+        //CSJ,variable=indexTree,インデックスツリー
         var indexTree = await GitAsync(fixture.Local, "write-tree");
+        //CSJ,variable=oldTree,旧ツリー
         var oldTree = await GitAsync(fixture.Local, "rev-parse", fixture.Start + "^{tree}");
         Check(head == fixture.Start && await GitAsync(fixture.Local, "show", fixture.Start + ":existing.txt") == "base",
             "ref sharing failure changed the held ref or lost original committed contents");
@@ -282,6 +314,7 @@ internal static class GitConfirmedPullTests
 
     private static async Task UnsupportedStateAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "limits");
         var target = await ApproveAsync(fixture);
         await GitAsync(fixture.Local, "config", "merge.verifySignatures", "true");
@@ -306,8 +339,10 @@ internal static class GitConfirmedPullTests
 
     private static async Task DeadlineAsync(string workRoot)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = await CreateAsync(workRoot, "deadline");
         var target = await ApproveAsync(fixture);
+        //CSJ,variable=repository,リポジトリ
         var repository = new GitRepository(fixture.Local) { RemoteTimeout = TimeSpan.FromSeconds(6) };
         var reachedGate = false;
         repository.BeforePullExecutionRecheck = deadline =>
@@ -331,6 +366,7 @@ internal static class GitConfirmedPullTests
         return result.Output.Trim();
     }
 
+    //CSJ,method=RunGitAsync,Gitを実行する（非同期）
     private static async Task<(int ExitCode, string Output, string Error)> RunGitAsync(string directory, params string[] arguments)
     {
         var start = new ProcessStartInfo("git")
@@ -341,14 +377,18 @@ internal static class GitConfirmedPullTests
             UseShellExecute = false,
             CreateNoWindow = true,
         };
+        //CSJ,variable=argument,引数
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        //CSJ,variable=process,プロセス
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start synthetic Git.");
         var output = process.StandardOutput.ReadToEndAsync();
+        //CSJ,variable=error,エラー
         var error = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
         return (process.ExitCode, await output, await error);
     }
 
+    //CSJ,method=Check,確認する
     private static void Check(bool condition, string diagnostic)
     {
         if (!condition) throw new InvalidOperationException(diagnostic);

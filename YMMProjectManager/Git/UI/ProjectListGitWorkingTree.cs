@@ -5,10 +5,13 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,enum=WorkingTreeAction,作業ツリーアクション
     private enum WorkingTreeAction { Stage, Unstage, Commit, CreateBranch, SwitchBranch }
 
+    //CSJ,method=ApplyWorkingTreeActionAsync,作業ツリーアクションを適用する（非同期）
     private async Task ApplyWorkingTreeActionAsync(WorkingTreeAction operation)
     {
         var selected = SelectedProject;
@@ -37,6 +40,7 @@ public sealed partial class ProjectListViewModel
                     return;
                 }
             }
+            //CSJ,variable=commitTarget,コミット対象
             GitCommitTarget? commitTarget = null;
             if (operation == WorkingTreeAction.Commit)
             {
@@ -61,6 +65,7 @@ public sealed partial class ProjectListViewModel
             if (operation == WorkingTreeAction.Commit && GitCommitMessage == requestedMessage) GitCommitMessage = "";
             try
             {
+                //CSJ,variable=status,状態
                 var status = await git.StatusAsync(token);
                 if (status.Success && ReferenceEquals(selected, SelectedProject)) UpdateGitChanges(status.StandardOutput);
             }
@@ -71,12 +76,14 @@ public sealed partial class ProjectListViewModel
         });
     }
 
+    //CSJ,method=ShowGitStatusAsync,Git状態を表示する（非同期）
     private async Task ShowGitStatusAsync(bool initialize)
     {
         var selected = SelectedProject;
         if (selected is null) return;
         await ExecuteToolAsync("Git", async token =>
         {
+            //CSJ,variable=directory,ディレクトリ
             var directory = Path.GetDirectoryName(Path.GetFullPath(selected.FullPath));
             if (directory is null || !Directory.Exists(directory))
             {
@@ -105,7 +112,9 @@ public sealed partial class ProjectListViewModel
                 detected = await git.DetectAsync(token);
             }
             if (!detected.Success) { GitStatus = "Git リポジトリが見つかりません。"; return; }
+            //CSJ,variable=status,状態
             var status = await git.StatusAsync(token);
+            //CSJ,variable=branches,ブランチ一覧
             var branches = await git.BranchesAsync(token);
             if (!ReferenceEquals(selected, SelectedProject)) return;
             if (status.Success) UpdateGitChanges(status.StandardOutput);

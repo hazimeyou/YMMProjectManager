@@ -12,8 +12,10 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// YMM の PreviewViewModel から GetBitmap を呼び出し、WPF で保存可能なビットマップへ変換します。
 /// </summary>
+//CSJ,class=YmmPreviewBitmapCaptureAdapter,YMMプレビュービットマップキャプチャアダプター
 public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public YmmPreviewBitmapCaptureAdapter()
@@ -26,10 +28,12 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         this.logger = logger;
     }
 
+    //CSJ,method=TryCaptureAsync,キャプチャを試みる（非同期）
     public Task<YMMProjectManager.Application.Thumbnails.PreviewCaptureResult> TryCaptureAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
+        //CSJ,variable=dispatcher,ディスパッチャー
         var dispatcher = global::System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
@@ -39,12 +43,14 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
 
         return dispatcher.InvokeAsync(() =>
         {
+            //CSJ,variable=discovery,検出
             var discovery = new YmmPreviewDiscoveryService(logger).Discover();
             if (discovery.PreviewViewModel is null)
             {
                 return YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Failed(discovery.FailureReason ?? "PreviewViewModel not found.");
             }
 
+            //CSJ,variable=capture,キャプチャ
             var capture = Capture(discovery.PreviewViewModel);
             return capture.Success && capture.Bitmap is not null
                 ? YMMProjectManager.Application.Thumbnails.PreviewCaptureResult.Succeeded(capture.Bitmap, capture.Bitmap.GetType().FullName ?? capture.Bitmap.GetType().Name)
@@ -52,6 +58,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         }).Task;
     }
 
+    //CSJ,method=Capture,取得する
     public PreviewBitmapCaptureResult Capture(object previewViewModel)
     {
         // まず最も成功しやすい GetBitmap オーバーロードを選び、失敗時は後続候補へ回す。
@@ -65,6 +72,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
             };
         }
 
+        //CSJ,variable=attempt,試行
         foreach (var attempt in CreateAttempts(method))
         {
             try
@@ -113,9 +121,13 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         };
     }
 
+    //CSJ,method=TrySelectGetBitmapMethod,取得ビットマップメソッドの選択するを試みる
     internal static bool TrySelectGetBitmapMethod(
+        //CSJ,parameter=previewViewModel,プレビュービューモデル
         object previewViewModel,
+        //CSJ,parameter=method,メソッド
         out MethodInfo? method,
+        //CSJ,parameter=parameterTypes,引数型一覧
         out string[] parameterTypes,
         out string nextRecommendedCall)
     {
@@ -145,6 +157,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         return true;
     }
 
+    //CSJ,method=TryNormalizeBitmap,ビットマップの正規化を試みる
     internal static bool TryNormalizeBitmap(object value, out BitmapSource bitmap, out int width, out int height, out string pixelFormat)
     {
         bitmap = null!;
@@ -170,6 +183,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         return TryConvertDrawingBitmap(value, out bitmap, out width, out height, out pixelFormat);
     }
 
+    //CSJ,method=CreateAttempts,試行回数を作成する
     private static IEnumerable<(MethodInfo Method, object?[] Args, string Signature)> CreateAttempts(MethodInfo method)
     {
         var parameters = method.GetParameters();
@@ -186,6 +200,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         }
     }
 
+    //CSJ,method=ScoreMethod,得点メソッド
     private static int ScoreMethod(MethodInfo method)
     {
         var parameters = method.GetParameters();
@@ -225,9 +240,13 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         height = 0;
         pixelFormat = string.Empty;
 
+        //CSJ,variable=bitmapType,ビットマップ型
         var bitmapType = bitmap.GetType();
+        //CSJ,variable=widthProperty,幅プロパティ
         var widthProperty = bitmapType.GetProperty("Width");
+        //CSJ,variable=heightProperty,高さプロパティ
         var heightProperty = bitmapType.GetProperty("Height");
+        //CSJ,variable=pixelFormatProperty,画素形式プロパティ
         var pixelFormatProperty = bitmapType.GetProperty("PixelFormat");
         if (widthProperty is null || heightProperty is null)
         {
@@ -280,6 +299,7 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
         }
     }
 
+    //CSJ,method=DeleteObject,オブジェクトを削除する
     [DllImport("gdi32.dll")]
     private static extern bool DeleteObject(IntPtr hObject);
 }
@@ -287,15 +307,25 @@ public sealed class YmmPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapte
 /// <summary>
 /// PreviewViewModel からのビットマップ取得結果です。
 /// </summary>
+//CSJ,class=PreviewBitmapCaptureResult,プレビュービットマップキャプチャ結果
 public sealed class PreviewBitmapCaptureResult
 {
+    //CSJ,property=Success,成功
     public bool Success { get; set; }
+    //CSJ,property=FailureReason,失敗理由
     public string? FailureReason { get; set; }
+    //CSJ,property=GetBitmapMethodFound,GetBitmapメソッドを検出したか
     public bool GetBitmapMethodFound { get; set; }
+    //CSJ,property=GetBitmapParameterTypes,取得ビットマップ引数型一覧
     public string[] GetBitmapParameterTypes { get; set; } = [];
+    //CSJ,property=NextRecommendedCall,次に推奨する呼び出し
     public string NextRecommendedCall { get; set; } = string.Empty;
+    //CSJ,property=Bitmap,ビットマップ
     public BitmapSource? Bitmap { get; set; }
+    //CSJ,property=BitmapWidth,ビットマップ幅
     public int BitmapWidth { get; set; }
+    //CSJ,property=BitmapHeight,ビットマップ高さ
     public int BitmapHeight { get; set; }
+    //CSJ,property=BitmapPixelFormat,ビットマップ画素形式
     public string BitmapPixelFormat { get; set; } = string.Empty;
 }

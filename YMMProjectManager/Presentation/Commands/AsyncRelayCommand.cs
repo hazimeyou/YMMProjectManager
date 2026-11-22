@@ -4,9 +4,11 @@ using System.Windows.Input;
 
 namespace YMMProjectManager.Presentation.Commands;
 
+//CSJ,class=AsyncRelayCommand,非同期処理委譲コマンド
 public sealed class AsyncRelayCommand : ICommand
 {
     private readonly Func<Task> executeAsync;
+    //CSJ,field=canExecute,実行の可否
     private readonly Func<bool>? canExecute;
     private bool isExecuting;
 
@@ -16,12 +18,14 @@ public sealed class AsyncRelayCommand : ICommand
         this.canExecute = canExecute;
     }
 
+    //CSJ,event=CanExecuteChanged,実行可否の変更イベント
     public event EventHandler? CanExecuteChanged
     {
         add => CommandManager.RequerySuggested += value;
         remove => CommandManager.RequerySuggested -= value;
     }
 
+    //CSJ,method=CanExecute,実行が可能かを判定する
     public bool CanExecute(object? parameter)
     {
         if (isExecuting)
@@ -32,6 +36,7 @@ public sealed class AsyncRelayCommand : ICommand
         return canExecute?.Invoke() ?? true;
     }
 
+    //CSJ,method=Execute,実行する
     public async void Execute(object? parameter)
     {
         if (!CanExecute(parameter))

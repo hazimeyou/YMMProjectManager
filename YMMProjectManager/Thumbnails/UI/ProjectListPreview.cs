@@ -10,10 +10,12 @@ using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
     private async Task GenerateThumbnailsFastAsync()
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null)
         {
@@ -23,6 +25,7 @@ public sealed partial class ProjectListViewModel
         await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
         {
             // 高速サムネイル生成は、YMM 側で開いているタイムライン情報を前提にする。
+            //CSJ,variable=info,情報
             var info = TimelineContextService.Info;
             if (info?.Timeline is null)
             {
@@ -49,10 +52,12 @@ public sealed partial class ProjectListViewModel
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=RunSeekProbeAsync,フレーム移動調査を実行する（非同期）
     private async Task RunSeekProbeAsync()
     {
         await ExecuteWithBusyAsync("SeekProbe", async () =>
         {
+            //CSJ,variable=timeline,タイムライン
             var timeline = TimelineContextService.Timeline;
             if (timeline is null)
             {
@@ -60,19 +65,26 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
+            //CSJ,variable=outputDirectory,出力ディレクトリ
             var outputDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "seek-probe");
             Directory.CreateDirectory(outputDirectory);
 
             // 代表フレームを複数試し、YMM のタイムライン操作が安定しているかを確認する。
+            //CSJ,variable=probeFrames,調査フレーム列
             var probeFrames = CreateSeekProbeFrames(timeline);
+            //CSJ,variable=seekAdapter,フレーム移動アダプター
             var seekAdapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=resultPaths,結果パス一覧
             var resultPaths = new List<string>(probeFrames.Count);
+            //CSJ,variable=failedCount,失敗件数
             var failedCount = 0;
 
+            //CSJ,variable=frame,フレーム
             foreach (var frame in probeFrames)
             {
                 try
                 {
+                    //CSJ,variable=path,パス
                     var path = await seekAdapter.WriteSeekProbeAsync(timeline, frame, outputDirectory, CancellationToken.None).ConfigureAwait(true);
                     resultPaths.Add(path);
 
@@ -92,6 +104,7 @@ public sealed partial class ProjectListViewModel
                 }
             }
 
+            //CSJ,variable=message,メッセージ
             var message = resultPaths.Count == 0
                 ? $"Seek probe produced no result files.\nOutput: {outputDirectory}"
                 : $"Seek probe completed.\nFrames: {string.Join(", ", probeFrames)}\nSaved: {resultPaths.Count}\nFailed: {failedCount}\nOutput: {outputDirectory}";
@@ -104,6 +117,7 @@ public sealed partial class ProjectListViewModel
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=PrepareThumbnailMetadata,サムネイルメタデータを準備する
     private void PrepareThumbnailMetadata(IReadOnlyList<ProjectEntry> entries)
     {
         foreach (var entry in entries)
@@ -112,11 +126,13 @@ public sealed partial class ProjectListViewModel
         }
     }
 
+    //CSJ,method=UpdateThumbnailMetadata,サムネイルメタデータを更新する
     private void UpdateThumbnailMetadata(ProjectEntry entry)
     {
         try
         {
             // キャッシュキーはプロジェクトパス由来なので、移動や別名保存時も再計算する。
+            //CSJ,variable=hash,ハッシュ
             var hash = FilmstripCacheKeyFactory.TryCreateHash(entry.FullPath);
             if (string.IsNullOrWhiteSpace(hash))
             {
@@ -125,6 +141,7 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
+            //CSJ,variable=cacheDirectory,キャッシュディレクトリ
             var cacheDirectory = Path.Combine(
                 AppDirectories.UserDirectory,
                 "plugin",
@@ -149,8 +166,10 @@ public sealed partial class ProjectListViewModel
         }
     }
 
+    //CSJ,method=CreateSeekProbeFrames,フレーム移動調査フレーム列を作成する
     private static List<int> CreateSeekProbeFrames(object timeline)
     {
+        //CSJ,variable=frames,フレーム列
         var frames = new List<int> { 0, 10, 100, 500, 1000 };
         var lastNearFrame = TryGetTimelineLastNearFrame(timeline);
         if (lastNearFrame is int candidate && candidate >= 0 && !frames.Contains(candidate))
@@ -163,7 +182,9 @@ public sealed partial class ProjectListViewModel
 
     private static int? TryGetTimelineLastNearFrame(object timeline)
     {
+        //CSJ,variable=lengthProperty,長さプロパティ
         var lengthProperty = timeline.GetType().GetProperty("Length");
+        //CSJ,variable=lengthValue,長さ値
         var lengthValue = lengthProperty?.GetValue(timeline);
         if (!TryConvertFrameLikeValue(lengthValue, out var lengthFrames))
         {
@@ -188,7 +209,9 @@ public sealed partial class ProjectListViewModel
             return true;
         }
 
+        //CSJ,variable=frameProperty,フレームプロパティ
         var frameProperty = value?.GetType().GetProperty("Frame");
+        //CSJ,variable=frameValue,フレーム値
         var frameValue = frameProperty?.GetValue(value);
         if (frameValue is int nestedInt)
         {

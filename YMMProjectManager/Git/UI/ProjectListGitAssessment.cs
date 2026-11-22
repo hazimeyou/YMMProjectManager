@@ -5,12 +5,16 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,property=InspectGitPullCommand,点検Gitプルコマンド
     public ICommand InspectGitPullCommand { get; }
 
+    //CSJ,method=InspectGitPullAsync,Gitプルを点検する（非同期）
     private Task InspectGitPullAsync() => ExecuteToolAsync("Git pull assessment", async token =>
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null) return;
         var git = await LocateProjectGitRootAsync(project, token);
@@ -22,6 +26,7 @@ public sealed partial class ProjectListViewModel
         }
         var result = await git.Value.Repository.InspectPullAsync(token);
         if (!ReferenceEquals(project, SelectedProject)) return;
+        //CSJ,variable=description,説明
         var description = result.State switch
         {
             GitPullState.FastForwardCandidate => "保存済みの追跡ブランチには fast-forward できる履歴があります。",
@@ -37,6 +42,7 @@ public sealed partial class ProjectListViewModel
             GitPullState.Changed => "確認中にリポジトリが変更されました。再確認してください。",
             _ => "状態を確認できません。通常のリポジトリのルートとブランチを確認してください。",
         };
+        //CSJ,variable=lines,行一覧
         var lines = new List<string> { description, $"対象リポジトリ {git.Value.Root}" };
         if (result.BranchRef is { } branch)
             lines.Add($"現在のブランチ {branch} {result.LocalObjectId}".TrimEnd());
@@ -49,14 +55,19 @@ public sealed partial class ProjectListViewModel
 
     private static async Task<(GitRepository Repository, string Root)?> LocateProjectGitRootAsync(ProjectEntry project, CancellationToken token)
     {
+        //CSJ,variable=directory,ディレクトリ
         var directory = Path.GetDirectoryName(Path.GetFullPath(project.FullPath));
         if (directory is null || !Directory.Exists(directory)) return null;
+        //CSJ,variable=query,問い合わせ
         var query = new GitRepository(directory);
+        //CSJ,variable=rootResult,ルート結果
         var rootResult = await query.DetectAsync(token);
+        //CSJ,variable=root,ルート
         var root = rootResult.StandardOutput.TrimEnd('\r', '\n');
         if (!rootResult.Success || root.Contains('\n') || root.Contains('\r') || !Path.IsPathFullyQualified(root) || !Directory.Exists(root))
             return null;
         root = Path.GetFullPath(root);
+        //CSJ,variable=relative,相対
         var relative = Path.GetRelativePath(root, directory);
         if (Path.IsPathFullyQualified(relative) || relative == ".." || relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal))
             return null;

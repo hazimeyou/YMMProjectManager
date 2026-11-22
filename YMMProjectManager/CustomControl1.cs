@@ -40,6 +40,7 @@ namespace YMMProjectManager
     ///     <MyNamespace:CustomControl1/>
     ///
     /// </summary>
+    //CSJ,class=CustomControl1,カスタムコントロール
     public class CustomControl1 : Control
     {
         static CustomControl1()

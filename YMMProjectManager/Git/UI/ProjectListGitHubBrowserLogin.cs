@@ -4,18 +4,25 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,field=GitHubBrowserLoginOperation,GitHubブラウザーログイン操作
     private const string GitHubBrowserLoginOperation = "GitHub browser login";
 
+    //CSJ,property=GitHubBrowserLoginCommand,GitHubブラウザーログインコマンド
     public ICommand GitHubBrowserLoginCommand { get; }
+    //CSJ,property=GitHubBrowserReloginCommand,ブラウザーでのGitHub再ログインコマンド
     public ICommand GitHubBrowserReloginCommand { get; }
+    //CSJ,property=CancelGitHubBrowserLoginCommand,キャンセルGitHubブラウザーログインコマンド
     public ICommand CancelGitHubBrowserLoginCommand { get; }
 
+    //CSJ,method=RunGitHubBrowserLoginAsync,GitHubブラウザーログインを実行する（非同期）
     private Task RunGitHubBrowserLoginAsync(bool reauthenticate) =>
         RunGitHubBrowserLoginAsync(reauthenticate, ConfirmGitHubBrowserLogin,
             GitRepository.GetGitHubBrowserLoginAvailabilityAsync, GitRepository.SignInGitHubInBrowserAsync);
 
+    //CSJ,method=RunGitHubBrowserLoginAsync,GitHubブラウザーログインを実行する（非同期）
     internal Task RunGitHubBrowserLoginAsync(bool reauthenticate, Func<bool, bool> approve,
         Func<CancellationToken, Task<bool>> checkAvailability,
         Func<bool, CancellationToken, Task<GitResult>> signIn) =>
@@ -40,8 +47,10 @@ public sealed partial class ProjectListViewModel
             GitStatus = DescribeGitHubBrowserLoginResult(result, reauthenticate);
         });
 
+    //CSJ,method=ConfirmGitHubBrowserLogin,GitHubブラウザーログインを確認する
     private static bool ConfirmGitHubBrowserLogin(bool reauthenticate)
     {
+        //CSJ,variable=action,アクション
         var action = reauthenticate
             ? "再ログインすると、Git Credential Manager が Windows に保存する資格情報が更新される場合があります。"
             : "Git Credential Manager が既定のブラウザを使い、資格情報を Windows に保存します。既にブラウザでログインしている場合は、そのセッションが再利用されることがあります。";
@@ -51,10 +60,12 @@ public sealed partial class ProjectListViewModel
             MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
     }
 
+    //CSJ,method=DescribeGitHubBrowserLoginResult,GitHubブラウザーログイン結果を説明する
     internal static string DescribeGitHubBrowserLoginResult(GitResult result, bool reauthenticate)
     {
         if (result.Success)
         {
+            //CSJ,variable=operation,操作
             var operation = reauthenticate ? "再ログイン" : "ログイン";
             return $"GCM の GitHub {operation}が完了しました。保存済み資格情報を使うにはチェックを入れ、対象リポジトリへのアクセスを確認してください。複数の資格情報がある場合は、使用されるアカウントを確認してください。";
         }

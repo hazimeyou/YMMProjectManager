@@ -5,16 +5,21 @@ using YMMProjectManager.Domain;
 using YMMProjectManager.Application;
 using YMMProjectManager.Infrastructure;
 
+//CSJ,class=ProjectListConcurrencyTests,プロジェクト一覧並行処理テスト
 internal static class ProjectListConcurrencyTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "project-list-concurrency"); Directory.CreateDirectory(root);
+        //CSJ,variable=path,パス
         var path = Path.Combine(root, "projects.json"); var logger = new FileLogger(Path.Combine(root, "test.log"));
         var a = new JsonProjectRepository(logger, path); var b = new JsonProjectRepository(logger, path);
         var first = await a.LoadAsync(); var stale = await b.LoadAsync();
         first.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "one.ymmp"), ProjectId = Guid.NewGuid() });
         await a.SaveAsync(first);
+        //CSJ,variable=saved,保存済み
         var saved = SHA256.HashData(await File.ReadAllBytesAsync(path));
         stale.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "two.ymmp"), ProjectId = Guid.NewGuid() });
         try { await b.SaveAsync(stale); throw new Exception("stale project list was accepted"); }
@@ -31,6 +36,7 @@ internal static class ProjectListConcurrencyTests
         using var one = StartWorker("one"); using var two = StartWorker("two");
         try
         {
+            //CSJ,variable=timeout,タイムアウト
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             while (!File.Exists(Path.Combine(root, "one.ready")) || !File.Exists(Path.Combine(root, "two.ready")))
             {
@@ -40,12 +46,15 @@ internal static class ProjectListConcurrencyTests
             await File.WriteAllTextAsync(Path.Combine(root, "start"), "go", timeout.Token);
             await Task.WhenAll(one.WaitForExitAsync(timeout.Token), two.WaitForExitAsync(timeout.Token));
             if (one.ExitCode != 0 || two.ExitCode != 0) throw new Exception("worker failed: " + await one.StandardError.ReadToEndAsync() + await two.StandardError.ReadToEndAsync());
+            //CSJ,variable=results,結果一覧
             var results = new[] { await File.ReadAllTextAsync(Path.Combine(root, "one.result")), await File.ReadAllTextAsync(Path.Combine(root, "two.result")) };
             if (results.Count(x => x == "saved") != 1 || results.Count(x => x == "stale" || x == "busy") != 1) throw new Exception("cross-process updates did not yield one winner and one rejection");
             if ((await a.LoadAsync()).Projects.Count != 2) throw new Exception("cross-process updates lost existing registration");
         }
         finally { if (!one.HasExited) one.Kill(true); if (!two.HasExited) two.Kill(true); }
+        //CSJ,variable=externalContent,外部内容
         var externalContent = "{\"Projects\":[],\"Folders\":[]}";
+        //CSJ,variable=externalRepo,外部リポジトリ
         var externalRepo = new JsonProjectRepository(logger, path, beforeReplace: () => File.WriteAllText(path, externalContent));
         var old = await externalRepo.LoadAsync();
         try { await externalRepo.SaveAsync(old); throw new Exception("external change was overwritten"); }
@@ -56,6 +65,7 @@ internal static class ProjectListConcurrencyTests
         var candidate = await externalRepo.LoadAsync();
         var id = Guid.NewGuid(); var testPath = Path.Combine(root, "pending.ymmp");
         candidate.Projects.Add(new ProjectEntry { FullPath = testPath });
+        //CSJ,variable=beforeFingerprint,フィンガープリント照合前の処理
         var beforeFingerprint = ProjectListRecovery.Fingerprint(candidate);
         ProjectListRecovery.ApplyIdentity(candidate, testPath, id);
         if (candidate.Projects.Single().ProjectId != id || ProjectListRecovery.Fingerprint(candidate) == beforeFingerprint) throw new Exception("identity recovery did not change expected snapshot");
@@ -82,16 +92,21 @@ internal static class ProjectListConcurrencyTests
             try { await unsafeRepo.SaveAsync(loaded); throw new Exception("unsafe repository save accepted"); } catch (InvalidDataException) { }
             if (await File.ReadAllTextAsync(unsafePath) != input) throw new Exception("unsafe recovery input changed");
         }
+        //CSJ,variable=mergeBase,マージ基点
         var mergeBase = new ProjectStore { Revision = new ProjectListRevision("base"), IsRecoverySafe = true };
         mergeBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "base.ymmp"), ProjectId = Guid.NewGuid(), DisplayName = "base" });
+        //CSJ,variable=local,ローカル
         var local = ProjectListMerge.Snapshot(mergeBase); var remote = ProjectListMerge.Snapshot(mergeBase);
         local.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "local.ymmp"), ProjectId = Guid.NewGuid() });
         remote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "remote.ymmp"), ProjectId = Guid.NewGuid() });
         var independent = ProjectListMerge.Merge(mergeBase, local, remote);
         if (independent.Store?.Projects.Count != 3 || independent.Conflicts.Count != 0) throw new Exception("independent additions did not merge");
+        //CSJ,variable=legacyBase,旧形式基点
         var legacyBase = ProjectListMerge.Snapshot(mergeBase);
         legacyBase.Projects[0].ProjectId = null;
+        //CSJ,variable=legacyLocal,旧形式ローカル
         var legacyLocal = ProjectListMerge.Snapshot(legacyBase);
+        //CSJ,variable=legacyRemote,旧形式リモート
         var legacyRemote = ProjectListMerge.Snapshot(legacyBase);
         legacyLocal.Projects[0].DisplayName = "local legacy edit";
         var additionalId = Guid.NewGuid();
@@ -101,10 +116,12 @@ internal static class ProjectListConcurrencyTests
             repairedLegacy.Projects.Single(p => p.ProjectId is not null).ProjectId != additionalId)
             throw new Exception("unchanged legacy registration could not recover an edit independently of a newly registered project");
         legacyRemote.Projects[0].DisplayName = "external legacy edit";
+        //CSJ,variable=legacyConflict,旧形式競合
         var legacyConflict = ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote);
         if (!legacyConflict.CanResolveAll || legacyConflict.Choices.Count != 1)
             throw new Exception("competing legacy changes did not require an explicit choice");
         var legacyChoice = legacyConflict.Choices.Single();
+        //CSJ,variable=selectedLegacy,選択中の旧形式
         var selectedLegacy = ProjectListMerge.Merge(legacyBase, legacyLocal, legacyRemote,
             new Dictionary<ProjectListConflict, bool> { [legacyChoice] = true }).Store;
         if (selectedLegacy?.Projects[0].ProjectId is not null || selectedLegacy?.Projects[0].DisplayName != "local legacy edit")
@@ -121,14 +138,18 @@ internal static class ProjectListConcurrencyTests
         local.Projects[0].DisplayName = "local"; remote.Projects[0].Pinned = true;
         var differentFields = ProjectListMerge.Merge(mergeBase, local, remote);
         if (differentFields.Store?.Projects.Single().DisplayName != "local" || !differentFields.Store.Projects.Single().Pinned) throw new Exception("independent field edits did not merge");
+        //CSJ,variable=timeBase,時刻基点
         var timeBase = ProjectListMerge.Snapshot(mergeBase); timeBase.Projects[0].LastAccess = DateTimeOffset.Parse("2026-01-01T10:00:00+09:00");
+        //CSJ,variable=timeLocal,時刻ローカル
         var timeLocal = ProjectListMerge.Snapshot(timeBase); var timeRemote = ProjectListMerge.Snapshot(timeBase);
         timeLocal.Projects[0].LastAccess = DateTimeOffset.Parse("2026-01-01T01:00:00+00:00");
+        //CSJ,variable=timeMerge,時刻マージ
         var timeMerge = ProjectListMerge.Merge(timeBase, timeLocal, timeRemote);
         if (timeMerge.Store?.Projects[0].LastAccess?.Offset != TimeSpan.Zero) throw new Exception("timestamp offset change was lost");
         remote.Projects[0].DisplayName = "remote";
         var contested = ProjectListMerge.Merge(mergeBase, local, remote);
         if (contested.Store is not null || !contested.CanResolveAll) throw new Exception("same-field conflict was not presented");
+        //CSJ,variable=name,名前
         var name = contested.Choices.Single();
         var chooseLocal = ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [name] = true });
         var chooseRemote = ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [name] = false });
@@ -145,6 +166,7 @@ internal static class ProjectListConcurrencyTests
         remote.Projects[0].FullPath = Path.Combine(root, "remote-move.ymmp");
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("delete versus remote move was accepted");
         local = ProjectListMerge.Snapshot(mergeBase); local.Projects[0].FullPath = Path.Combine(root, "local-move.ymmp"); remote = ProjectListMerge.Snapshot(mergeBase); remote.Projects.Clear();
+        //CSJ,variable=moveConflict,移動競合
         var moveConflict = ProjectListMerge.Merge(mergeBase, local, remote);
         if (moveConflict.Store is not null || !moveConflict.CanResolveAll) throw new Exception("local move versus deletion was not presented");
         if (ProjectListMerge.Merge(mergeBase, local, remote, new Dictionary<ProjectListConflict, bool> { [moveConflict.Choices.Single()] = true })
@@ -157,7 +179,9 @@ internal static class ProjectListConcurrencyTests
             throw new Exception("independent move and property change did not merge");
         var competingLocal = ProjectListMerge.Snapshot(mergeBase);
         var competingRemote = ProjectListMerge.Snapshot(mergeBase);
+        //CSJ,variable=localMove,ローカル移動
         var localMove = competingLocal.Projects.Single();
+        //CSJ,variable=remoteMove,リモート移動
         var remoteMove = competingRemote.Projects.Single();
         localMove.FullPath = Path.Combine(root, "selected-local.ymmp");
         remoteMove.FullPath = Path.Combine(root, "selected-remote.ymmp");
@@ -188,19 +212,26 @@ internal static class ProjectListConcurrencyTests
         if (ProjectListMerge.Merge(mergeBase, competingLocal, competingRemote,
             new Dictionary<ProjectListConflict, bool> { [competing.Choices.Single()] = true }).Store is not null)
             throw new Exception("a changed competing destination attachment reused a stale choice");
+        //CSJ,variable=linkBase,リンク基点
         var linkBase = ProjectListMerge.Snapshot(mergeBase);
         linkBase.Projects[0].LinkedYmmpFiles.Add(new LinkedYmmpFile { FilePath = linkBase.Projects[0].FullPath, Role = YmmpRole.Main });
+        //CSJ,variable=linkLocal,リンクローカル
         var linkLocal = ProjectListMerge.Snapshot(linkBase);
+        //CSJ,variable=linkRemote,リンクリモート
         var linkRemote = ProjectListMerge.Snapshot(linkBase);
         linkLocal.Projects[0].LinkedYmmpFiles[0].Memo = "local memo";
         linkRemote.Projects[0].LinkedYmmpFiles[0].DisplayName = "remote label";
+        //CSJ,variable=linkResult,リンク結果
         var linkResult = ProjectListMerge.Merge(linkBase, linkLocal, linkRemote).Store?.Projects.Single().LinkedYmmpFiles.Single();
         if (linkResult is not { Memo: "local memo", DisplayName: "remote label" })
             throw new Exception("independent changes to a link were not merged");
+        //CSJ,variable=linkId,リンクID
         var linkId = linkBase.Projects[0].LinkedYmmpFiles[0].Id;
         var anotherLink = new LinkedYmmpFile { FilePath = Path.Combine(root, "existing-link.ymmp") };
         linkBase.Projects[0].LinkedYmmpFiles.Add(anotherLink);
+        //CSJ,variable=localLinks,ローカルリンク一覧
         var localLinks = ProjectListMerge.Snapshot(linkBase);
+        //CSJ,variable=remoteLinks,リモートリンク一覧
         var remoteLinks = ProjectListMerge.Snapshot(linkBase);
         localLinks.Projects[0].LinkedYmmpFiles[0].Memo = "local changed";
         remoteLinks.Projects[0].LinkedYmmpFiles[1].DisplayName = "remote changed";
@@ -219,10 +250,12 @@ internal static class ProjectListConcurrencyTests
         if (chooseLink?.Count != 4 || chooseLink.Single(link => link.Id == linkId).Memo != "local changed")
             throw new Exception("explicit link restoration lost independent additions or edits");
         localLinks = ProjectListMerge.Snapshot(linkBase); remoteLinks = ProjectListMerge.Snapshot(linkBase);
+        //CSJ,variable=localLink,ローカルリンク
         var localLink = localLinks.Projects[0].LinkedYmmpFiles[0];
         localLink.FilePath = Path.Combine(root, "moved-link.ymmp");
         remoteLinks.Projects[0].LinkedYmmpFiles[0].Exists = true;
         remoteLinks.Projects[0].LinkedYmmpFiles[0].LastCheckedAt = DateTimeOffset.UtcNow;
+        //CSJ,variable=linkBinding,リンクバインディング
         var linkBinding = ProjectListMerge.Merge(linkBase, localLinks, remoteLinks);
         if (!linkBinding.CanResolveAll || linkBinding.Choices.Count != 1)
             throw new Exception("link destination inherited a presence check for the old path");
@@ -238,6 +271,7 @@ internal static class ProjectListConcurrencyTests
         if (ProjectListMerge.Merge(mergeBase, local, remote).Store is not null) throw new Exception("duplicate project identity was accepted");
         var localAlias = ProjectListMerge.Snapshot(mergeBase);
         var remoteAlias = ProjectListMerge.Snapshot(mergeBase);
+        //CSJ,variable=sharedFileId,共有ファイルID
         var sharedFileId = Guid.NewGuid();
         localAlias.Projects.Add(new ProjectEntry
         {
@@ -254,14 +288,18 @@ internal static class ProjectListConcurrencyTests
         remoteAlias.Projects.Last().FileIdentity = remoteAlias.Projects.Last().FileIdentity! with { Volume = 8 };
         if (ProjectListMerge.Merge(mergeBase, localAlias, remoteAlias).Store?.Projects.Count != 3)
             throw new Exception("identical index on a different volume was conflated");
+        //CSJ,variable=folder,フォルダー
         var folder = new ProjectFolder { Name = "folder" }; var folderBase = ProjectListMerge.Snapshot(mergeBase);
         folderBase.Folders.Add(folder); folderBase.Projects[0].FolderId = folder.Id;
+        //CSJ,variable=folderLocal,フォルダーローカル
         var folderLocal = ProjectListMerge.Snapshot(folderBase); var folderRemote = ProjectListMerge.Snapshot(folderBase);
         folderLocal.Projects[0].FolderId = null; folderLocal.Folders.Clear();
         folderRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "external-folder.ymmp"), ProjectId = Guid.NewGuid(), FolderId = folder.Id });
         if (ProjectListMerge.Merge(folderBase, folderLocal, folderRemote).Store is not null) throw new Exception("folder deletion orphaned an external project");
+        //CSJ,variable=orderBase,順序基点
         var orderBase = ProjectListMerge.Snapshot(mergeBase);
         orderBase.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "second-order.ymmp"), ProjectId = Guid.NewGuid() });
+        //CSJ,variable=orderLocal,順序ローカル
         var orderLocal = ProjectListMerge.Snapshot(orderBase); var orderRemote = ProjectListMerge.Snapshot(orderBase);
         orderLocal.Projects.Reverse(); orderLocal.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "third-order.ymmp"), ProjectId = Guid.NewGuid() });
         orderRemote.Projects[0].Pinned = true;
@@ -270,8 +308,10 @@ internal static class ProjectListConcurrencyTests
             !reordered.Projects.Single(p => p.FullPath == orderBase.Projects[0].FullPath).Pinned)
             throw new Exception("reorder or independent remote attribute edit was lost");
         orderRemote.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "remote-order.ymmp"), ProjectId = Guid.NewGuid() });
+        //CSJ,variable=orderConflict,順序競合
         var orderConflict = ProjectListMerge.Merge(orderBase, orderLocal, orderRemote);
         if (orderConflict.Store is not null || !orderConflict.CanResolveAll) throw new Exception("incompatible order changes were not presented");
+        //CSJ,variable=manualOrder,手動順序
         var manualOrder = ProjectListMerge.Merge(orderBase, orderLocal, orderRemote,
             new Dictionary<ProjectListConflict, bool> { [orderConflict.Choices.Single()] = true }).Store;
         if (manualOrder is null || manualOrder.Projects.Count != 4 || !manualOrder.Projects.Take(3).Select(p => p.FullPath)
@@ -290,30 +330,39 @@ internal static class ProjectListConcurrencyTests
         orderLocal = ProjectListMerge.Snapshot(orderBase); orderLocal.Projects.Insert(0, new ProjectEntry { FullPath = Path.Combine(root, "inserted.ymmp"), ProjectId = Guid.NewGuid() });
         if (ProjectListMerge.Merge(orderBase, orderLocal, orderRemote).Store?.Projects[0].FullPath != orderLocal.Projects[0].FullPath)
             throw new Exception("local insertion order was lost");
+        //CSJ,variable=mergePath,マージパス
         var mergePath = Path.Combine(root, "merge-failure.json"); var mergeRepo = new JsonProjectRepository(logger, mergePath);
         var mergeSeed = await mergeRepo.LoadAsync(); mergeSeed.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "seed.ymmp"), ProjectId = Guid.NewGuid() }); await mergeRepo.SaveAsync(mergeSeed);
+        //CSJ,variable=mergeBaseline,マージ基準
         var mergeBaseline = await mergeRepo.LoadAsync(); var mergeLocal = ProjectListMerge.Snapshot(mergeBaseline);
         mergeLocal.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "local-change.ymmp"), ProjectId = Guid.NewGuid() });
         var otherRepo = new JsonProjectRepository(logger, mergePath); var mergeRemote = await otherRepo.LoadAsync();
         mergeRemote.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, "external-change.ymmp"), ProjectId = Guid.NewGuid() }); await otherRepo.SaveAsync(mergeRemote);
+        //CSJ,variable=mergeLatest,マージ最新
         var mergeLatest = await mergeRepo.LoadAsync(); var recoveryPlan = ProjectListMerge.Merge(mergeBaseline, mergeLocal, mergeLatest);
         if (recoveryPlan.Store is null) throw new Exception("recovery plan unexpectedly conflicts");
+        //CSJ,variable=beforeFailure,変更前失敗
         var beforeFailure = SHA256.HashData(await File.ReadAllBytesAsync(mergePath));
         var injected = new JsonProjectRepository(logger, mergePath, beforeReplace: () => throw new IOException("synthetic recovery save failure"));
         try { await injected.SaveAsync(recoveryPlan.Store); throw new Exception("recovery save failure hidden"); } catch (IOException) { }
+        //CSJ,variable=afterFailure,変更後失敗
         var afterFailure = SHA256.HashData(await File.ReadAllBytesAsync(mergePath));
         if (!beforeFailure.SequenceEqual(afterFailure) || mergeLocal.Projects.Count != 2 || (await mergeRepo.LoadAsync()).Projects.Count != 2) throw new Exception("recovery failure lost local or remote state");
     }
 
     public static async Task RunWorkerAsync(string root, string id)
     {
+        //CSJ,variable=allowedRoot,許可済みのルート
         var allowedRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests")) + Path.DirectorySeparatorChar;
         root = Path.GetFullPath(root);
         if (!root.StartsWith(allowedRoot, StringComparison.OrdinalIgnoreCase) || (id != "one" && id != "two")) throw new InvalidOperationException("worker fixture outside isolated test root");
+        //CSJ,variable=repo,リポジトリ
         var repo = new JsonProjectRepository(new FileLogger(Path.Combine(root, id + ".log")), Path.Combine(root, "projects.json"));
+        //CSJ,variable=store,保管先
         var store = await repo.LoadAsync();
         store.Projects.Add(new ProjectEntry { FullPath = Path.Combine(root, id + "-worker.ymmp"), ProjectId = Guid.NewGuid() });
         await File.WriteAllTextAsync(Path.Combine(root, id + ".ready"), "ready");
+        //CSJ,variable=timeout,タイムアウト
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
         while (!File.Exists(Path.Combine(root, "start"))) await Task.Delay(20, timeout.Token);
         try { await repo.SaveAsync(store, timeout.Token); await File.WriteAllTextAsync(Path.Combine(root, id + ".result"), "saved"); }

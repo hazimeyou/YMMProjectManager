@@ -1,13 +1,16 @@
 using YMMProjectManager.Application.PreviewComparison;
 
+//CSJ,class=PreviewComparisonTests,プレビュー比較テスト
 internal static class PreviewComparisonTests
 {
+    //CSJ,field=Configuration,構成
     private static readonly Guid Configuration = Guid.Parse("00000000-0000-0000-0000-000000000010");
     private static readonly PreviewSource A = new(
         Guid.Parse("00000000-0000-0000-0000-000000000001"), Configuration, new(24, 1), 48);
     private static readonly PreviewSource B = new(
         Guid.Parse("00000000-0000-0000-0000-000000000002"), Configuration, new(30, 1), 30);
 
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync()
     {
         await CaseAsync("TL-1 same rate, mixed rate and half-open frame boundaries", TestAlignment);
@@ -26,6 +29,7 @@ internal static class PreviewComparisonTests
         return Task.CompletedTask;
     });
 
+    //CSJ,method=TestAlignment,整合をテストする
     private static void TestAlignment()
     {
         var sameRate = B with { FrameRate = new(48, 2), FrameCount = 24 };
@@ -51,11 +55,13 @@ internal static class PreviewComparisonTests
             PreviewComparisonError.OutsideCommonDuration);
     }
 
+    //CSJ,method=TestInvalidAlignment,無効整合をテストする
     private static void TestInvalidAlignment()
     {
         ExpectAlignment(new(TimeSpan.FromTicks(-1), A, B), null, null, PreviewComparisonError.NegativeTimestamp);
         ExpectAlignment(new(TimeSpan.Zero, default, B), null, null,
             PreviewComparisonError.InvalidSource, PreviewComparisonSide.A);
+        //CSJ,variable=invalid,無効
         foreach (var invalid in new[] { B with { FrameRate = new(0, 1) }, B with { FrameRate = new(24, -1) },
             B with { FrameCount = -1 }, B with { RenderingConfigurationId = Guid.Empty } })
         {
@@ -81,6 +87,7 @@ internal static class PreviewComparisonTests
             PreviewComparisonError.OutsideCommonDuration);
     }
 
+    //CSJ,method=TestMetrics,測定値をテストする
     private static void TestMetrics()
     {
         byte[] original = [10, 60, 0, 100, 20, 30, 40, 50];
@@ -89,12 +96,15 @@ internal static class PreviewComparisonTests
         Ensure(identical.ExactlyEqual && identical.ChangedPixels == 0 && identical.ChangedPixelPercentage == 0 &&
             identical.MeanAbsoluteError == 0 && identical.MaximumChannelDifference == 0, "Identical buffers");
 
+        //CSJ,variable=changed,変更済み
         var changed = Frame(B, [110, 40, 10, 110, 20, 30, 40, 50]);
+        //CSJ,variable=metrics,測定値
         var metrics = Compare(a, changed);
         Ensure(metrics == new PreviewImageMetrics(2, 1, 1, 100, 140) && !metrics.ExactlyEqual &&
             metrics.MeanAbsoluteError == 17.5 && metrics.ChangedPixelPercentage == 50, "Four-channel metrics");
         Ensure(Compare(Frame(A, changed.Pixels.ToArray()), Frame(B, original)) == metrics, "Absolute differences");
 
+        //CSJ,variable=alpha,アルファ
         var alpha = Compare(Frame(A, [8, 9, 10, 0], 1), Frame(B, [8, 9, 10, 40], 1));
         Ensure(alpha == new PreviewImageMetrics(1, 1, 1, 40, 40) && alpha.MeanAbsoluteError == 10,
             "Alpha-only change");
@@ -102,10 +112,12 @@ internal static class PreviewComparisonTests
         Ensure(hiddenRgb == new PreviewImageMetrics(1, 1, 1, 10, 10), "RGB at alpha zero");
     }
 
+    //CSJ,method=TestInvalidFrames,無効フレーム列をテストする
     private static void TestInvalidFrames()
     {
         var a = Frame(A, new byte[8]);
         var b = Frame(B, new byte[8]);
+        //CSJ,variable=request,要求
         var request = new PreviewComparisonRequest(TimeSpan.Zero, A, B);
 
         ExpectError(request, a with { Width = 0 }, b, PreviewComparisonError.InvalidDimensions, PreviewComparisonSide.A);
@@ -139,10 +151,12 @@ internal static class PreviewComparisonTests
             "Comparison preserves the request and aligned positions");
     }
 
+    //CSJ,method=TestCancellation,キャンセルをテストする
     private static void TestCancellation()
     {
         var a = Frame(A, new byte[8]);
         var b = Frame(B, new byte[8]);
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         try
@@ -159,7 +173,9 @@ internal static class PreviewComparisonTests
 
     private static void TestCancellationDuringBufferAcquisition()
     {
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
+        //CSJ,variable=pixels,画素列
         using var pixels = new CancelOnSpanAccess(new byte[8], cancellation);
         var a = Frame(A, new byte[8]) with { Pixels = pixels.Buffer };
         var b = Frame(B, new byte[8]);
@@ -177,7 +193,9 @@ internal static class PreviewComparisonTests
 
     private static void TestLargeImage()
     {
+        //CSJ,variable=width,幅
         const int width = 3840;
+        //CSJ,variable=height,高さ
         const int height = 2160;
         var zeros = new byte[width * height * 4];
         var full = new byte[zeros.Length];
@@ -195,6 +213,7 @@ internal static class PreviewComparisonTests
         Ensure(result == Compare(a, b), "Repeated 4K comparison produced different results.");
     }
 
+    //CSJ,method=TestConcurrencyAsync,並行処理をテストする（非同期）
     private static async Task TestConcurrencyAsync()
     {
         var a = Frame(A, [0, 0, 0, 0], 1);
@@ -202,6 +221,7 @@ internal static class PreviewComparisonTests
         var c = Frame(B, [1, 2, 3, 4], 1);
         var tasks = Enumerable.Range(0, 32).Select(i => Task.Run(() => i % 2 == 0
             ? Compare(a, b) : Compare(a, c)));
+        //CSJ,variable=results,結果一覧
         var results = await Task.WhenAll(tasks);
         for (int i = 0; i < results.Length; i++)
         {
@@ -218,6 +238,7 @@ internal static class PreviewComparisonTests
     private static PreviewFrame Frame(PreviewSource source, byte[] pixels, int width = 2) =>
         new(source, 0, width, 1, PreviewPixelFormat.Bgra32, pixels);
 
+    //CSJ,method=Compare,比較する
     private static PreviewImageMetrics Compare(PreviewFrame a, PreviewFrame b)
     {
         var result = PreviewFrameComparison.Compare(new(TimeSpan.Zero, A, B), a, b);
@@ -226,6 +247,7 @@ internal static class PreviewComparisonTests
     }
 
     private static void ExpectError(PreviewComparisonRequest request, PreviewFrame a, PreviewFrame b,
+        //CSJ,parameter=error,エラー
         PreviewComparisonError error, PreviewComparisonSide? side = null)
     {
         var result = PreviewFrameComparison.Compare(request, a, b);
@@ -234,12 +256,14 @@ internal static class PreviewComparisonTests
     }
 
     private static void ExpectAlignment(PreviewComparisonRequest request, int? a, int? b,
+        //CSJ,parameter=error,エラー
         PreviewComparisonError error = PreviewComparisonError.None, PreviewComparisonSide? side = null)
     {
         var result = PreviewFrameAlignment.Align(request);
         Ensure(result == new PreviewFrameAlignment(request, a, b, error, side), $"Alignment mismatch: {result}");
     }
 
+    //CSJ,method=Ensure,確認する
     private static void Ensure(bool condition, string message)
     {
         if (!condition)

@@ -6,8 +6,10 @@ using System.Security.Principal;
 using System.Text;
 using YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitHubBrowserLoginTests,GitHubブラウザーログインテスト
 internal static class GitHubBrowserLoginTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     internal static async Task RunAsync(string workRoot)
     {
         await Program.RunNamedCaseAsync("R24 browser helper uses fixed GitHub arguments and a fresh process profile",
@@ -28,9 +30,11 @@ internal static class GitHubBrowserLoginTests
             VerifyPreCancellationAsync);
     }
 
+    //CSJ,method=VerifyProfileAsync,プロファイルを検証する（非同期）
     private static Task VerifyProfileAsync(string root)
     {
         var proxy = new Uri("http://127.0.0.1:32119");
+        //CSJ,variable=path,パス
         var path = Path.Combine(root, "isolated-git");
         var oldTrace = Environment.GetEnvironmentVariable("GCM_TRACE_SECRETS");
         var oldBypass = Environment.GetEnvironmentVariable("NO_PROXY");
@@ -69,6 +73,7 @@ internal static class GitHubBrowserLoginTests
     {
         var administrators = new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null);
         var users = new SecurityIdentifier(WellKnownSidType.BuiltinUsersSid, null);
+        //CSJ,variable=access,アクセス
         var access = new FileSecurity();
         access.SetOwner(administrators);
         access.AddAccessRule(new FileSystemAccessRule(administrators, FileSystemRights.FullControl, AccessControlType.Allow));
@@ -102,13 +107,16 @@ internal static class GitHubBrowserLoginTests
         })
             Require(await ParseAsync(unsafeRequest) is null, "unsupported request was accepted");
 
+        //CSJ,method=ParseAsync,解析する（非同期）
         static async Task<string?> ParseAsync(string header)
         {
+            //CSJ,variable=stream,ストリーム
             using var stream = new MemoryStream(Encoding.ASCII.GetBytes(header));
             return await GitHubBrowserProxy.ReadAllowedHostAsync(stream, CancellationToken.None);
         }
     }
 
+    //CSJ,method=VerifyRelayAsync,中継器を検証する（非同期）
     private static async Task VerifyRelayAsync()
     {
         await using var proxy = new GitHubBrowserProxy();
@@ -123,21 +131,27 @@ internal static class GitHubBrowserLoginTests
         catch (SocketException) { }
 
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        //CSJ,variable=client,クライアント
         using var client = new TcpClient(AddressFamily.InterNetwork);
         await client.ConnectAsync(IPAddress.Loopback, port, deadline.Token);
         await client.GetStream().WriteAsync("CONNECT localhost:443 HTTP/1.1\r\nHost: localhost:443\r\n\r\n"u8.ToArray(), deadline.Token);
+        //CSJ,variable=reader,読み取り元
         using var reader = new StreamReader(client.GetStream(), Encoding.ASCII);
+        //CSJ,variable=response,応答
         var response = await reader.ReadToEndAsync(deadline.Token);
         Require(response.StartsWith("HTTP/1.1 403", StringComparison.Ordinal) &&
             !response.Contains("Proxy-Authenticate", StringComparison.OrdinalIgnoreCase) && proxy.Denied && !proxy.Opened,
             "relay refusal must not challenge or open an upstream connection");
     }
 
+    //CSJ,method=VerifyExitAsync,終了を検証する（非同期）
     private static async Task VerifyExitAsync()
     {
         await using var proxy = new GitHubBrowserProxy();
+        //CSJ,variable=work,作業
         var work = Environment.SystemDirectory;
         var env = GitRepository.BuildBrowserGcmEnvironment(work, work, proxy.Endpoint);
+        //CSJ,variable=fixture,テスト用データ
         var fixture = Path.Combine(work, "cmd.exe");
 
         using (var child = GitHubLoginProcess.Start(fixture, "/d /c \"echo synthetic-output & echo synthetic-error 1>&2 & exit /b 13\"", work, env))
@@ -151,12 +165,15 @@ internal static class GitHubBrowserLoginTests
 
         using var unverified = GitHubLoginProcess.Start(fixture, "/d /c \"exit /b 0\"", work, env);
         await unverified.Exited.WaitAsync(TimeSpan.FromSeconds(5));
+        //CSJ,variable=success,成功
         var success = await GitRepository.FinishBrowserLoginAsync(unverified, proxy, TimeSpan.FromSeconds(5), CancellationToken.None);
         Require(success.Failure == GitFailure.OutcomeUnknown, "exit zero without proxy evidence claimed a login");
     }
 
+    //CSJ,method=VerifyApprovedRelayAsync,承認済み中継器を検証する（非同期）
     private static async Task VerifyApprovedRelayAsync()
     {
+        //CSJ,variable=destination,格納先
         using var destination = new TcpListener(IPAddress.Loopback, 0);
         destination.Start();
         var destinationPort = ((IPEndPoint)destination.LocalEndpoint).Port;
@@ -165,22 +182,28 @@ internal static class GitHubBrowserLoginTests
         {
             Require(host == "api.github.com", "proxy connected an unapproved test endpoint");
             connected = true;
+            //CSJ,variable=endpoint,エンドポイント
             var endpoint = new TcpClient(AddressFamily.InterNetwork);
             await endpoint.ConnectAsync(IPAddress.Loopback, destinationPort, token);
             return endpoint;
         });
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        //CSJ,variable=client,クライアント
         using var client = new TcpClient(AddressFamily.InterNetwork);
         await client.ConnectAsync(IPAddress.Loopback, proxy.Endpoint.Port, deadline.Token);
+        //CSJ,variable=stream,ストリーム
         var stream = client.GetStream();
         await stream.WriteAsync("CONNECT api.github.com:443 HTTP/1.1\r\nHost: api.github.com:443\r\n\r\n"u8.ToArray(), deadline.Token);
+        //CSJ,variable=server,サーバー
         using var server = await destination.AcceptTcpClientAsync(deadline.Token);
         var header = "HTTP/1.1 200 Connection Established\r\n\r\n"u8.ToArray();
+        //CSJ,variable=response,応答
         var response = new byte[header.Length];
         await stream.ReadExactlyAsync(response, deadline.Token);
         Require(response.AsSpan().SequenceEqual(header) && connected && proxy.Opened && !proxy.Denied, "approved tunnel not established");
         var syntheticRequest = "synthetic-request"u8.ToArray();
         await stream.WriteAsync(syntheticRequest, deadline.Token);
+        //CSJ,variable=read,読み取り
         var read = new byte[syntheticRequest.Length];
         await server.GetStream().ReadExactlyAsync(read, deadline.Token);
         Require(read.AsSpan().SequenceEqual(syntheticRequest), "proxy did not forward the request bytes");
@@ -188,21 +211,27 @@ internal static class GitHubBrowserLoginTests
         await stream.ReadExactlyAsync(read, deadline.Token);
         Require(read.AsSpan().SequenceEqual(syntheticRequest), "proxy did not forward the response bytes");
 
+        //CSJ,variable=work,作業
         var work = Environment.SystemDirectory;
         var env = GitRepository.BuildBrowserGcmEnvironment(work, work, proxy.Endpoint);
+        //CSJ,variable=helper,補助処理
         using var helper = GitHubLoginProcess.Start(Path.Combine(work, "cmd.exe"), "/d /c \"exit /b 0\"", work, env);
+        //CSJ,variable=outcome,処理結果
         var outcome = await GitRepository.FinishBrowserLoginAsync(helper, proxy, TimeSpan.FromSeconds(5), deadline.Token);
         Require(outcome.Success, "verified synthetic helper did not report success");
     }
 
     private static async Task VerifyTerminationAsync()
     {
+        //CSJ,variable=cancelled,キャンセル済み
         foreach (var cancelled in new[] { true, false })
         {
             await using var proxy = new GitHubBrowserProxy();
+            //CSJ,variable=work,作業
             var work = Environment.SystemDirectory;
             var env = GitRepository.BuildBrowserGcmEnvironment(work, work, proxy.Endpoint);
             using var child = GitHubLoginProcess.Start(Path.Combine(work, "ping.exe"), "-n 31 127.0.0.1", work, env);
+            //CSJ,variable=request,要求
             using var request = new CancellationTokenSource();
             if (cancelled) request.Cancel();
             var result = await GitRepository.FinishBrowserLoginAsync(child, proxy,
@@ -221,6 +250,7 @@ internal static class GitHubBrowserLoginTests
 
     private static async Task VerifyPreCancellationAsync()
     {
+        //CSJ,variable=request,要求
         using var request = new CancellationTokenSource();
         request.Cancel();
         try

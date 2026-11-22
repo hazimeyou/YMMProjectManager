@@ -5,18 +5,23 @@ using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRepository,Gitリポジトリ操作
 public sealed partial class GitRepository
 {
+    //CSJ,method=ResolveRemoteGitExecutable,リモートGit実行ファイルを解決する
     private string ResolveRemoteGitExecutable()
     {
+        //CSJ,variable=machine,端末
         var machine = Path.Combine(MachineGitInstallation(), "mingw64", "bin", "git.exe");
         if (Path.IsPathFullyQualified(machine) && IsOrdinaryDirectory(Path.GetDirectoryName(machine)!) && IsRegularFile(machine))
             return machine;
         foreach (var entry in (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
         {
+            //CSJ,variable=path,パス
             var path = entry.Trim().Trim('"');
             if (!Path.IsPathFullyQualified(path)) continue;
             var candidate = Path.GetFullPath(Path.Combine(path, "git.exe"));
+            //CSJ,variable=relative,相対
             var relative = Path.GetRelativePath(directory, candidate);
             if (!relative.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) && !Path.IsPathRooted(relative)) continue;
             if (IsOrdinaryDirectory(path) && IsRegularFile(candidate)) return candidate;
@@ -24,6 +29,7 @@ public sealed partial class GitRepository
         throw new InvalidOperationException("Git was not found in an absolute PATH directory outside the working repository.");
     }
 
+    //CSJ,method=SetTransportEnvironment,通信環境を設定する
     internal static void SetTransportEnvironment(IDictionary<string, string?> environment, string? allowedProtocol)
     {
         // Partial clones can fetch missing objects even during object lookups such as
@@ -35,8 +41,10 @@ public sealed partial class GitRepository
             ? allowedProtocol : string.Empty;
     }
 
+    //CSJ,method=RunAsync,実行する（非同期）
     private async Task<GitResult> RunAsync(IReadOnlyCollection<string> arguments, CancellationToken token, string? allowedProtocol = null, bool trustedProcess = false,
         bool ignoreLegacyGrafts = false, string[]? pullSettings = null, Action<Process>? afterStart = null, string? standardInput = null,
+        //CSJ,parameter=outputLimit,出力上限
         int? outputLimit = null, string? privateIndex = null, Func<Stream, CancellationToken, Task>? rawOutput = null,
         bool noLazyFetch = false, GitHubTransportProfile? githubTransport = null, bool preserveReceiverHooks = false,
         Func<Process, CancellationToken, Task<(string Text, bool Truncated)>>? interaction = null)
@@ -57,6 +65,7 @@ public sealed partial class GitRepository
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8,
         };
+        //CSJ,variable=name,名前
         foreach (var name in new[]
         {
             "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
@@ -66,6 +75,7 @@ public sealed partial class GitRepository
             start.Environment.Remove(name);
         // Inherited command-scoped config can inject hooks or rewrite a remote independently
         // of the repository and normal user Git configuration that the UI asks users to trust.
+        //CSJ,variable=name,名前
         foreach (var name in start.Environment.Keys.Where(name =>
             name.Equals("GIT_CONFIG_COUNT", StringComparison.OrdinalIgnoreCase) ||
             name.Equals("GIT_CONFIG_PARAMETERS", StringComparison.OrdinalIgnoreCase) ||
@@ -74,6 +84,7 @@ public sealed partial class GitRepository
             start.Environment.Remove(name);
         if (pullSettings is not null)
         {
+            //CSJ,variable=name,名前
             foreach (var name in start.Environment.Keys.Where(name =>
                 (name.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase) &&
                  !name.Equals("GIT_ALLOW_PROTOCOL", StringComparison.OrdinalIgnoreCase)) ||
@@ -92,6 +103,7 @@ public sealed partial class GitRepository
                 start.ArgumentList.Add("-c");
                 start.ArgumentList.Add("core.hooksPath=/dev/null");
             }
+            //CSJ,variable=argument,引数
             foreach (var argument in new[]
             {
                 "--no-pager", "-c", "core.attributesFile=NUL", "-c", "core.askPass=", "-c", "credential.helper=",
@@ -111,6 +123,7 @@ public sealed partial class GitRepository
         SetTransportEnvironment(start.Environment, allowedProtocol);
         if (allowedProtocol is not null || trustedProcess)
         {
+            //CSJ,variable=name,名前
             foreach (var name in start.Environment.Keys.Where(name => name.StartsWith("GIT_TRACE", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("GIT_CURL_VERBOSE", StringComparison.OrdinalIgnoreCase)).ToArray())
                 start.Environment.Remove(name);
@@ -130,19 +143,23 @@ public sealed partial class GitRepository
         start.ArgumentList.Add("-c");
         start.ArgumentList.Add("core.fsmonitor=false");
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
+        //CSJ,variable=process,プロセス
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Could not start Git.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(Timeout);
+        //CSJ,method=ReadOutputAsync,出力を読み取る（非同期）
         async Task<(string Text, bool Truncated)> ReadOutputAsync()
         {
             if (interaction is not null) return await interaction(process, deadline.Token).ConfigureAwait(false);
             if (rawOutput is null) return await ReadGitTextAsync(process.StandardOutput, outputLimit, deadline.Token).ConfigureAwait(false);
             // Closing the pipe on a parse error also releases a child blocked writing output.
+            //CSJ,variable=stream,ストリーム
             using var stream = process.StandardOutput.BaseStream;
             await rawOutput(stream, deadline.Token).ConfigureAwait(false);
             return ("", false);
         }
         var output = ReadOutputAsync();
+        //CSJ,variable=error,エラー
         var error = ReadGitTextAsync(process.StandardError, outputLimit, deadline.Token);
         var input = standardInput is null ? Task.CompletedTask : WriteGitInputAsync(process, standardInput, deadline.Token);
         try
@@ -160,24 +177,31 @@ public sealed partial class GitRepository
             if (token.IsCancellationRequested) throw;
             throw new TimeoutException("Git operation timed out.");
         }
+        //CSJ,variable=stdout,標準出力
         var stdout = await output.ConfigureAwait(false);
+        //CSJ,variable=stderr,標準エラー
         var stderr = await error.ConfigureAwait(false);
         return stdout.Truncated || stderr.Truncated
             ? UnsafeRemote("Git output exceeds the supported inspection size.")
             : new GitResult(process.ExitCode, stdout.Text, stderr.Text);
     }
 
+    //CSJ,method=ReadGitTextAsync,Gitテキストを読み取る（非同期）
     private static async Task<(string Text, bool Truncated)> ReadGitTextAsync(StreamReader reader, int? limit,
         CancellationToken token)
     {
         if (limit is null) return (await reader.ReadToEndAsync(token).ConfigureAwait(false), false);
 
+        //CSJ,variable=buffer,バッファー
         var buffer = new char[8192];
+        //CSJ,variable=content,内容
         var content = new StringBuilder();
         var truncated = false;
+        //CSJ,variable=read,読み取り
         int read;
         while ((read = await reader.ReadAsync(buffer.AsMemory(), token).ConfigureAwait(false)) != 0)
         {
+            //CSJ,variable=available,利用可能
             var available = Math.Min(read, limit.Value - content.Length);
             content.Append(buffer, 0, available);
             // Drain the rest so Git can still exit. A truncated observation cannot authorize a write.
@@ -186,6 +210,7 @@ public sealed partial class GitRepository
         return (content.ToString(), truncated);
     }
 
+    //CSJ,method=WriteGitInputAsync,Git入力を書き込む（非同期）
     private static async Task WriteGitInputAsync(Process process, string input, CancellationToken token)
     {
         try { await process.StandardInput.BaseStream.WriteAsync(Encoding.UTF8.GetBytes(input), token).ConfigureAwait(false); }

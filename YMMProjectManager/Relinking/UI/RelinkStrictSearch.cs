@@ -6,14 +6,19 @@ using YMMProjectManager.Infrastructure.Relink;
 
 namespace YMMProjectManager.Presentation.Relink;
 
+//CSJ,class=RelinkMainWindow,素材の再リンク画面
 public partial class RelinkMainWindow
 {
+    //CSJ,class=DerivedRegistrationException,派生プロジェクト登録例外
     private sealed class DerivedRegistrationException(Exception inner) : IOException("The derived output was verified before registration.", inner);
+    //CSJ,record=StrictMatch,厳格一致
     private sealed record StrictMatch(string ExpectedName, string ExpectedSha256, string ApprovedRoot,
         bool HasExternalMetadata, AssetPoolMatch Candidate);
+    //CSJ,field=strictCandidates,厳格候補一覧
     private readonly Dictionary<int, StrictMatch[]> strictCandidates = [];
     private AssetRevisionSeries.Head? searchedRevision;
 
+    //CSJ,method=SearchStrictAsync,厳格を検索する（非同期）
     private async Task SearchStrictAsync()
     {
         if (context is null || rows.Count == 0) return;
@@ -22,11 +27,14 @@ public partial class RelinkMainWindow
             SetSummaryText("先にこのプロジェクトの素材メタデータを関連付けてください。期待SHA-256がない参照は変更できません。");
             return;
         }
+        //CSJ,variable=mode,モード
         var mode = MessageBox.Show("配布名を元の名前に照合する素材プールの記録を使用しますか？\n「いいえ」で元の名前の素材をフォルダーから探します。",
             "素材の照合", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.No);
         if (mode == MessageBoxResult.Cancel) return;
+        //CSJ,variable=root,ルート
         var root = new OpenFolderDialog { Title = "検索を許可するフォルダーを選択" };
         if (root.ShowDialog() != true) return;
+        //CSJ,variable=manifestPath,目録パス
         string? manifestPath = null;
         if (mode == MessageBoxResult.Yes)
         {
@@ -41,6 +49,7 @@ public partial class RelinkMainWindow
             manifestPath = select.FileName;
         }
 
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         searchCts = cancellation;
         var token = cancellation.Token;
@@ -58,6 +67,7 @@ public partial class RelinkMainWindow
         try
         {
             SetSummaryText("許可したフォルダーの素材を元の名前とSHA-256で照合しています。");
+            //CSJ,variable=history,履歴
             var history = await resolveMetadata(token);
             var expected = new StrictRelinkAssets(context.YmmpPath, context.OriginalJsonText, history.Selected.Manifest);
             var jobs = new Dictionary<string, Task<IReadOnlyList<AssetPoolMatch>>>(StringComparer.OrdinalIgnoreCase);
@@ -69,14 +79,18 @@ public partial class RelinkMainWindow
                     row.Message = "期待SHA-256が未登録";
                     continue;
                 }
+                //CSJ,variable=name,名前
                 var name = metadata.ExternalRelink?.OriginalFileName ?? AssetPool.GetOriginalFileName(row.OriginalPath);
+                //CSJ,variable=key,キー
                 var key = metadata.Sha256 + ":" + name;
                 if (!jobs.TryGetValue(key, out var job))
                 {
                     job = Task.Run(() => AssetPool.FindAsync(name, metadata.Sha256, [root.FolderName], manifestPath, token), token);
                     jobs.Add(key, job);
                 }
+                //CSJ,variable=matches,一致項目
                 var matches = await job;
+                //CSJ,variable=candidates,候補一覧
                 var candidates = matches.Select(match => new StrictMatch(name, metadata.Sha256, root.FolderName,
                     metadata.ExternalRelink is not null, match)).ToArray();
                 strictCandidates.Add(row.RowIndex, candidates);
@@ -109,16 +123,20 @@ public partial class RelinkMainWindow
         }
     }
 
+    //CSJ,method=SaveStrictCandidatesAsync,厳格候補一覧を保存する（非同期）
     private async Task SaveStrictCandidatesAsync(RelinkDocumentContext snapshot, CancellationToken token)
     {
         if (resolveMetadata is null || searchedRevision is null || metadataDirectory is null)
             throw new InvalidDataException("素材を保存する前に、関連付けたメタデータを使って照合してください。");
+        //CSJ,variable=association,関連付け
         var association = await resolveMetadata(token);
         if (searchedRevision != association.Selected.Receipt || !association.Graph.Heads.Contains(searchedRevision))
             throw new InvalidDataException("選択した履歴が変わりました。素材を検索し直してください。");
+        //CSJ,variable=selection,選択
         var selection = snapshot.Rows.Where(row => row.Status == RelinkStatus.Updated && row.SelectedCandidate is not null).ToArray();
         if (selection.Length is 0 or > 10)
             throw new InvalidDataException("操作は候補1件以上10件以下に分けてください。");
+        //CSJ,variable=verified,検証済み
         var verified = new List<AssetPoolVerification>();
         var proofs = new List<AssetRelinkRecovery.StrictAssetProof>();
         var approvedRoots = new HashSet<string>(StringComparer.Ordinal);
@@ -137,6 +155,7 @@ public partial class RelinkMainWindow
                 approvedRoots.Add(choice.ApprovedRoot);
                 hasExternalMetadata |= choice.HasExternalMetadata;
             }
+            //CSJ,variable=projectDirectory,プロジェクトディレクトリ
             var projectDirectory = Path.GetDirectoryName(snapshot.YmmpPath)!;
             if (!hasExternalMetadata && verified.All(asset => StrictRelinkAssets.IsDescendant(projectDirectory, asset.CandidatePath)))
                 await SaveManagedRelinkAsync(snapshot, association, proofs.ToArray(), token);
@@ -145,10 +164,12 @@ public partial class RelinkMainWindow
         }
         finally
         {
+            //CSJ,variable=asset,素材
             foreach (var asset in verified) await asset.DisposeAsync();
         }
     }
 
+    //CSJ,method=SaveStrictExternalOutputAsync,厳格外部出力を保存する（非同期）
     private async Task SaveStrictExternalOutputAsync(RelinkDocumentContext snapshot,
         AssetRevisionSeries.BranchSelection reviewed, AssetRelinkRecovery.StrictAssetProof[] proofs,
         IReadOnlyList<string> approvedRoots, CancellationToken token)
@@ -157,6 +178,7 @@ public partial class RelinkMainWindow
             throw new InvalidDataException("一覧への派生登録を開始できません。登録済みの元プロジェクトから再度開いてください。");
         const string notice = "結果は別名のPFとして保存し、独立した派生IDで一覧に登録します。元PF・登録・メタデータ履歴と素材は維持されます。";
         var rowsToSave = snapshot.Rows.Where(row => row.Status == RelinkStatus.Updated && row.SelectedCandidate is not null);
+        //CSJ,variable=details,詳細
         var details = string.Join("\n\n", rowsToSave.Select(row => $"{row.OriginalPath}\n→ {row.SelectedCandidate}"));
         if (MessageBox.Show($"{notice}\n\n{details}\n\n続けますか？", "厳格な素材再リンク",
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
@@ -172,6 +194,7 @@ public partial class RelinkMainWindow
         if (reviewed.Selected.Receipt != current.Selected.Receipt ||
             !AssetRevisionSeries.SameTips(reviewed.Graph.Heads, current.Graph.Heads))
             throw new InvalidDataException("メタデータ履歴が変わりました。素材を検索し直してください。");
+        //CSJ,variable=evidence,証跡
         var evidence = await AssetRelinkRecovery.PrepareExternalOutputAsync(snapshot, output.FileName, metadataDirectory!,
             reviewed.Graph.Root, reviewed.Selected.Receipt, reviewed.Graph.Heads, proofs, approvedRoots, token);
         try
@@ -197,11 +220,13 @@ public partial class RelinkMainWindow
         }
     }
 
+    //CSJ,method=CompleteExternalRelinkAsync,外部再リンクを完了する（非同期）
     private async Task CompleteExternalRelinkAsync(string evidence, AssetRevisionSeries.Head sourceRoot, string source,
         IReadOnlyList<string> approvedRoots, CancellationToken token)
     {
         if (RegisterDerivedAsync is not { } register)
             throw new InvalidDataException("元プロジェクトの一覧登録を確認できません。");
+        //CSJ,variable=receipt,照合記録
         var receipt = await AssetRelinkRecovery.CompleteExternalOutputAsync(evidence, metadataDirectory!, sourceRoot, source,
             approvedRoots, token, async (item, heldToken) =>
             {
@@ -211,8 +236,10 @@ public partial class RelinkMainWindow
         SetSummaryText($"別名PFと履歴を確認し、派生プロジェクトを登録しました。\n{receipt.Output.Output}\n派生ID {receipt.Output.Revision.ProjectId}\n回復記録 {evidence}");
     }
 
+    //CSJ,method=TryRecoverExternalRelinkAsync,外部再リンクの復旧を試みる（非同期）
     private async Task<bool> TryRecoverExternalRelinkAsync(string evidence, string source, CancellationToken token)
     {
+        //CSJ,variable=review,レビュー
         var review = await AssetRelinkRecovery.InspectExternalRecoveryAsync(evidence, source, token);
         if (review is null) return false;
         if (review.State == AssetRelinkRecovery.ExternalRecoveryState.NotStaged)
@@ -230,7 +257,9 @@ public partial class RelinkMainWindow
         if (MessageBox.Show($"出力 {review.Output}\n派生ID {review.DerivedProjectId}\n\n素材の検索先を再指定して派生登録を回復しますか？",
                 "外部素材の再リンク回復", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
             return true;
+        //CSJ,variable=approved,承認済み
         var approved = new List<string>();
+        //CSJ,variable=root,ルート
         foreach (var root in review.ApprovedRoots)
         {
             token.ThrowIfCancellationRequested();
@@ -245,6 +274,7 @@ public partial class RelinkMainWindow
             }
             approved.Add(chosen);
         }
+        //CSJ,variable=association,関連付け
         var association = await resolveMetadata!(token);
         await CompleteExternalRelinkAsync(evidence, association.Graph.Root, source, approved, token);
         return true;

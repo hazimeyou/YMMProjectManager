@@ -9,12 +9,15 @@ namespace YMMProjectManager.Infrastructure.Git;
 internal sealed class GitHubBrowserProxy : IAsyncDisposable
 {
     private const int HeaderLimit = 8192;
+    //CSJ,field=ConnectionLimit,接続上限
     private const int ConnectionLimit = 32;
     private readonly CancellationTokenSource shutdown = new();
+    //CSJ,field=listener,リスナー
     private readonly TcpListener listener = new(IPAddress.Loopback, 0);
     private readonly Task serving;
     private readonly Func<string, CancellationToken, Task<TcpClient>> connect;
     private int denied;
+    //CSJ,field=opened,表示済み
     private int opened;
 
     public GitHubBrowserProxy() : this(ConnectAsync) { }
@@ -28,11 +31,15 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         serving = ServeAsync();
     }
 
+    //CSJ,property=Endpoint,エンドポイント
     public Uri Endpoint { get; }
+    //CSJ,property=Denied,拒否済み
     public bool Denied => Volatile.Read(ref denied) != 0;
+    //CSJ,property=Opened,表示済み
     public bool Opened => Volatile.Read(ref opened) != 0;
 
     // Keep the port reserved until GCM exits, including if child termination fails.
+    //CSJ,method=StopForwarding,転送を停止する
     public void StopForwarding() => shutdown.Cancel();
 
     private async Task ServeAsync()
@@ -42,6 +49,7 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         {
             while (!shutdown.IsCancellationRequested)
             {
+                //CSJ,variable=client,クライアント
                 var client = await listener.AcceptTcpClientAsync(shutdown.Token).ConfigureAwait(false);
                 if (connections.Count == ConnectionLimit)
                 {
@@ -65,13 +73,16 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         }
     }
 
+    //CSJ,method=HandleAsync,処理する（非同期）
     private async Task HandleAsync(TcpClient client, CancellationToken cancellation)
     {
         using (client)
         {
             try
             {
+                //CSJ,variable=stream,ストリーム
                 var stream = client.GetStream();
+                //CSJ,variable=host,ホスト
                 var host = await ReadAllowedHostAsync(stream, cancellation).ConfigureAwait(false);
                 if (host is null)
                 {
@@ -82,7 +93,9 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
                     return;
                 }
 
+                //CSJ,variable=destination,格納先
                 using var destination = await connect(host, cancellation).ConfigureAwait(false);
+                //CSJ,variable=upstream,上流
                 var upstream = destination.GetStream();
                 Interlocked.Exchange(ref opened, 1);
                 await stream.WriteAsync("HTTP/1.1 200 Connection Established\r\n\r\n"u8.ToArray(), cancellation).ConfigureAwait(false);
@@ -100,6 +113,7 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
 
     private static async Task<TcpClient> ConnectAsync(string host, CancellationToken cancellation)
     {
+        //CSJ,variable=client,クライアント
         var client = new TcpClient();
         try
         {
@@ -113,16 +127,19 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         }
     }
 
+    //CSJ,method=ReadAllowedHostAsync,許可済みホストを読み取る（非同期）
     internal static async Task<string?> ReadAllowedHostAsync(Stream stream, CancellationToken cancellation)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
         deadline.CancelAfter(TimeSpan.FromSeconds(5));
         var header = new byte[HeaderLimit];
+        //CSJ,variable=length,長さ
         var length = 0;
         try
         {
             while (length < header.Length)
             {
+                //CSJ,variable=read,読み取り
                 var read = await stream.ReadAsync(header.AsMemory(length), deadline.Token).ConfigureAwait(false);
                 if (read == 0) return null;
                 length += read;
@@ -136,10 +153,14 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         return null;
     }
 
+    //CSJ,method=ReadAllowedHost,許可済みホストを読み取る
     private static string? ReadAllowedHost(ReadOnlySpan<byte> header)
     {
+        //CSJ,variable=firstLine,最初行
         var firstLine = header.IndexOf("\r\n"u8);
+        //CSJ,variable=request,要求
         var request = firstLine < 0 ? header : header[..firstLine];
+        //CSJ,variable=host,ホスト
         var host = Encoding.ASCII.GetString(request) switch
         {
             "CONNECT github.com:443 HTTP/1.1" => "github.com",
@@ -149,11 +170,15 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         if (host is null || firstLine < 0) return null;
 
         var hostSeen = false;
+        //CSJ,variable=fields,フィールド一覧
         var fields = Encoding.ASCII.GetString(header[(firstLine + 2)..]).Split("\r\n", StringSplitOptions.None);
+        //CSJ,variable=field,フィールド
         foreach (var field in fields)
         {
+            //CSJ,variable=separator,区切り
             var separator = field.IndexOf(':');
             if (separator <= 0 || field.Contains('\r') || field.Contains('\n') || field[0] is ' ' or '\t') return null;
+            //CSJ,variable=name,名前
             var name = field[..separator];
             if (name.Equals("Proxy-Authorization", StringComparison.OrdinalIgnoreCase) ||
                 name.Equals("Transfer-Encoding", StringComparison.OrdinalIgnoreCase) ||
@@ -167,6 +192,7 @@ internal sealed class GitHubBrowserProxy : IAsyncDisposable
         return hostSeen ? host : null;
     }
 
+    //CSJ,method=DisposeAsync,破棄する（非同期）
     public async ValueTask DisposeAsync()
     {
         StopForwarding();

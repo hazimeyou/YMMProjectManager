@@ -8,10 +8,13 @@ using YMMProjectManager.Domain;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,method=PackageSelectedProjectAsync,パッケージ選択中のプロジェクト（非同期）
     private async Task PackageSelectedProjectAsync()
     {
+        //CSJ,variable=path,パス
         var path = SelectedProject?.FullPath;
         if (string.IsNullOrWhiteSpace(path))
         {
@@ -21,8 +24,10 @@ public sealed partial class ProjectListViewModel
         await PackageProjectAsync(path).ConfigureAwait(true);
     }
 
+    //CSJ,method=PackageOpenedProjectAsync,パッケージ表示済みプロジェクト（非同期）
     private async Task PackageOpenedProjectAsync()
     {
+        //CSJ,variable=currentProjectPath,現在のプロジェクトのパス
         var currentProjectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
         if (string.IsNullOrWhiteSpace(currentProjectPath))
         {
@@ -33,8 +38,10 @@ public sealed partial class ProjectListViewModel
         await PackageProjectAsync(currentProjectPath).ConfigureAwait(true);
     }
 
+    //CSJ,method=ExtractBundleAsync,一括パッケージを抽出する（非同期）
     private Task ExtractBundleAsync() => ExecuteToolAsync("Bundle extraction", async token =>
     {
+        //CSJ,variable=bundle,一括パッケージ
         var bundle = new OpenFileDialog
         {
             Filter = "YMM同梱ファイル (*.ymmpx)|*.ymmpx",
@@ -45,12 +52,14 @@ public sealed partial class ProjectListViewModel
 
         var parent = new OpenFolderDialog { Title = "新しい展開フォルダーを作成する場所を選択" };
         if (parent.ShowDialog() != true) return;
+        //CSJ,variable=destination,格納先
         var destination = Path.Combine(parent.FolderName, Path.GetFileNameWithoutExtension(bundle.FileName));
         if (MessageBox.Show($"次の場所に新しいフォルダーを作成します。\n{destination}\n\n新しい受け渡し用YMMPXは、同じフォルダーの ymmpm-transfer.json と照合します。従来のYMMPXでは素材名とSHA-256の一致は証明できません。",
             "ymmpx 展開", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
 
         BundleStatus = "ymmpx を展開中...";
         BundleProgress = 0;
+        //CSJ,variable=progress,進捗
         var progress = new Progress<double>(value => BundleProgress = value * 100d);
         var result = await bundleService.ExtractPackageAsync(bundle.FileName, destination, token, progress);
         if (!result.Success)
@@ -89,9 +98,12 @@ public sealed partial class ProjectListViewModel
     private async Task RegisterExtractedProjectAsync(string restoredYmmpPath, ProjectFileIdentity extractedIdentity, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=fullPath,完全パス
         var fullPath = Path.GetFullPath(restoredYmmpPath);
         if (Projects.Any(x => string.Equals(Path.GetFullPath(x.FullPath), fullPath, StringComparison.OrdinalIgnoreCase))) return;
+        //CSJ,variable=directory,ディレクトリ
         using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
+        //CSJ,variable=file,ファイル
         await using var file = YmmpxTransfer.OpenOrdinaryRead(fullPath);
         var current = await ProjectFileEvidence.ReadAsync(file, token);
         if (current != extractedIdentity)

@@ -3,12 +3,15 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,property=InspectGitHubAccessCommand,点検GitHubアクセスコマンド
     public ICommand InspectGitHubAccessCommand { get; }
 
     private bool useCachedGitHubAuthentication;
 
+    //CSJ,property=UseCachedGitHubAuthentication,キャッシュ済みのGitHub認証を使用する
     public bool UseCachedGitHubAuthentication
     {
         get => useCachedGitHubAuthentication;
@@ -24,18 +27,24 @@ public sealed partial class ProjectListViewModel
             ? "\nGitHubへの接続に、Windowsに保存済みのGit Credential Manager資格情報を使用します。"
             : "";
 
+    //CSJ,field=GitHubAccessOperation,GitHubアクセス操作
     private const string GitHubAccessOperation = "GitHub access";
 
+    //CSJ,method=InspectGitHubAccessAsync,GitHubアクセスを点検する（非同期）
     private Task InspectGitHubAccessAsync() => InspectGitHubAccessAsync(
         (root, summary) => ConfirmGitTrust("GitHubのアクセスを確認", root, summary),
         (repository, target, authentication, token) => repository.ProbeGitHubAccessAsync(target, authentication, token));
 
+    //CSJ,method=InspectGitHubAccessAsync,GitHubアクセスを点検する（非同期）
     internal Task InspectGitHubAccessAsync(Func<string, string, bool> approve,
+        //CSJ,parameter=probe,調査
         Func<GitRepository, GitFetchTarget, GitHubAuthentication, CancellationToken, Task<GitResult>> probe) =>
         ExecuteToolAsync(GitHubAccessOperation, async token =>
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null) return;
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = project.FullPath;
         var located = await LocateProjectGitRootAsync(project, token);
         if (located is null) { GitStatus = "Gitリポジトリを確認できません。"; return; }
@@ -47,6 +56,7 @@ public sealed partial class ProjectListViewModel
             return;
         }
         if (!ReferenceEquals(project, SelectedProject) || projectPath != project.FullPath) return;
+        //CSJ,variable=authentication,認証
         var authentication = AuthenticationFor(target.Endpoint);
         if (!approve(root, target.Endpoint + AuthenticationNotice(authentication)))
         {

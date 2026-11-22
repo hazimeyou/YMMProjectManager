@@ -5,13 +5,17 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,method=ApplyDerivedRelinkAsync,派生再リンクを適用する（非同期）
     internal async Task ApplyDerivedRelinkAsync(ProjectEntry source, ProjectMetadataAssociation expectedAssociation,
+        //CSJ,parameter=derived,派生
         AssetRelinkRecovery.DerivedOutputReceipt derived, CancellationToken token)
     {
         var output = derived.Output;
         var child = output.Revision;
+        //CSJ,variable=association,関連付け
         var association = new ProjectMetadataAssociation(derived.SeriesDirectory, child.RevisionId, child.Sha256,
             child.RevisionId, child.Sha256, child.RevisionId, child.Sha256);
         if (!isInitialized || !isProjectListLossless || retainedRecoverySnapshot is not null || HasUnsavedProjectList ||
@@ -25,7 +29,9 @@ public sealed partial class ProjectListViewModel
             !string.Equals(source.FullPath, output.Source, StringComparison.Ordinal) || projectListRevision is null || savedBaseline is null)
             throw new InvalidDataException("元の登録または一覧の未保存状態が変わりました。一覧を確認してから再開してください。");
 
+        //CSJ,variable=fileIdentity,ファイル識別情報
         var fileIdentity = new ProjectFileIdentity(output.OutputIdentity.Volume, output.OutputIdentity.FileId, output.OutputSha256);
+        //CSJ,variable=sourceIdentity,移行元の識別情報
         var sourceIdentity = new ProjectFileIdentity(output.SourceIdentity.Volume, output.SourceIdentity.FileId, output.SourceSha256);
         if (!MatchesSource(source))
             throw new InvalidDataException("元の登録ファイルの実体が変わりました。");
@@ -34,6 +40,7 @@ public sealed partial class ProjectListViewModel
         {
             Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless,
         });
+        //CSJ,variable=beforeFingerprint,フィンガープリント照合前の処理
         var beforeFingerprint = ProjectListRecovery.Fingerprint(before);
         if (beforeFingerprint != ProjectListRecovery.Fingerprint(savedBaseline))
             throw new InvalidDataException("一覧に別の変更があります。保存内容を確認してから再開してください。");
@@ -94,6 +101,7 @@ public sealed partial class ProjectListViewModel
                 if (CurrentStoreFingerprint() != beforeFingerprint)
                     throw new InvalidDataException("一覧表示が変更されました。");
                 Projects.Add(added);
+                //CSJ,variable=fingerprint,フィンガープリント
                 var fingerprint = ProjectListRecovery.Fingerprint(persisted);
                 if (CurrentStoreFingerprint() != fingerprint)
                     throw new InvalidDataException("一覧表示を確定できません。");
@@ -109,6 +117,7 @@ public sealed partial class ProjectListViewModel
             }
         }
 
+        //CSJ,method=MatchesSource,元ファイルと一致するか確認する
         bool MatchesSource(ProjectEntry existing) => existing.ProjectId == source.ProjectId &&
             existing.FullPath == output.Source && existing.MetadataAssociation == expectedAssociation &&
             (existing.FileIdentity is null || existing.FileIdentity.IsSameFile(sourceIdentity));

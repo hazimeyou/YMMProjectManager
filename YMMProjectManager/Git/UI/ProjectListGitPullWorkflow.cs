@@ -5,16 +5,21 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,field=PullWorkflowOperation,プル作業手順操作
     private const string PullWorkflowOperation = "Git Pull";
 
+    //CSJ,property=PullHelp,プル操作のヘルプ
     public string PullHelp =>
         "承認後に fast-forward のみ実行します。作業ツリーには固定ローカルNTFSが必要です。GitHubでは保存済みのWindows資格情報を選べます。";
 
+    //CSJ,property=GitRemoteOperationsHelp,Gitリモート操作のヘルプ
     public string GitRemoteOperationsHelp =>
         "Clone・Fetch・Push は操作ごとに信頼を確認します。Pull は接続の承認と更新先の確認が必要です。";
 
+    //CSJ,record=PullApprovalDetails,プル承認詳細
     internal sealed record PullApprovalDetails(string RepositoryRoot, string BranchRef, string RemoteName,
         string UpstreamRef, string Endpoint, string StartObjectId, string TargetObjectId, bool ChangesWorktree);
 
@@ -44,6 +49,7 @@ public sealed partial class ProjectListViewModel
                 GitStatus = DescribePullFailure(located.Value.Root, result);
                 return null;
             },
+            //CSJ,parameter=remote,リモート
             remote => approveTransport(remote.RepositoryRoot, $"{remote.RemoteName} / {remote.UpstreamRef}\n{remote.Endpoint}" +
                 AuthenticationNotice(remote.Authentication)),
             async (remote, token) =>
@@ -67,14 +73,17 @@ public sealed partial class ProjectListViewModel
                 var result = await new GitRepository(target.RepositoryRoot).PullTrustedAsync(target, token);
                 logger.Info($"Pull outcome: exit={result.ExitCode}; failure={result.Failure}; elapsed={result.RemoteDiagnostic?.Elapsed}");
                 if (!result.Success) return DescribePullFailure(target.RepositoryRoot, result, target.BranchRef, target.Remote);
+                //CSJ,variable=action,アクション
                 var action = target.ChangesWorktree
                     ? "Pull が完了しました。ブランチ、index、作業ファイルを確認しました。"
                     : "最新です。作業ファイルの更新はありません。";
                 return $"{action}\n対象リポジトリ {target.RepositoryRoot}\n現在のブランチ {target.BranchRef}\n確認したコミット {target.TargetObjectId}";
             });
 
+    //CSJ,method=DescribePullFailure,プル失敗を説明する
     internal static string DescribePullFailure(string repository, GitResult result, string? branch = null, GitPullRemote? remote = null)
     {
+        //CSJ,variable=action,アクション
         var action = result.Failure switch
         {
             GitFailure.OutcomeUnknown => "Pull の結果を確定できません。作業ファイルと回復記録を保全し、Git の状態、現在のブランチ、HEAD、index を確認してください。確認が済むまで再実行や reset は行わないでください。回復記録が残っている間は Pull を開始できません。",
@@ -87,12 +96,15 @@ public sealed partial class ProjectListViewModel
                 remote?.Authentication ?? GitHubAuthentication.Anonymous),
         };
         var affected = branch is null ? repository : $"{repository}\n対象ブランチ {branch}";
+        //CSJ,variable=evidence,証跡
         var evidence = result.RecoveryPath is { } path ? $"\n回復記録 {path}" : string.Empty;
         return $"{action}\n対象リポジトリ {affected}{evidence}";
     }
 
+    //CSJ,method=DescribePullApproval,プル承認を説明する
     internal static string DescribePullApproval(PullApprovalDetails target)
     {
+        //CSJ,variable=change,変更
         var change = target.ChangesWorktree
             ? "対象ブランチを更新します。差分がある場合は index と作業ファイルを更新します。"
             : "現在と更新先のコミットは同じです。作業ファイルは更新しません。";
@@ -111,21 +123,27 @@ public sealed partial class ProjectListViewModel
             """;
     }
 
+    //CSJ,method=ConfirmPull,プルを確認する
     private static bool ConfirmPull(PullApprovalDetails target) => CreatePullConfirmation(target).ShowDialog() == true;
 
     internal static Window CreatePullConfirmation(PullApprovalDetails target)
     {
+        //CSJ,variable=cancel,キャンセル
         var cancel = new Button { Content = "キャンセル", IsCancel = true, IsDefault = true, MinWidth = 120 };
+        //CSJ,variable=run,実行
         var run = new Button { Content = "Pull を実行", MinWidth = 120, Margin = new Thickness(8, 0, 0, 0) };
         var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
         buttons.Children.Add(cancel);
         buttons.Children.Add(run);
+        //CSJ,variable=text,テキスト
         var text = new TextBlock { Text = DescribePullApproval(target), TextWrapping = TextWrapping.Wrap };
+        //CSJ,variable=panel,パネル
         var panel = new DockPanel { Margin = new Thickness(16), LastChildFill = true };
         DockPanel.SetDock(buttons, Dock.Bottom);
         buttons.Margin = new Thickness(0, 12, 0, 0);
         panel.Children.Add(buttons);
         panel.Children.Add(new ScrollViewer { Content = text, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
+        //CSJ,variable=window,ウィンドウ
         var window = new Window
         {
             Title = "Git Pull を実行しますか？",
@@ -141,17 +159,24 @@ public sealed partial class ProjectListViewModel
         return window;
     }
 
+    //CSJ,method=RunGitPullWorkflowAsync,Gitプル作業手順を実行する（非同期）
     internal Task RunGitPullWorkflowAsync<TRemote, TTarget>(
+        //CSJ,parameter=inspectRemote,点検リモート
         Func<ProjectEntry, CancellationToken, Task<TRemote?>> inspectRemote,
+        //CSJ,parameter=confirmTransport,確認通信
         Func<TRemote, bool> confirmTransport,
+        //CSJ,parameter=inspectTarget,点検対象
         Func<TRemote, CancellationToken, Task<TTarget?>> inspectTarget,
+        //CSJ,parameter=confirmTarget,確認対象
         Func<TTarget, bool> confirmTarget,
+        //CSJ,parameter=execute,実行
         Func<TTarget, CancellationToken, Task<string>> execute)
         where TRemote : class
         where TTarget : class
         => ExecuteToolAsync(PullWorkflowOperation, async token =>
         {
             if (SelectedProject is not { } project) return;
+            //CSJ,variable=projectPath,プロジェクトのパス
             var projectPath = project.FullPath;
 
             bool StillSelected()
@@ -164,6 +189,7 @@ public sealed partial class ProjectListViewModel
 
             GitStatus = "Pull の接続先を確認中です。";
             if (!StillSelected()) return;
+            //CSJ,variable=remote,リモート
             var remote = await inspectRemote(project, token);
             if (!StillSelected() || remote is null) return;
             if (!confirmTransport(remote))

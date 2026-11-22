@@ -3,22 +3,30 @@ using System.IO;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRepository,Gitリポジトリ操作
 public sealed partial class GitRepository
 {
     internal Func<string, CancellationToken, Task<GitResult?>>? OnStageTreePrepared { get; init; }
 
+    //CSJ,method=RunIndexChangeAsync,インデックス変更を実行する（非同期）
     private async Task<GitResult> RunIndexChangeAsync(IReadOnlyCollection<string> requestedPaths, bool stage, CancellationToken token)
     {
+        //CSJ,variable=paths,パス一覧
         var paths = ReadExplicitIndexPaths(requestedPaths);
         if (HasPendingPullEvidence()) return UnresolvedPull();
+        //CSJ,variable=session,セッション
         using var session = await OpenPullSessionAsync(token, requireIndex: false).ConfigureAwait(false);
         if (session is null) return UnsafeRemote("Staging requires a verified main repository without unsupported configuration.");
+        //CSJ,variable=gitDirectory,Git ディレクトリ
         var gitDirectory = Path.Combine(directory, ".git");
+        //CSJ,variable=indexPath,インデックスパス
         var indexPath = Path.Combine(gitDirectory, "index");
         try
         {
             if (PullOperationMarkers.Any(marker => HasGitEntry(Path.Combine(gitDirectory, marker)))) return BusyIndex();
+            //CSJ,variable=indexLock,インデックスロック
             await using var indexLock = OwnedFilePublication.CreateOwnedOutputFile(indexPath + ".lock", readBack: true);
+            //CSJ,variable=published,確定済み
             var published = false;
             try
             {
@@ -31,9 +39,11 @@ public sealed partial class GitRepository
                 if (stage)
                 {
                     if (!HasOrdinaryPublicationObjectStore()) return PublicationRefusal("This Git object store cannot be inspected safely.");
+                    //CSJ,variable=known,既知の
                     var known = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
                     if (known is not null) return known;
                 }
+                //CSJ,variable=scratch,一時作業
                 using var scratch = OwnedStagingDirectory.Reserve(gitDirectory, ".ymm-stage-");
                 var proposedPath = Path.Combine(scratch.Path, "index");
                 (ulong Volume, Guid FileId)? observed = null;
@@ -42,10 +52,12 @@ public sealed partial class GitRepository
                     if (original is not null)
                     {
                         ProjectListReplacement.VerifyCompatibleFileMetadata(original, indexLock, indexPath);
+                        //CSJ,variable=initial,初期
                         await using var initial = OwnedFilePublication.CreateOwnedOutputFile(proposedPath);
                         observed = ProjectFileEvidence.ReadPhysicalIdentity(initial.SafeFileHandle);
                         await original.CopyToAsync(initial, token).ConfigureAwait(false);
                     }
+                    //CSJ,variable=changed,変更済み
                     var changed = stage ? await StageExplicitPathsAsync(session, paths, proposedPath, token).ConfigureAwait(false)
                         : await UnstageExplicitPathsAsync(session, paths, proposedPath, token).ConfigureAwait(false);
                     if (changed is not null) return changed;
@@ -57,12 +69,15 @@ public sealed partial class GitRepository
                     // available to remove an offending path from pre-existing staging.
                     if (stage)
                     {
+                        //CSJ,variable=write,書き込み
                         var write = await RunDirectAsync(["write-tree"], token, pullSettings: session.Settings,
                             privateIndex: proposedPath).ConfigureAwait(false);
+                        //CSJ,variable=tree,ツリー
                         var tree = write.StandardOutput.Trim();
                         if (!write.Success || !IsObjectId(tree)) return UnsafeRemote("The proposed staged tree could not be verified.");
                         if (OnStageTreePrepared is { } inspect && await inspect(tree, token).ConfigureAwait(false) is { } refusal)
                             return refusal;
+                        //CSJ,variable=mediaError,メディアエラー
                         var mediaError = await CheckPublicationTreeAsync(tree, token).ConfigureAwait(false);
                         if (mediaError is not null) return mediaError;
                     }
@@ -107,9 +122,11 @@ public sealed partial class GitRepository
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
             if (Path.IsPathRooted(path) || HasHiddenText(path))
                 throw new ArgumentException("Paths must be relative to the repository.", nameof(paths));
+            //CSJ,variable=full,絶対パス
             var full = Path.GetFullPath(path, directory);
             if (!full.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("Path is outside the repository.", nameof(paths));
+            //CSJ,variable=relative,相対
             var relative = Path.GetRelativePath(directory, full).Replace('\\', '/');
             if (relative.Split('/').Any(piece => piece.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
                 piece.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
@@ -120,22 +137,27 @@ public sealed partial class GitRepository
 
     private async Task<GitResult?> StageExplicitPathsAsync(PullSession session, string[] paths, string index, CancellationToken token)
     {
+        //CSJ,variable=inputs,入力一覧
         var inputs = new List<IDisposable>();
         var present = new List<string>();
         var absent = new List<string>();
         try
         {
+            //CSJ,variable=path,パス
             foreach (var path in paths)
             {
                 token.ThrowIfCancellationRequested();
                 // Git expects slash-form paths. Native extended paths require the
                 // Windows separator when we pin the selected working-tree file.
+                //CSJ,variable=full,絶対パス
                 var full = Path.GetFullPath(path, directory);
                 if (!HasGitEntry(full)) { absent.Add(path); continue; }
                 if (!IsRegularFile(full)) return UnsafeRemote("Select individual files. Folders and links cannot be staged.");
                 inputs.Add(OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true));
+                //CSJ,variable=file,ファイル
                 var file = ProjectListReplacement.Open(full);
                 inputs.Add(file);
+                //CSJ,variable=mediaError,メディアエラー
                 var mediaError = await CheckStagePublicationFileAsync(path, file, token).ConfigureAwait(false);
                 if (mediaError is not null) return mediaError;
                 var ignored = await RunDirectAsync(["check-ignore", "--quiet", "--", path], token,
@@ -158,8 +180,10 @@ public sealed partial class GitRepository
     private async Task<GitResult?> UnstageExplicitPathsAsync(PullSession session, string[] paths, string index, CancellationToken token)
     {
         // Explicit files only, even when their worktree paths no longer exist.
+        //CSJ,variable=entries,項目一覧
         var entries = await RunDirectAsync(["--literal-pathspecs", "ls-files", "-z", "--", .. paths], token,
             pullSettings: session.Settings, outputLimit: 1024 * 1024, privateIndex: index).ConfigureAwait(false);
+        //CSJ,variable=known,既知の
         var known = paths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         if (!entries.Success || entries.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(path => !known.Contains(path)))
             return UnsafeRemote("Select individual staged files to unstage.");
@@ -174,16 +198,20 @@ public sealed partial class GitRepository
             pullSettings: session.Settings, outputLimit: 1024 * 1024, privateIndex: index).ConfigureAwait(false);
         if (!original.Success || original.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries).Any(path => !known.Contains(path)))
             return UnsafeRemote("Select individual staged files to unstage.");
+        //CSJ,variable=restored,復元済み
         var restored = await RunDirectAsync(["--literal-pathspecs", "restore", "--staged", "--source=" + parent, "--", .. paths],
             token, pullSettings: session.Settings, privateIndex: index).ConfigureAwait(false);
         return restored.Success ? null : UnsafeRemote("Git could not unstage the selected files.");
     }
 
+    //CSJ,method=RunIndexInputAsync,インデックス入力を実行する（非同期）
     private async Task<bool> RunIndexInputAsync(PullSession session, string[] args, IReadOnlyCollection<string> paths,
+        //CSJ,parameter=index,インデックス
         string index, CancellationToken token) =>
         (await RunDirectAsync(args, token, pullSettings: session.Settings, standardInput: string.Join('\0', paths) + "\0",
             privateIndex: index).ConfigureAwait(false)).Success;
 
+    //CSJ,method=TryCleanStageDirectory,ステージディレクトリの変更なしを試みる
     private static void TryCleanStageDirectory(OwnedStagingDirectory scratch)
     {
         try { scratch.DeleteIfEmpty(); }

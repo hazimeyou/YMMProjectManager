@@ -10,30 +10,48 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Relink;
 
+//CSJ,enum=RelinkStatus,再リンク状態
 public enum RelinkStatus
 {
+    //CSJ,field=Existing,既存
     Existing,
+    //CSJ,field=Missing,欠落
     Missing,
+    //CSJ,field=Updated,更新済み
     Updated,
     Ambiguous,
+    //CSJ,field=NotFound,未検出
     NotFound,
+    //CSJ,field=Failed,失敗
     Failed,
 }
 
+//CSJ,class=RelinkRow,再リンク行
 public sealed class RelinkRow : INotifyPropertyChanged
 {
+    //CSJ,field=status,状態
     private RelinkStatus status;
+    //CSJ,field=candidateCount,候補件数
     private int candidateCount;
+    //CSJ,field=selectedCandidate,選択中の候補
     private string? selectedCandidate;
+    //CSJ,field=message,メッセージ
     private string message = string.Empty;
 
+    //CSJ,property=RowIndex,行インデックス
     public int RowIndex { get; init; }
+    //CSJ,property=TypeHint,型の手掛かり
     public string TypeHint { get; init; } = string.Empty;
+    //CSJ,property=OriginalPath,元のパス
     public string OriginalPath { get; init; } = string.Empty;
+    //CSJ,property=FileName,ファイル名
     public string FileName { get; init; } = string.Empty;
+    //CSJ,property=Extension,拡張子
     public string Extension { get; init; } = string.Empty;
+    //CSJ,property=Candidates,候補一覧
     public ObservableCollection<string> Candidates { get; } = [];
 
+    //CSJ,property=Status,状態
     public RelinkStatus Status
     {
         get => status;
@@ -46,12 +64,14 @@ public sealed class RelinkRow : INotifyPropertyChanged
         }
     }
 
+    //CSJ,property=CandidateCount,候補件数
     public int CandidateCount
     {
         get => candidateCount;
         set => SetProperty(ref candidateCount, value);
     }
 
+    //CSJ,property=SelectedCandidate,選択中の候補
     public string? SelectedCandidate
     {
         get => selectedCandidate;
@@ -62,16 +82,20 @@ public sealed class RelinkRow : INotifyPropertyChanged
         }
     }
 
+    //CSJ,property=Message,メッセージ
     public string Message
     {
         get => message;
         set => SetProperty(ref message, value);
     }
 
+    //CSJ,property=IsEditable,編集可能か
     public bool IsEditable => Status == RelinkStatus.Ambiguous || (Status == RelinkStatus.Updated && CandidateCount > 1);
 
+    //CSJ,event=PropertyChanged,プロパティ変更済み
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    //CSJ,method=SetProperty,プロパティを設定する
     private bool SetProperty<T>(ref T field, T value, [CallerMemberName] string? name = null)
     {
         if (EqualityComparer<T>.Default.Equals(field, value))
@@ -84,66 +108,101 @@ public sealed class RelinkRow : INotifyPropertyChanged
         return true;
     }
 
+    //CSJ,method=OnPropertyChanged,プロパティ変更済み時の処理
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null)
     {
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
     }
 }
 
+//CSJ,class=RelinkSearchInputRow,再リンク検索入力行
 public sealed class RelinkSearchInputRow
 {
+    //CSJ,property=RowIndex,行インデックス
     public int RowIndex { get; init; }
+    //CSJ,property=TypeHint,型の手掛かり
     public string TypeHint { get; init; } = string.Empty;
+    //CSJ,property=OriginalPath,元のパス
     public string OriginalPath { get; init; } = string.Empty;
+    //CSJ,property=FileName,ファイル名
     public string FileName { get; init; } = string.Empty;
+    //CSJ,property=Extension,拡張子
     public string Extension { get; init; } = string.Empty;
+    //CSJ,property=CurrentStatus,現在の状態
     public RelinkStatus CurrentStatus { get; init; }
 }
 
+//CSJ,class=RelinkRowUpdate,再リンク行更新
 public sealed class RelinkRowUpdate
 {
+    //CSJ,property=RowIndex,行インデックス
     public int RowIndex { get; init; }
+    //CSJ,property=Status,状態
     public RelinkStatus Status { get; init; }
+    //CSJ,property=SelectedCandidate,選択中の候補
     public string? SelectedCandidate { get; init; }
+    //CSJ,property=Candidates,候補一覧
     public IReadOnlyList<string> Candidates { get; init; } = Array.Empty<string>();
+    //CSJ,property=Message,メッセージ
     public string Message { get; init; } = string.Empty;
 }
 
+//CSJ,class=RelinkSearchProgressInfo,再リンク検索進捗情報
 public sealed class RelinkSearchProgressInfo
 {
     public int Done { get; init; }
+    //CSJ,property=Total,合計
     public int Total { get; init; }
+    //CSJ,property=CurrentFileName,現在のファイル名
     public string CurrentFileName { get; init; } = string.Empty;
 }
 
+//CSJ,class=RelinkSearchExecutionResult,再リンク検索の実行結果
 public sealed class RelinkSearchExecutionResult
 {
+    //CSJ,property=Summary,概要
     public RelinkResult Summary { get; init; } = new();
+    //CSJ,property=Updates,更新一覧
     public List<RelinkRowUpdate> Updates { get; init; } = [];
 }
 
+//CSJ,class=RelinkResult,再リンク結果
 public sealed class RelinkResult
 {
+    //CSJ,property=ScannedFilePathCount,探索したファイルパス数
     public int ScannedFilePathCount { get; set; }
+    //CSJ,property=MissingCount,欠落件数
     public int MissingCount { get; set; }
+    //CSJ,property=UpdatedCount,更新済みの件数
     public int UpdatedCount { get; set; }
+    //CSJ,property=AmbiguousCount,曖昧な候補数
     public int AmbiguousCount { get; set; }
+    //CSJ,property=NotFoundCount,未検出件数
     public int NotFoundCount { get; set; }
+    //CSJ,property=SkippedCount,スキップ数
     public int SkippedCount { get; set; }
+    //CSJ,property=FailedCount,失敗件数
     public int FailedCount { get; set; }
+    //CSJ,property=ErrorMessage,エラーメッセージ
     public string? ErrorMessage { get; set; }
 }
 
+//CSJ,class=RelinkDocumentContext,再リンク文書コンテキスト
 public sealed class RelinkDocumentContext
 {
+    //CSJ,property=YmmpPath,YMMPパス
     public string YmmpPath { get; init; } = string.Empty;
+    //CSJ,property=OriginalJsonText,元のJSONテキスト
     public string OriginalJsonText { get; init; } = string.Empty;
+    //CSJ,property=Rows,行一覧
     public List<RelinkRow> Rows { get; init; } = [];
+    //CSJ,property=OriginalBytes,元のバイト列
     internal byte[]? OriginalBytes { get; init; }
 }
 
 public sealed class RelinkScanService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public RelinkScanService(FileLogger logger)
@@ -151,14 +210,18 @@ public sealed class RelinkScanService
         this.logger = logger;
     }
 
+    //CSJ,method=ScanAsync,走査する（非同期）
     public Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanAsync(string ymmpPath, CancellationToken token) =>
         ScanCoreAsync(ymmpPath, probeOriginalPath: true, token);
 
     // A received project can contain paths to unapproved drives, shares, or devices.
+    //CSJ,method=ScanForStrictRelinkAsync,厳密な再リンク候補を探索する（非同期）
     public Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanForStrictRelinkAsync(string ymmpPath, CancellationToken token) =>
         ScanCoreAsync(ymmpPath, probeOriginalPath: false, token);
 
+    //CSJ,method=ScanCoreAsync,中核を走査する（非同期）
     private async Task<(RelinkDocumentContext? Context, RelinkResult Result)> ScanCoreAsync(string ymmpPath,
+        //CSJ,parameter=probeOriginalPath,調査元のパス
         bool probeOriginalPath, CancellationToken token)
     {
         var result = new RelinkResult();
@@ -171,11 +234,15 @@ public sealed class RelinkScanService
                 return (null, result);
             }
 
+            //CSJ,variable=bytes,バイト列
             var bytes = probeOriginalPath
                 ? await File.ReadAllBytesAsync(ymmpPath, token).ConfigureAwait(false)
                 : await ReadSelectedProjectAsync(ymmpPath, token).ConfigureAwait(false);
+            //CSJ,variable=offset,オフセット
             var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
+            //CSJ,variable=text,テキスト
             var text = new UTF8Encoding(false, true).GetString(bytes, offset, bytes.Length - offset);
+            //CSJ,variable=root,ルート
             var root = JsonNode.Parse(text);
             if (root is null)
             {
@@ -183,14 +250,17 @@ public sealed class RelinkScanService
                 return (null, result);
             }
 
+            //CSJ,variable=nodes,ノード一覧
             var nodes = new List<FilePathNode>();
             CollectFilePathNodes(root, false, null, nodes);
             result.ScannedFilePathCount = nodes.Count;
 
+            //CSJ,variable=rows,行一覧
             var rows = new List<RelinkRow>(nodes.Count);
             for (var i = 0; i < nodes.Count; i++)
             {
                 token.ThrowIfCancellationRequested();
+                //CSJ,variable=node,ノード
                 var node = nodes[i];
                 var row = new RelinkRow
                 {
@@ -251,18 +321,24 @@ public sealed class RelinkScanService
         }
     }
 
+    //CSJ,method=ReadSelectedProjectAsync,選択中のプロジェクトを読み取る（非同期）
     private static async Task<byte[]> ReadSelectedProjectAsync(string ymmpPath, CancellationToken token)
     {
+        //CSJ,variable=full,絶対パス
         var full = Path.GetFullPath(ymmpPath);
+        //CSJ,variable=directories,ディレクトリ一覧
         using var directories = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true);
         using var handle = OwnedFilePublication.OpenOrdinaryPath(full, expectDirectory: false, allowRename: false);
+        //CSJ,variable=stream,ストリーム
         await using var stream = new FileStream(handle, FileAccess.Read);
         if (stream.Length > 32 * 1024 * 1024) throw new InvalidDataException("プロジェクトが大きすぎます。");
+        //CSJ,variable=bytes,バイト列
         var bytes = new byte[checked((int)stream.Length)];
         await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
         return bytes;
     }
 
+    //CSJ,method=CollectFilePathNodes,ファイルパスノード一覧を収集する
     private static void CollectFilePathNodes(JsonNode node, bool insideItems, string? currentTypeHint, List<FilePathNode> target)
     {
         if (node is JsonObject obj)
@@ -299,6 +375,7 @@ public sealed class RelinkScanService
 
     private static string? GetTypeHint(JsonObject obj, string? fallback)
     {
+        //CSJ,variable=key,キー
         foreach (var key in new[] { "TypeHint", "Type", "$type", "ItemType" })
         {
             if (obj.TryGetPropertyValue(key, out var node) && node is JsonValue v && v.TryGetValue<string>(out var s) && !string.IsNullOrWhiteSpace(s))
@@ -310,15 +387,19 @@ public sealed class RelinkScanService
         return fallback;
     }
 
+    //CSJ,record=FilePathNode,ファイルパスノード
     private sealed record FilePathNode(string Path, string? TypeHint)
     {
+        //CSJ,property=FileName,ファイル名
         public string FileName => System.IO.Path.GetFileName(Path) ?? string.Empty;
+        //CSJ,property=Extension,拡張子
         public string Extension => System.IO.Path.GetExtension(Path) ?? string.Empty;
     }
 }
 
 public sealed class RelinkSearchService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public RelinkSearchService(FileLogger logger)
@@ -326,12 +407,17 @@ public sealed class RelinkSearchService
         this.logger = logger;
     }
 
+    //CSJ,method=ExecuteAsync,実行する（非同期）
     public async Task<RelinkSearchExecutionResult> ExecuteAsync(
+        //CSJ,parameter=rows,行一覧
         IReadOnlyList<RelinkSearchInputRow> rows,
+        //CSJ,parameter=searchFolders,検索フォルダー一覧
         IReadOnlyList<string> searchFolders,
         CancellationToken token,
+        //CSJ,parameter=progress,進捗
         IProgress<RelinkSearchProgressInfo>? progress = null)
     {
+        //CSJ,variable=summary,概要
         var summary = new RelinkResult
         {
             ScannedFilePathCount = rows.Count,
@@ -343,11 +429,13 @@ public sealed class RelinkSearchService
         try
         {
             logger.Info($"Relink.SearchService start. rows={rows.Count}, folders={searchFolders.Count}");
+            //CSJ,variable=normalizedFolders,正規化済みフォルダー一覧
             var normalizedFolders = searchFolders
                 .Where(x => !string.IsNullOrWhiteSpace(x))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
             var targets = rows.Where(x => x.CurrentStatus is RelinkStatus.Missing or RelinkStatus.Ambiguous or RelinkStatus.NotFound).ToList();
+            //CSJ,variable=candidateIndex,候補インデックス
             var candidateIndex = await BuildCandidateIndexAsync(normalizedFolders, summary, token, progress).ConfigureAwait(false);
 
             for (var i = 0; i < targets.Count; i++)
@@ -359,6 +447,7 @@ public sealed class RelinkSearchService
                 try
                 {
                     candidateIndex.TryGetValue(row.FileName, out var indexedCandidates);
+                    //CSJ,variable=candidates,候補一覧
                     var candidates = indexedCandidates is null
                         ? []
                         : (IReadOnlyList<string>)indexedCandidates;
@@ -432,16 +521,22 @@ public sealed class RelinkSearchService
         }
     }
 
+    //CSJ,method=BuildCandidateIndexAsync,候補インデックスを構築する（非同期）
     private async Task<Dictionary<string, List<string>>> BuildCandidateIndexAsync(
+        //CSJ,parameter=searchFolders,検索フォルダー一覧
         IReadOnlyList<string> searchFolders,
+        //CSJ,parameter=summary,概要
         RelinkResult summary,
         CancellationToken token,
+        //CSJ,parameter=progress,進捗
         IProgress<RelinkSearchProgressInfo>? progress)
     {
         return await Task.Run(() =>
         {
+            //CSJ,variable=index,インデックス
             var index = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             var scanned = 0;
+            //CSJ,variable=folder,フォルダー
             foreach (var folder in searchFolders)
             {
                 token.ThrowIfCancellationRequested();
@@ -450,9 +545,11 @@ public sealed class RelinkSearchService
                     continue;
                 }
 
+                //CSJ,variable=file,ファイル
                 foreach (var file in EnumerateFilesSafe(folder, summary))
                 {
                     token.ThrowIfCancellationRequested();
+                    //CSJ,variable=fileName,ファイル名
                     var fileName = Path.GetFileName(file);
                     if (string.IsNullOrWhiteSpace(fileName))
                     {
@@ -482,6 +579,7 @@ public sealed class RelinkSearchService
         }, token).ConfigureAwait(false);
     }
 
+    //CSJ,method=EnumerateFilesSafe,ファイル一覧安全を列挙する
     private IEnumerable<string> EnumerateFilesSafe(string root, RelinkResult summary)
     {
         var stack = new Stack<string>();
@@ -491,6 +589,7 @@ public sealed class RelinkSearchService
         {
             var dir = stack.Pop();
 
+            //CSJ,variable=files,ファイル一覧
             IEnumerable<string> files;
             try
             {
@@ -503,6 +602,7 @@ public sealed class RelinkSearchService
                 continue;
             }
 
+            //CSJ,variable=file,ファイル
             foreach (var file in files)
             {
                 yield return file;
@@ -530,9 +630,12 @@ public sealed class RelinkSearchService
 
 public sealed class RelinkSaveService
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
+    //CSJ,field=write,書き込み
     private readonly Func<Stream, byte[], CancellationToken, Task> write;
     private readonly Action<FileStream> flush;
+    //CSJ,field=beforeCommit,再リンク結果の保存確定前の処理
     private readonly Action? beforeCommit;
 
     public RelinkSaveService(FileLogger logger) : this(logger, null, null, null) { }
@@ -545,19 +648,24 @@ public sealed class RelinkSaveService
         this.beforeCommit = beforeCommit;
     }
 
+    //CSJ,method=SaveAsAsync,別名で保存する（非同期）
     public Task<(bool Success, string? ErrorMessage)> SaveAsAsync(RelinkDocumentContext context, string destination, CancellationToken token) =>
         SaveAsCoreAsync(context, destination, null, null, token);
 
+    //CSJ,method=StagePreparedAsync,準備済みを準備領域に置く（非同期）
     internal Task<(bool Success, string? ErrorMessage)> StagePreparedAsync(RelinkDocumentContext context, string destination,
+        //CSJ,parameter=stage,作業段階
         string stage, Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token) =>
         SaveAsCoreAsync(context, destination, stage, persistPublication, token);
 
     private async Task<(bool Success, string? ErrorMessage)> SaveAsCoreAsync(RelinkDocumentContext context, string destination,
+        //CSJ,parameter=stage,作業段階
         string? stage, Func<FileStream, CancellationToken, Task>? persistPublication, CancellationToken token)
     {
         try
         {
             token.ThrowIfCancellationRequested();
+            //CSJ,variable=rows,行一覧
             var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated)).ToArray();
             if (rows.Length == 0) return (false, "更新対象はありません。");
             var original = context.OriginalBytes?.ToArray();
@@ -568,14 +676,18 @@ public sealed class RelinkSaveService
             if (!string.Equals(Path.GetDirectoryName(source), Path.GetDirectoryName(output), StringComparison.Ordinal))
                 return (false, "相対素材パスを保護するため、元のプロジェクトと同じフォルダーに別名保存してください。");
             if (File.Exists(output) || Directory.Exists(output)) return (false, "既存ファイルは上書きできません。別名を選択してください。");
+            //CSJ,variable=directory,ディレクトリ
             using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(source)!, enforceShare: true);
             var expected = SHA256.HashData(original);
+            //CSJ,variable=initial,初期
             using (var initial = new FileStream(OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false, allowRename: false), FileAccess.Read))
             {
+                //CSJ,variable=initialHash,初期ハッシュ
                 var initialHash = await SHA256.HashDataAsync(initial, token).ConfigureAwait(false);
                 if (!expected.SequenceEqual(initialHash))
                     return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
             }
+            //CSJ,variable=updated,更新済み
             var updated = RelinkJsonUpdate.Apply(original, rows);
             using (JsonDocument.Parse(updated.AsMemory(updated.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0))) { }
             if (persistPublication is not null)
@@ -584,7 +696,9 @@ public sealed class RelinkSaveService
                 return (true, null);
             }
             var candidate = Path.Combine(Path.GetDirectoryName(output)!, $".ymmpm-relink.tmp-{Guid.NewGuid():N}");
+            //CSJ,variable=stream,ストリーム
             await using var stream = OwnedFilePublication.CreateOwnedOutputFile(candidate, readBack: true);
+            //CSJ,variable=published,確定済み
             var published = false;
             try
             {
@@ -592,12 +706,14 @@ public sealed class RelinkSaveService
                 await stream.FlushAsync(token).ConfigureAwait(false);
                 flush(stream);
                 stream.Position = 0;
+                //CSJ,variable=stagedHash,準備済みのハッシュ
                 var stagedHash = await SHA256.HashDataAsync(stream, token).ConfigureAwait(false);
                 if (!SHA256.HashData(updated).SequenceEqual(stagedHash))
                     return (false, "書き込んだ再リンク結果を検証できません。");
                 beforeCommit?.Invoke();
                 token.ThrowIfCancellationRequested();
                 using var current = new FileStream(OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false, allowRename: false), FileAccess.Read);
+                //CSJ,variable=currentHash,現在のハッシュ
                 var currentHash = await SHA256.HashDataAsync(current, token).ConfigureAwait(false);
                 if (!expected.SequenceEqual(currentHash))
                     return (false, "プロジェクトが外部で変更されました。再読み込みしてください。");
@@ -617,9 +733,11 @@ public sealed class RelinkSaveService
         }
     }
 
+    //CSJ,method=WritePreparedStageAsync,準備済み作業段階を書き込む（非同期）
     private async Task WritePreparedStageAsync(string stage, byte[] updated,
         Func<FileStream, CancellationToken, Task> persistPublication, CancellationToken token)
     {
+        //CSJ,variable=stream,ストリーム
         await using var stream = OwnedFilePublication.CreateOwnedOutputFile(stage, readBack: true);
         var durable = false;
         try
@@ -643,6 +761,7 @@ public sealed class RelinkSaveService
 
     // In-place replacement cannot prevent a concurrent external write between comparison and replace.
     // Existing callers must choose a new destination through SaveAsAsync instead.
+    //CSJ,method=SaveAsync,保存する（非同期）
     public Task<(bool Success, string? ErrorMessage, string? BackupPath)> SaveAsync(RelinkDocumentContext context, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();

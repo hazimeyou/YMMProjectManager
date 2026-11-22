@@ -21,6 +21,7 @@ public partial class ProjectListView : UserControl
         }
     }
 
+    //CSJ,method=OnLoaded,読み込み済み時の処理
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         if (initialized)
@@ -45,12 +46,15 @@ public partial class ProjectListView : UserControl
             return;
         }
 
+        //CSJ,variable=files,ファイル一覧
         var files = e.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
+        //CSJ,variable=hasYmmp,YMMPの有無
         var hasYmmp = files.Any(x => x.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase));
         e.Effects = hasYmmp ? DragDropEffects.Copy : DragDropEffects.None;
         e.Handled = true;
     }
 
+    //CSJ,method=OnDrop,ドロップ時の処理
     private async void OnDrop(object sender, DragEventArgs e)
     {
         if (DataContext is not ProjectListViewModel vm)
@@ -63,7 +67,9 @@ public partial class ProjectListView : UserControl
             return;
         }
 
+        //CSJ,variable=files,ファイル一覧
         var files = e.Data.GetData(DataFormats.FileDrop) as string[] ?? [];
+        //CSJ,variable=ymmpFiles,YMMPファイル一覧
         var ymmpFiles = files.Where(x => x.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase)).ToArray();
         if (ymmpFiles.Length == 0)
         {
@@ -80,6 +86,7 @@ public partial class ProjectListView : UserControl
             return;
         }
 
+        //CSJ,variable=dependencyObject,依存関係オブジェクト
         var dependencyObject = e.OriginalSource as DependencyObject;
         if (dependencyObject is null)
         {
@@ -97,6 +104,7 @@ public partial class ProjectListView : UserControl
         listBox.SelectedItem = null;
     }
 
+    //CSJ,method=OnSaveGenerationMenuClick,保存世代メニュークリック時の処理
     private async void OnSaveGenerationMenuClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not ProjectListViewModel vm)
@@ -107,6 +115,7 @@ public partial class ProjectListView : UserControl
         await vm.SaveGenerationAsync();
     }
 
+    //CSJ,method=OnShowGenerationListMenuClick,表示世代一覧メニュークリック時の処理
     private async void OnShowGenerationListMenuClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not ProjectListViewModel vm)
@@ -117,6 +126,7 @@ public partial class ProjectListView : UserControl
         await vm.ShowGenerationListAsync();
     }
 
+    //CSJ,method=OnShowGenerationDiagnosticsMenuClick,表示世代診断情報メニュークリック時の処理
     private async void OnShowGenerationDiagnosticsMenuClick(object sender, RoutedEventArgs e)
     {
         if (DataContext is not ProjectListViewModel vm)

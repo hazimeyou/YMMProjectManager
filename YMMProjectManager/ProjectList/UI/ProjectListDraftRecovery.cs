@@ -8,12 +8,17 @@ using YMMProjectManager.Presentation.Views;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,property=ReviewDraftCommand,レビュー下書きコマンド
     public ICommand ReviewDraftCommand { get; }
+    //CSJ,property=ExportOriginalProjectListCommand,書き出し元のプロジェクト一覧コマンド
     public ICommand ExportOriginalProjectListCommand { get; }
+    //CSJ,field=pendingDraftPath,保留下書きパス
     private string? pendingDraftPath;
 
+    //CSJ,method=ExportOriginalProjectListAsync,元のプロジェクト一覧を書き出す（非同期）
     private Task ExportOriginalProjectListAsync() => ExecuteToolAsync("Asset project list export", async token =>
     {
         if (repository is not JsonProjectRepository json) return;
@@ -24,11 +29,14 @@ public sealed partial class ProjectListViewModel
         AssetStatus = $"原本の内容を新しいファイルへ退避しました。\n{picker.FileName}";
     });
 
+    //CSJ,method=SavePendingDraftAsync,保留下書きを保存する（非同期）
     private async Task SavePendingDraftAsync(ProjectStore local)
     {
         if (repository is not JsonProjectRepository json || savedBaseline is not { IsRecoverySafe: true } baseline ||
             (pendingDraftPath is null && ProjectListRecovery.Fingerprint(baseline) == ProjectListRecovery.Fingerprint(local))) return;
+        //CSJ,variable=evidence,証跡
         var evidence = pendingAdditionEvidence.ToDictionary(pair => pair.Key,
+            //CSJ,parameter=pair,組
             pair => new ProjectListDrafts.Evidence(pair.Value.Id, pair.Value.Hash), StringComparer.OrdinalIgnoreCase);
         pendingDraftPath = await json.WritePendingDraftAsync(baseline, local, evidence, pendingDraftPath);
     }
@@ -51,8 +59,10 @@ public sealed partial class ProjectListViewModel
 
     private static bool IsClaimedDraft(string path) => path.EndsWith(".saving", StringComparison.Ordinal);
 
+    //CSJ,method=ExportDraftCopyAsync,下書きコピーを書き出す（非同期）
     private async Task ExportDraftCopyAsync(ProjectStore local, string title)
     {
+        //CSJ,variable=export,書き出し
         var export = new SaveFileDialog { Filter = "JSON (*.json)|*.json", DefaultExt = ".json", OverwritePrompt = false, Title = title };
         if (export.ShowDialog() != true) return;
         await new JsonProjectRepository(logger, export.FileName).SaveNewCopyAsync(local);
@@ -61,26 +71,33 @@ public sealed partial class ProjectListViewModel
 
     private static ProjectListMergeResult? MergeWithReview(ProjectStore baseline, ProjectStore local, ProjectStore remote)
     {
+        //CSJ,variable=plan,計画
         var plan = ProjectListMerge.Merge(baseline, local, remote);
         if (!plan.CanResolveAll || plan.Choices.Count > 20 ||
             plan.Choices.Any(conflict => conflict.Local.Length > 32000 || conflict.Remote.Length > 32000)) return plan;
+        //CSJ,variable=window,ウィンドウ
         var window = new ProjectListConflictReview(plan.Choices, GetActiveWindow());
         if (window.ShowDialog() != true || !window.AllDecisionsMade) return null;
         var decisions = window.Decisions;
+        //CSJ,variable=resolved,解決済み
         var resolved = ProjectListMerge.Merge(baseline, local, remote, decisions);
         if (resolved.Store is null) return resolved;
+        //CSJ,variable=summary,概要
         var summary = decisions.Select(pair =>
             $"{pair.Key.Item} / {pair.Key.Field}  {(pair.Value ? "未保存の値を採用" : "ディスク上の値を採用")}");
         return resolved with { Changes = summary.Concat(resolved.Changes).ToArray() };
     }
 
+    //CSJ,method=ReviewDraftAsync,レビュー下書き（非同期）
     private Task ReviewDraftAsync() => ExecuteWithBusyAsync("Recover project list", async () =>
     {
         if (repository is not JsonProjectRepository json || HasUnsavedProjectList) return;
+        //CSJ,variable=drafts,下書き一覧
         var drafts = new ProjectListDrafts(json.RecoveryDirectory);
         var picker = new OpenFileDialog { InitialDirectory = drafts.DirectoryPath,
             Filter = "一覧の保存記録 (*.draft.json;*.saving)|*.draft.json;*.saving|終了した記録 (*.closed)|*.closed" };
         if (picker.ShowDialog() != true) return;
+        //CSJ,variable=path,パス
         var path = picker.FileName;
         if (path.EndsWith(".closed", StringComparison.Ordinal))
         {
@@ -97,6 +114,7 @@ public sealed partial class ProjectListViewModel
         }
         if (claimed)
         {
+            //CSJ,variable=outcome,処理結果
             var outcome = ProjectListPublications.Outcome.Unknown;
             try { outcome = await json.ReconcileDraftAsync(path); }
             catch (Exception ex) when (ex is InvalidDataException or System.Text.Json.JsonException)
@@ -117,19 +135,25 @@ public sealed partial class ProjectListViewModel
             await ExportDraftCopyAsync(draft.Local, "保存の成否が不明なため、未保存候補を別ファイルに退避");
             return;
         }
+        //CSJ,variable=latest,最新
         var latest = await repository.LoadAsync();
+        //CSJ,variable=plan,計画
         var plan = MergeWithReview(draft.Baseline, draft.Local, latest);
         if (plan is null) return;
         if (plan.Store is null)
         {
+            //CSJ,variable=conflict,競合
             var conflict = string.Join("\n", plan.Conflicts.Take(20));
+            //CSJ,variable=decision,判断
             var decision = MessageBox.Show($"安全に再適用できない競合があります。\n{conflict}\n\n「はい」で未保存の一覧を別名退避し、「いいえ」で記録を閉じます。「キャンセル」で記録を保持します。",
                 "前回の保存記録", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel);
             if (decision == MessageBoxResult.Yes) await ExportDraftCopyAsync(draft.Local, "未保存の一覧を別ファイルに退避");
             if (decision == MessageBoxResult.No) await json.RetireReadyDraftAsync(path);
             return;
         }
+        //CSJ,variable=hasChanges,変更一覧の有無
         var hasChanges = ProjectListRecovery.Fingerprint(plan.Store) != ProjectListRecovery.Fingerprint(latest);
+        //CSJ,variable=summary,概要
         var summary = string.Join("\n", plan.Changes);
         if (summary.Length > 12000) throw new InvalidDataException("変更内容が大きすぎるため再適用できません。");
         var choice = MessageBox.Show(hasChanges
@@ -139,7 +163,9 @@ public sealed partial class ProjectListViewModel
         if (choice == MessageBoxResult.No) { await json.RetireReadyDraftAsync(path); return; }
         if (choice != MessageBoxResult.Yes || !hasChanges) return;
 
+        //CSJ,variable=verifiedFiles,検証済みファイル一覧
         using var verifiedFiles = await ProjectListRecoveryFiles.OpenAsync(plan.Store, latest,
+            //CSJ,parameter=path,パス
             path => draft.Additions.TryGetValue(path, out var evidence) ? (evidence.Id, evidence.Hash) : null);
         if (savedBaseline is null || CurrentStoreFingerprint() != ProjectListRecovery.Fingerprint(savedBaseline))
             throw new InvalidDataException("画面上の一覧が変更されました。");

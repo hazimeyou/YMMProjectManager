@@ -11,73 +11,101 @@ namespace YMMProjectManager.Infrastructure;
 /// </summary>
 public static class AssetRevisionSeries
 {
+    //CSJ,record=Head,版系列の先端
     public sealed record Head(Guid ProjectId, Guid RevisionId, string Sha256);
+    //CSJ,record=Revision,素材目録の版
     public sealed record Revision(Head Receipt, AssetManifest Manifest);
+    //CSJ,record=Inspection,点検
     public sealed record Inspection(Head Root, Head Head, IReadOnlyList<Revision> Revisions);
+    //CSJ,record=Selection,選択
     public sealed record Selection(Head Root, Head Head, Revision Selected);
+    //CSJ,record=GraphInspection,グラフ点検
     public sealed record GraphInspection(Head Root, IReadOnlyList<Head> Heads, IReadOnlyList<Revision> Revisions);
+    //CSJ,record=BranchSelection,ブランチ選択
     public sealed record BranchSelection(GraphInspection Graph, Revision Selected);
+    //CSJ,field=Prefix,接頭辞
     private const string Prefix = "revision-";
+    //CSJ,field=LockFileName,ロックファイル名
     private const string LockFileName = ".asset-revisions.lock";
+    //CSJ,field=MaxManifestBytes,最大目録バイト列
     private const int MaxManifestBytes = 4 * 1024 * 1024;
+    //CSJ,field=MaxHistoryBytes,最大履歴バイト列
     private const int MaxHistoryBytes = 64 * 1024 * 1024;
     private const int MaxRevisions = 4096;
 
     /// <summary>Copies an explicitly selected legacy history to a new directory, preserving every source byte.</summary>
+    //CSJ,method=ImportLegacyAsync,旧形式を取り込む（非同期）
     public static async Task<Inspection> ImportLegacyAsync(string directory, Guid projectId, IEnumerable<string> files, CancellationToken token = default)
     {
+        //CSJ,variable=graph,グラフ
         var graph = await ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: true, token).ConfigureAwait(false);
         return new Inspection(graph.Root, graph.Heads[0], graph.Revisions);
     }
 
     /// <summary>Imports every explicitly selected revision while retaining all branches.</summary>
+    //CSJ,method=ImportLegacyGraphAsync,旧形式グラフを取り込む（非同期）
     public static Task<GraphInspection> ImportLegacyGraphAsync(string directory, Guid projectId, IEnumerable<string> files,
         CancellationToken token = default) => ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: false, token);
 
     internal const string RetainedImportPath = "AssetMetadataRetainedImportPath";
 
+    //CSJ,method=ImportLegacyGraphAsync,旧形式グラフを取り込む（非同期）
     internal static Task<GraphInspection> ImportLegacyGraphAsync(string directory, Guid projectId, IEnumerable<string> files,
         CancellationToken token, Action<string> beforePublication)
         => ImportLegacyCoreAsync(directory, projectId, files, requireSingleHead: false, token, beforePublication);
 
+    //CSJ,method=ImportLegacyCoreAsync,旧形式中核を取り込む（非同期）
     private static async Task<GraphInspection> ImportLegacyCoreAsync(string directory, Guid projectId, IEnumerable<string> files,
+        //CSJ,parameter=requireSingleHead,要求単一HEAD
         bool requireSingleHead, CancellationToken token, Action<string>? beforePublication = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         token.ThrowIfCancellationRequested();
         if (projectId == Guid.Empty) throw new ArgumentException("The project identity is required.", nameof(projectId));
+        //CSJ,variable=destination,格納先
         var destination = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         var parent = ValidateDirectory(Path.GetDirectoryName(destination) ?? throw new ArgumentException("A new series directory is required.", nameof(directory)));
         if (Directory.Exists(destination) || File.Exists(destination)) throw new IOException("The import destination already exists.");
 
+        //CSJ,variable=history,履歴
         var history = new Dictionary<Guid, Node>();
         var contents = new Dictionary<Guid, byte[]>();
         var remainingBytes = MaxHistoryBytes;
+        //CSJ,variable=file,ファイル
         foreach (var file in files)
         {
             token.ThrowIfCancellationRequested();
             if (history.Count >= MaxRevisions) throw new InvalidDataException("The revision history exceeds the entry limit.");
+            //CSJ,variable=full,絶対パス
             var full = Path.GetFullPath(file);
+            //CSJ,variable=sourceFence,元整合性境界
             using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(full)!, enforceShare: true);
+            //CSJ,variable=bytes,バイト列
             var bytes = await ReadRegularFileAsync(full, remainingBytes, token).ConfigureAwait(false);
             remainingBytes -= bytes.Length;
+            //CSJ,variable=node,ノード
             var node = ParseNode(bytes);
             if (node.Manifest.ProjectId != projectId || !history.TryAdd(node.Manifest.RevisionId, node))
                 throw new InvalidDataException("The history has a foreign project or duplicate revision ID.");
             contents.Add(node.Manifest.RevisionId, bytes);
         }
 
+        //CSJ,variable=graph,グラフ
         var graph = InspectGraph(history);
         if (requireSingleHead) RequireSingleHead(graph);
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=staging,準備領域
         using var staging = OwnedStagingDirectory.Reserve(parent, ".asset-import-");
         try
         {
             foreach (var (revisionId, bytes) in contents)
             {
                 token.ThrowIfCancellationRequested();
+                //CSJ,variable=path,パス
                 var path = RevisionPath(staging.Path, revisionId);
+                //CSJ,variable=stream,ストリーム
                 await using var stream = OwnedFilePublication.CreateOwnedOutputFile(path);
+                //CSJ,variable=complete,完了
                 var complete = false;
                 try
                 {
@@ -116,6 +144,7 @@ public static class AssetRevisionSeries
     }
 
     /// <summary>Initializes an empty series from a root manifest. Existing history is never replaced.</summary>
+    //CSJ,method=InitializeAsync,初期化する（非同期）
     public static async Task<Head> InitializeAsync(string directory, AssetManifest root, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
@@ -123,10 +152,13 @@ public static class AssetRevisionSeries
         if (root.ParentRevisionId is not null) throw new InvalidDataException("A series must start with an actual root revision.");
         root = Snapshot(root);
         var full = ValidateDirectory(directory);
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        //CSJ,variable=gate,排他制御
         await using var gate = AcquireLock(full);
         if ((await ReadNodesAsync(full, token).ConfigureAwait(false)).Count != 0)
             throw new InvalidDataException("The revision series already contains history.");
+        //CSJ,variable=destination,格納先
         var destination = RevisionPath(full, root.RevisionId);
         var head = MakeHead(root);
         await AssetManifestStore.SaveNewAsync(destination, root, token).ConfigureAwait(false);
@@ -134,31 +166,40 @@ public static class AssetRevisionSeries
     }
 
     /// <summary>Reads the only valid head; missing, corrupt, disconnected or divergent history is rejected.</summary>
+    //CSJ,method=ReadHeadAsync,HEADを読み取る（非同期）
     public static async Task<Head> ReadHeadAsync(string directory, CancellationToken token = default)
         => (await InspectAsync(directory, token).ConfigureAwait(false)).Head;
 
     /// <summary>Returns the immutable revisions of an unambiguous series in parent order.</summary>
+    //CSJ,method=InspectAsync,点検する（非同期）
     public static async Task<Inspection> InspectAsync(string directory, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        //CSJ,variable=gate,排他制御
         await using var gate = AcquireLock(full);
         return await InspectCoreAsync(full, token).ConfigureAwait(false);
     }
 
     /// <summary>Reads a complete, validated history without choosing between multiple tips.</summary>
+    //CSJ,method=InspectGraphAsync,グラフを点検する（非同期）
     public static async Task<GraphInspection> InspectGraphAsync(string directory, CancellationToken token = default)
     {
         token.ThrowIfCancellationRequested();
         var full = ValidateDirectory(directory);
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        //CSJ,variable=gate,排他制御
         await using var gate = AcquireLock(full);
         return InspectGraph(await ReadNodesAsync(full, token).ConfigureAwait(false));
     }
 
     /// <summary>Resolves an explicitly selected revision and verifies that the series and revision still match.</summary>
+    //CSJ,method=ResolveAsync,解決する（非同期）
     public static async Task<Selection> ResolveAsync(string directory, Guid projectId, Guid rootRevisionId,
+        //CSJ,parameter=rootSha256,ルートSHA-256
         string rootSha256, Guid selectedRevisionId, string selectedSha256, CancellationToken token = default)
     {
         var selected = await ResolveBranchAsync(directory, projectId, rootRevisionId, rootSha256,
@@ -166,9 +207,12 @@ public static class AssetRevisionSeries
         return new Selection(selected.Graph.Root, RequireSingleHead(selected.Graph), selected.Selected);
     }
 
+    //CSJ,method=ResolveBranchAsync,ブランチを解決する（非同期）
     public static async Task<BranchSelection> ResolveBranchAsync(string directory, Guid projectId, Guid rootRevisionId,
+        //CSJ,parameter=rootSha256,ルートSHA-256
         string rootSha256, Guid selectedRevisionId, string selectedSha256, CancellationToken token = default)
     {
+        //CSJ,variable=graph,グラフ
         var graph = await InspectGraphAsync(directory, token).ConfigureAwait(false);
         if (graph.Root.ProjectId != projectId || graph.Root.RevisionId != rootRevisionId ||
             !string.Equals(graph.Root.Sha256, rootSha256, StringComparison.OrdinalIgnoreCase))
@@ -181,13 +225,16 @@ public static class AssetRevisionSeries
     }
 
     /// <summary>Publishes a new revision only if the expected head identity and bytes still match.</summary>
+    //CSJ,method=AppendAsync,追記する（非同期）
     public static Task<Head> AppendAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
         => AppendCoreAsync(directory, null, null, expected, next, acceptCommittedRevision: false, token);
 
+    //CSJ,method=AppendAsync,追記する（非同期）
     public static Task<Head> AppendAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token = default)
         => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: false, token);
 
     /// <summary>Extends the selected branch tip while keeping every other branch intact.</summary>
+    //CSJ,method=AppendToBranchAsync,分岐に版を追加する（非同期）
     public static Task<Head> AppendToBranchAsync(string directory, Head expectedRoot, IReadOnlyList<Head> observedTips, Head expectedTip,
         AssetManifest next, CancellationToken token = default)
     {
@@ -197,9 +244,11 @@ public static class AssetRevisionSeries
     }
 
     /// <summary>Retries a fixed revision without creating another if the exact expected revision was already published.</summary>
+    //CSJ,method=AppendOrVerifyAsync,追記または照合する（非同期）
     public static Task<Head> AppendOrVerifyAsync(string directory, Head expected, AssetManifest next, CancellationToken token = default)
         => AppendCoreAsync(directory, null, null, expected, next, acceptCommittedRevision: true, token);
 
+    //CSJ,method=AppendOrVerifyAsync,追記または照合する（非同期）
     internal static Task<Head> AppendOrVerifyAsync(string directory, Head expectedRoot, Head expected, AssetManifest next, CancellationToken token)
         => AppendCoreAsync(directory, expectedRoot, null, expected, next, acceptCommittedRevision: true, token);
 
@@ -215,9 +264,13 @@ public static class AssetRevisionSeries
         IReadOnlyList<Head> expectedTips, Func<AssetManifest, CancellationToken, Task<T>> operation, CancellationToken token)
     {
         var full = ValidateDirectory(directory);
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        //CSJ,variable=gate,排他制御
         await using var gate = AcquireLock(full);
+        //CSJ,variable=pins,固定参照
         using var pins = new RevisionReadPins();
+        //CSJ,variable=graph,グラフ
         var graph = InspectGraph(await ReadNodesAsync(full, token, pins).ConfigureAwait(false));
         if (graph.Root != expectedRoot || !graph.Heads.Contains(expectedTip) || !SameTips(graph.Heads, expectedTips))
             throw new InvalidDataException("The original metadata branch changed. Inspect the current branch before continuing.");
@@ -231,12 +284,15 @@ public static class AssetRevisionSeries
         root = Snapshot(root);
         if (root.ParentRevisionId is not null || root.DerivedFrom is null)
             throw new InvalidDataException("A derived series needs a root with original project provenance.");
+        //CSJ,variable=destination,格納先
         var destination = Path.GetFullPath(directory);
         var parent = ValidateDirectory(Path.GetDirectoryName(destination) ?? throw new InvalidDataException("A derived directory is required."));
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(parent, enforceShare: true);
         var expected = MakeHead(root);
         if (!Path.Exists(destination))
         {
+            //CSJ,variable=staging,準備領域
             using var staging = OwnedStagingDirectory.Reserve(parent, ".ymmpm-derived-pending-");
             try
             {
@@ -252,12 +308,14 @@ public static class AssetRevisionSeries
                 // Never overwrite this path or delete an unverified staging directory.
             }
         }
+        //CSJ,variable=graph,グラフ
         var graph = await InspectGraphAsync(destination, token).ConfigureAwait(false);
         if (graph.Root != expected)
             throw new InvalidDataException("The derived metadata destination is occupied by different history.");
         return expected;
     }
 
+    //CSJ,method=AppendCoreAsync,中核を追記する（非同期）
     private static async Task<Head> AppendCoreAsync(string directory, Head? expectedRoot, Head[]? observedTips, Head expected, AssetManifest next,
         bool acceptCommittedRevision, CancellationToken token, Action? publishPreparedOutput = null)
     {
@@ -267,10 +325,15 @@ public static class AssetRevisionSeries
         if (next.ProjectId != expected.ProjectId || next.ParentRevisionId != expected.RevisionId)
             throw new InvalidDataException("The new revision does not reference the expected project and parent.");
         var full = ValidateDirectory(directory);
+        //CSJ,variable=fence,整合性境界
         using var fence = OwnedFilePublication.DirectoryFence.Open(full, enforceShare: true);
+        //CSJ,variable=gate,排他制御
         await using var gate = AcquireLock(full);
+        //CSJ,variable=history,履歴
         using var history = new RevisionReadPins();
+        //CSJ,variable=nodes,ノード一覧
         var nodes = await ReadNodesAsync(full, token, history).ConfigureAwait(false);
+        //CSJ,variable=graph,グラフ
         var graph = InspectGraph(nodes);
         if (expectedRoot is not null && graph.Root != expectedRoot)
             throw new InvalidDataException("The associated metadata series changed; reload before updating.");
@@ -298,9 +361,11 @@ public static class AssetRevisionSeries
         return head;
     }
 
+    //CSJ,method=ValidateDirectory,ディレクトリを検証する
     private static string ValidateDirectory(string directory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
+        //CSJ,variable=full,絶対パス
         var full = Path.GetFullPath(directory);
         if (!Directory.Exists(full)) throw new DirectoryNotFoundException(full);
         for (var current = new DirectoryInfo(full); current is not null; current = current.Parent)
@@ -308,8 +373,10 @@ public static class AssetRevisionSeries
         return full;
     }
 
+    //CSJ,method=AcquireLock,ロックを取得する
     private static FileStream AcquireLock(string directory)
     {
+        //CSJ,variable=path,パス
         var path = Path.Combine(directory, LockFileName);
         if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("Revision lock cannot be a reparse point.");
@@ -317,50 +384,65 @@ public static class AssetRevisionSeries
         return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
 
+    //CSJ,method=RevisionPath,版パス
     private static string RevisionPath(string directory, Guid revision) => Path.Combine(directory, $"{Prefix}{revision:N}.json");
 
+    //CSJ,method=Snapshot,スナップショット
     private static AssetManifest Snapshot(AssetManifest manifest)
     {
         ArgumentNullException.ThrowIfNull(manifest);
         return AssetManifestStore.Parse(JsonSerializer.SerializeToUtf8Bytes(manifest));
     }
 
+    //CSJ,method=SerializeRevision,版をシリアル化する
     private static byte[] SerializeRevision(AssetManifest manifest)
         => JsonSerializer.SerializeToUtf8Bytes(manifest, new JsonSerializerOptions { WriteIndented = true });
 
     private static Head MakeHead(AssetManifest manifest) => new(manifest.ProjectId, manifest.RevisionId,
         Convert.ToHexString(SHA256.HashData(SerializeRevision(manifest))));
 
+    //CSJ,method=DescribeRevision,版を説明する
     internal static Head DescribeRevision(AssetManifest manifest) => MakeHead(Snapshot(manifest));
 
+    //CSJ,record=Node,ノード
     private sealed record Node(AssetManifest Manifest, string Hash, int ByteCount);
 
+    //CSJ,class=RevisionReadPins,素材目録の版読み取り保持
     private sealed class RevisionReadPins : IDisposable
     {
         private readonly List<FileStream> streams = [];
 
+        //CSJ,method=Open,開く
         public FileStream Open(string path)
         {
             // The bytes are already buffered by ReadRevisionBytesAsync. Keep only the file handle.
+            //CSJ,variable=stream,ストリーム
             var stream = OpenRegularRevision(path, bufferSize: 1);
             streams.Add(stream);
             return stream;
         }
 
+        //CSJ,method=Dispose,破棄する
         public void Dispose()
         {
+            //CSJ,variable=stream,ストリーム
             foreach (var stream in streams) stream.Dispose();
         }
     }
 
+    //CSJ,method=ReadNodesAsync,ノード一覧を読み取る（非同期）
     private static async Task<Dictionary<Guid, Node>> ReadNodesAsync(string directory, CancellationToken token,
+        //CSJ,parameter=history,履歴
         RevisionReadPins? history = null)
     {
+        //CSJ,variable=nodes,ノード一覧
         var nodes = new Dictionary<Guid, Node>();
         var remainingBytes = MaxHistoryBytes;
+        //CSJ,variable=path,パス
         foreach (var path in Directory.EnumerateFileSystemEntries(directory, Prefix + "*", SearchOption.TopDirectoryOnly))
         {
             token.ThrowIfCancellationRequested();
+            //CSJ,variable=name,名前
             var name = Path.GetFileName(path);
             // Older writers staged revisions in the committed namespace. Leave those files available
             // for diagnosis after interruption, and never inspect them as published revisions.
@@ -369,10 +451,12 @@ public static class AssetRevisionSeries
             if (name.Length != Prefix.Length + 32 + 5 || !name.EndsWith(".json", StringComparison.OrdinalIgnoreCase) ||
                 !Guid.TryParseExact(name.Substring(Prefix.Length, 32), "N", out var nameId))
                 throw new InvalidDataException("An unrecognized revision entry exists; history was not modified.");
+            //CSJ,variable=bytes,バイト列
             var bytes = history is null
                 ? await ReadRegularFileAsync(path, remainingBytes, token).ConfigureAwait(false)
                 : await ReadRevisionBytesAsync(history.Open(path), remainingBytes, token).ConfigureAwait(false);
             remainingBytes -= bytes.Length;
+            //CSJ,variable=node,ノード
             var node = ParseNode(bytes);
             if (node.Manifest.RevisionId != nameId || !nodes.TryAdd(nameId, node))
                 throw new InvalidDataException("Revision identifier collision or filename mismatch.");
@@ -380,11 +464,16 @@ public static class AssetRevisionSeries
         return nodes;
     }
 
+    //CSJ,method=IsLegacyRevisionStage,旧形式版作業段階かを判定する
     private static bool IsLegacyRevisionStage(string name)
     {
+        //CSJ,variable=marker,マーカー
         const string marker = ".json.tmp-";
+        //CSJ,variable=idLength,ID長さ
         const int idLength = 32;
+        //CSJ,variable=markerOffset,マーカーオフセット
         var markerOffset = Prefix.Length + idLength;
+        //CSJ,variable=tempIdOffset,一時IDオフセット
         var tempIdOffset = markerOffset + marker.Length;
         return name.Length == tempIdOffset + idLength &&
             name.StartsWith(Prefix, StringComparison.OrdinalIgnoreCase) &&
@@ -395,6 +484,7 @@ public static class AssetRevisionSeries
 
     private static async Task<byte[]> ReadRegularFileAsync(string path, int remainingBytes, CancellationToken token)
     {
+        //CSJ,variable=stream,ストリーム
         await using var stream = OpenRegularRevision(path);
         return await ReadRevisionBytesAsync(stream, remainingBytes, token).ConfigureAwait(false);
     }
@@ -406,15 +496,18 @@ public static class AssetRevisionSeries
         catch { handle.Dispose(); throw; }
     }
 
+    //CSJ,method=ReadRevisionBytesAsync,版バイト列を読み取る（非同期）
     private static async Task<byte[]> ReadRevisionBytesAsync(FileStream stream, int remainingBytes, CancellationToken token)
     {
         if (stream.Length > MaxManifestBytes || stream.Length > remainingBytes)
             throw new InvalidDataException("The revision or its history exceeds the size limit.");
+        //CSJ,variable=bytes,バイト列
         var bytes = new byte[checked((int)stream.Length)];
         await stream.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
         return bytes;
     }
 
+    //CSJ,method=ParseNode,ノードを解析する
     private static Node ParseNode(byte[] bytes)
     {
         var json = bytes.AsMemory();
@@ -424,11 +517,14 @@ public static class AssetRevisionSeries
         return new Node(AssetManifestStore.Parse(bytes), Convert.ToHexString(SHA256.HashData(bytes)), bytes.Length);
     }
 
+    //CSJ,method=HasDuplicateProperties,重複プロパティ一覧の有無を判定する
     private static bool HasDuplicateProperties(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
+            //CSJ,variable=names,名前一覧
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            //CSJ,variable=property,プロパティ
             foreach (var property in element.EnumerateObject())
                 if (!names.Add(property.Name) || HasDuplicateProperties(property.Value)) return true;
         }
@@ -437,26 +533,35 @@ public static class AssetRevisionSeries
         return false;
     }
 
+    //CSJ,method=InspectCoreAsync,中核を点検する（非同期）
     private static async Task<Inspection> InspectCoreAsync(string directory, CancellationToken token)
         => InspectNodes(await ReadNodesAsync(directory, token).ConfigureAwait(false));
 
+    //CSJ,method=InspectNodes,ノード一覧を点検する
     private static Inspection InspectNodes(Dictionary<Guid, Node> nodes)
     {
+        //CSJ,variable=graph,グラフ
         var graph = InspectGraph(nodes);
         return new Inspection(graph.Root, RequireSingleHead(graph), graph.Revisions);
     }
 
+    //CSJ,method=RequireSingleHead,要求単一HEAD
     private static Head RequireSingleHead(GraphInspection graph)
         => graph.Heads.Count == 1 ? graph.Heads[0] :
             throw new InvalidDataException("Revision history is divergent. Select a branch explicitly.");
 
+    //CSJ,method=InspectGraph,グラフを点検する
     private static GraphInspection InspectGraph(Dictionary<Guid, Node> nodes)
     {
         if (nodes.Count == 0) throw new InvalidDataException("The revision series is empty.");
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = nodes.Values.First().Manifest.ProjectId;
         if (nodes.Values.Any(n => n.Manifest.ProjectId != projectId)) throw new InvalidDataException("The revision series contains different projects.");
+        //CSJ,variable=children,子要素
         var children = new Dictionary<Guid, List<Guid>>();
+        //CSJ,variable=root,ルート
         Guid? root = null;
+        //CSJ,variable=node,ノード
         foreach (var node in nodes.Values)
         {
             if (node.Manifest.ParentRevisionId is Guid parent)
@@ -472,11 +577,14 @@ public static class AssetRevisionSeries
         if (root is null) throw new InvalidDataException("Revision history has no root.");
         var heads = new List<Head>();
         var ordered = new List<Revision>(nodes.Count);
+        //CSJ,variable=pending,保留
         var pending = new Queue<Guid>();
         pending.Enqueue(root.Value);
         while (pending.TryDequeue(out var id))
         {
+            //CSJ,variable=node,ノード
             var node = nodes[id];
+            //CSJ,variable=receipt,照合記録
             var receipt = new Head(projectId, id, node.Hash);
             ordered.Add(new Revision(receipt, node.Manifest));
             if (children.TryGetValue(id, out var next))

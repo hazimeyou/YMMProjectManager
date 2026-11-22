@@ -5,30 +5,43 @@ using System.Text.Json.Nodes;
 
 namespace YMMProjectManager.Infrastructure;
 
+//CSJ,class=ProjectListIdentityRecovery,プロジェクト一覧識別情報復旧
 internal static partial class ProjectListIdentityRecovery
 {
+    //CSJ,field=MaximumBytes,最大バイト列
     private const int MaximumBytes = 32 * 1024 * 1024;
+    //CSJ,field=OutputOptions,出力オプション
     private static readonly JsonSerializerOptions OutputOptions = new(JsonSerializerOptions.Default) { WriteIndented = true };
 
+    //CSJ,record=Entry,項目
     internal sealed record Entry(int Row, string Path, bool HasMetadata);
+    //CSJ,record=Conflict,競合
     internal sealed record Conflict(Guid Id, IReadOnlyList<Entry> Entries);
+    //CSJ,record=Review,レビュー
     internal sealed record Review(string Sha256, IReadOnlyList<Conflict> Conflicts, IReadOnlyList<Entry> LegacyProjects);
 
+    //CSJ,method=Inspect,点検する
     internal static Review Inspect(byte[] bytes)
     {
         using var input = Load(bytes);
+        //CSJ,variable=projects,プロジェクト一覧
         var projects = ReadProjects(input);
 
+        //CSJ,variable=paths,パス一覧
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var byId = new Dictionary<Guid, List<Entry>>();
+        //CSJ,variable=legacy,旧形式
         var legacy = new List<Entry>();
         var row = 0;
+        //CSJ,variable=project,プロジェクト
         foreach (var project in projects.EnumerateArray())
         {
+            //CSJ,variable=path,パス
             var path = ReadProjectPath(project);
             if (!paths.Add(Path.GetFullPath(path)))
                 throw new InvalidDataException("重複するパスがあります。先に同じファイルの重複登録を確認してください。");
 
+            //CSJ,variable=index,インデックス
             var index = row++;
             var entry = new Entry(index, path,
                 project.TryGetProperty("MetadataAssociation", out var metadata) && metadata.ValueKind != JsonValueKind.Null);
@@ -44,11 +57,14 @@ internal static partial class ProjectListIdentityRecovery
             byId.Where(pair => pair.Value.Count > 1).Select(pair => new Conflict(pair.Key, pair.Value.AsReadOnly())).ToArray(), legacy.AsReadOnly());
     }
 
+    //CSJ,method=Repair,修復する
     internal static byte[] Repair(byte[] confirmedBytes, Review review, IReadOnlyDictionary<Guid, int> keepers,
+        //CSJ,parameter=legacyRows,旧形式行一覧
         IReadOnlySet<int>? legacyRows = null)
     {
         // Recompute rather than trusting row indexes or groups supplied by the screen.
         var current = Inspect(confirmedBytes);
+        //CSJ,variable=eligible,適格
         var eligible = current.LegacyProjects.Where(entry => !entry.HasMetadata).Select(entry => entry.Row).ToHashSet();
         if (current.Sha256 != review.Sha256 || (current.Conflicts.Count == 0 && legacyRows is not { Count: > 0 }) ||
             (legacyRows is not null && !legacyRows.IsSubsetOf(eligible)) ||
@@ -57,14 +73,18 @@ internal static partial class ProjectListIdentityRecovery
             throw new InvalidDataException("選択内容が確認した一覧と一致しません。");
 
         using var input = Load(confirmedBytes);
+        //CSJ,variable=root,ルート
         var root = JsonNode.Parse(input.RootElement.GetRawText())!.AsObject();
+        //CSJ,variable=projects,プロジェクト一覧
         var projects = root["Projects"]!.AsArray();
         var used = projects.Select(node => node!["ProjectId"]).Where(node => node is not null)
             .Select(node => Guid.Parse(node!.GetValue<string>())).ToHashSet();
+        //CSJ,variable=group,グループ
         foreach (var group in current.Conflicts)
         {
             foreach (var entry in group.Entries.Where(entry => entry.Row != keepers[group.Id]))
             {
+                //CSJ,variable=project,プロジェクト
                 var project = projects[entry.Row]!.AsObject();
                 project["ProjectId"] = NextId(used).ToString("D");
                 // The old association belongs to the retained logical project. Keep it in the untouched source list.
@@ -74,12 +94,14 @@ internal static partial class ProjectListIdentityRecovery
 
         foreach (var row in legacyRows ?? new HashSet<int>())
         {
+            //CSJ,variable=project,プロジェクト
             var project = projects[row]!.AsObject();
             project["ProjectId"] = NextId(used).ToString("D");
             if (project["LinkedYmmpFiles"] is not JsonArray links) continue;
             var explicitIds = links.OfType<JsonObject>().Select(link => link["Id"])
                 .OfType<JsonValue>().Select(value => value.TryGetValue<string>(out var raw) && Guid.TryParse(raw, out var id) ? id : Guid.Empty)
                 .ToHashSet();
+            //CSJ,variable=link,リンク
             foreach (var link in links.OfType<JsonObject>().Where(link => link["Id"] is null))
                 link["Id"] = NextId(explicitIds).ToString("D");
         }
@@ -89,7 +111,9 @@ internal static partial class ProjectListIdentityRecovery
         return result;
     }
 
+    //CSJ,method=ApplyAsync,適用する（非同期）
     internal static async Task ApplyAsync(JsonProjectRepository repository, Review review, IReadOnlyDictionary<Guid, int> keepers,
+        //CSJ,parameter=backup,バックアップ
         string backup, CancellationToken token, IReadOnlySet<int>? legacyRows = null)
     {
         var current = await repository.ReadOriginalAsync(token).ConfigureAwait(false);
@@ -103,6 +127,7 @@ internal static partial class ProjectListIdentityRecovery
         await repository.SaveAsync(repaired, token).ConfigureAwait(false);
     }
 
+    //CSJ,method=NextId,次ID
     private static Guid NextId(HashSet<Guid> used)
     {
         Guid id;
@@ -110,13 +135,16 @@ internal static partial class ProjectListIdentityRecovery
         return id;
     }
 
+    //CSJ,method=Load,読み込む
     private static JsonDocument Load(byte[] bytes)
     {
         if (bytes.Length > MaximumBytes) throw new InvalidDataException("一覧が大きすぎるため、修復できません。");
+        //CSJ,variable=offset,オフセット
         var offset = bytes.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
         return JsonDocument.Parse(bytes.AsMemory(offset));
     }
 
+    //CSJ,method=ReadProjects,プロジェクト一覧を読み取る
     private static JsonElement ReadProjects(JsonDocument input)
     {
         CheckProperties(input.RootElement);
@@ -126,6 +154,7 @@ internal static partial class ProjectListIdentityRecovery
         return projects;
     }
 
+    //CSJ,method=ReadProjectPath,プロジェクトのパスを読み取る
     private static string ReadProjectPath(JsonElement project)
     {
         if (project.ValueKind != JsonValueKind.Object ||
@@ -135,6 +164,7 @@ internal static partial class ProjectListIdentityRecovery
         return path;
     }
 
+    //CSJ,method=ReadProjectId,プロジェクトIDを読み取る
     private static Guid? ReadProjectId(JsonElement project)
     {
         if (!project.TryGetProperty("ProjectId", out var value) || value.ValueKind == JsonValueKind.Null)
@@ -144,11 +174,14 @@ internal static partial class ProjectListIdentityRecovery
         return id;
     }
 
+    //CSJ,method=CheckProperties,プロパティ一覧を確認する
     private static void CheckProperties(JsonElement element)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
+            //CSJ,variable=names,名前一覧
             var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            //CSJ,variable=property,プロパティ
             foreach (var property in element.EnumerateObject())
             {
                 if (!names.Add(property.Name)) throw new InvalidDataException("大文字小文字を除いて同名の JSON 項目があります。");

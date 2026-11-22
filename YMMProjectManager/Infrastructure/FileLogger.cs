@@ -6,8 +6,11 @@ namespace YMMProjectManager.Infrastructure;
 
 public sealed class FileLogger
 {
+    //CSJ,field=logPath,ログパス
     private readonly string logPath;
+    //CSJ,field=sync,同期
     private readonly object sync = new();
+    //CSJ,field=writer,書き込み処理
     private StreamWriter? writer;
 
     public FileLogger(string logPath)
@@ -16,21 +19,25 @@ public sealed class FileLogger
         EnsureLogDirectory();
     }
 
+    //CSJ,method=Info,情報
     public void Info(string message)
     {
         Write("INFO", message);
     }
 
+    //CSJ,method=Error,エラー
     public void Error(string message, Exception ex)
     {
         Write("ERROR", $"{message}{Environment.NewLine}{ex}");
     }
 
+    //CSJ,method=Error,エラー
     public void Error(Exception ex, string message)
     {
         Write("ERROR", $"{message}{Environment.NewLine}{ex}");
     }
 
+    //CSJ,method=Flush,書き出す
     public void Flush()
     {
         try
@@ -46,6 +53,7 @@ public sealed class FileLogger
         }
     }
 
+    //CSJ,method=Write,書き込む
     private void Write(string level, string message)
     {
         try
@@ -63,6 +71,7 @@ public sealed class FileLogger
         }
     }
 
+    //CSJ,method=EnsureLogDirectory,ログディレクトリを確認する
     private void EnsureLogDirectory()
     {
         var dir = Path.GetDirectoryName(logPath);
@@ -72,6 +81,7 @@ public sealed class FileLogger
         }
     }
 
+    //CSJ,method=EnsureWriter,書き込み処理を確認する
     private void EnsureWriter()
     {
         if (writer is not null)
@@ -80,6 +90,7 @@ public sealed class FileLogger
         }
 
         EnsureLogDirectory();
+        //CSJ,variable=stream,ストリーム
         var stream = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
         writer = new StreamWriter(stream, new UTF8Encoding(false))
         {

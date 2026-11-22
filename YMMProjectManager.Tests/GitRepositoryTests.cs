@@ -2,17 +2,22 @@ using System.Diagnostics;
 using System.IO;
 using YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRepositoryTests,Gitリポジトリテスト
 internal static class GitRepositoryTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "git-core");
         Directory.CreateDirectory(root);
         var git = new GitRepository(root);
+        //CSJ,method=Check,確認する
         static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
         Check((await git.InitializeAsync()).Success, "git init");
         foreach (var (key, value) in new[] { ("user.name", "Synthetic Tester"), ("user.email", "synthetic@example.invalid") })
             await CommandAsync(root, "config", "--local", key, value);
+        //CSJ,variable=marker,マーカー
         var marker = Path.Combine(root, "fsmonitor-ran");
         var monitor = Path.Combine(root, "monitor.sh");
         await File.WriteAllTextAsync(monitor, "#!/bin/sh\nprintf invoked > fsmonitor-ran\n");
@@ -26,8 +31,11 @@ internal static class GitRepositoryTests
         Check((await git.CommitAsync("first commit")).Success, "commit");
         var hooks = Path.Combine(root, "injected-hooks"); Directory.CreateDirectory(hooks);
         await File.WriteAllTextAsync(Path.Combine(hooks, "pre-commit"), "#!/bin/sh\nprintf invoked > injected-hook-ran\n");
+        //CSJ,variable=previousCount,直前の件数
         var previousCount = Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT");
+        //CSJ,variable=previousKey,直前のキー
         var previousKey = Environment.GetEnvironmentVariable("GIT_CONFIG_KEY_0");
+        //CSJ,variable=previousValue,直前の値
         var previousValue = Environment.GetEnvironmentVariable("GIT_CONFIG_VALUE_0");
         try
         {
@@ -51,10 +59,12 @@ internal static class GitRepositoryTests
             await File.WriteAllTextAsync(Path.Combine(root, "parameters.txt"), "synthetic");
             Check((await git.StageAsync(["parameters.txt"])).Success, "stage for parameters test");
             Environment.SetEnvironmentVariable("GIT_CONFIG_PARAMETERS", $"'core.hooksPath={hooks.Replace('\\', '/')}'");
+            //CSJ,variable=probe,調査
             var probe = new ProcessStartInfo("git") { WorkingDirectory = root, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             ConfigureFixtureGit(probe);
             probe.Environment["GIT_CONFIG_PARAMETERS"] = Environment.GetEnvironmentVariable("GIT_CONFIG_PARAMETERS");
             foreach (var arg in new[] { "config", "--get", "core.hooksPath" }) probe.ArgumentList.Add(arg);
+            //CSJ,variable=process,プロセス
             using (var process = Process.Start(probe)!)
             {
                 var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
@@ -77,6 +87,7 @@ internal static class GitRepositoryTests
         Check((await git.StatusAsync()).StandardOutput.Contains("one.txt"), "status");
         try { await git.StageAsync(["../outside.txt"]); throw new Exception("traversal accepted"); } catch (ArgumentException) { }
         try { await git.CreateBranchAsync("--help"); throw new Exception("option injection accepted"); } catch (ArgumentException) { }
+        //CSJ,variable=cancelled,キャンセル済み
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { await git.StatusAsync(cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
         Console.WriteLine("Offline Git local operations passed.");
@@ -90,9 +101,13 @@ internal static class GitRepositoryTests
 
     private static async Task VerifyGuardedIndexAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = await MakeCommitFixtureAsync(workRoot, "guarded-index");
+        //CSJ,variable=indexPath,インデックスパス
         var indexPath = Path.Combine(root, ".git", "index");
+        //CSJ,variable=indexBefore,インデックス変更前
         var indexBefore = await File.ReadAllBytesAsync(indexPath);
+        //CSJ,variable=text,テキスト
         var text = Path.Combine(root, "explicit.txt");
         await File.WriteAllTextAsync(text, "approved staging payload");
         var examined = false;
@@ -121,11 +136,14 @@ internal static class GitRepositoryTests
         Require((await accept.StageAsync(["explicit.txt"])).Success, "approved stage failed");
         Require((await CommandAsync(root, "show", ":explicit.txt")).Trim() == "approved staging payload" &&
             await File.ReadAllTextAsync(text) == "later worktree edit", "Stage did not publish exact reviewed index");
+        //CSJ,variable=folder,フォルダー
         var folder = Directory.CreateDirectory(Path.Combine(root, "bulk")).FullName;
         await File.WriteAllTextAsync(Path.Combine(folder, "secret.txt"), "bulk staging must not run");
         Require(!(await accept.StageAsync(["bulk"])).Success, "Stage accidentally accepted a directory");
+        //CSJ,variable=rootCommit,ルートコミット
         var rootCommit = Path.Combine(workRoot, "initial-index");
         Directory.CreateDirectory(rootCommit);
+        //CSJ,variable=initial,初期
         var initial = new GitRepository(rootCommit);
         Require((await initial.InitializeAsync()).Success, "first stage fixture init");
         await File.WriteAllTextAsync(Path.Combine(rootCommit, "one.txt"), "initial payload");
@@ -135,12 +153,15 @@ internal static class GitRepositoryTests
             "first-commit unstage changed the worktree");
     }
 
+    //CSJ,method=VerifyGitHubProfileAsync,GitHubプロファイルを検証する（非同期）
     private static async Task VerifyGitHubProfileAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "github-profile");
         Directory.CreateDirectory(root);
         var git = new GitRepository(root);
         Require((await git.InitializeAsync()).Success, "init GitHub settings fixture");
+        //CSJ,variable=environment,環境
         var environment = new Dictionary<string, string?>(StringComparer.Ordinal)
         {
             ["GcM_TRACE_SECRETS"] = "synthetic",
@@ -171,6 +192,7 @@ internal static class GitRepositoryTests
             Require((await git.ProbeGitHubAccessAsync(uri, GitHubAuthentication.CachedWindows)).Failure == GitFailure.UnsafeOperation,
                 "unsupported endpoint reached the credential path");
         }
+        //CSJ,variable=cancelled,キャンセル済み
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
         try
@@ -199,11 +221,15 @@ internal static class GitRepositoryTests
             ConfigureFixtureGit(start);
             start.Environment["GIT_TERMINAL_PROMPT"] = "0";
             start.Environment.Remove("SSH_ASKPASS");
+            //CSJ,variable=arguments,引数一覧
             var arguments = GitRepository.BuildGitHubTransportSettings(
                 ["-c", "credential.https://github.com.helper=!echo unsafe > unsafe-helper-ran"], candidate.Helper);
             foreach (var arg in arguments.Concat(["credential", "fill"])) start.ArgumentList.Add(arg);
+            //CSJ,variable=process,プロセス
             using var process = Process.Start(start)!;
+            //CSJ,variable=stdout,標準出力
             var stdout = process.StandardOutput.ReadToEndAsync();
+            //CSJ,variable=stderr,標準エラー
             var stderr = process.StandardError.ReadToEndAsync();
             await process.StandardInput.BaseStream.WriteAsync(System.Text.Encoding.UTF8.GetBytes($"protocol=https\nhost={candidate.Host}\npath=Synthetic/repo.git\n\n"));
             process.StandardInput.Close();
@@ -215,6 +241,7 @@ internal static class GitRepositoryTests
             Require(!File.Exists(Path.Combine(root, "unsafe-helper-ran")), "lower-priority credential helper was executed");
         }
 
+        //CSJ,variable=action,アクション
         foreach (var action in new[] { "approve", "reject" })
         {
             var start = new ProcessStartInfo("git")
@@ -225,8 +252,11 @@ internal static class GitRepositoryTests
             ConfigureFixtureGit(start);
             foreach (var arg in GitRepository.BuildGitHubTransportSettings([], script).Concat(["credential", action]))
                 start.ArgumentList.Add(arg);
+            //CSJ,variable=process,プロセス
             using var process = Process.Start(start)!;
+            //CSJ,variable=stdout,標準出力
             var stdout = process.StandardOutput.ReadToEndAsync();
+            //CSJ,variable=stderr,標準エラー
             var stderr = process.StandardError.ReadToEndAsync();
             await process.StandardInput.WriteAsync("protocol=https\nhost=github.com\nusername=fixture\npassword=synthetic-non-secret\n\n");
             process.StandardInput.Close();
@@ -249,27 +279,35 @@ internal static class GitRepositoryTests
             ("unable to update url base from redirection", GitFailure.RemoteRedirect),
         })
         {
+            //CSJ,variable=marker,マーカー
             const string marker = "synthetic-private-diagnostic";
+            //CSJ,variable=safe,安全
             var safe = GitRepository.SanitizeRemote(new(128, marker, reason + ": " + marker), false, null);
             Require(safe.Failure == failure && safe.StandardOutput == "" && !safe.StandardError.Contains(marker),
                 "remote error was not classified or helper output leaked");
         }
     }
 
+    //CSJ,method=VerifyGitHubAccessApprovalAsync,GitHubアクセス承認を検証する（非同期）
     private static async Task VerifyGitHubAccessApprovalAsync(string workRoot)
     {
+        //CSJ,variable=approvedEndpoint,承認済みエンドポイント
         const string approvedEndpoint = "https://github.com/Synthetic/approved.git";
+        //CSJ,variable=changedEndpoint,変更済みエンドポイント
         const string changedEndpoint = "https://github.com/Synthetic/changed.git";
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "github-access");
         Directory.CreateDirectory(root);
         var git = new GitRepository(root);
         Require((await git.InitializeAsync()).Success, "init GitHub access approval fixture");
         await CommandAsync(root, "remote", "add", "origin", approvedEndpoint);
+        //CSJ,variable=approved,承認済み
         var approved = (await git.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget;
         Require(approved is not null && approved.Endpoint == approvedEndpoint, "capture the literal origin");
         var target = approved!;
         var config = Path.Combine(root, ".git", "config");
 
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
         var reachedTransport = false;
         git.BeforeRemoteExecution = _ =>
@@ -278,6 +316,7 @@ internal static class GitRepositoryTests
             cancellation.Cancel();
             try
             {
+                //CSJ,variable=writer,書き込み処理
                 using var writer = File.Open(config, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
                 throw new InvalidOperationException("the approved origin config could be modified before the probe");
             }
@@ -285,12 +324,14 @@ internal static class GitRepositoryTests
         };
 
         await CommandAsync(root, "remote", "set-url", "origin", changedEndpoint);
+        //CSJ,variable=changed,変更済み
         var changed = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous, cancellation.Token);
         Require(changed.Failure == GitFailure.UnsafeOperation && changed.StandardError.Contains("origin differs") && !reachedTransport,
             "changed origin reached the transport");
 
         await CommandAsync(root, "remote", "set-url", "origin", approvedEndpoint);
         await CommandAsync(root, "config", "--local", "--add", "remote.origin.url", changedEndpoint);
+        //CSJ,variable=multiple,複数
         var multiple = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous, cancellation.Token);
         Require(multiple.Failure == GitFailure.UnsafeOperation && !reachedTransport, "ambiguous origin reached the transport");
         await CommandAsync(root, "config", "--local", "--unset-all", "remote.origin.url");
@@ -309,6 +350,7 @@ internal static class GitRepositoryTests
         git = new GitRepository(root) { BeforeRemoteExecution = _ => throw new InvalidOperationException("replacement reached the transport") };
         Require((await git.InitializeAsync()).Success, "init replacement GitHub access fixture");
         await CommandAsync(root, "remote", "add", "origin", approvedEndpoint);
+        //CSJ,variable=replacement,置換
         var replacement = await git.ProbeGitHubAccessAsync(target, GitHubAuthentication.Anonymous);
         Require(replacement.Failure == GitFailure.UnsafeOperation && replacement.StandardError.Contains("its Git directory changed"),
             "same-path replacement did not invalidate the access approval");
@@ -316,21 +358,26 @@ internal static class GitRepositoryTests
 
     private static async Task VerifyReviewedCommitAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = await MakeCommitFixtureAsync(workRoot, "commit-review");
         var git = new GitRepository(root);
+        //CSJ,variable=changed,変更済み
         var changed = Path.Combine(root, "scène.txt");
         await File.WriteAllTextAsync(changed, "staged text");
         await File.WriteAllTextAsync(Path.Combine(root, "keep.txt"), "want to keep local");
         Require((await git.StageAsync(["scène.txt", "keep.txt"])).Success, "stage reviewed paths");
         Require((await git.UnstageAsync(["keep.txt"])).Success, "unstage independent path");
+        //CSJ,variable=plan,計画
         var plan = (await git.InspectCommitAsync()).CommitTarget;
         Require(plan is not null && plan.Paths.SequenceEqual(["scène.txt"]), "exact staged path list");
+        //CSJ,variable=index,インデックス
         var index = await File.ReadAllBytesAsync(Path.Combine(root, ".git", "index"));
         await File.WriteAllTextAsync(changed, "later unstaged text");
         await CommandAsync(root, "config", "--local", "commit.gpgSign", "true");
         var signingRequired = await git.CommitAsync(plan!, "must not bypass required signing");
         Require(!signingRequired.Success && signingRequired.StandardError.Contains("signing"), "required signing was silently bypassed");
         await CommandAsync(root, "config", "--local", "--unset", "commit.gpgSign");
+        //CSJ,variable=commit,コミット
         var commit = await git.CommitAsync(plan!, "レビュー済み\n\nSecond paragraph");
         Require(commit.Success && (await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit.StandardOutput,
             "published commit OID");
@@ -343,9 +390,11 @@ internal static class GitRepositoryTests
 
     private static async Task VerifyCommitInterferenceAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = await MakeCommitFixtureAsync(workRoot, "commit-interference");
         var git = new GitRepository(root);
         var head = (await CommandAsync(root, "rev-parse", "HEAD")).Trim();
+        //CSJ,variable=file,ファイル
         var file = Path.Combine(root, "scène.txt");
         await File.WriteAllTextAsync(file, "approved");
         Require((await git.StageAsync(["scène.txt"])).Success, "stage initial review");
@@ -355,6 +404,7 @@ internal static class GitRepositoryTests
         Require(!(await git.CommitAsync(old, "must refuse stale review")).Success, "changed staged tree accepted");
 
         var current = (await git.InspectCommitAsync()).CommitTarget!;
+        //CSJ,variable=cancel,キャンセル
         using var cancel = new CancellationTokenSource();
         var cancellable = new GitRepository(root) { BeforeCommitRefUpdate = cancel.Cancel };
         try
@@ -367,7 +417,9 @@ internal static class GitRepositoryTests
         Require(!File.Exists(Path.Combine(root, ".git", "index.lock")), "cancelled index lock released");
         Require(!Directory.EnumerateFiles(Path.Combine(root, ".git"), "ymm-index-*").Any(), "owned index snapshot was left behind");
 
+        //CSJ,variable=mergeMarker,マージマーカー
         var mergeMarker = Path.Combine(root, ".git", "MERGE_HEAD");
+        //CSJ,variable=merge,マージ
         var merge = new GitRepository(root) { BeforeCommitRefUpdate = () => File.WriteAllText(mergeMarker, head + "\n") };
         Require((await merge.CommitAsync(current, "must not publish during merge")).Failure == GitFailure.ConcurrentOperation,
             "merge started at the publication boundary was ignored");
@@ -375,6 +427,7 @@ internal static class GitRepositoryTests
             "merge evidence or branch ref was changed");
         File.Delete(mergeMarker);
 
+        //CSJ,variable=commit,コミット
         var commit = (await CommandAsync(root, "commit-tree", current.TreeObjectId, "-p", head, "-m", "independent actor")).Trim();
         var raced = new GitRepository(root)
         {
@@ -385,6 +438,7 @@ internal static class GitRepositoryTests
                 CommandAsync(root, "update-ref", current.BranchRef, commit, head).GetAwaiter().GetResult();
             },
         };
+        //CSJ,variable=rejected,拒否
         var rejected = await raced.CommitAsync(current, "must not overwrite");
         Require(rejected.Failure == GitFailure.ConcurrentOperation, "branch CAS accepted competing update");
         Require((await CommandAsync(root, "rev-parse", "HEAD")).Trim() == commit, "concurrent branch update preserved");
@@ -408,6 +462,7 @@ internal static class GitRepositoryTests
 
     private static async Task<string> MakeCommitFixtureAsync(string workRoot, string name)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, name);
         Directory.CreateDirectory(root);
         var git = new GitRepository(root);
@@ -421,15 +476,20 @@ internal static class GitRepositoryTests
         return root;
     }
 
+    //CSJ,method=VerifyInterruptedCommitAsync,中断済みコミットを検証する（非同期）
     private static async Task VerifyInterruptedCommitAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = await MakeCommitFixtureAsync(workRoot, "r22-commit-stop");
         await File.WriteAllTextAsync(Path.Combine(root, "scène.txt"), "staged fixture");
         var git = new GitRepository(root);
         Require((await git.StageAsync(["scène.txt"])).Success, "fixture stage failed");
         var target = (await git.InspectCommitAsync()).CommitTarget!;
+        //CSJ,variable=indexPath,インデックスパス
         var indexPath = Path.Combine(root, ".git", "index");
+        //CSJ,variable=indexBefore,インデックス変更前
         var indexBefore = await File.ReadAllBytesAsync(indexPath);
+        //CSJ,variable=interrupted,中断済み
         var interrupted = false;
         var actor = new GitRepository(root)
         {
@@ -442,7 +502,9 @@ internal static class GitRepositoryTests
         };
         var result = await actor.CommitAsync(target, "synthetic acknowledged update");
         var actual = (await CommandAsync(root, "rev-parse", "HEAD")).Trim();
+        //CSJ,variable=actualTree,実測値ツリー
         var actualTree = (await CommandAsync(root, "rev-parse", "HEAD^{tree}")).Trim();
+        //CSJ,variable=indexAfter,インデックス変更後
         var indexAfter = await File.ReadAllBytesAsync(indexPath);
         Require(interrupted && result.Failure == GitFailure.OutcomeUnknown && actual != target.ParentObjectId &&
             actualTree == target.TreeObjectId && indexBefore.SequenceEqual(indexAfter), "interrupted native Commit outcome or data was lost");
@@ -461,6 +523,7 @@ internal static class GitRepositoryTests
         foreach (var arg in args) start.ArgumentList.Add(arg);
         using var child = Process.Start(start)!;
         var output = child.StandardOutput.ReadToEndAsync();
+        //CSJ,variable=error,エラー
         var error = child.StandardError.ReadToEndAsync();
         await child.WaitForExitAsync();
         Require(child.ExitCode == allowedExitCode, $"fixture {args[0]} returned {child.ExitCode}: {await error}");
@@ -469,6 +532,7 @@ internal static class GitRepositoryTests
 
     private static void ConfigureFixtureGit(ProcessStartInfo start)
     {
+        //CSJ,variable=key,キー
         foreach (var key in start.Environment.Keys.Where(key => key.StartsWith("GIT_", StringComparison.OrdinalIgnoreCase)).ToArray())
             start.Environment.Remove(key);
         start.Environment["GIT_CONFIG_GLOBAL"] = "NUL";

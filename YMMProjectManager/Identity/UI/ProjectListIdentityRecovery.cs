@@ -7,17 +7,21 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,property=RepairProjectListIdentitiesCommand,プロジェクト一覧の識別情報修復コマンド
     public ICommand RepairProjectListIdentitiesCommand { get; }
 
     private async Task RepairProjectListIdentitiesAsync()
     {
+        //CSJ,variable=published,確定済み
         var published = false;
         await ExecuteToolAsync("Asset duplicate project ID recovery", async token =>
         {
             if (repository is not JsonProjectRepository json || HasUnsavedProjectList) return;
             var original = await json.ReadOriginalAsync(token);
+            //CSJ,variable=physical,物理
             var physical = await ProjectListIdentityRecovery.InspectPhysicalAsync(original, token);
             if (physical.Conflicts.Count != 0)
             {
@@ -26,6 +30,7 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
+            //CSJ,variable=review,レビュー
             var review = await Task.Run(() => ProjectListIdentityRecovery.Inspect(original), token);
             if (review.Conflicts.Count == 0 && review.LegacyProjects.All(entry => entry.HasMetadata))
             {
@@ -43,6 +48,7 @@ public sealed partial class ProjectListViewModel
                 "「はい」で原本を別ファイルに退避してから修復を反映します。「いいえ」で修復版を別ファイルに保存します。",
                 "重複プロジェクト ID の修復", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.No);
             if (choice == MessageBoxResult.Cancel) return;
+            //CSJ,variable=apply,適用
             var apply = choice == MessageBoxResult.Yes;
             var picker = new SaveFileDialog
             {
@@ -79,6 +85,7 @@ public sealed partial class ProjectListViewModel
     }
 
     private async Task<bool> RepairPhysicalRegistrationsAsync(JsonProjectRepository json,
+        //CSJ,parameter=review,レビュー
         ProjectListIdentityRecovery.PhysicalReview review, CancellationToken token)
     {
         var keepers = ChoosePhysicalRegistrations(review);
@@ -89,6 +96,7 @@ public sealed partial class ProjectListViewModel
             "同じファイルを指す登録の修復", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning, MessageBoxResult.No);
         if (choice == MessageBoxResult.Cancel) return false;
 
+        //CSJ,variable=apply,適用
         var apply = choice == MessageBoxResult.Yes;
         var picker = new SaveFileDialog
         {
@@ -111,8 +119,10 @@ public sealed partial class ProjectListViewModel
     }
 
     private static Dictionary<(ulong Volume, Guid FileId), int>? ChoosePhysicalRegistrations(
+        //CSJ,parameter=review,レビュー
         ProjectListIdentityRecovery.PhysicalReview review)
     {
+        //CSJ,variable=panel,パネル
         var panel = new DockPanel { Margin = new Thickness(12) };
         var instructions = new TextBlock
         {
@@ -123,20 +133,25 @@ public sealed partial class ProjectListViewModel
         DockPanel.SetDock(instructions, Dock.Top);
         panel.Children.Add(instructions);
 
+        //CSJ,variable=confirm,確認
         var confirm = new Button { Content = "選択を確認して続ける", IsEnabled = false, IsDefault = true, Margin = new Thickness(0, 12, 0, 0) };
         DockPanel.SetDock(confirm, Dock.Bottom);
         panel.Children.Add(confirm);
         var choices = new StackPanel();
         panel.Children.Add(new ScrollViewer { Content = choices, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var selections = new Dictionary<(ulong Volume, Guid FileId), ComboBox>();
+        //CSJ,variable=group,グループ
         foreach (var group in review.Conflicts)
         {
+            //CSJ,variable=options,オプション
             var options = new ComboBox { Margin = new Thickness(0, 0, 0, 12) };
             choices.Children.Add(new TextBlock { Text = $"同じファイルを指す登録 {group.Entries.Count} 件" });
             foreach (var entry in group.Entries)
             {
+                //CSJ,variable=metadata,メタデータ
                 var metadata = entry.HasMetadata ? "関連付けあり" : "関連付けなし";
                 var id = entry.ProjectId?.ToString("D") ?? "未設定";
+                //CSJ,variable=text,テキスト
                 var text = $"項目 {entry.Row + 1}  {entry.Path}\nID {id} / {metadata} / リンク {entry.LinkCount} 件";
                 options.Items.Add(new ComboBoxItem { Content = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap }, Tag = entry.Row });
             }
@@ -145,6 +160,7 @@ public sealed partial class ProjectListViewModel
             choices.Children.Add(options);
         }
 
+        //CSJ,variable=window,ウィンドウ
         var window = new Window { Title = "同じファイルを指すプロジェクト登録", Width = 820, Height = 460, Content = panel, Owner = GetActiveWindow() };
         confirm.Click += (_, _) => window.DialogResult = true;
         return window.ShowDialog() == true
@@ -164,17 +180,22 @@ public sealed partial class ProjectListViewModel
         DockPanel.SetDock(instructions, Dock.Top);
         grid.Children.Add(instructions);
 
+        //CSJ,variable=confirm,確認
         var confirm = new Button { Content = "選択を確認して続ける", IsEnabled = false, IsDefault = true, Margin = new Thickness(0, 12, 0, 0) };
         DockPanel.SetDock(confirm, Dock.Bottom);
         grid.Children.Add(confirm);
+        //CSJ,variable=fields,フィールド一覧
         var fields = new StackPanel();
         grid.Children.Add(new ScrollViewer { Content = fields, VerticalScrollBarVisibility = ScrollBarVisibility.Auto });
         var selections = new Dictionary<Guid, ComboBox>();
+        //CSJ,variable=legacyOptions,旧形式オプション
         var legacyOptions = new Dictionary<int, CheckBox>();
         void UpdateConfirmation() => confirm.IsEnabled = selections.Values.All(box => box.SelectedItem is not null) &&
             (selections.Count > 0 || legacyOptions.Values.Any(option => option.IsChecked == true));
+        //CSJ,variable=group,グループ
         foreach (var group in review.Conflicts)
         {
+            //CSJ,variable=options,オプション
             var options = new ComboBox { Margin = new Thickness(0, 0, 0, 8) };
             fields.Children.Add(new TextBlock { Text = group.Id.ToString("D") });
             foreach (var entry in group.Entries)
@@ -183,16 +204,19 @@ public sealed partial class ProjectListViewModel
             options.SelectionChanged += (_, _) => UpdateConfirmation();
             fields.Children.Add(options);
         }
+        //CSJ,variable=legacy,旧形式
         var legacy = review.LegacyProjects.Where(entry => !entry.HasMetadata).ToArray();
         if (legacy.Length > 0) fields.Children.Add(new TextBlock { Text = "新しい ID を付ける項目" });
         foreach (var entry in legacy)
         {
+            //CSJ,variable=option,オプション
             var option = new CheckBox { Content = entry.Path, ToolTip = entry.Path, Margin = new Thickness(0, 2, 0, 2) };
             legacyOptions.Add(entry.Row, option);
             option.Checked += (_, _) => UpdateConfirmation();
             option.Unchecked += (_, _) => UpdateConfirmation();
             fields.Children.Add(option);
         }
+        //CSJ,variable=window,ウィンドウ
         var window = new Window { Title = "プロジェクト一覧の ID を修復", Width = 760, Height = 420, Content = grid, Owner = GetActiveWindow() };
         confirm.Click += (_, _) => window.DialogResult = true;
         return window.ShowDialog() == true

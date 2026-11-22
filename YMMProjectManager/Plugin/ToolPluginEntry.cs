@@ -11,26 +11,34 @@ namespace YMMProjectManager.Plugin;
 
 public sealed class ToolPluginEntry : IToolPlugin
 {
+    //CSJ,field=Logger,ロガー
     private static readonly FileLogger Logger = CreateLogger();
     private static bool exceptionHooksInstalled;
 
+    //CSJ,property=Name,名前
     public string Name => "プロジェクトマネージャー";
+    //CSJ,property=ViewModelType,ビューモデル型
     public Type ViewModelType => typeof(ProjectListViewModel);
+    //CSJ,property=ViewType,ビュー型
     public Type ViewType => typeof(ProjectListView);
 
     public ToolPluginEntry()
     {
         InstallGlobalExceptionHooks();
         Logger.Info("ToolPluginEntry started.");
+        //CSJ,variable=timelineToolType,タイムラインツール型
         var timelineToolType = typeof(ProjectListViewModel);
+        //CSJ,variable=hasInterface,インターフェースの有無
         var hasInterface = typeof(ITimelineToolViewModel).IsAssignableFrom(timelineToolType);
         Logger.Info(
             $"Timeline context tool type check. type={timelineToolType.FullName}, assembly={timelineToolType.Assembly.GetName().Name}, implementsITimelineToolViewModel={hasInterface}");
     }
 
+    //CSJ,method=CreateLogger,ロガーを作成する
     private static FileLogger CreateLogger()
     {
         var assemblyDir = Path.GetDirectoryName(typeof(ToolPluginEntry).Assembly.Location) ?? AppContext.BaseDirectory;
+        //CSJ,variable=logPath,ログパス
         var logPath = Path.Combine(assemblyDir, "logs", "YMMProjectManager.log");
         return new FileLogger(logPath);
     }
@@ -71,6 +79,7 @@ public sealed class ToolPluginEntry : IToolPlugin
             }
         };
 
+        //CSJ,variable=app,アプリケーション
         var app = System.Windows.Application.Current;
         if (app is not null)
         {

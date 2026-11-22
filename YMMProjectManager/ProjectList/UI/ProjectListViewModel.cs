@@ -24,18 +24,29 @@ namespace YMMProjectManager.Presentation.ViewModels;
 
 public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolViewModel
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
+    //CSJ,field=repository,リポジトリ
     private readonly IProjectRepository repository;
+    //CSJ,field=seekPreviewThumbnailGenerator,フレーム移動プレビューサムネイル生成器
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
+    //CSJ,field=generationService,世代サービス
     private readonly IProjectGenerationService generationService;
+    //CSJ,field=bundleService,一括パッケージサービス
     private readonly YmmpxLibBundleService bundleService;
+    //CSJ,field=folders,フォルダー一覧
     private List<ProjectFolder> folders = [];
+    //CSJ,field=selectedProject,選択中のプロジェクト
     private ProjectEntry? selectedProject;
     private bool isBusy;
     private bool isInitialized;
+    //CSJ,field=projectListRevision,プロジェクト一覧版
     private ProjectListRevision? projectListRevision;
+    //CSJ,field=pendingIdentity,保留識別情報
     private PendingIdentity? pendingIdentity;
+    //CSJ,field=lastSavedFingerprint,最後保存済みフィンガープリント
     private string? lastSavedFingerprint;
+    //CSJ,field=savedBaseline,保存済み基準
     private ProjectStore? savedBaseline;
     private ProjectStore? retainedRecoverySnapshot;
     private ProjectStore? retainedScreenSnapshot;
@@ -43,23 +54,38 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     private (Guid Id, string Path, ProjectFileIdentity Identity)? pendingExtractedProject;
     private bool isProjectListLossless;
     private bool hasUnsavedProjectList;
+    //CSJ,field=bundleStatus,一括パッケージ状態
     private string bundleStatus = string.Empty;
+    //CSJ,field=bundleProgress,一括パッケージ進捗
     private double bundleProgress;
+    //CSJ,field=gitStatus,Git状態
     private string gitStatus = string.Empty;
+    //CSJ,field=gitPath,Gitパス
     private string gitPath = string.Empty;
+    //CSJ,field=gitCommitMessage,Gitコミットメッセージ
     private string gitCommitMessage = string.Empty;
+    //CSJ,field=gitBranch,Gitブランチ
     private string gitBranch = string.Empty;
+    //CSJ,field=gitRemote,Gitリモート
     private string gitRemote = string.Empty;
+    //CSJ,field=gitCloneName,Gitクローン名前
     private string gitCloneName = string.Empty;
+    //CSJ,field=assetPath,素材のパス
     private string assetPath = string.Empty;
+    //CSJ,field=assetStatus,素材状態
     private string assetStatus = string.Empty;
+    //CSJ,field=assetUrl,素材URL
     private string assetUrl = string.Empty;
     private IReadOnlyList<AssetMetadata>? inspectedAssets;
+    //CSJ,field=toolCancellation,ツールキャンセル
     private CancellationTokenSource? toolCancellation;
+    //CSJ,field=activeToolOperation,有効ツール操作
     private string? activeToolOperation;
 
+    //CSJ,property=Projects,プロジェクト一覧
     public ObservableCollection<ProjectEntry> Projects { get; } = [];
 
+    //CSJ,property=IsBusy,処理中か
     public bool IsBusy
     {
         get => isBusy;
@@ -89,18 +115,21 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
     }
 
+    //CSJ,property=BundleStatus,一括パッケージ状態
     public string BundleStatus
     {
         get => bundleStatus;
         set => SetProperty(ref bundleStatus, value);
     }
 
+    //CSJ,property=BundleProgress,一括パッケージ進捗
     public double BundleProgress
     {
         get => bundleProgress;
         set => SetProperty(ref bundleProgress, value);
     }
 
+    //CSJ,property=HasUnsavedProjectList,プロジェクト一覧に未保存の変更があるか
     public bool HasUnsavedProjectList
     {
         get => hasUnsavedProjectList;
@@ -111,50 +140,95 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
     }
 
+    //CSJ,property=RetryProjectListSaveCommand,再試行プロジェクト一覧保存コマンド
     public ICommand RetryProjectListSaveCommand { get; }
+    //CSJ,property=AssignLegacyProjectIdCommand,旧プロジェクトへのID割り当てコマンド
     public ICommand AssignLegacyProjectIdCommand { get; }
+    //CSJ,property=AssociateLegacyMetadataCommand,関連付け旧形式メタデータコマンド
     public ICommand AssociateLegacyMetadataCommand { get; }
+    //CSJ,property=RecoverIdentityCommand,復旧識別情報コマンド
     public ICommand RecoverIdentityCommand { get; }
+    //CSJ,property=RecoverProjectListCommand,復旧プロジェクト一覧コマンド
     public ICommand RecoverProjectListCommand { get; }
+    //CSJ,property=ExportRecoverySnapshotCommand,書き出し復旧スナップショットコマンド
     public ICommand ExportRecoverySnapshotCommand { get; }
+    //CSJ,property=ExportRecoveryScreenCommand,復旧画面の書き出しコマンド
     public ICommand ExportRecoveryScreenCommand { get; }
+    //CSJ,property=AddCommand,追加コマンド
     public ICommand AddCommand { get; }
+    //CSJ,property=RemoveCommand,除去コマンド
     public ICommand RemoveCommand { get; }
+    //CSJ,property=OpenCommand,表示コマンド
     public ICommand OpenCommand { get; }
+    //CSJ,property=GenerateThumbnailsFastCommand,高速サムネイル生成コマンド
     public ICommand GenerateThumbnailsFastCommand { get; }
+    //CSJ,property=RunSeekProbeCommand,実行フレーム移動調査コマンド
     public ICommand RunSeekProbeCommand { get; }
+    //CSJ,property=OpenRelinkWindowCommand,表示再リンクウィンドウコマンド
     public ICommand OpenRelinkWindowCommand { get; }
+    //CSJ,property=OpenSelectedProjectRelinkCommand,表示選択中のプロジェクト再リンクコマンド
     public ICommand OpenSelectedProjectRelinkCommand { get; }
+    //CSJ,property=PackageSelectedProjectCommand,パッケージ選択中のプロジェクトコマンド
     public ICommand PackageSelectedProjectCommand { get; }
+    //CSJ,property=PackageOpenedProjectCommand,パッケージ表示済みプロジェクトコマンド
     public ICommand PackageOpenedProjectCommand { get; }
+    //CSJ,property=ExtractBundleCommand,抽出一括パッケージコマンド
     public ICommand ExtractBundleCommand { get; }
+    //CSJ,property=RefreshGitStatusCommand,更新Git状態コマンド
     public ICommand RefreshGitStatusCommand { get; }
+    //CSJ,property=InitializeGitCommand,初期化Git コマンド
     public ICommand InitializeGitCommand { get; }
+    //CSJ,property=StageGitPathCommand,パスを指定してGitの変更をステージするコマンド
     public ICommand StageGitPathCommand { get; }
+    //CSJ,property=UnstageGitPathCommand,パスを指定してGitのステージを解除するコマンド
     public ICommand UnstageGitPathCommand { get; }
+    //CSJ,property=CommitGitCommand,コミットGit コマンド
     public ICommand CommitGitCommand { get; }
+    //CSJ,property=CreateGitBranchCommand,作成Gitブランチコマンド
     public ICommand CreateGitBranchCommand { get; }
+    //CSJ,property=SwitchGitBranchCommand,Gitブランチ切り替えコマンド
     public ICommand SwitchGitBranchCommand { get; }
+    //CSJ,property=FetchGitCommand,フェッチGit コマンド
     public ICommand FetchGitCommand { get; }
+    //CSJ,property=PullGitCommand,プルGit コマンド
     public ICommand PullGitCommand { get; }
+    //CSJ,property=PushGitCommand,プッシュGit コマンド
     public ICommand PushGitCommand { get; }
+    //CSJ,property=GitHistoryCommand,Git履歴コマンド
     public ICommand GitHistoryCommand { get; }
+    //CSJ,property=GitOriginCommand,Gitのorigin情報を表示するコマンド
     public ICommand GitOriginCommand { get; }
+    //CSJ,property=GitCloneCommand,Gitクローンコマンド
     public ICommand GitCloneCommand { get; }
+    //CSJ,property=FindAssetCandidatesCommand,検索素材候補一覧コマンド
     public ICommand FindAssetCandidatesCommand { get; }
+    //CSJ,property=InspectAssetCommand,点検素材コマンド
     public ICommand InspectAssetCommand { get; }
+    //CSJ,property=ExportAssetMetadataCommand,書き出し素材メタデータコマンド
     public ICommand ExportAssetMetadataCommand { get; }
+    //CSJ,property=UpdateAssetMetadataCommand,更新素材メタデータコマンド
     public ICommand UpdateAssetMetadataCommand { get; }
+    //CSJ,property=VerifyAssetMetadataCommand,検証素材メタデータコマンド
     public ICommand VerifyAssetMetadataCommand { get; }
+    //CSJ,property=CancelToolCommand,キャンセルツールコマンド
     public ICommand CancelToolCommand { get; }
+    //CSJ,property=GitStatus,Git状態
     public string GitStatus { get => gitStatus; private set => SetProperty(ref gitStatus, value); }
+    //CSJ,property=GitPath,Gitパス
     public string GitPath { get => gitPath; set => SetProperty(ref gitPath, value); }
+    //CSJ,property=GitCommitMessage,Gitコミットメッセージ
     public string GitCommitMessage { get => gitCommitMessage; set => SetProperty(ref gitCommitMessage, value); }
+    //CSJ,property=GitBranch,Gitブランチ
     public string GitBranch { get => gitBranch; set => SetProperty(ref gitBranch, value); }
+    //CSJ,property=GitRemote,Gitリモート
     public string GitRemote { get => gitRemote; set => SetProperty(ref gitRemote, value); }
+    //CSJ,property=GitCloneName,Gitクローン名前
     public string GitCloneName { get => gitCloneName; set => SetProperty(ref gitCloneName, value); }
+    //CSJ,property=AssetPath,素材のパス
     public string AssetPath { get => assetPath; set { if (SetProperty(ref assetPath, value)) inspectedAssets = null; } }
+    //CSJ,property=AssetUrl,素材URL
     public string AssetUrl { get => assetUrl; set { if (SetProperty(ref assetUrl, value)) inspectedAssets = null; } }
+    //CSJ,property=AssetStatus,素材状態
     public string AssetStatus { get => assetStatus; private set => SetProperty(ref assetStatus, value); }
 
     public ProjectListViewModel()
@@ -167,6 +241,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         // この ViewModel には、安定しているサムネイル経路だけを持たせる。
         this.logger = logger;
         this.repository = repository ?? new JsonProjectRepository(logger);
+        //CSJ,variable=currentPreviewCaptureService,現在のプレビューキャプチャサービス
         var currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
         generationService = new ProjectGenerationService(logger);
@@ -240,10 +315,12 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         CancelToolCommand = new RelayCommand(() => toolCancellation?.Cancel(), () => toolCancellation is not null && !toolCancellation.IsCancellationRequested);
     }
 
+    //CSJ,method=ExecuteToolAsync,ツールを実行する（非同期）
     private async Task ExecuteToolAsync(string name, Func<CancellationToken, Task> action)
     {
         await ExecuteWithBusyAsync(name, async () =>
         {
+            //CSJ,variable=cancellation,キャンセル
             using var cancellation = new CancellationTokenSource();
             toolCancellation = cancellation;
             activeToolOperation = name;
@@ -251,7 +328,9 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             try { await action(cancellation.Token); }
             catch (OperationCanceledException ex)
             {
+                //CSJ,variable=recovery,復旧
                 var recovery = ex.Data["CloneRecoveryPath"] as string;
+                //CSJ,variable=message,メッセージ
                 var message = "中止しました。ディスクやリモートの状態を確認してください。";
                 if (recovery is not null) message += " 残存 clone: " + recovery;
                 if (ex.Data["YmmpxRetainedStagingPath"] is string staging) message += $" 展開一時フォルダー: {staging}";
@@ -277,14 +356,17 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         });
     }
 
+    //CSJ,method=SetTimelineToolInfo,タイムラインツール情報を設定する
     public void SetTimelineToolInfo(TimelineToolInfo info)
     {
         TimelineContextService.Info = info;
+        //CSJ,variable=timeline,タイムライン
         var timeline = info.Timeline;
         logger.Info($"SetTimelineToolInfo called. timeline={(timeline is null ? "null" : "available")}, currentFrame={timeline?.CurrentFrame}, length={timeline?.Length}");
         CommandManager.InvalidateRequerySuggested();
     }
 
+    //CSJ,method=InitializeAsync,初期化する（非同期）
     public async Task InitializeAsync()
     {
         if (isInitialized)
@@ -295,6 +377,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         await ExecuteWithBusyAsync("Load", async () =>
         {
             logger.Info("Load start.");
+            //CSJ,variable=store,保管先
             ProjectStore store;
             try { store = await repository.LoadAsync().ConfigureAwait(true); }
             catch (ProjectListBusyException ex)
@@ -329,14 +412,17 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=AddProjectsAsync,プロジェクト一覧を追加する（非同期）
     public async Task AddProjectsAsync(IEnumerable<string>? explicitPaths = null)
     {
         await ExecuteWithBusyAsync("Add batch", async () =>
         {
             if (!isInitialized) throw new InvalidOperationException("プロジェクト一覧が読み込まれていません。");
+            //CSJ,variable=paths,パス一覧
             var paths = explicitPaths?.ToArray();
             if (paths is null)
             {
+                //CSJ,variable=dialog,ダイアログ
                 var dialog = new OpenFileDialog
                 {
                     Filter = "YMM Project (*.ymmp)|*.ymmp",
@@ -353,8 +439,10 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 paths = dialog.FileNames;
             }
 
+            //CSJ,variable=existing,既存
             var existing = new HashSet<string>(Projects.Select(x => x.FullPath), StringComparer.OrdinalIgnoreCase);
             var addedEntries = new List<ProjectEntry>();
+            //CSJ,variable=rawPath,生データパス
             foreach (var rawPath in paths)
             {
                 if (!rawPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
@@ -362,6 +450,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                     continue;
                 }
 
+                //CSJ,variable=fullPath,完全パス
                 string fullPath;
                 try
                 {
@@ -392,6 +481,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 };
                 try
                 {
+                    //CSJ,variable=evidence,証跡
                     var evidence = await ProjectFileEvidence.ReadAsync(fullPath);
                     if (Projects.Any(other => other.FileIdentity is { } recorded && recorded.IsSameFile(evidence)))
                     {
@@ -422,6 +512,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=RemoveAsync,除去する（非同期）
     private async Task RemoveAsync()
     {
         if (SelectedProject is null)
@@ -444,6 +535,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=OpenAsync,開く（非同期）
     private async Task OpenAsync()
     {
         if (SelectedProject is null)
@@ -453,6 +545,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
         await ExecuteWithBusyAsync("Open", async () =>
         {
+            //CSJ,variable=project,プロジェクト
             var project = SelectedProject;
             if (project is null)
             {
@@ -478,6 +571,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=RetryProjectListSaveAsync,プロジェクト一覧の保存を再試行する（非同期）
     public async Task RetryProjectListSaveAsync()
     {
         if (!HasUnsavedProjectList) return;
@@ -486,15 +580,18 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
     private async Task AssignLegacyProjectIdAsync()
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null || project.ProjectId is not null || HasUnsavedProjectList) return;
         await ExecuteWithBusyAsync("Assign project identity", async () =>
         {
             if (!isProjectListLossless) { AssetStatus = "一覧に安全に保存できない項目があります。ID の設定を中止しました。"; return; }
             if (!File.Exists(project.FullPath)) { AssetStatus = "プロジェクトが見つかりません。移動先の関連付けは未対応です。"; return; }
+            //CSJ,variable=projectPath,プロジェクトのパス
             var projectPath = project.FullPath;
             var expected = await ProjectFileEvidence.ReadAsync(projectPath);
             if (MessageBox.Show($"次の一覧項目に新しい ID を設定しますか？\n{project.FullPath}\n既存 metadata は関連付けられません。", "プロジェクト ID", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes) return;
+            //CSJ,variable=file,ファイル
             await using var file = ProjectFileEvidence.OpenRead(projectPath);
             var confirmed = await ProjectFileEvidence.ReadAsync(file);
             if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || project.FullPath != projectPath || confirmed != expected) return;
@@ -506,37 +603,49 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
     private async Task ChooseLegacyMetadataAsync()
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null || project.ProjectId is not null || HasUnsavedProjectList) return;
         if (!isProjectListLossless) { AssetStatus = "一覧に安全に保存できない項目があります。関連付けを中止しました。"; return; }
+        //CSJ,variable=dialog,ダイアログ
         var dialog = new OpenFileDialog { Filter = "JSON (*.json)|*.json", Title = "関連付ける旧素材メタデータを選択", CheckFileExists = true };
         if (dialog.ShowDialog() != true) return;
         await ExecuteWithBusyAsync("Associate legacy metadata", async () =>
         {
+            //CSJ,variable=projectPath,プロジェクトのパス
             var projectPath = project.FullPath;
+            //CSJ,variable=projectEvidence,プロジェクト証跡
             var projectEvidence = await ProjectFileEvidence.ReadAsync(projectPath);
             var before = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
+            //CSJ,variable=manifest,目録
             var manifest = AssetManifestStore.Parse(before);
+            //CSJ,variable=afterLoad,変更後読み込み
             var afterLoad = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
             if (!before.SequenceEqual(afterLoad)) throw new InvalidDataException("metadata が変更されました。再選択してください。");
             if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList || project.FullPath != projectPath) return;
+            //CSJ,variable=confirm,確認
             var confirm = MessageBox.Show($"一覧項目: {projectPath}\n選択 metadata: {dialog.FileName}\nmetadata の project 名: {manifest.ProjectFileName}\nproject ID: {manifest.ProjectId}\nrevision ID: {manifest.RevisionId}\n\nmetadata の場所は保存しません。今後もファイルを選択する必要があります。名前や内容だけでは同一性を確認できません。同じ論理プロジェクトとして関連付けますか？", "旧素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
+            //CSJ,variable=afterConfirm,変更後確認
             var afterConfirm = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
             if (!before.SequenceEqual(afterConfirm) || project.FullPath != projectPath) throw new InvalidDataException("metadata または project が変更されました。再確認してください。");
             await AssociateLegacyMetadataAsync(project, manifest, projectEvidence).ConfigureAwait(true);
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=ReadMetadataEvidenceAsync,メタデータ証跡を読み取る（非同期）
     private static async Task<byte[]> ReadMetadataEvidenceAsync(string path)
     {
+        //CSJ,variable=stream,ストリーム
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
         if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("素材 metadata が大きすぎます。");
+        //CSJ,variable=bytes,バイト列
         var bytes = new byte[checked((int)stream.Length)];
         await stream.ReadExactlyAsync(bytes).ConfigureAwait(false);
         return bytes;
     }
 
+    //CSJ,method=AssociateLegacyMetadataAsync,関連付け旧形式メタデータ（非同期）
     internal async Task AssociateLegacyMetadataAsync(ProjectEntry project, AssetManifest manifest, ProjectFileIdentity? expectedProject = null)
     {
         if (!isInitialized || !ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList)
@@ -546,8 +655,11 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             throw new InvalidDataException("プロジェクトまたは metadata ID が不正です。");
         if (Projects.Any(item => !ReferenceEquals(item, project) && item.ProjectId == manifest.ProjectId))
             throw new InvalidDataException("この metadata の ID は別の一覧項目に使用されています。");
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = project.FullPath;
+        //CSJ,variable=file,ファイル
         await using var file = ProjectFileEvidence.OpenRead(projectPath);
+        //CSJ,variable=projectEvidence,プロジェクト証跡
         var projectEvidence = await ProjectFileEvidence.ReadAsync(file);
         if (expectedProject is not null && projectEvidence != expectedProject) throw new InvalidDataException("project が変更されました。再確認してください。");
         if (!ReferenceEquals(project, SelectedProject) || project.FullPath != projectPath || project.ProjectId is not null || HasUnsavedProjectList)
@@ -557,15 +669,19 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         AssetStatus = HasUnsavedProjectList ? "ID を保存しましたが、保存中の一覧変更が未保存です。" : "既存の project ID を一覧に関連付けました。metadata と project ファイルは変更していません。";
     }
 
+    //CSJ,record=PendingIdentity,保留識別情報
     private sealed record PendingIdentity(string Path, Guid Id, string Fingerprint, ProjectFileIdentity Evidence);
 
+    //CSJ,method=CurrentStoreFingerprint,現在の保管先フィンガープリント
     private string CurrentStoreFingerprint() => ProjectListRecovery.Fingerprint(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList() });
 
+    //CSJ,method=SetPendingIdentity,保留識別情報を設定する
     private void SetPendingIdentity(ProjectEntry project, Guid identity, ProjectFileIdentity evidence)
     {
         if (Projects.Any(item => !ReferenceEquals(item, project) && item.FileIdentity?.IsSameFile(evidence) == true))
             throw new InvalidDataException("同じファイルが別のパスから登録されています。");
         var before = CurrentStoreFingerprint();
+        //CSJ,variable=canRecover,復旧の可否
         var canRecover = !HasUnsavedProjectList && lastSavedFingerprint is not null && before == lastSavedFingerprint;
         project.ProjectId = identity;
         project.FileIdentity = evidence;
@@ -575,22 +691,29 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             : null;
     }
 
+    //CSJ,method=RecoverIdentityAsync,識別情報を復旧する（非同期）
     private async Task RecoverIdentityAsync()
     {
+        //CSJ,variable=pending,保留
         var pending = pendingIdentity;
         if (pending is null || !HasUnsavedProjectList) return;
         await ExecuteWithBusyAsync("Recover project identity", async () =>
         {
             if (CurrentStoreFingerprint() != pending.Fingerprint) throw new InvalidDataException("未保存の一覧に他の変更があるため自動再適用できません。");
+            //CSJ,variable=latest,最新
             var latest = await repository.LoadAsync().ConfigureAwait(true);
+            //CSJ,variable=file,ファイル
             await using var file = ProjectFileEvidence.OpenRead(pending.Path);
             if (CurrentStoreFingerprint() != pending.Fingerprint || await ProjectFileEvidence.ReadAsync(file) != pending.Evidence)
                 throw new InvalidDataException("未保存の一覧または project が変更されました。");
             ProjectListRecovery.ApplyIdentity(latest, pending.Path, pending.Id, pending.Evidence);
+            //CSJ,variable=previousPaths,直前のパス一覧
             var previousPaths = Projects.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            //CSJ,variable=latestPaths,最新パス一覧
             var latestPaths = latest.Projects.Select(x => x.FullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
             var added = latestPaths.Except(previousPaths, StringComparer.OrdinalIgnoreCase).Count();
             var removed = previousPaths.Except(latestPaths, StringComparer.OrdinalIgnoreCase).Count();
+            //CSJ,variable=confirm,確認
             var confirm = MessageBox.Show($"最新一覧では追加 {added} 件、削除 {removed} 件です。その他の項目や属性の変更内容は表示しません。\n対象: {pending.Path}\n保留中の ID: {pending.Id}\n最新一覧の内容を維持して、この ID だけ再適用しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
             if (CurrentStoreFingerprint() != pending.Fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
@@ -613,26 +736,36 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=RecoverProjectListAsync,プロジェクト一覧を復旧する（非同期）
     private async Task RecoverProjectListAsync()
     {
+        //CSJ,variable=baseline,基準
         var baseline = savedBaseline;
         if (baseline is null || !HasUnsavedProjectList) return;
         await ExecuteWithBusyAsync("Recover project list", async () =>
         {
+            //CSJ,variable=local,ローカル
             var local = ProjectListMerge.Snapshot(new ProjectStore { Projects = Projects.ToList(), Folders = folders.ToList(), Revision = projectListRevision, IsRecoverySafe = isProjectListLossless });
+            //CSJ,variable=fingerprint,フィンガープリント
             var fingerprint = ProjectListRecovery.Fingerprint(local);
+            //CSJ,variable=latest,最新
             var latest = await repository.LoadAsync().ConfigureAwait(true);
             if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。再確認してください。");
+            //CSJ,variable=plan,計画
             var plan = MergeWithReview(baseline, local, latest);
             if (plan is null) return;
             if (plan.Conflicts.Count != 0) throw new InvalidDataException(string.Join("\n", plan.Conflicts.Take(20)) + (plan.Conflicts.Count > 20 ? "\n他にも競合があります。" : ""));
             if (plan.Changes.Count == 0) throw new InvalidDataException("再適用する変更がありません。ID 設定は専用の回復操作を使用してください。");
             if (plan.Changes.Count > 20) throw new InvalidDataException("変更が20件を超えています。すべてを表示できないため再適用を中止しました。");
             var merged = plan.Store!;
+            //CSJ,variable=verifiedFiles,検証済みファイル一覧
             using var verifiedFiles = await ProjectListRecoveryFiles.OpenAsync(merged, latest,
+                //CSJ,parameter=path,パス
                 path => pendingAdditionEvidence.TryGetValue(path, out var evidence) ? evidence : null);
+            //CSJ,variable=summary,概要
             var summary = string.Join("\n", plan.Changes);
             if (summary.Length > 12000) throw new InvalidDataException("変更内容が大きすぎて確認できないため再適用を中止しました。");
+            //CSJ,variable=confirm,確認
             var confirm = MessageBox.Show($"最新一覧を保持し、次の未保存変更を再適用します。最新側の属性変更は表示されません。\n{summary}\n続行しますか？", "一覧の競合回復", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
             if (CurrentStoreFingerprint() != fingerprint) throw new InvalidDataException("未保存の一覧が変更されました。");
@@ -685,8 +818,10 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         CommandManager.InvalidateRequerySuggested();
     }
 
+    //CSJ,method=ExportRecoverySnapshotAsync,復旧スナップショットを書き出す（非同期）
     private async Task ExportRecoverySnapshotAsync()
     {
+        //CSJ,variable=snapshot,スナップショット
         var snapshot = retainedRecoverySnapshot;
         if (snapshot is null) return;
         await ExportSnapshotAsync(snapshot).ConfigureAwait(true);
@@ -694,24 +829,29 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
 
     private async Task ExportRecoveryScreenAsync()
     {
+        //CSJ,variable=snapshot,スナップショット
         var snapshot = retainedScreenSnapshot;
         if (snapshot is null) return;
         await ExportSnapshotAsync(snapshot).ConfigureAwait(true);
     }
 
+    //CSJ,method=ExportSnapshotAsync,スナップショットを書き出す（非同期）
     private async Task ExportSnapshotAsync(ProjectStore snapshot)
     {
+        //CSJ,variable=dialog,ダイアログ
         var dialog = new SaveFileDialog { Filter = "JSON (*.json)|*.json", Title = "未保存一覧を新しいファイルに退避", OverwritePrompt = false };
         if (dialog.ShowDialog() != true) return;
         await ExecuteWithBusyAsync("Export recovery snapshot", async () =>
         {
             var exporter = new JsonProjectRepository(logger, dialog.FileName);
+            //CSJ,variable=copy,コピー
             var copy = ProjectListMerge.Snapshot(snapshot);
             await exporter.SaveNewCopyAsync(copy).ConfigureAwait(true);
             AssetStatus = "未保存一覧を新しいファイルへ退避しました。元の画面と一覧は変更していません。";
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=SaveAsync,保存する（非同期）
     private async Task SaveAsync()
     {
         if (!isInitialized)
@@ -722,6 +862,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         try
         {
             if (!isProjectListLossless) throw new InvalidDataException("一覧に安全に保存できない項目があります。元ファイルを保護するため保存を中止しました。");
+            //CSJ,variable=store,保管先
             var store = ProjectListMerge.Snapshot(new ProjectStore
             {
                 Projects = Projects.ToList(),
@@ -729,6 +870,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 Revision = projectListRevision,
                 IsRecoverySafe = isProjectListLossless,
             });
+            //CSJ,variable=expectedFingerprint,期待値フィンガープリント
             var expectedFingerprint = ProjectListRecovery.Fingerprint(store);
             var extracted = pendingExtractedProject;
             if (extracted is { } pending)
@@ -739,8 +881,10 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
                 else if (registration.FullPath != pending.Path || registration.FileIdentity != pending.Identity)
                     throw new IOException("展開したPFの一覧項目が変更されたため、登録できません。");
             }
+            //CSJ,variable=directory,ディレクトリ
             using var directory = extracted is { } destination
                 ? OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(destination.Path)!, enforceShare: true) : null;
+            //CSJ,variable=file,ファイル
             await using var file = extracted is { } source ? YmmpxTransfer.OpenOrdinaryRead(source.Path) : null;
             if (extracted is { } original && await ProjectFileEvidence.ReadAsync(file!) != original.Identity)
                 throw new IOException("展開したPFが変更されたため、一覧に登録できません。");
@@ -834,9 +978,11 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         }
     }
 
+    //CSJ,method=CreateLogger,ロガーを作成する
     private static FileLogger CreateLogger()
     {
         var assemblyDir = Path.GetDirectoryName(typeof(ProjectListViewModel).Assembly.Location) ?? AppContext.BaseDirectory;
+        //CSJ,variable=logPath,ログパス
         var logPath = Path.Combine(assemblyDir, "logs", "YMMProjectManager.log");
         return new FileLogger(logPath);
     }
@@ -877,6 +1023,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         return true;
     }
 
+    //CSJ,method=GetActiveWindow,アクティブウィンドウを取得する
     private static Window? GetActiveWindow()
     {
         return System.Windows.Application.Current?.Windows.OfType<Window>().FirstOrDefault(x => x.IsActive);

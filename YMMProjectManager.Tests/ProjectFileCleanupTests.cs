@@ -8,6 +8,7 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Tests;
 
+//CSJ,class=ProjectFileCleanupTests,プロジェクトファイル後片付けテスト
 internal static class ProjectFileCleanupTests
 {
     private const string ReviewedHost = "4.57.0.1+f7f1e4a691d0b476c5693586b4be2ce0c9b13a3c";
@@ -18,6 +19,7 @@ internal static class ProjectFileCleanupTests
         "PluginMetadata":{"Relative":"..\\metadata.json"}
         """;
 
+    //CSJ,method=RunAsync,実行する（非同期）
     internal static async Task RunAsync()
     {
         await Program.RunNamedCaseAsync("PF cleanup splices only approved redundant root properties", PreservesRawContentsAsync);
@@ -26,6 +28,7 @@ internal static class ProjectFileCleanupTests
         await Program.RunNamedCaseAsync("PF cleanup refuses stale preview and leaves original unchanged", RefusesStalePreviewAsync);
         await Program.RunNamedCaseAsync("PF cleanup refuses output collision at publication", RefusesCollisionAsync);
         await Program.RunNamedCaseAsync("PF cleanup cancellation before publication retains original", ConservesSourceOnCancelAsync);
+        //CSJ,variable=libraryPath,ライブラリのパス
         var libraryPath = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
         if (!File.Exists(libraryPath))
             Program.ReportConditionalSkip("PF research: YmmpxLib RemoveUiSettings unavailable");
@@ -35,8 +38,11 @@ internal static class ProjectFileCleanupTests
 
     private static async Task PreservesRawContentsAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService();
+        //CSJ,variable=prepared,準備済み
         var prepared = new[]
         {
             ("{ \"LayoutXml\" : \"\", \"ToolStates\" : null, " + ProjectBody + " }", "{ " + ProjectBody + " }"),
@@ -45,14 +51,17 @@ internal static class ProjectFileCleanupTests
             ("{ \"LayoutXml\":\"\", " + ProjectBody + ",\"ToolStates\":null,\r\n \"Keep\": true}",
                 "{ " + ProjectBody + ",\"Keep\": true}"),
         };
+        //CSJ,variable=index,インデックス
         for (var index = 0; index < prepared.Length; index++)
         {
             var (input, expected) = prepared[index];
             var source = fixture.PathFor($"source{index}.ymmp");
             var output = fixture.PathFor($"clean{index}.ymmp");
+            //CSJ,variable=encoding,エンコード
             var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: index == 0);
             await File.WriteAllTextAsync(source, input, encoding);
             var before = await HashAsync(source);
+            //CSJ,variable=report,報告
             var report = await service.InspectAsync(source);
             Require(report.CanSave && report.Candidates.Count == 2, "expected two approved root properties");
             Require(report.FormatForDisplay().Contains("既定値", StringComparison.Ordinal), "reason missing");
@@ -68,13 +77,16 @@ internal static class ProjectFileCleanupTests
 
     private static async Task KeepsSettingsAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService();
         var source = fixture.PathFor("state.ymmp");
         var input = "{" + ProjectBody + ",\"LayoutXml\":\"<state/>\"" +
             ",\"ToolStates\":{\"Plugin\":{\"SavedState\":\"{\\\"FilePath\\\":\\\"private.bin\\\"}\"}}}";
         await File.WriteAllTextAsync(source, input);
         var before = await HashAsync(source);
+        //CSJ,variable=report,報告
         var report = await service.InspectAsync(source);
         Require(report.Candidates.Count == 2 && !report.CanSave, "meaningful state was approved");
         var output = fixture.PathFor("must-not-exist.ymmp");
@@ -90,6 +102,7 @@ internal static class ProjectFileCleanupTests
             ("{\"$type\":\"SomeType\",\"Timelines\":[{\"Items\":[]}],\"ToolStates\":null,\"LayoutXml\":\"\"}", ReviewedHost),
         })
         {
+            //CSJ,variable=candidates,候補一覧
             var candidates = ProjectFileCleanupService.Inspect(Encoding.UTF8.GetBytes(value), host, default);
             Require(candidates.Count == 2 && candidates.All(candidate =>
                 candidate.Disposition == ProjectFileCleanupDisposition.Conditional), "unsupported format was approved");
@@ -99,7 +112,9 @@ internal static class ProjectFileCleanupTests
 
     private static async Task RefusesInvalidInputsAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService();
         var source = fixture.PathFor("invalid.ymmp");
         foreach (var input in new[]
@@ -125,21 +140,27 @@ internal static class ProjectFileCleanupTests
 
     private static async Task RefusesStalePreviewAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
         var source = await fixture.WriteSourceAsync();
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService();
+        //CSJ,variable=report,報告
         var report = await service.InspectAsync(source);
         var output = fixture.PathFor("new.ymmp");
+        //CSJ,variable=secondDirectory,2番目ディレクトリ
         var secondDirectory = fixture.PathFor("different-folder");
         Directory.CreateDirectory(secondDirectory);
         await ThrowsAsync<IOException>(() => service.SaveAsAsync(report, Path.Combine(secondDirectory, "new.ymmp")));
         await ThrowsAsync<IOException>(() => service.SaveAsAsync(report, source));
         await File.AppendAllTextAsync(source, " ");
+        //CSJ,variable=changed,変更済み
         var changed = await HashAsync(source);
         await ThrowsAsync<IOException>(() => service.SaveAsAsync(report, output));
         Require(await HashAsync(source) == changed && !File.Exists(output), "stale preview published");
 
         report = await service.InspectAsync(source);
+        //CSJ,variable=replacement,置換
         var replacement = fixture.PathFor("replacement.ymmp");
         File.Copy(source, replacement);
         File.Move(replacement, source, overwrite: true);
@@ -150,10 +171,13 @@ internal static class ProjectFileCleanupTests
 
     private static async Task RefusesCollisionAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
         var source = await fixture.WriteSourceAsync();
         var output = fixture.PathFor("collision.ymmp");
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService(() => File.WriteAllText(output, "competing project"));
+        //CSJ,variable=report,報告
         var report = await service.InspectAsync(source);
         var before = await HashAsync(source);
         await ThrowsAsync<IOException>(() => service.SaveAsAsync(report, output));
@@ -164,11 +188,15 @@ internal static class ProjectFileCleanupTests
 
     private static async Task ConservesSourceOnCancelAsync()
     {
+        //CSJ,variable=fixture,テスト用データ
         using var fixture = new Fixture();
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
         var source = await fixture.WriteSourceAsync();
         var output = fixture.PathFor("cancel.ymmp");
+        //CSJ,variable=service,サービス
         var service = new ProjectFileCleanupService(cancellation.Cancel);
+        //CSJ,variable=report,報告
         var report = await service.InspectAsync(source);
         var before = await HashAsync(source);
         await ThrowsAsync<OperationCanceledException>(() => service.SaveAsAsync(report, output, cancellation.Token));
@@ -179,14 +207,19 @@ internal static class ProjectFileCleanupTests
     private static async Task<string> HashAsync(string path) =>
         Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(path)));
 
+    //CSJ,method=VerifyLibraryAsync,ライブラリを検証する（非同期）
     private static Task VerifyLibraryAsync(string libraryPath)
     {
+        //CSJ,variable=library,ライブラリ
         var library = Assembly.LoadFrom(libraryPath);
+        //CSJ,variable=options,オプション
         var options = library.GetType("YmmpxLib.YmmpxPackagingOptions", throwOnError: true)!;
         Require(options.GetProperty("IncludeProjectUiSettings")!.GetValue(Activator.CreateInstance(options)) is true,
             "upstream's default behavior changed");
+        //CSJ,variable=remove,除去
         var remove = library.GetType("YmmpxLib.YmmpxProjectJson", throwOnError: true)!
             .GetMethod("RemoveUiSettings", BindingFlags.Public | BindingFlags.Static)!;
+        //CSJ,variable=root,ルート
         var root = JsonNode.Parse("{" + ProjectBody + ",\"LayoutXml\":\"<layout/>\",\"ToolStates\":{\"Plugin\":true}}");
         Require(remove.Invoke(null, [root]) is true && JsonNode.DeepEquals(root, JsonNode.Parse("{" + ProjectBody + "}")),
             "upstream changed fields other than the documented two root members");
@@ -206,12 +239,15 @@ internal static class ProjectFileCleanupTests
         throw new InvalidOperationException($"Expected {typeof(T).Name}.");
     }
 
+    //CSJ,class=Fixture,テスト用データ
     private sealed class Fixture : IDisposable
     {
+        //CSJ,field=directory,ディレクトリ
         private readonly string directory = Directory.CreateTempSubdirectory("pf-").FullName;
 
         internal string PathFor(string name) => Path.Combine(directory, name);
 
+        //CSJ,method=WriteSourceAsync,元を書き込む（非同期）
         internal async Task<string> WriteSourceAsync()
         {
             var source = PathFor("source.ymmp");
@@ -222,6 +258,7 @@ internal static class ProjectFileCleanupTests
         internal void RequireNoStaging() =>
             Require(!Directory.EnumerateFiles(directory, ".ymmpm-pf-*.tmp").Any(), "an owned temporary file leaked");
 
+        //CSJ,method=Dispose,破棄する
         public void Dispose() => Directory.Delete(directory, recursive: true);
     }
 }

@@ -4,8 +4,10 @@ using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=YmmpxBundleTests,YMMPX一括パッケージテスト
 internal static class YmmpxBundleTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
         await TestInstallGuideMessageAsync(workRoot);
@@ -22,12 +24,14 @@ internal static class YmmpxBundleTests
             start.ArgumentList.Add("--ymmpx-missing-fixture"); start.ArgumentList.Add(workRoot);
             start.Environment.Remove("YMMPX_LIB_PATH");
             using var child = System.Diagnostics.Process.Start(start)!;
+            //CSJ,variable=timeout,タイムアウト
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             try { await child.WaitForExitAsync(timeout.Token); }
             finally { if (!child.HasExited) child.Kill(true); }
             AssertTrue(child.ExitCode == 0, "isolated missing-library fixture failed: " + await child.StandardError.ReadToEndAsync());
         }
 
+        //CSJ,variable=ymmpxLibPath,YMMPXライブラリパス
         var ymmpxLibPath = LocateYmmpxLibDll();
         if (!string.IsNullOrWhiteSpace(ymmpxLibPath))
         {
@@ -41,9 +45,12 @@ internal static class YmmpxBundleTests
 
     private static Task TestInstallGuideMessageAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestInstallGuideMessageAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "guide.log"));
         var guide = new YmmpxLibInstallGuide(logger);
+        //CSJ,variable=message,メッセージ
         var message = guide.BuildMissingPluginMessage(
             [Path.Combine(root, "user", "plugin", "YmmpxLibPlugin", "YmmpxLib.dll")],
             []);
@@ -57,7 +64,9 @@ internal static class YmmpxBundleTests
 
     private static Task TestLegacyFolderDetectionAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestLegacyFolderDetectionAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "legacy.log"));
         var guide = new YmmpxLibInstallGuide(logger);
         var legacyA = Path.Combine(root, "user", "plugin", "YMMProjectManager", "YmmpxLib");
@@ -74,6 +83,7 @@ internal static class YmmpxBundleTests
 
     private static async Task TestInstallerDownloadAndLaunchAsync(string root)
     {
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "installer.log"));
         var launchedPaths = new List<string>();
         var guide = new YmmpxLibInstallGuide(
@@ -110,7 +120,9 @@ internal static class YmmpxBundleTests
 
     private static async Task RunInInstallerTempAsync(string workRoot, Func<string, Task> test)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, test.Method.Name);
+        //CSJ,variable=oldTemp,旧一時
         var oldTemp = Environment.GetEnvironmentVariable("TEMP");
         var oldTmp = Environment.GetEnvironmentVariable("TMP");
         try
@@ -132,15 +144,19 @@ internal static class YmmpxBundleTests
         var launches = 0;
         var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
             launcher: _ => launches++, downloader: (_, _, token) => { token.ThrowIfCancellationRequested(); throw new IOException("synthetic download failure"); });
+        //CSJ,variable=existing,既存
         var existing = guide.GetInstallerDownloadPath();
         Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
         await File.WriteAllTextAsync(existing, "synthetic existing installer");
+        //CSJ,variable=cancelled,キャンセル済み
         using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
         try { await guide.DownloadAndLaunchInstallerAsync(cancelled.Token); throw new Exception("installer cancellation ignored"); }
         catch (OperationCanceledException) { }
         AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled installer modified existing file or launched");
+        //CSJ,variable=failed,失敗
         var failed = await guide.DownloadAndLaunchInstallerAsync();
         AssertTrue(!failed.Success && await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "failed download modified existing file or launched");
+        //CSJ,variable=interrupted,中断済み
         using var interrupted = new CancellationTokenSource();
         var duringDownload = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "during.log")),
             launcher: _ => launches++, downloader: async (_, output, _) => { await output.WriteAsync("synthetic partial"u8.ToArray()); interrupted.Cancel(); });
@@ -150,9 +166,12 @@ internal static class YmmpxBundleTests
         AssertTrue(Directory.GetFiles(Path.GetDirectoryName(existing)!).SequenceEqual(new[] { existing }), "cancelled or failed downloads left owned partial installers");
     }
 
+    //CSJ,method=TestResolverSearchPathsAsync,解決処理検索パス一覧をテストする（非同期）
     private static Task TestResolverSearchPathsAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestResolverSearchPathsAsync));
+        //CSJ,variable=searchPaths,検索パス一覧
         var searchPaths = YmmpxLibResolver.GetSearchPaths(root, Path.Combine(root, "custom", "YmmpxLib.dll"));
 
         AssertTrue(searchPaths.Any(path => path.EndsWith(Path.Combine("user", "plugin", "YmmpxLibPlugin", "YmmpxLib.dll"), StringComparison.OrdinalIgnoreCase)), "search paths should include the YMM4 plugin path");
@@ -162,15 +181,20 @@ internal static class YmmpxBundleTests
 
     internal static async Task TestMissingYmmpxLibReturnsErrorAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestMissingYmmpxLibReturnsErrorAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "missing.log"));
+        //CSJ,variable=service,サービス
         var service = new YmmpxLibBundleService(logger, explicitAssemblyPath: Path.Combine(root, "missing", "YmmpxLib.dll"), baseDirectory: root);
 
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = Path.Combine(root, "sample.ymmp");
         await File.WriteAllTextAsync(projectPath, """
         { "FilePath": "asset.png" }
         """);
 
+        //CSJ,variable=cancelled,キャンセル済み
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
@@ -192,14 +216,19 @@ internal static class YmmpxBundleTests
 
     private static async Task TestPackageAndExtractWithYmmpxLibAsync(string workRoot, string ymmpxLibPath)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestPackageAndExtractWithYmmpxLibAsync));
+        //CSJ,variable=assets,素材一覧
         var assets = Path.Combine(root, "assets");
         Directory.CreateDirectory(assets);
 
+        //CSJ,variable=imagePath,画像パス
         var imagePath = Path.Combine(assets, "image.png");
         await File.WriteAllTextAsync(imagePath, "png");
+        //CSJ,variable=absoluteImagePath,絶対画像パス
         var absoluteImagePath = Path.GetFullPath(imagePath);
 
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = Path.Combine(root, "sample.ymmp");
         await File.WriteAllTextAsync(projectPath, """
         {
@@ -211,16 +240,21 @@ internal static class YmmpxBundleTests
         }
         """.Replace("__ABSOLUTE_IMAGE_PATH__", absoluteImagePath.Replace("\\", "\\\\")));
 
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "ymmpx.log"));
+        //CSJ,variable=service,サービス
         var service = new YmmpxLibBundleService(logger, explicitAssemblyPath: ymmpxLibPath, baseDirectory: root);
+        //CSJ,variable=outputPath,出力パス
         var outputPath = Path.Combine(root, "sample.ymmpx");
 
+        //CSJ,variable=packageResult,パッケージ結果
         var packageResult = await service.CreatePackageAsync(projectPath, outputPath, CancellationToken.None);
         AssertTrue(packageResult.Success, packageResult.ErrorMessage ?? "package creation failed");
         AssertTrue(File.Exists(outputPath), "output ymmpx should exist");
         AssertTrue(packageResult.DetectedMaterialCount >= 1, "package should detect at least one resource");
         AssertTrue(packageResult.PackagedMaterialCount >= 1, "package should include at least one resource");
 
+        //CSJ,variable=archive,アーカイブ
         using (var archive = ZipFile.OpenRead(outputPath))
         {
             AssertTrue(archive.GetEntry("links.json") is not null, "links.json should exist for YMMResourcePackager compatibility");
@@ -228,7 +262,9 @@ internal static class YmmpxBundleTests
             AssertTrue(archive.Entries.Any(x => x.FullName.StartsWith("resources/", StringComparison.OrdinalIgnoreCase)), "resources should exist");
         }
 
+        //CSJ,variable=extractRoot,抽出ルート
         var extractRoot = Path.Combine(root, "extract");
+        //CSJ,variable=extractResult,抽出結果
         var extractResult = await service.ExtractPackageAsync(outputPath, extractRoot, CancellationToken.None);
 
         AssertTrue(extractResult.Success, extractResult.ErrorMessage ?? "extract failed");
@@ -236,8 +272,10 @@ internal static class YmmpxBundleTests
         AssertTrue(Path.IsPathRooted(extractResult.RestoredProjectPath!), "restored ymmp should be absolute");
         AssertTrue(extractResult.ReplacedPathCount >= 1, "extract should replace at least one FilePath");
 
+        //CSJ,variable=restoredJson,復元済みJSON
         var restoredJson = await File.ReadAllTextAsync(extractResult.RestoredProjectPath!);
         using var doc = JsonDocument.Parse(restoredJson);
+        //CSJ,variable=restoredPaths,復元済みパス一覧
         var restoredPaths = new List<string>();
         CollectFilePaths(doc.RootElement, restoredPaths);
 
@@ -255,6 +293,7 @@ internal static class YmmpxBundleTests
             return Path.GetFullPath(env);
         }
 
+        //CSJ,variable=repoRoot,リポジトリルート
         var repoRoot = Directory.GetCurrentDirectory();
         var parent = Directory.GetParent(repoRoot)?.FullName;
         if (string.IsNullOrWhiteSpace(parent))
@@ -262,6 +301,7 @@ internal static class YmmpxBundleTests
             return null;
         }
 
+        //CSJ,variable=candidates,候補一覧
         var candidates = new[]
         {
             Path.Combine(parent, "YMMPXLib", "publish", "YmmpxLib.dll"),
@@ -273,8 +313,10 @@ internal static class YmmpxBundleTests
         return candidates.FirstOrDefault(File.Exists);
     }
 
+    //CSJ,method=CreateRoot,ルートを作成する
     private static string CreateRoot(string workRoot, string testName)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, testName);
         Directory.CreateDirectory(root);
         return root;
@@ -288,14 +330,17 @@ internal static class YmmpxBundleTests
         }
     }
 
+    //CSJ,method=CollectFilePaths,ファイルパス一覧を収集する
     private static void CollectFilePaths(JsonElement element, List<string> result)
     {
         if (element.ValueKind == JsonValueKind.Object)
         {
+            //CSJ,variable=property,プロパティ
             foreach (var property in element.EnumerateObject())
             {
                 if (property.NameEquals("FilePath") && property.Value.ValueKind == JsonValueKind.String)
                 {
+                    //CSJ,variable=path,パス
                     var path = property.Value.GetString();
                     if (!string.IsNullOrWhiteSpace(path))
                     {

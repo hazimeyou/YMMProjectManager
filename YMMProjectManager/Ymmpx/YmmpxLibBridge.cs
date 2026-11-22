@@ -10,10 +10,14 @@ namespace YMMProjectManager.Infrastructure.Packaging;
 
 public sealed class YmmpxLibBridge
 {
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
     private readonly string? explicitAssemblyPath;
+    //CSJ,field=baseDirectory,基点ディレクトリ
     private readonly string? baseDirectory;
+    //CSJ,field=cachedAssembly,キャッシュ済みアセンブリ
     private Assembly? cachedAssembly;
+    //CSJ,field=cachedAssemblyPath,キャッシュ済みアセンブリのパス
     private string? cachedAssemblyPath;
     private IReadOnlyList<string> searchedPaths = [];
 
@@ -31,24 +35,33 @@ public sealed class YmmpxLibBridge
         cachedAssemblyPath = assembly.Location;
     }
 
+    //CSJ,property=SearchedPaths,検索済みのパス一覧
     public IReadOnlyList<string> SearchedPaths => searchedPaths;
 
+    //CSJ,property=MissingLibraryMessage,欠落ライブラリメッセージ
     public string MissingLibraryMessage =>
         "YmmpxLib が見つかりません。\nYmmpxLibPlugin を YMM4 の user/plugin に導入してください。";
 
+    //CSJ,method=TryEnsureAvailable,利用可能の確認と準備を試みる
     public bool TryEnsureAvailable(out string? resolvedAssemblyPath)
     {
+        //CSJ,variable=assembly,アセンブリ
         var assembly = ResolveAssembly(out resolvedAssemblyPath);
         return assembly is not null;
     }
 
+    //CSJ,method=CreatePackageAsync,パッケージを作成する（非同期）
     public async Task<YmmpxPackageResult> CreatePackageAsync(
+        //CSJ,parameter=ymmpPath,YMMPパス
         string ymmpPath,
+        //CSJ,parameter=outputYmmpxPath,出力YMMPXパス
         string outputYmmpxPath,
         CancellationToken token,
+        //CSJ,parameter=progress,進捗
         IProgress<double>? progress = null)
     {
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=assembly,アセンブリ
         var assembly = ResolveAssembly(out var resolvedAssemblyPath);
         if (assembly is null)
         {
@@ -60,13 +73,17 @@ public sealed class YmmpxLibBridge
             };
         }
 
+        //CSJ,variable=staging,準備領域
         OwnedStagingDirectory? staging = null;
+        //CSJ,variable=temporaryPath,一時パス
         string? temporaryPath = null;
+        //CSJ,variable=temporaryIdentity,一時識別情報
         (ulong Volume, Guid FileId)? temporaryIdentity = null;
         FileStream? validatedPackage = null;
         try
         {
             token.ThrowIfCancellationRequested();
+            //CSJ,variable=destination,格納先
             var destination = Path.GetFullPath(outputYmmpxPath);
             if (string.Equals(destination, Path.GetFullPath(ymmpPath), StringComparison.OrdinalIgnoreCase))
                 throw new IOException("プロジェクトと同じパスには出力できません。");
@@ -77,9 +94,11 @@ public sealed class YmmpxLibBridge
             if (!Path.GetExtension(ymmpPath).Equals(".ymmp", StringComparison.OrdinalIgnoreCase) ||
                 sourceGuard.Length > YmmpxPackageReader.MaxProjectBytes)
                 return InvalidProject();
+            //CSJ,variable=sourceSnapshot,元スナップショット
             JsonDocument sourceSnapshot;
             try
             {
+                //CSJ,variable=reader,読み取り元
                 using var reader = new StreamReader(sourceGuard, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: true);
                 sourceSnapshot = JsonDocument.Parse(await reader.ReadToEndAsync(token).ConfigureAwait(false));
             }
@@ -88,20 +107,26 @@ public sealed class YmmpxLibBridge
             if (source.RootElement.ValueKind != JsonValueKind.Object) return InvalidProject();
             staging = OwnedStagingDirectory.Reserve(Path.GetDirectoryName(destination)!, ".ymmpm-package-");
             temporaryPath = PackagingOutputHelper.CreateTemporaryPackagePath(Path.Combine(staging.Path, Path.GetFileName(destination)));
+            //CSJ,variable=reserved,予約済み
             using (var reserved = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 temporaryIdentity = ProjectFileEvidence.ReadPhysicalIdentity(reserved);
+            //CSJ,variable=scan,走査
             var scan = ScanProjectForLogging(ymmpPath);
             token.ThrowIfCancellationRequested();
             logger.Info(
                 $"YmmpxLib 同梱開始。対象 ymmp={ymmpPath}, 出力 ymmpx={outputYmmpxPath}, 探索パス={string.Join(" | ", searchedPaths)}");
 
+            //CSJ,variable=serviceType,サービス型
             var serviceType = assembly.GetType("YmmpxLib.YmmpxPackageService")
                 ?? throw new TypeLoadException("YmmpxPackageService が見つかりません。");
+            //CSJ,variable=optionsType,オプション型
             var optionsType = assembly.GetType("YmmpxLib.YmmpxPackagingOptions")
                 ?? throw new TypeLoadException("YmmpxPackagingOptions が見つかりません。");
+            //CSJ,variable=progressType,進捗型
             var progressType = assembly.GetType("YmmpxLib.YmmpxPackagingProgress")
                 ?? throw new TypeLoadException("YmmpxPackagingProgress が見つかりません。");
 
+            //CSJ,variable=options,オプション
             var options = Activator.CreateInstance(optionsType)
                 ?? throw new InvalidOperationException("YmmpxPackagingOptions を生成できません。");
             optionsType.GetProperty("IncludeProjectUiSettings")?.SetValue(options, true);
@@ -123,6 +148,7 @@ public sealed class YmmpxLibBridge
                 }));
             }
 
+            //CSJ,variable=createMethod,作成メソッド
             var createMethod = serviceType.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .FirstOrDefault(m => m.Name == "CreatePackageAsync" && m.GetParameters().Length >= 5)
                 ?? throw new MissingMethodException("CreatePackageAsync が見つかりません。");
@@ -145,8 +171,11 @@ public sealed class YmmpxLibBridge
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
             await YmmpxPackageReader.ValidateAsync(validatedPackage, ymmpPath, source.RootElement, token).ConfigureAwait(false);
+            //CSJ,variable=resourceCount,リソース件数
             var resourceCount = GetIntProperty(result, "ResourceCount");
+            //CSJ,variable=fileMap,ファイル対応表
             var fileMap = GetDictionaryProperty(result, "FileMap");
+            //CSJ,variable=links,リンク一覧
             var links = scan.Links.Select(link => new YmmpxPackageLink
             {
                 OriginalPath = link.OriginalPath,
@@ -216,6 +245,7 @@ public sealed class YmmpxLibBridge
             }
         }
 
+        //CSJ,method=InvalidProject,無効プロジェクト
         static YmmpxPackageResult InvalidProject() => new()
         {
             Success = false,
@@ -223,6 +253,7 @@ public sealed class YmmpxLibBridge
         };
     }
 
+    //CSJ,method=TryDeleteOwnedPackage,管理対象のパッケージの削除を試みる
     private void TryDeleteOwnedPackage(string path, (ulong Volume, Guid FileId) identity, FileStream? validatedPackage)
     {
         try
@@ -230,6 +261,7 @@ public sealed class YmmpxLibBridge
             using var reopened = validatedPackage is null
                 ? new FileStream(YmmpxPackageReader.OpenPackageForPublication(path), FileAccess.Read)
                 : null;
+            //CSJ,variable=package,パッケージ
             var package = validatedPackage ?? reopened!;
             if (ProjectFileEvidence.ReadPhysicalIdentity(package) == identity &&
                 YmmpxPackageReader.TryDeleteOpenedPath(package.SafeFileHandle)) return;
@@ -241,11 +273,16 @@ public sealed class YmmpxLibBridge
         }
     }
 
+    //CSJ,method=ExtractPackageAsync,パッケージを抽出する（非同期）
     public async Task<YmmpxExtractResult> ExtractPackageAsync(
+        //CSJ,parameter=ymmpxPath,YMMPXパス
         string ymmpxPath,
+        //CSJ,parameter=outputDirectory,出力ディレクトリ
         string outputDirectory,
         CancellationToken token,
+        //CSJ,parameter=progress,進捗
         IProgress<double>? progress = null,
+        //CSJ,parameter=requireTransfer,要求受け渡し
         bool requireTransfer = false)
     {
         token.ThrowIfCancellationRequested();
@@ -281,24 +318,31 @@ public sealed class YmmpxLibBridge
     internal static void ValidateArchiveForExtraction(Stream stream, CancellationToken token, long maxTotalBytes = 100L * 1024 * 1024 * 1024, int maxEntries = 100000)
     {
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=archive,アーカイブ
         using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: true);
         ValidateArchiveForExtraction(archive, token, maxTotalBytes, maxEntries);
     }
 
     internal static void ValidateArchiveForExtraction(ZipArchive archive, CancellationToken token,
+        //CSJ,parameter=maxTotalBytes,最大合計バイト列
         long maxTotalBytes = 100L * 1024 * 1024 * 1024, int maxEntries = 100000)
     {
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=paths,パス一覧
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=files,ファイル一覧
         var files = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=total,合計
         long total = 0;
         if (archive.Entries.Count > maxEntries) throw new InvalidDataException("パッケージ内の項目数が多すぎます。");
         foreach (var entry in archive.Entries)
         {
             token.ThrowIfCancellationRequested();
+            //CSJ,variable=name,名前
             var name = entry.FullName.Replace('\\', '/');
             if (string.IsNullOrEmpty(name) || name.StartsWith('/') || name.Contains(':'))
                 throw new InvalidDataException("パッケージに不正なパスがあります。");
+            //CSJ,variable=parts,構成要素
             var parts = name.TrimEnd('/').Split('/');
             if (parts.Length > 32 || name.Length > 2048 || parts.Any(part => part.Length is 0 or > 255 || part is "." or ".." || part.EndsWith(' ') || part.EndsWith('.') || part.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
                 throw new InvalidDataException("パッケージに不正なパスがあります。");
@@ -320,6 +364,7 @@ public sealed class YmmpxLibBridge
             total += entry.Length;
         }
         var directorySpellings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=path,パス
         foreach (var path in paths)
         {
             token.ThrowIfCancellationRequested();
@@ -327,6 +372,7 @@ public sealed class YmmpxLibBridge
             var slash = path.IndexOf('/');
             while (slash >= 0)
             {
+                //CSJ,variable=directory,ディレクトリ
                 var directory = path[..slash];
                 if (files.Contains(directory)) throw new InvalidDataException("ファイルとディレクトリが競合しています。");
                 RecordDirectory(directory);
@@ -334,6 +380,7 @@ public sealed class YmmpxLibBridge
             }
         }
 
+        //CSJ,method=RecordDirectory,ディレクトリを記録する
         void RecordDirectory(string directory)
         {
             if (directorySpellings.TryGetValue(directory, out var previous) &&
@@ -343,6 +390,7 @@ public sealed class YmmpxLibBridge
         }
     }
 
+    //CSJ,method=ResolveAssembly,アセンブリを解決する
     private Assembly? ResolveAssembly(out string? resolvedAssemblyPath)
     {
         if (cachedAssembly is not null)
@@ -365,6 +413,7 @@ public sealed class YmmpxLibBridge
         return assembly;
     }
 
+    //CSJ,method=LogMissingYmmpxLib,欠落YMMPXライブラリをログに記録する
     private void LogMissingYmmpxLib(string operation)
     {
         logger.Error(
@@ -398,6 +447,7 @@ public sealed class YmmpxLibBridge
         }
     }
 
+    //CSJ,method=GetDictionaryProperty,辞書プロパティを取得する
     private static Dictionary<string, string> GetDictionaryProperty(object obj, string propertyName)
     {
         try
@@ -421,9 +471,12 @@ public sealed class YmmpxLibBridge
         }
     }
 
+    //CSJ,method=ExtractTaskResult,タスク結果を抽出する
     private static object ExtractTaskResult(object taskObj)
     {
+        //CSJ,variable=taskType,タスク型
         var taskType = taskObj.GetType();
+        //CSJ,variable=resultProperty,結果プロパティ
         var resultProperty = taskType.GetProperty("Result");
         return resultProperty?.GetValue(taskObj)
             ?? throw new InvalidOperationException("Task.Result が取得できません。");
@@ -441,8 +494,10 @@ public sealed class YmmpxLibBridge
         }
     }
 
+    //CSJ,class=ObjectProgress,オブジェクト進捗
     private sealed class ObjectProgress<T> : IProgress<T>
     {
+        //CSJ,field=report,報告
         private readonly Action<object?> report;
 
         public ObjectProgress(Action<object?> report)
@@ -450,26 +505,38 @@ public sealed class YmmpxLibBridge
             this.report = report;
         }
 
+        //CSJ,method=Report,報告
         public void Report(T value)
         {
             report(value);
         }
     }
 
+    //CSJ,class=ProjectScanResult,プロジェクト走査結果
     private sealed class ProjectScanResult
     {
+        //CSJ,property=DetectedCount,検出数
         public int DetectedCount { get; init; }
+        //CSJ,property=MissingCount,欠落件数
         public int MissingCount { get; init; }
+        //CSJ,property=DuplicateCount,重複件数
         public int DuplicateCount { get; init; }
+        //CSJ,property=Links,リンク一覧
         public List<ProjectLink> Links { get; init; } = [];
     }
 
+    //CSJ,class=ProjectLink,プロジェクトリンク
     private sealed class ProjectLink
     {
+        //CSJ,property=OriginalPath,元のパス
         public string OriginalPath { get; init; } = string.Empty;
+        //CSJ,property=ResolvedPath,解決済みのパス
         public string ResolvedPath { get; init; } = string.Empty;
+        //CSJ,property=BundlePath,一括パッケージのパス
         public string BundlePath { get; init; } = string.Empty;
+        //CSJ,property=BundleFileName,一括パッケージファイル名
         public string BundleFileName => Path.GetFileName(BundlePath);
+        //CSJ,property=Exists,存在するか判定する
         public bool Exists { get; init; }
     }
 
@@ -481,15 +548,21 @@ public sealed class YmmpxLibBridge
         }
 
         var projectDir = Path.GetDirectoryName(Path.GetFullPath(ymmpPath)) ?? string.Empty;
+        //CSJ,variable=rawPaths,生データパス一覧
         var rawPaths = PackagingDetector.GetProjectFilePaths(ymmpPath);
         var uniqueResolved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=links,リンク一覧
         var links = new List<ProjectLink>();
+        //CSJ,variable=missingCount,欠落件数
         var missingCount = 0;
+        //CSJ,variable=duplicateCount,重複件数
         var duplicateCount = 0;
         var packagedIndex = 0;
 
+        //CSJ,variable=rawPath,生データパス
         foreach (var rawPath in rawPaths)
         {
+            //CSJ,variable=resolved,解決済み
             var resolved = PackagingDetector.ResolveMaterialPath(rawPath, projectDir);
             var exists = !string.IsNullOrWhiteSpace(resolved) && File.Exists(resolved);
             if (!exists)
@@ -519,6 +592,7 @@ public sealed class YmmpxLibBridge
             }
 
             packagedIndex++;
+            //CSJ,variable=bundlePath,一括パッケージのパス
             var bundlePath = $"resources/{packagedIndex:D6}_{SanitizeFileName(Path.GetFileName(resolved!))}";
             links.Add(new ProjectLink
             {
@@ -540,7 +614,9 @@ public sealed class YmmpxLibBridge
 
     private static string SanitizeFileName(string fileName)
     {
+        //CSJ,variable=invalid,無効
         var invalid = Path.GetInvalidFileNameChars();
+        //CSJ,variable=builder,ビルダー
         var builder = new StringBuilder(fileName.Length);
         foreach (var ch in fileName)
         {

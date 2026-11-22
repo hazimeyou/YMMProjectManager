@@ -15,13 +15,18 @@ namespace YMMProjectManager.Infrastructure.Thumbnails;
 /// <summary>
 /// YMM のタイムラインらしきオブジェクトを探索し、指定フレームへ移動します。
 /// </summary>
+//CSJ,class=YmmTimelineSeekAdapter,YMMタイムラインフレーム移動アダプター
 public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 {
     private const int FrameTolerance = 1;
+    //CSJ,field=MaxDiscoveryDepth,最大検出深さ
     private const int MaxDiscoveryDepth = 6;
+    //CSJ,field=MaxDiscoveryNodes,最大検出ノード一覧
     private const int MaxDiscoveryNodes = 2048;
 
+    //CSJ,field=CommandNameCandidates,コマンド名前候補一覧
     private static readonly string[] CommandNameCandidates = ["ScrollToFrame", "シーク", "Seek"];
+    //CSJ,field=PriorityPropertyNames,優先順位プロパティ名前一覧
     private static readonly string[] PriorityPropertyNames =
     [
         "Timeline",
@@ -33,11 +38,13 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         "ProjectListViewModel",
     ];
 
+    //CSJ,method=SeekAsync,指定フレームへ移動する（非同期）
     public async Task<SeekResult> SeekAsync(object? timeline, int targetFrame, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
 
         // YMM の UI オブジェクトを触るため、シーク処理は必ず WPF Dispatcher 上で実行する。
+        //CSJ,variable=dispatcher,ディスパッチャー
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
@@ -76,10 +83,12 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=WriteSeekProbeAsync,フレーム移動調査を書き込む（非同期）
     public async Task<string> WriteSeekProbeAsync(object? timeline, int targetFrame, string outputDirectory, CancellationToken cancellationToken)
     {
         var result = await SeekAsync(timeline, targetFrame, cancellationToken).ConfigureAwait(true);
         Directory.CreateDirectory(outputDirectory);
+        //CSJ,variable=path,パス
         var path = Path.Combine(outputDirectory, $"seek-probe-{DateTime.Now:yyyyMMdd-HHmmss-fff}-frame-{targetFrame:D6}.json");
         var json = JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
         await File.WriteAllTextAsync(path, json, cancellationToken).ConfigureAwait(false);
@@ -88,6 +97,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
     private static SeekResult SeekOnUiThread(object? timeline, int targetFrame)
     {
+        //CSJ,variable=discovery,検出
         var discovery = DiscoverTimeline(timeline);
         if (discovery.Timeline is null)
         {
@@ -106,6 +116,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
 
         // CurrentFrame が読み取り専用の場合は、YMM のコマンドバインディング経由で移動を試す。
+        //CSJ,variable=fallbackResult,代替結果
         var fallbackResult = TrySeekViaCommandBindings(discovery, targetFrame);
         if (fallbackResult.Success)
         {
@@ -202,6 +213,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         var failureReasons = new List<string>();
         string? lastExceptionType = null;
 
+        //CSJ,variable=window,ウィンドウ
         foreach (var window in windows)
         {
             var matchingBindings = window.CommandBindings
@@ -214,12 +226,17 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
                 continue;
             }
 
+            //CSJ,variable=binding,バインディング
             foreach (var binding in matchingBindings)
             {
+                //CSJ,variable=commandName,コマンド名前
                 var commandName = GetCommandName(binding.Command);
+                //CSJ,variable=parameterAttempt,引数試行
                 foreach (var parameterAttempt in CreateParameterAttempts(targetFrame))
                 {
+                    //CSJ,variable=beforeFrame,変更前フレーム
                     var beforeFrame = TryGetCurrentFrameOrFallback(discovery.Timeline, 0);
+                    //CSJ,variable=parameter,引数
                     var parameter = parameterAttempt.Create(beforeFrame);
 
                     try
@@ -274,12 +291,14 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
     private static TimelineDiscoveryResult DiscoverTimeline(object? explicitTimeline)
     {
+        //CSJ,variable=app,アプリケーション
         var app = System.Windows.Application.Current;
         if (app is null)
         {
             return new TimelineDiscoveryResult(null, null, "Application.Current unavailable during timeline discovery.");
         }
 
+        //CSJ,variable=queue,キュー
         var queue = new Queue<DiscoveryNode>();
         var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
         var notes = new List<string>();
@@ -290,6 +309,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         Enqueue(queue, timelineContextTimeline, "TimelineContextService.Timeline", 0, null);
         Enqueue(queue, timelineContextInfo, "TimelineContextService.Info", 0, null);
 
+        //CSJ,variable=window,ウィンドウ
         foreach (Window window in app.Windows)
         {
             Enqueue(queue, window, $"Application.Current.Windows[{window.GetType().Name}]", 0, window);
@@ -298,6 +318,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         var nodesVisited = 0;
         while (queue.Count > 0)
         {
+            //CSJ,variable=node,ノード
             var node = queue.Dequeue();
             if (node.Value is null || !ShouldInspect(node.Value) || !visited.Add(node.Value))
             {
@@ -328,6 +349,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             }
         }
 
+        //CSJ,variable=limitReason,上限理由
         var limitReason = nodesVisited >= MaxDiscoveryNodes
             ? $"timeline not found after scanning {nodesVisited} nodes (limit {MaxDiscoveryNodes})"
             : $"timeline not found after scanning {nodesVisited} nodes";
@@ -339,6 +361,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         return new TimelineDiscoveryResult(null, null, limitReason);
     }
 
+    //CSJ,method=EnumerateChildren,子要素を列挙する
     private static IEnumerable<DiscoveryNode> EnumerateChildren(DiscoveryNode node)
     {
         if (node.Value is FrameworkElement frameworkElement)
@@ -375,8 +398,10 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=EnumerateVisualChildren,表示子要素を列挙する
     private static IEnumerable<DiscoveryNode> EnumerateVisualChildren(DiscoveryNode node, DependencyObject dependencyObject)
     {
+        //CSJ,variable=childCount,子件数
         int childCount;
         try
         {
@@ -417,6 +442,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
         using (enumerator as IDisposable)
         {
+            //CSJ,variable=index,インデックス
             var index = 0;
             while (true)
             {
@@ -440,8 +466,10 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=EnumerateObjectProperties,オブジェクトプロパティ一覧を列挙する
     private static IEnumerable<DiscoveryNode> EnumerateObjectProperties(DiscoveryNode node)
     {
+        //CSJ,variable=nodeValue,ノード値
         var nodeValue = node.Value;
         if (nodeValue is null)
         {
@@ -449,6 +477,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
 
         // よく使うプロパティを先に見て、深いオブジェクトグラフを無駄に広げない。
+        //CSJ,variable=properties,プロパティ一覧
         var properties = nodeValue.GetType()
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
             .Where(property => property.CanRead && property.GetIndexParameters().Length == 0)
@@ -459,6 +488,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             })
             .ThenBy(property => property.Name, StringComparer.Ordinal);
 
+        //CSJ,variable=property,プロパティ
         foreach (var property in properties)
         {
             if (!ShouldInspect(property.PropertyType))
@@ -480,6 +510,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=EnumerateCandidateWindows,候補Windowsを列挙する
     private static IEnumerable<Window> EnumerateCandidateWindows(TimelineDiscoveryResult discovery)
     {
         var yielded = new HashSet<Window>(ReferenceEqualityComparer.Instance);
@@ -488,12 +519,14 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             yield return discovery.OwnerWindow;
         }
 
+        //CSJ,variable=app,アプリケーション
         var app = System.Windows.Application.Current;
         if (app is null)
         {
             yield break;
         }
 
+        //CSJ,variable=window,ウィンドウ
         foreach (Window window in app.Windows)
         {
             if (yielded.Add(window))
@@ -503,11 +536,13 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=TrySetCurrentFrame,現在のフレームの設定を試みる
     private static bool TrySetCurrentFrame(object timeline, int targetFrame, out string? failureReason, out string? exceptionType)
     {
         failureReason = null;
         exceptionType = null;
 
+        //CSJ,variable=property,プロパティ
         var property = timeline.GetType().GetProperty("CurrentFrame", BindingFlags.Public | BindingFlags.Instance);
         if (property is null)
         {
@@ -523,6 +558,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
         try
         {
+            //CSJ,variable=targetType,対象型
             var targetType = property.PropertyType;
             if (targetType == typeof(int))
             {
@@ -543,9 +579,11 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
                 return true;
             }
 
+            //CSJ,variable=frameProperty,フレームプロパティ
             var frameProperty = targetType.GetProperty("Frame", BindingFlags.Public | BindingFlags.Instance);
             if (frameProperty is not null && frameProperty.CanWrite)
             {
+                //CSJ,variable=instance,インスタンス
                 var instance = Activator.CreateInstance(targetType);
                 if (instance is null)
                 {
@@ -585,6 +623,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=TryReadCurrentFrame,現在のフレームの読み取りを試みる
     private static bool TryReadCurrentFrame(object timeline, out int frame, out string? failureReason, out string? exceptionType)
     {
         frame = 0;
@@ -593,6 +632,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
 
         try
         {
+            //CSJ,variable=property,プロパティ
             var property = timeline.GetType().GetProperty("CurrentFrame", BindingFlags.Public | BindingFlags.Instance);
             if (property is null || !property.CanRead)
             {
@@ -622,6 +662,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
     private static int TryGetCurrentFrameOrFallback(object timeline, int fallback)
         => TryReadCurrentFrame(timeline, out var frame, out _, out _) ? frame : fallback;
 
+    //CSJ,method=TryConvertFrameValue,フレーム値の変換を試みる
     private static bool TryConvertFrameValue(object? value, out int frame)
     {
         frame = 0;
@@ -637,12 +678,14 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
             return true;
         }
 
+        //CSJ,variable=frameProperty,フレームプロパティ
         var frameProperty = value?.GetType().GetProperty("Frame", BindingFlags.Public | BindingFlags.Instance);
         if (frameProperty is null || !frameProperty.CanRead)
         {
             return false;
         }
 
+        //CSJ,variable=frameValue,フレーム値
         var frameValue = frameProperty.GetValue(value);
         if (frameValue is int frameInt)
         {
@@ -659,18 +702,23 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         return false;
     }
 
+    //CSJ,method=HasCurrentFrameProperty,現在のフレームプロパティの有無を判定する
     private static bool HasCurrentFrameProperty(object value)
     {
+        //CSJ,variable=property,プロパティ
         var property = value.GetType().GetProperty("CurrentFrame", BindingFlags.Public | BindingFlags.Instance);
         return property is not null && property.CanRead;
     }
 
+    //CSJ,method=MatchesCommandCandidate,コマンド候補の条件に合うか判定する
     private static bool MatchesCommandCandidate(ICommand? command)
     {
+        //CSJ,variable=commandName,コマンド名前
         var commandName = GetCommandName(command);
         return CommandNameCandidates.Any(candidate => commandName.Contains(candidate, StringComparison.OrdinalIgnoreCase));
     }
 
+    //CSJ,method=GetCommandName,コマンド名前を取得する
     private static string GetCommandName(ICommand? command)
     {
         return command switch
@@ -693,6 +741,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         return "CommandBindingSeek";
     }
 
+    //CSJ,method=CanExecute,実行が可能かを判定する
     private static bool CanExecute(ICommand command, object? parameter, Window window)
     {
         return command switch
@@ -702,6 +751,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         };
     }
 
+    //CSJ,method=Execute,実行する
     private static void Execute(ICommand command, object? parameter, Window window)
     {
         switch (command)
@@ -715,6 +765,7 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,method=CreateParameterAttempts,引数試行回数を作成する
     private static IEnumerable<CommandParameterAttempt> CreateParameterAttempts(int targetFrame)
     {
         yield return new CommandParameterAttempt("targetFrame", _ => targetFrame);
@@ -734,8 +785,10 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         return filtered.Length == 0 ? null : string.Join(" | ", filtered);
     }
 
+    //CSJ,method=ShouldInspect,点検が必要かを判定する
     private static bool ShouldInspect(object value) => ShouldInspect(value.GetType());
 
+    //CSJ,method=ShouldInspect,点検が必要かを判定する
     private static bool ShouldInspect(Type type)
     {
         if (type.IsPrimitive || type.IsEnum)
@@ -757,17 +810,21 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         return true;
     }
 
+    //CSJ,method=TryGetTimelineContextCandidates,タイムラインコンテキスト候補一覧の取得を試みる
     private static (object? Timeline, object? Info) TryGetTimelineContextCandidates()
     {
         try
         {
+            //CSJ,variable=timelineContextType,タイムラインコンテキスト型
             var timelineContextType = Type.GetType("YMMProjectManager.Infrastructure.TimelineContextService, YMMProjectManager", throwOnError: false);
             if (timelineContextType is null)
             {
                 return (null, null);
             }
 
+            //CSJ,variable=timeline,タイムライン
             var timeline = timelineContextType.GetProperty("Timeline", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+            //CSJ,variable=info,情報
             var info = timelineContextType.GetProperty("Info", BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
             return (timeline, info);
         }
@@ -777,14 +834,18 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
         }
     }
 
+    //CSJ,record=DiscoveryNode,検出ノード
     private sealed record DiscoveryNode(object? Value, string Path, int Depth, Window? OwnerWindow)
     {
+        //CSJ,method=CreateChild,子を作成する
         public DiscoveryNode CreateChild(object? value, string path, Window? ownerWindow = null)
             => new(value, path, Depth + 1, ownerWindow ?? OwnerWindow);
     }
 
+    //CSJ,record=TimelineDiscoveryResult,タイムライン検出結果
     private sealed record TimelineDiscoveryResult(object? Timeline, Window? OwnerWindow, string? FailureReason);
 
+    //CSJ,record=CommandParameterAttempt,コマンド引数試行
     private sealed record CommandParameterAttempt(string Label, Func<int, object?> Create);
 
     private static void Enqueue(Queue<DiscoveryNode> queue, object? value, string path, int depth, Window? ownerWindow)
@@ -798,8 +859,10 @@ public sealed class YmmTimelineSeekAdapter : ITimelineSeekAdapter
     }
 }
 
+//CSJ,class=FrameworkElementExtensions,フレームワーク要素の拡張処理
 internal static class FrameworkElementExtensions
 {
+    //CSJ,method=ContentOrDefault,内容または既定値
     public static object? ContentOrDefault(this FrameworkElement element)
         => element.GetType().GetProperty("Content", BindingFlags.Public | BindingFlags.Instance)?.GetValue(element);
 }

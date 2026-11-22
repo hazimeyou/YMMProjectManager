@@ -4,10 +4,13 @@ using System.Security.Cryptography;
 using System.Text;
 using YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRemoteTests,Gitリモートテスト
 internal static class GitRemoteTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "git-remote"); Directory.CreateDirectory(root);
         var global = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
         var system = Environment.GetEnvironmentVariable("GIT_CONFIG_NOSYSTEM");
@@ -15,7 +18,9 @@ internal static class GitRemoteTests
         Environment.SetEnvironmentVariable("GIT_CONFIG_NOSYSTEM", "1");
         try
         {
+            //CSJ,method=Check,確認する
             static void Check(bool value, string message) { if (!value) throw new InvalidOperationException(message); }
+            //CSJ,variable=environment,環境
             var environment = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["GIT_ALLOW_PROTOCOL"] = "file:https",
@@ -37,6 +42,7 @@ internal static class GitRemoteTests
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = cwd, UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
                 foreach (var arg in args) start.ArgumentList.Add(arg);
+                //CSJ,variable=process,プロセス
                 using var process = Process.Start(start)!;
                 var output = process.StandardOutput.ReadToEndAsync(); var error = process.StandardError.ReadToEndAsync();
                 await process.WaitForExitAsync(); var stdout = await output; var stderr = await error;
@@ -50,13 +56,18 @@ internal static class GitRemoteTests
             await File.WriteAllTextAsync(Path.Combine(source, "one.txt"), "one");
             Check((await one.StageAsync(["one.txt"])).Success && (await one.CommitAsync("first café")).Success, "initial commit");
             await Command(root, "init", "--bare", bare); await Command(source, "remote", "add", "origin", bare);
+            //CSJ,variable=branch,ブランチ
             var branch = await Command(source, "symbolic-ref", "--short", "HEAD");
+            //CSJ,variable=expectedCommit,期待値コミット
             var expectedCommit = await Command(source, "rev-parse", "HEAD");
             await Command(root, "--git-dir", bare, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             var decoy = Path.Combine(root, "decoy.git");
             await Command(root, "init", "--bare", decoy);
+            //CSJ,variable=oldCount,旧件数
             var oldCount = Environment.GetEnvironmentVariable("GIT_CONFIG_COUNT");
+            //CSJ,variable=oldKey,旧キー
             var oldKey = Environment.GetEnvironmentVariable("GIT_CONFIG_KEY_0");
+            //CSJ,variable=oldValue,旧値
             var oldValue = Environment.GetEnvironmentVariable("GIT_CONFIG_VALUE_0");
             try
             {
@@ -78,13 +89,16 @@ internal static class GitRemoteTests
             {
                 var start = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
                 foreach (var arg in new[] { "remote", "set-url", "origin", decoy }) start.ArgumentList.Add(arg);
+                //CSJ,variable=process,プロセス
                 using var process = Process.Start(start)!; process.WaitForExit();
                 Check(process.ExitCode == 0, "change remote fixture");
                 var switchHead = new ProcessStartInfo("git") { WorkingDirectory = source, UseShellExecute = false, CreateNoWindow = true };
                 foreach (var arg in new[] { "symbolic-ref", "HEAD", "refs/heads/concurrent-unborn" }) switchHead.ArgumentList.Add(arg);
+                //CSJ,variable=headProcess,HEADプロセス
                 using var headProcess = Process.Start(switchHead)!; headProcess.WaitForExit();
                 Check(headProcess.ExitCode == 0, "change HEAD fixture");
             };
+            //CSJ,variable=initialPush,初期プッシュ
             var initialPush = await one.PushAsync();
             Check(initialPush.Success, $"initial push failed ({initialPush.Failure}, exit {initialPush.ExitCode}): {initialPush.StandardError}");
             one.BeforeRemoteExecution = null;
@@ -92,6 +106,7 @@ internal static class GitRemoteTests
             await Command(source, "symbolic-ref", "HEAD", "refs/heads/" + branch);
             Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push followed changed origin");
             await Command(source, "remote", "set-url", "origin", bare);
+            //CSJ,variable=initialClone,初期クローン
             var initialClone = await GitRepository.CloneAsync(bare, clone);
             Check(initialClone.Success, $"clone failed ({initialClone.Failure}, exit {initialClone.ExitCode}): {initialClone.StandardError}");
             var two = new GitRepository(clone);
@@ -109,6 +124,7 @@ internal static class GitRemoteTests
             await Command(source, "switch", "race-side");
             Check((await one.InspectPullAsync()).State == GitPullState.TrackingUnavailable, "unknown tracking ref treated as pull candidate");
             await Command(source, "switch", branch);
+            //CSJ,variable=cancelledPull,キャンセル済みプル
             using (var cancelledPull = new CancellationTokenSource())
             {
                 cancelledPull.Cancel();
@@ -118,9 +134,13 @@ internal static class GitRemoteTests
                 catch (OperationCanceledException) { }
             }
             Check((await one.FetchAsync()).Success, "fetch");
+            //CSJ,variable=originalIndex,元のインデックス
             var originalIndex = SHA256.HashData(await File.ReadAllBytesAsync(Path.Combine(source, ".git", "index")));
+            //CSJ,variable=currentLocal,現在のローカル
             var currentLocal = await Command(source, "rev-parse", "HEAD");
+            //CSJ,variable=currentUpstream,現在の上流
             var currentUpstream = await Command(source, "rev-parse", "refs/remotes/origin/" + branch);
+            //CSJ,variable=checkPull,確認プル
             var checkPull = await one.InspectPullAsync();
             Check(checkPull is { State: GitPullState.FastForwardCandidate } && checkPull.BranchRef == "refs/heads/" + branch &&
                 checkPull.LocalObjectId == currentLocal && checkPull.TrackingRef == "refs/remotes/origin/" + branch &&
@@ -133,8 +153,11 @@ internal static class GitRemoteTests
             {
                 const string alternateRemote = "r16-alternate";
                 const string firstTrackingRef = "refs/remotes/" + alternateRemote + "/server";
+                //CSJ,variable=secondTrackingRef,2番目追跡参照
                 const string secondTrackingRef = "refs/remotes/" + alternateRemote + "/other";
+                //CSJ,variable=remoteSetting,リモート設定
                 var remoteSetting = $"branch.{branch}.remote";
+                //CSJ,variable=mergeSetting,マージ設定
                 var mergeSetting = $"branch.{branch}.merge";
                 await Command(source, "config", "remote." + alternateRemote + ".fetch", "+refs/heads/*:refs/remotes/" + alternateRemote + "/*");
                 await Command(source, "config", remoteSetting, alternateRemote);
@@ -155,6 +178,7 @@ internal static class GitRemoteTests
                     one.BeforePullInspectionRecheck = null;
 
                     await Command(source, "config", mergeSetting, "refs/heads/not-fetched");
+                    //CSJ,variable=missing,欠落
                     var missing = await one.InspectPullAsync();
                     Check(missing.State == GitPullState.TrackingUnavailable &&
                         missing.TrackingRef == "refs/remotes/" + alternateRemote + "/not-fetched",
@@ -174,12 +198,15 @@ internal static class GitRemoteTests
             });
             await Program.RunNamedCaseAsync("Pull inspection rejects a moved or deleted local tracking ref", async () =>
             {
+                //CSJ,variable=trackingRef,追跡参照
                 var trackingRef = "refs/remotes/origin/" + branch;
+                //CSJ,variable=upstreamRef,上流参照
                 var upstreamRef = "refs/heads/" + branch;
 
                 try
                 {
                     await Command(root, "--git-dir", bare, "update-ref", upstreamRef, currentLocal, currentUpstream);
+                    //CSJ,variable=cached,キャッシュ済み
                     var cached = await one.InspectPullAsync();
                     Check(cached.State == GitPullState.FastForwardCandidate && cached.TrackingObjectId == currentUpstream,
                         "inspection unexpectedly contacted the remote or changed the cached ref");
@@ -221,14 +248,21 @@ internal static class GitRemoteTests
             await Command(source, "switch", branch);
             await Program.RunNamedCaseAsync("Pull inspection refuses active operations and unverifiable index entries", async () =>
             {
+                //CSJ,variable=gitDirectory,Git ディレクトリ
                 var gitDirectory = Path.Combine(source, ".git");
+                //CSJ,variable=indexPath,インデックスパス
                 var indexPath = Path.Combine(gitDirectory, "index");
+                //CSJ,variable=indexLock,インデックスロック
                 var indexLock = indexPath + ".lock";
                 var tracked = Path.Combine(source, "one.txt");
+                //CSJ,variable=candidatePath,候補パス
                 var candidatePath = Path.Combine(source, "two.txt");
+                //CSJ,variable=branchLock,ブランチロック
                 var branchLock = Path.Combine(gitDirectory, "refs", "heads", branch) + ".lock";
+                //CSJ,variable=mergeMarker,マージマーカー
                 var mergeMarker = Path.Combine(gitDirectory, "MERGE_HEAD");
 
+                //CSJ,variable=marker,マーカー
                 foreach (var marker in new[] { indexLock, branchLock, mergeMarker })
                 {
                     await File.WriteAllTextAsync(marker, currentLocal);
@@ -253,6 +287,7 @@ internal static class GitRemoteTests
                     File.Delete(indexLock);
                 }
 
+                //CSJ,variable=flag,フラグ
                 foreach (var flag in new[] { "assume-unchanged", "skip-worktree" })
                 {
                     await Command(source, "update-index", "--" + flag, "one.txt");
@@ -286,9 +321,11 @@ internal static class GitRemoteTests
                 }
                 finally { await Command(source, "update-index", "--force-remove", "--", "fixture-module"); }
 
+                //CSJ,variable=indexContent,インデックス内容
                 var indexContent = await File.ReadAllBytesAsync(indexPath);
                 await File.WriteAllTextAsync(tracked, "first staged version");
                 await Command(source, "add", "--", "one.txt");
+                //CSJ,variable=stagedStatus,準備済みの状態
                 var stagedStatus = await Command(source, "--no-optional-locks", "status", "--porcelain");
                 one.BeforePullInspectionRecheck = () =>
                 {
@@ -308,6 +345,7 @@ internal static class GitRemoteTests
                     await File.WriteAllBytesAsync(indexPath, indexContent);
                 }
 
+                //CSJ,variable=interrupted,中断済み
                 using (var interrupted = new CancellationTokenSource())
                 {
                     one.BeforePullInspectionRecheck = interrupted.Cancel;
@@ -337,7 +375,9 @@ internal static class GitRemoteTests
             {
                 var exclude = Path.Combine(source, ".git", "info", "exclude");
                 var priorExclude = await File.ReadAllBytesAsync(exclude);
+                //CSJ,variable=collision,衝突
                 var collision = Path.Combine(source, "two.txt");
+                //CSJ,variable=nested,入れ子
                 var nested = Path.Combine(collision, "keep.txt");
                 var unrelated = Path.Combine(source, "notes.txt");
                 const string contents = "user-owned synthetic content";
@@ -379,15 +419,20 @@ internal static class GitRemoteTests
             });
             await Program.RunNamedCaseAsync("Branch switch preserves an ignored file that overlaps the target tree", async () =>
             {
+                //CSJ,variable=targetBranch,対象ブランチ
                 const string targetBranch = "r18-ignore-target";
                 var exclude = Path.Combine(source, ".git", "info", "exclude");
                 var priorExclude = await File.ReadAllBytesAsync(exclude);
+                //CSJ,variable=path,パス
                 var path = Path.Combine(source, "two.txt");
+                //CSJ,variable=index,インデックス
                 var index = Path.Combine(source, ".git", "index");
                 const string contents = "protected synthetic ignored material";
 
                 await Command(source, "branch", targetBranch, "refs/remotes/origin/" + branch);
+                //CSJ,variable=oldHead,旧HEAD
                 var oldHead = await Command(source, "rev-parse", "HEAD");
+                //CSJ,variable=oldIndexHash,旧インデックスハッシュ
                 var oldIndexHash = SHA256.HashData(await File.ReadAllBytesAsync(index));
                 try
                 {
@@ -417,17 +462,22 @@ internal static class GitRemoteTests
             });
             await Program.RunNamedCaseAsync("Git status and history preserve Unicode outside a UTF-8 console", async () =>
             {
+                //CSJ,variable=name,名前
                 const string name = "素材の候補.txt";
+                //CSJ,variable=path,パス
                 var path = Path.Combine(source, name);
+                //CSJ,variable=previousEncoding,直前のエンコード
                 var previousEncoding = Console.OutputEncoding;
                 await File.WriteAllTextAsync(path, "synthetic");
                 await Command(source, "config", "i18n.logOutputEncoding", "ISO-8859-1");
                 try
                 {
                     Console.OutputEncoding = Encoding.Latin1;
+                    //CSJ,variable=status,状態
                     var status = await one.StatusAsync();
                     Check(status.Success && status.StandardOutput.Split('\0').Contains("?? " + name),
                         "Git's UTF-8 path was decoded using the console encoding");
+                    //CSJ,variable=history,履歴
                     var history = await one.HistoryAsync();
                     Check(history.Success && history.StandardOutput.Contains("first café", StringComparison.Ordinal),
                         "Git history encoding was affected by repository configuration");
@@ -451,6 +501,7 @@ internal static class GitRemoteTests
             Check((await two.StageAsync(["remote.txt"])).Success && (await two.CommitAsync("remote")).Success && (await two.PushAsync()).Success, "remote commit");
             var prior = await Command(source, "rev-parse", "HEAD");
             var remoteBeforeRejectedPush = await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch);
+            //CSJ,variable=rejectedPush,拒否プッシュ
             var rejectedPush = await one.PushAsync(); var rejectedPull = await one.PullAsync();
             Check(!rejectedPush.Success && !rejectedPull.Success, "divergence accepted");
             Check(rejectedPush.Failure == GitFailure.Divergence && rejectedPull.Failure == GitFailure.UnsafeOperation, $"failure classification: push={rejectedPush.Failure}, pull={rejectedPull.Failure}");
@@ -507,13 +558,16 @@ internal static class GitRemoteTests
             await Command(source, "remote", "set-url", "origin", bare);
             await Command(source, "config", "--local", "--remove-section", "url.https://beta.invalid/");
             await Command(source, "config", "--local", "--remove-section", "url.https://gamma.invalid/");
+            //CSJ,variable=inspection,点検
             var inspection = await one.InspectRemoteAsync(GitRemoteOperation.Fetch);
             Check(inspection.Success && inspection.StandardOutput == bare && inspection.FetchTarget is { } inspectedFetch &&
                 inspectedFetch.Endpoint == bare && inspectedFetch.RepositoryRoot == source, "trusted inspection did not identify the fetch target");
             Check((await two.FetchTrustedAsync(inspection.FetchTarget!)).Failure == GitFailure.UnsafeOperation,
                 "fetch approval was accepted from a different checkout");
 
+            //CSJ,variable=identityRoot,識別情報ルート
             var identityRoot = Path.Combine(root, "fetch-identity");
+            //CSJ,variable=firstRoot,最初ルート
             var firstRoot = Path.Combine(root, "fetch-retained");
             var competingRoot = Path.Combine(root, "fetch-other");
             var movedDuringFetch = Path.Combine(root, "fetch-moved");
@@ -521,7 +575,9 @@ internal static class GitRemoteTests
             await Command(root, "init", competingRoot);
             await Command(identityRoot, "remote", "add", "origin", bare);
             await Command(competingRoot, "remote", "add", "origin", bare);
+            //CSJ,variable=identityRepository,識別情報リポジトリ
             var identityRepository = new GitRepository(identityRoot);
+            //CSJ,variable=firstApproval,最初承認
             var firstApproval = (await identityRepository.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget
                 ?? throw new InvalidOperationException("missing first repository identity");
             Directory.Move(identityRoot, firstRoot);
@@ -530,6 +586,7 @@ internal static class GitRemoteTests
                 "same path and endpoint were accepted for a replaced checkout");
             Check((await Command(identityRoot, "for-each-ref", "--format=%(refname)", "refs/remotes")).Length == 0,
                 "stale approval modified the replacement checkout");
+            //CSJ,variable=replacementApproval,置換承認
             var replacementApproval = (await identityRepository.InspectRemoteAsync(GitRemoteOperation.Fetch)).FetchTarget
                 ?? throw new InvalidOperationException("missing replacement identity");
             identityRepository.BeforeRemoteExecution = _ =>
@@ -550,14 +607,17 @@ internal static class GitRemoteTests
             Check((await Command(identityRoot, "for-each-ref", "--format=%(refname)", "refs/remotes")).Length == 0,
                 "stale approval modified the replacement Git directory");
             await Command(source, "remote", "set-url", "--push", "origin", decoy);
+            //CSJ,variable=pushInspection,プッシュ点検
             var pushInspection = await one.InspectRemoteAsync(GitRemoteOperation.Push);
             Check(pushInspection.Success && pushInspection.StandardOutput == decoy, "trusted inspection did not distinguish push URL");
             Check((await one.PushTrustedAsync(bare)).Failure == GitFailure.UnsafeOperation, "push accepted a different endpoint");
             Check(!Directory.EnumerateFiles(Path.Combine(decoy, "refs", "heads"), "*", SearchOption.AllDirectories).Any(), "push mismatch updated unapproved remote");
             await Command(source, "config", "--local", "--unset-all", "remote.origin.pushurl");
+            //CSJ,variable=trustedFetch,信頼済みフェッチ
             var trustedFetch = await one.FetchTrustedAsync(bare);
             Check(trustedFetch.Success && trustedFetch.RemoteDiagnostic is { Operation: "Fetch" }, "trusted fetch did not complete or report diagnostics");
             Check((await two.PushTrustedAsync(bare)).Success, "trusted non-force push");
+            //CSJ,variable=approval,承認
             var approval = (await two.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
                 ?? throw new InvalidOperationException("push inspection did not return a target");
             var cloneTip = await Command(clone, "rev-parse", "HEAD");
@@ -570,11 +630,14 @@ internal static class GitRemoteTests
             var alternatePushCheckout = Path.Combine(root, "push-other");
             Check((await GitRepository.CloneTrustedAsync(bare, originalPushCheckout)).Success, "first push identity checkout");
             Check((await GitRepository.CloneTrustedAsync(bare, alternatePushCheckout)).Success, "second push identity checkout");
+            //CSJ,variable=identityPushRepository,識別情報プッシュリポジトリ
             var identityPushRepository = new GitRepository(originalPushCheckout);
+            //CSJ,variable=oldPushTarget,旧プッシュ対象
             var oldPushTarget = (await identityPushRepository.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
                 ?? throw new InvalidOperationException("missing approved push identity");
             Directory.Move(originalPushCheckout, retainedPushCheckout);
             Directory.Move(alternatePushCheckout, originalPushCheckout);
+            //CSJ,variable=currentPushTarget,現在のプッシュ対象
             var currentPushTarget = (await identityPushRepository.InspectRemoteAsync(GitRemoteOperation.Push)).PushTarget
                 ?? throw new InvalidOperationException("missing replacement push identity");
             Check(currentPushTarget.RepositoryRoot == oldPushTarget.RepositoryRoot && currentPushTarget.Endpoint == oldPushTarget.Endpoint &&
@@ -585,7 +648,9 @@ internal static class GitRemoteTests
             Check((await identityPushRepository.PushTrustedAsync(currentPushTarget)).Success,
                 "fresh approval for a stable replacement was rejected");
 
+            //CSJ,variable=approvedBranch,承認済みブランチ
             const string approvedBranch = "approval-fixture";
+            //CSJ,variable=approvedRef,承認済み参照
             var approvedRef = "refs/heads/" + approvedBranch;
             await Command(clone, "switch", "-c", approvedBranch);
             Check((await two.PushTrustedAsync(approval)).Failure == GitFailure.UnsafeOperation, "push silently switched branch after approval");
@@ -609,8 +674,10 @@ internal static class GitRemoteTests
                 "push did not publish the approved commit");
             Check(await Command(root, "--git-dir", bare, "rev-parse", "refs/heads/" + branch) == remoteBeforeRejectedPush,
                 "push changed an unapproved remote branch");
+            //CSJ,variable=trustedClonePath,信頼済みクローンパス
             var trustedClonePath = Path.Combine(root, "trusted-clone");
             Check((await GitRepository.CloneTrustedAsync(bare, trustedClonePath)).Success && Directory.Exists(trustedClonePath), "trusted clone");
+            //CSJ,variable=nestedRoot,入れ子ルート
             var nestedRoot = Path.Combine(source, "nested"); Directory.CreateDirectory(nestedRoot);
             Check((await new GitRepository(nestedRoot).FetchTrustedAsync(bare)).Failure == GitFailure.UnsafeOperation, "parent repository used by trust operation");
             await Command(source, "config", "--local", $"url.{decoy}.pushInsteadOf", bare);
@@ -622,6 +689,7 @@ internal static class GitRemoteTests
             Check(unsignedInspection.Success && unsignedInspection.StandardOutput == explicitEndpoint, "HTTPS preview was not literal");
             Check((await one.FetchAsync()).Failure == GitFailure.UnsafeOperation, "HTTPS fetch accepted without explicit trust");
             Check((await one.FetchTrustedAsync("https://other.invalid/repository")).Failure == GitFailure.UnsafeOperation, "trusted fetch accepted wrong HTTPS endpoint");
+            //CSJ,variable=cloneInspection,クローン点検
             var cloneInspection = GitRepository.InspectCloneRemote(explicitEndpoint);
             Check(cloneInspection.Success && cloneInspection.StandardOutput == explicitEndpoint, "clone inspection failed to preserve the approved endpoint");
             Check(!GitRepository.InspectCloneRemote(explicitEndpoint + "=sample").Success,
@@ -630,6 +698,7 @@ internal static class GitRemoteTests
                 "percent-encoded path data was rejected despite safe configuration representation");
             Check(!GitRepository.InspectCloneRemote(explicitEndpoint + "\u200Bsample").Success,
                 "endpoint confirmation accepted invisible format text");
+            //CSJ,variable=credentialInspection,資格情報点検
             var credentialInspection = GitRepository.InspectCloneRemote("https://user:secret@approved.invalid/repository");
             Check(!credentialInspection.Success && !credentialInspection.StandardOutput.Contains("secret") &&
                 !credentialInspection.StandardError.Contains("secret"), "clone inspection disclosed credentials");
@@ -637,6 +706,7 @@ internal static class GitRemoteTests
             Check((await GitRepository.CloneAsync(explicitEndpoint, unapprovedClone)).Failure == GitFailure.UnsafeOperation &&
                 !Directory.Exists(unapprovedClone), "HTTPS clone accepted without explicit trust");
             await Command(source, "remote", "set-url", "origin", bare);
+            //CSJ,variable=timeoutRepository,タイムアウトリポジトリ
             var timeoutRepository = new GitRepository(source) { RemoteTimeout = TimeSpan.FromSeconds(2) };
             var deadlineObserved = false;
             timeoutRepository.BeforeRemoteExecution = deadline => deadlineObserved = deadline.WaitHandle.WaitOne(TimeSpan.FromSeconds(5));
@@ -644,18 +714,23 @@ internal static class GitRemoteTests
             Check(deadlineObserved && timedOut.Failure == GitFailure.Timeout && timedOut.RemoteDiagnostic is { Operation: "Fetch" }, "remote deadline was not operation-wide");
             try { await GitRepository.CloneAsync("https://user:secret@example.invalid/repo", Path.Combine(root, "unsafe")); throw new Exception("credentials accepted"); } catch (ArgumentException) { }
             try { await GitRepository.CloneAsync(bare, clone); throw new Exception("existing destination accepted"); } catch (IOException) { }
+            //CSJ,variable=cancelled,キャンセル済み
             using (var cancelled = new CancellationTokenSource())
             {
                 cancelled.Cancel();
+                //CSJ,variable=cancelledDestination,キャンセル済み格納先
                 var cancelledDestination = Path.Combine(root, "cancelled");
+                //CSJ,variable=countBefore,件数変更前
                 var countBefore = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Count();
                 try { await GitRepository.CloneAsync(bare, cancelledDestination, cancelled.Token); throw new Exception("cancel ignored"); } catch (OperationCanceledException) { }
                 Check(!Directory.Exists(cancelledDestination) && countBefore == Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Count(), "cancelled clone created files");
             }
+            //CSJ,variable=ownedDestination,管理対象の格納先
             var ownedDestination = Path.Combine(root, "owned-clone");
             var existingStages = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").ToHashSet(StringComparer.OrdinalIgnoreCase);
             string? observedStage = null;
             GitDirectoryIdentity? observedIdentity = null;
+            //CSJ,variable=ownedClone,管理対象のクローン
             var ownedClone = await GitRepository.CloneCoreAsync(bare, ownedDestination, () =>
             {
                 observedStage = Directory.EnumerateDirectories(root, ".ymmpm-clone-*").Single(path => !existingStages.Contains(path));
@@ -666,6 +741,7 @@ internal static class GitRemoteTests
             }, CancellationToken.None);
             Check(ownedClone.Success && observedIdentity.HasValue && !Directory.Exists(observedStage) &&
                 existingStages.All(Directory.Exists), "exact clone failed or affected other staging paths");
+            //CSJ,variable=published,確定済み
             using (var published = GitRepositoryLease.OpenDirectory(ownedDestination))
                 Check(GitRepositoryLease.ReadIdentity(published) == observedIdentity,
                     "published directory was not the owned Git staging directory");
@@ -676,8 +752,10 @@ internal static class GitRemoteTests
             Check(!race.Success && race.Failure == GitFailure.UnsafeOperation &&
                 race.RecoveryPath is not null && File.Exists(Path.Combine(race.RecoveryPath, ".git", "HEAD")), "race clone recovery");
             Check(File.ReadAllText(Path.Combine(raced, "sentinel")) == "keep", "race overwrote destination");
+            //CSJ,variable=publicationCancellation,確定反映キャンセル
             using (var publicationCancellation = new CancellationTokenSource())
             {
+                //CSJ,variable=destination,格納先
                 var destination = Path.Combine(root, "cancel-at-publication");
                 try
                 {

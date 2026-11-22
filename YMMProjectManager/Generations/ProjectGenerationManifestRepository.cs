@@ -6,7 +6,9 @@ namespace YMMProjectManager.Infrastructure.Generations;
 
 public sealed class ProjectGenerationManifestRepository
 {
+    //CSJ,field=storage,保管
     private readonly ProjectGenerationStorage storage;
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
 
     public ProjectGenerationManifestRepository(ProjectGenerationStorage storage, FileLogger logger)
@@ -15,6 +17,7 @@ public sealed class ProjectGenerationManifestRepository
         this.logger = logger;
     }
 
+    //CSJ,method=LoadAsync,読み込む（非同期）
     public async Task<ProjectGenerationManifestLoadResult> LoadAsync(string projectId, string projectPath, CancellationToken cancellationToken = default)
     {
         try
@@ -32,6 +35,7 @@ public sealed class ProjectGenerationManifestRepository
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationManifestLoadFailed projectId={projectId}");
+            //CSJ,variable=status,状態
             var status = ex is NotSupportedException ? ProjectGenerationManifestStatus.UnsupportedSchema : ProjectGenerationManifestStatus.Corrupted;
             return new ProjectGenerationManifestLoadResult(null, status, ex.Message);
         }
@@ -40,6 +44,7 @@ public sealed class ProjectGenerationManifestRepository
         return new ProjectGenerationManifestLoadResult(CreateEmptyManifest(projectId, projectPath), ProjectGenerationManifestStatus.Missing);
     }
 
+    //CSJ,method=SaveAsync,保存する（非同期）
     public async Task SaveAsync(string projectId, ProjectGenerationManifest manifest, CancellationToken cancellationToken = default)
     {
         var current = await LoadAsync(projectId, manifest.ProjectPath, cancellationToken).ConfigureAwait(false);
@@ -49,6 +54,7 @@ public sealed class ProjectGenerationManifestRepository
     }
 
     internal async Task SaveValidatedAsync(string projectId, ProjectGenerationManifest manifest,
+        //CSJ,parameter=initial,初期
         ProjectGenerationManifestLoadResult initial, CancellationToken cancellationToken)
     {
         try
@@ -66,6 +72,7 @@ public sealed class ProjectGenerationManifestRepository
         }
     }
 
+    //CSJ,method=CreateEmptyManifest,空目録を作成する
     private static ProjectGenerationManifest CreateEmptyManifest(string projectId, string projectPath)
     {
         var now = DateTimeOffset.Now;

@@ -8,25 +8,34 @@ using YMMProjectManager.Infrastructure.Packaging;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRepository,Gitリポジトリ操作
 public sealed partial class GitRepository
 {
     private const int PublicationListingLimit = 4 * 1024 * 1024;
+    //CSJ,field=PublicationObjectLimit,Git送信検査のオブジェクト上限
     private const int PublicationObjectLimit = 4 * 1024 * 1024;
+    //CSJ,field=PublicationTotalLimit,Git送信検査の総量上限
     private const long PublicationTotalLimit = 128L * 1024 * 1024;
+    //CSJ,field=StrictPublicationUtf8,Git送信検査用の厳格なUTF-8
     private static readonly UTF8Encoding StrictPublicationUtf8 = new(false, true);
+    //CSJ,field=publicationAssetNames,Git送信検査で使う素材名の一覧
     private readonly HashSet<string> publicationAssetNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> publicationAssetHashes = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>Adds media known to the selected project before inspecting staged or outgoing objects.</summary>
+    //CSJ,method=SetPublicationAssets,Git送信検査で使う素材一覧を設定する
     internal void SetPublicationAssets(IEnumerable<string> names, IEnumerable<string> hashes)
     {
+        //CSJ,variable=name,名前
         foreach (var name in names)
             publicationAssetNames.Add(Path.GetFileName(PackagingDetector.NormalizeFilePathKey(name)));
+        //CSJ,variable=hash,ハッシュ
         foreach (var hash in hashes)
             if (hash.Length == 64 && hash.All(Uri.IsHexDigit))
                 publicationAssetHashes.Add(hash);
     }
 
+    //CSJ,method=InspectCurrentCommitAsync,現在のコミットを点検する（非同期）
     internal async Task<GitResult> InspectCurrentCommitAsync(CancellationToken token)
     {
         if (!HasDirectRepository()) return UnsafeRemote("Select a direct Git repository.");
@@ -36,17 +45,21 @@ public sealed partial class GitRepository
 
     private static GitResult PublicationRefusal(string reason) => new(1, "", reason, GitFailure.MediaPublication);
 
+    //CSJ,method=CheckStagePublicationFileAsync,ステージ対象ファイルの送信可否を確認する（非同期）
     private async Task<GitResult?> CheckStagePublicationFileAsync(string path, FileStream file, CancellationToken token)
     {
         if (IsBlockedPublicationPath(path) || file.Length > PublicationObjectLimit)
             return PublicationRefusal("The selected file is an asset, private record or exceeds the media inspection limit.");
+        //CSJ,variable=bytes,バイト列
         var bytes = new byte[(int)file.Length];
         await file.ReadExactlyAsync(bytes, token).ConfigureAwait(false);
+        //CSJ,variable=reason,理由
         var reason = InspectPublicationBlob(bytes, new(StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase),
             new(StringComparer.OrdinalIgnoreCase));
         return reason is null ? null : PublicationRefusal(reason);
     }
 
+    //CSJ,method=HasOrdinaryPublicationObjectStore,検査対象のGitオブジェクト保管先が通常形式か判定する
     private bool HasOrdinaryPublicationObjectStore()
     {
         var git = Path.Combine(directory, ".git");
@@ -60,6 +73,7 @@ public sealed partial class GitRepository
         try
         {
             if (Directory.EnumerateFiles(objects).Any()) return false;
+            //CSJ,variable=folder,フォルダー
             foreach (var folder in Directory.EnumerateDirectories(objects))
             {
                 if (!IsOrdinaryDirectory(folder) || Directory.EnumerateDirectories(folder).Any()) return false;
@@ -73,13 +87,17 @@ public sealed partial class GitRepository
 
     // A Push can introduce old objects even when the tip no longer contains the media.
     // Inspect all reachable history before opening a network connection.
+    //CSJ,method=CheckPushPublicationAsync,プッシュ予定の内容の送信可否を確認する（非同期）
     private async Task<GitResult?> CheckPushPublicationAsync(string commit, CancellationToken token)
     {
+        //CSJ,variable=knownFailure,既知の失敗
         var knownFailure = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
         if (knownFailure is not null) return knownFailure;
+        //CSJ,variable=complete,完了
         var complete = await InspectPublicationGitAsync(["rev-parse", "--is-shallow-repository"], token).ConfigureAwait(false);
         if (!complete.Success || complete.StandardOutput.Trim() != "false")
             return PublicationRefusal("Complete local Git history is required to check outgoing media.");
+        //CSJ,variable=paths,パス一覧
         var paths = await InspectPublicationGitAsync(
             ["log", "--full-history", "--root", "--diff-merges=separate", "--format=", "--raw", "-z",
                 "--no-show-signature", "--no-notes", "--no-decorate", "--no-renames", "--no-ext-diff",
@@ -87,39 +105,52 @@ public sealed partial class GitRepository
         var objects = await InspectPublicationGitAsync(["rev-list", "--objects", "--no-object-names", commit, "--"], token).ConfigureAwait(false);
         if (!paths.Success || !objects.Success)
             return PublicationRefusal("Cannot verify all historical paths and objects.");
+        //CSJ,variable=entries,項目一覧
         var entries = paths.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+        //CSJ,variable=names,名前一覧
         var names = new List<string>();
         if (entries.Length % 2 != 0) return PublicationRefusal("Cannot identify historical file names.");
         for (var i = 0; i < entries.Length; i += 2)
         {
+            //CSJ,variable=fields,フィールド一覧
             var fields = entries[i].TrimStart('\n').Split(' ');
             if (fields.Length != 5 || !fields[0].StartsWith(':') || fields[1] is not ("100644" or "100755"))
                 return PublicationRefusal("Git history contains a link or unsupported Git entry.");
+            //CSJ,variable=path,パス
             var path = entries[i + 1];
             if (IsBlockedPublicationPath(path))
                 return PublicationRefusal("Git history contains an asset, package or private record path.");
             names.Add(path);
         }
+        //CSJ,variable=ids,ID一覧
         var ids = objects.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         return await CheckPublicationObjectsAsync(ids, names, token).ConfigureAwait(false);
     }
 
     // A commit is checked against the immutable tree the caller will publish.
+    //CSJ,method=CheckPublicationTreeAsync,送信予定のGitツリーを確認する（非同期）
     private async Task<GitResult?> CheckPublicationTreeAsync(string tree, CancellationToken token)
     {
+        //CSJ,variable=knownFailure,既知の失敗
         var knownFailure = await ReadKnownPublicationAssetsAsync(token).ConfigureAwait(false);
         if (knownFailure is not null) return knownFailure;
         var listing = await InspectPublicationGitAsync(["ls-tree", "-r", "-z", tree, "--"], token).ConfigureAwait(false);
         if (!listing.Success) return PublicationRefusal("Cannot verify the staged tree.");
+        //CSJ,variable=ids,ID一覧
         var ids = new HashSet<string>(StringComparer.Ordinal);
+        //CSJ,variable=names,名前一覧
         var names = new List<string>();
+        //CSJ,variable=record,記録
         foreach (var record in listing.StandardOutput.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
+            //CSJ,variable=separator,区切り
             var separator = record.IndexOf('\t');
             if (separator < 0) return PublicationRefusal("Cannot identify a staged entry.");
+            //CSJ,variable=fields,フィールド一覧
             var fields = record[..separator].Split(' ');
             if (fields.Length != 3 || fields[0] is not ("100644" or "100755") || fields[1] != "blob" || !IsObjectId(fields[2]))
                 return PublicationRefusal("The staged tree contains a link or unsupported Git entry.");
+            //CSJ,variable=path,パス
             var path = record[(separator + 1)..];
             if (IsBlockedPublicationPath(path))
                 return PublicationRefusal("The staged tree contains an asset, package or private record path.");
@@ -129,6 +160,7 @@ public sealed partial class GitRepository
         return await CheckPublicationObjectsAsync(ids, names, token).ConfigureAwait(false);
     }
 
+    //CSJ,method=IsBlockedPublicationPath,Git送信禁止パスかを判定する
     private bool IsBlockedPublicationPath(string path) =>
         path.EndsWith(".ymmpx", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ymme", StringComparison.OrdinalIgnoreCase) ||
@@ -150,16 +182,19 @@ public sealed partial class GitRepository
             HasOperationName(component, ".ymmpm-derived-") ||
             HasOperationName(component, ".ymmpm-derived-pending-"));
 
+    //CSJ,method=HasOperationName,操作名が含まれているか判定する
     private static bool HasOperationName(string component, string prefix) =>
         component.Length >= prefix.Length + 32 &&
         component.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
         Guid.TryParseExact(component.AsSpan(prefix.Length, 32), "N", out _);
 
+    //CSJ,method=IsAssetPoolPayload,素材プール本体データかを判定する
     private static bool IsAssetPoolPayload(string path)
     {
         var components = path.Split('/');
         for (var i = 0; i < components.Length - 1; i++)
         {
+            //CSJ,variable=component,構成要素
             var component = components[i];
             if (component.StartsWith(".asset-pool-pending-", StringComparison.OrdinalIgnoreCase)) return true;
             if (component.Length == 87 && component.StartsWith("asset-", StringComparison.OrdinalIgnoreCase) && component[22] == '-' &&
@@ -170,28 +205,35 @@ public sealed partial class GitRepository
         return false;
     }
 
+    //CSJ,method=InspectPublicationGitAsync,送信検査のためにGitの情報を取得する（非同期）
     private Task<GitResult> InspectPublicationGitAsync(string[] arguments, CancellationToken token, string? input = null,
+        //CSJ,parameter=rawOutput,生データ出力
         Func<Stream, CancellationToken, Task>? rawOutput = null) =>
         RunAsync([$"--git-dir={Path.Combine(directory, ".git")}", $"--work-tree={directory}", .. arguments],
             token, trustedProcess: true, ignoreLegacyGrafts: true, pullSettings: [], standardInput: input,
             outputLimit: PublicationListingLimit, rawOutput: rawOutput, noLazyFetch: true);
 
     private async Task<GitResult?> CheckPublicationObjectsAsync(IReadOnlyCollection<string> ids,
+        //CSJ,parameter=paths,パス一覧
         IReadOnlyCollection<string> paths, CancellationToken token)
     {
         if (ids.Count == 0) return null;
         if (ids.Count > 40_000 || ids.Any(id => !IsObjectId(id)))
             return PublicationRefusal("The Git object list cannot be checked within the inspection bounds.");
+        //CSJ,variable=info,情報
         var info = await InspectPublicationGitAsync(["cat-file", "--batch-check"], token,
             string.Join("\n", ids) + "\n").ConfigureAwait(false);
         if (!info.Success) return PublicationRefusal("Cannot read local Git objects.");
+        //CSJ,variable=records,記録一覧
         var records = info.StandardOutput.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
         if (records.Length != ids.Count) return PublicationRefusal("The Git object list is incomplete.");
 
         var blobs = new List<(string Id, int Size)>();
+        //CSJ,variable=total,合計
         long total = 0;
         foreach (var (entry, expected) in records.Zip(ids))
         {
+            //CSJ,variable=fields,フィールド一覧
             var fields = entry.Split(' ');
             if (fields.Length != 3 || fields[0] != expected || fields[1] is not ("commit" or "tree" or "blob") ||
                 !int.TryParse(fields[2], NumberStyles.None, CultureInfo.InvariantCulture, out var size))
@@ -208,6 +250,7 @@ public sealed partial class GitRepository
         var historicalAssetNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var historicalAssetHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var blobHashes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        //CSJ,variable=buffer,バッファー
         var buffer = ArrayPool<byte>.Shared.Rent(PublicationObjectLimit + 1);
         try
         {
@@ -248,10 +291,12 @@ public sealed partial class GitRepository
     private string? InspectPublicationBlob(ReadOnlySpan<byte> bytes, HashSet<string> historicalAssetNames,
         HashSet<string> historicalAssetHashes, HashSet<string> blobHashes)
     {
+        //CSJ,variable=hash,ハッシュ
         var hash = Convert.ToHexString(SHA256.HashData(bytes));
         blobHashes.Add(hash);
         if (publicationAssetHashes.Contains(hash))
             return "Git contains a blob matching a registered asset SHA-256.";
+        //CSJ,variable=content,内容
         string content;
         try { content = StrictPublicationUtf8.GetString(bytes); }
         catch (DecoderFallbackException) { return "Git contains binary or unverified encoded content."; }
@@ -280,7 +325,9 @@ public sealed partial class GitRepository
         {
             try
             {
+                //CSJ,variable=document,文書
                 using var document = JsonDocument.Parse(content.TrimStart('\uFEFF'));
+                //CSJ,variable=root,ルート
                 var root = document.RootElement;
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
@@ -290,6 +337,7 @@ public sealed partial class GitRepository
                     return "Git contains a project prepared for local YMMPX asset transfer.";
                 if (root.TryGetProperty("Assets", out var assets) && assets.ValueKind == JsonValueKind.Array &&
                     root.TryGetProperty("ProjectId", out _))
+                    //CSJ,variable=asset,素材
                     foreach (var asset in assets.EnumerateArray())
                         ReadAsset(asset, "RelativePath", historicalAssetNames, historicalAssetHashes);
                 if (root.TryGetProperty("DistributionFileName", out _))
@@ -316,24 +364,30 @@ public sealed partial class GitRepository
         (root.TryGetProperty("Identity", out _) ||
             (root.TryGetProperty("SourceSha256", out _) && root.TryGetProperty("Approved", out _)));
 
+    //CSJ,method=IsTransferManifest,受け渡し目録かを判定する
     private static bool IsTransferManifest(JsonElement root)
     {
         if (root.ValueKind != JsonValueKind.Object) return false;
+        //CSJ,variable=properties,プロパティ一覧
         var properties = root.EnumerateObject().Select(property => property.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         return properties.Contains("Version") && properties.Contains("PackageName") &&
             properties.Contains("PackageSha256") && properties.Contains("Assets");
     }
 
+    //CSJ,method=IsMachineLocalReference,端末ローカル参照かを判定する
     private static bool IsMachineLocalReference(string reference)
     {
+        //CSJ,variable=path,パス
         var path = reference.Trim();
         return Path.IsPathRooted(path) || (Uri.TryCreate(path, UriKind.Absolute, out var uri) && uri.IsFile);
     }
 
+    //CSJ,method=ReadProjectAssetNames,プロジェクトの素材名を読み取る
     private static bool ReadProjectAssetNames(JsonElement node, HashSet<string> names)
     {
         if (node.ValueKind == JsonValueKind.Object)
         {
+            //CSJ,variable=property,プロパティ
             foreach (var property in node.EnumerateObject())
             {
                 if ((property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) ||
@@ -356,6 +410,7 @@ public sealed partial class GitRepository
         return false;
     }
 
+    //CSJ,method=IsTransferAssetReference,受け渡し素材参照かを判定する
     private static bool IsTransferAssetReference(string reference)
     {
         var components = reference.Replace('\\', '/').Split('/');
@@ -365,6 +420,7 @@ public sealed partial class GitRepository
                 !(i > 0 && components[i - 1].Equals("resources", StringComparison.OrdinalIgnoreCase) &&
                     components[i].Equals("ymmpm-transfer", StringComparison.OrdinalIgnoreCase)))
                 continue;
+            //CSJ,variable=key,キー
             var key = components[i + 1];
             if (key.Length == 8 && key.All(Uri.IsHexDigit) && components[i + 2].Length > 0)
                 return true;
@@ -372,6 +428,7 @@ public sealed partial class GitRepository
         return false;
     }
 
+    //CSJ,method=ReadAsset,素材を読み取る
     private static void ReadAsset(JsonElement entry, string nameProperty, HashSet<string> names, HashSet<string> hashes)
     {
         if (entry.ValueKind != JsonValueKind.Object ||

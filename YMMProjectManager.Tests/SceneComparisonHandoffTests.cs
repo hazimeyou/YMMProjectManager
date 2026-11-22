@@ -1,16 +1,23 @@
 using System.Buffers;
 using YMMProjectManager.Application.PreviewComparison;
 
+//CSJ,class=SceneComparisonHandoffTests,シーン比較引き継ぎテスト
 internal static class SceneComparisonHandoffTests
 {
+    //CSJ,field=Session,セッション
     private static readonly Guid Session = Guid.NewGuid();
+    //CSJ,field=Project,プロジェクト
     private static readonly Guid Project = Guid.NewGuid();
+    //CSJ,field=Revision,版
     private static readonly Guid Revision = Guid.NewGuid();
+    //CSJ,field=Configuration,構成
     private static readonly Guid Configuration = Guid.NewGuid();
     private static readonly SceneSnapshot A = Snapshot(24, 48);
     private static readonly SceneSnapshot B = Snapshot(30, 30);
+    //CSJ,field=Timestamp,タイムスタンプ
     private static readonly TimeSpan Timestamp = TimeSpan.FromMilliseconds(500);
 
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync()
     {
         await CaseAsync("TL-2A binding and alignment admission", TestPreparation);
@@ -40,6 +47,7 @@ internal static class SceneComparisonHandoffTests
 
     private static void TestPreparation()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan();
         Assert(plan.A.Timestamp == Timestamp && plan.B.Timestamp == Timestamp &&
             plan.A.FrameIndex == 12 && plan.B.FrameIndex == 15, "Expected containing frames at 500 ms.");
@@ -70,8 +78,10 @@ internal static class SceneComparisonHandoffTests
         Assert(result.Plan is null && result.Rejection == new SceneHandoffRejection(error, side), $"Expected {error}.");
     }
 
+    //CSJ,method=TestReceipt,照合記録をテストする
     private static void TestReceipt()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan();
         var a = Response(plan.A, new byte[8]);
         Assert(SceneCapturedFrame.Copy(plan, PreviewComparisonSide.B, a) == (null, SceneHandoffError.OperationMismatch),
@@ -94,6 +104,7 @@ internal static class SceneComparisonHandoffTests
 
     private static void TestFreshness()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan();
         var a = Copy(plan, PreviewComparisonSide.A, Response(plan.A, new byte[8]));
         var b = Copy(plan, PreviewComparisonSide.B, Response(plan.B, new byte[8]));
@@ -107,8 +118,10 @@ internal static class SceneComparisonHandoffTests
             "Freshness check must support final validation before publication.");
     }
 
+    //CSJ,method=TestPixels,画素列をテストする
     private static void TestPixels()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan();
         byte[] padded = [11, 22, 33, 0, 211, 212, 1, 2, 3, 128, 213, 214];
         byte[] packed = [11, 22, 33, 0, 1, 2, 3, 128];
@@ -130,9 +143,12 @@ internal static class SceneComparisonHandoffTests
             "Normalization must preserve RGB in fully transparent pixels.");
     }
 
+    //CSJ,method=TestInvalidOutput,無効出力をテストする
     private static void TestInvalidOutput()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan();
+        //CSJ,variable=response,応答
         var response = Response(plan.A, new byte[8]);
         ExpectCopyError(plan, response with { Format = PreviewPixelFormat.Pbgra32 }, SceneHandoffError.UnsupportedPixelFormat);
         ExpectCopyError(plan, response with { Format = (PreviewPixelFormat)42 }, SceneHandoffError.UnsupportedPixelFormat);
@@ -145,11 +161,15 @@ internal static class SceneComparisonHandoffTests
         ExpectCopyError(plan, response with { Stride = 6, Pixels = new byte[10] }, SceneHandoffError.InvalidBufferLength);
     }
 
+    //CSJ,method=TestCancellation,キャンセルをテストする
     private static void TestCancellation()
     {
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
+        //CSJ,variable=plan,計画
         var plan = Plan();
         using var borrowed = new CancelOnSpanAccess(new byte[8], cancellation);
+        //CSJ,variable=response,応答
         var response = Response(plan.A, []) with { Pixels = borrowed.Buffer };
         ExpectCancellation(() => SceneCapturedFrame.Copy(plan, PreviewComparisonSide.A, response, cancellation.Token), cancellation.Token);
         Assert(borrowed.AccessCount == 1, "Cancellation must happen after buffer acquisition.");
@@ -190,19 +210,23 @@ internal static class SceneComparisonHandoffTests
             "A response was used in the B slot.");
     }
 
+    //CSJ,method=TestConcurrentAsync,並行をテストする（非同期）
     private static async Task TestConcurrentAsync()
     {
         using var rendezvous = new Barrier(2);
         var tasks = Enumerable.Range(0, 2).Select(index => Task.Factory.StartNew(() =>
         {
+            //CSJ,variable=plan,計画
             var plan = Plan();
             var a = Copy(plan, PreviewComparisonSide.A, Response(plan.A, new byte[8]));
             if (!rendezvous.SignalAndWait(TimeSpan.FromSeconds(10)))
                 throw new TimeoutException("Comparison tasks did not overlap.");
+            //CSJ,variable=image,画像
             byte[] image = [0, 0, 0, (byte)index, 0, 0, 0, 0];
             var b = Copy(plan, PreviewComparisonSide.B, Response(plan.B, image));
             return (plan.A.OperationId, plan.B.OperationId, plan.Compare(a, b, A, B).Result?.Metrics);
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default));
+        //CSJ,variable=results,結果一覧
         var results = await Task.WhenAll(tasks);
         Assert(results.SelectMany(item => new[] { item.Item1, item.Item2 }).Distinct().Count() == 4,
             "Concurrent plans reused render operation IDs.");
@@ -216,6 +240,7 @@ internal static class SceneComparisonHandoffTests
     private static SceneRenderResponse Response(SceneRenderRequest request, byte[] pixels) =>
         new(request.OperationId, request.Snapshot, request.FrameIndex, 1, 2, 4, PreviewPixelFormat.Bgra32, pixels);
 
+    //CSJ,method=Copy,コピーする
     private static SceneCapturedFrame Copy(SceneComparisonPlan plan, PreviewComparisonSide side, SceneRenderResponse response)
     {
         var result = SceneCapturedFrame.Copy(plan, side, response);
@@ -227,6 +252,7 @@ internal static class SceneComparisonHandoffTests
         Assert(SceneCapturedFrame.Copy(plan, PreviewComparisonSide.A, response) == (null, error), $"Expected copy rejection {error}.");
     }
 
+    //CSJ,method=Assert,検査する
     private static void Assert(bool value, string message)
     {
         if (!value)
@@ -234,10 +260,13 @@ internal static class SceneComparisonHandoffTests
     }
 }
 
+//CSJ,class=CancelOnSpanAccess,スパン参照時のキャンセル
 internal sealed class CancelOnSpanAccess(byte[] pixels, CancellationTokenSource cancellation) : MemoryManager<byte>
 {
+    //CSJ,property=AccessCount,アクセス件数
     public int AccessCount { get; private set; }
 
+    //CSJ,property=Buffer,バッファー
     public ReadOnlyMemory<byte> Buffer => CreateMemory(pixels.Length);
 
     public override Span<byte> GetSpan()
@@ -249,5 +278,6 @@ internal sealed class CancelOnSpanAccess(byte[] pixels, CancellationTokenSource 
 
     public override MemoryHandle Pin(int elementIndex = 0) => throw new NotSupportedException();
     public override void Unpin() => throw new NotSupportedException();
+    //CSJ,method=Dispose,破棄する
     protected override void Dispose(bool disposing) { }
 }

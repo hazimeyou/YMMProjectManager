@@ -8,25 +8,33 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// 任意サイズの BGRA32 フレームを、一覧表示用の 64x36 PNG へ縮小保存します。
 /// </summary>
+//CSJ,class=ThumbnailSequenceFrameRenderer,連続サムネイルのフレーム描画
 public sealed class ThumbnailSequenceFrameRenderer
 {
+    //CSJ,field=ThumbnailWidth,サムネイル幅
     public const int ThumbnailWidth = 64;
+    //CSJ,field=ThumbnailHeight,サムネイル高さ
     public const int ThumbnailHeight = 36;
     private const int BytesPerPixel = 4;
+    //CSJ,field=pixels,画素列
     private readonly byte[] pixels = new byte[ThumbnailWidth * ThumbnailHeight * BytesPerPixel];
 
+    //CSJ,method=SaveThumbnailPng,サムネイルPNGを保存する
     public void SaveThumbnailPng(byte[] frameBytes, int frameWidth, int frameHeight, string outputPath)
     {
         RenderThumbnailPixels(frameBytes, frameWidth, frameHeight, pixels);
         SavePng(pixels, outputPath);
     }
 
+    //CSJ,method=SaveBlankPng,空のPNGを保存する
     public static void SaveBlankPng(string outputPath)
     {
+        //CSJ,variable=pixels,画素列
         var pixels = new byte[ThumbnailWidth * ThumbnailHeight * BytesPerPixel];
         SavePng(pixels, outputPath);
     }
 
+    //CSJ,method=RenderThumbnailPixels,サムネイル画素列を描画する
     private static void RenderThumbnailPixels(byte[] frameBytes, int frameWidth, int frameHeight, byte[] output)
     {
         Array.Clear(output);
@@ -41,6 +49,7 @@ public sealed class ThumbnailSequenceFrameRenderer
         }
 
         // アスペクト比を維持し、余白は透明のまま中央配置する。
+        //CSJ,variable=scale,倍率
         var scale = Math.Min(
             ThumbnailWidth / (double)frameWidth,
             ThumbnailHeight / (double)frameHeight);
@@ -72,6 +81,7 @@ public sealed class ThumbnailSequenceFrameRenderer
         }
     }
 
+    //CSJ,method=SavePng,PNGを保存する
     private static void SavePng(byte[] pixels, string outputPath)
     {
         var dir = Path.GetDirectoryName(outputPath);
@@ -80,6 +90,7 @@ public sealed class ThumbnailSequenceFrameRenderer
             Directory.CreateDirectory(dir);
         }
 
+        //CSJ,variable=bitmap,ビットマップ
         var bitmap = BitmapSource.Create(
             ThumbnailWidth,
             ThumbnailHeight,
@@ -90,8 +101,10 @@ public sealed class ThumbnailSequenceFrameRenderer
             pixels,
             ThumbnailWidth * BytesPerPixel);
 
+        //CSJ,variable=encoder,エンコーダー
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        //CSJ,variable=stream,ストリーム
         using var stream = File.Create(outputPath);
         encoder.Save(stream);
     }

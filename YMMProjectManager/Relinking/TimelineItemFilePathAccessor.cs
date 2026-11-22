@@ -2,8 +2,10 @@ using YukkuriMovieMaker.Project.Items;
 
 namespace YMMProjectManager.Infrastructure;
 
+//CSJ,class=TimelineItemFilePathAccessor,タイムライン項目のファイルパス参照
 internal static class TimelineItemFilePathAccessor
 {
+    //CSJ,method=TryGetFilePath,ファイルパスの取得を試みる
     public static bool TryGetFilePath(IItem item, out string? path)
     {
         switch (item)
@@ -23,6 +25,7 @@ internal static class TimelineItemFilePathAccessor
         }
     }
 
+    //CSJ,method=SetFilePath,ファイルパスを設定する
     public static void SetFilePath(IItem item, string path)
     {
         switch (item)

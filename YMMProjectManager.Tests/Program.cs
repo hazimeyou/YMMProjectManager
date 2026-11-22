@@ -19,6 +19,7 @@ using CurrentPreviewCaptureService = YMMProjectManager.Infrastructure.Output.Cur
 using YmmPreviewBitmapCaptureAdapter = YMMProjectManager.Infrastructure.Output.YmmPreviewBitmapCaptureAdapter;
 using YmmPreviewDiscoveryResult = YMMProjectManager.Infrastructure.Output.YmmPreviewDiscoveryResult;
 
+//CSJ,class=Program,テスト実行プログラム
 internal static class Program
 {
     private static int groupsPassed;
@@ -27,6 +28,7 @@ internal static class Program
     private static int namedCasesPassed;
     private static int namedCasesFailed;
 
+    //CSJ,method=RunNamedCaseAsync,名前付きテストケースを実行する（非同期）
     internal static async Task RunNamedCaseAsync(string name, Func<Task> run)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
@@ -84,17 +86,22 @@ internal static class Program
         }
         if (args.Length == 2 && args[0] == "--ymmpx-missing-fixture")
         {
+            //CSJ,variable=allowed,許可済み
             var allowed = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests")) + Path.DirectorySeparatorChar;
+            //CSJ,variable=fixtureRoot,テスト用データルート
             var fixtureRoot = Path.GetFullPath(args[1]);
             if (!fixtureRoot.StartsWith(allowed, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Fixture outside isolated root.");
             await YmmpxBundleTests.TestMissingYmmpxLibReturnsErrorAsync(fixtureRoot);
             return;
         }
         var timer = System.Diagnostics.Stopwatch.StartNew();
+        //CSJ,variable=configuration,構成
         var configuration = typeof(Program).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyConfigurationAttribute), false)
             .OfType<System.Reflection.AssemblyConfigurationAttribute>().SingleOrDefault()?.Configuration ?? "unknown";
+        //CSJ,variable=library,ライブラリ
         var library = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
         Console.WriteLine($"Configuration={configuration}; explicitly configured YmmpxLib present={File.Exists(library)}");
+        //CSJ,variable=workRoot,作業ルート
         var workRoot = Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(workRoot);
         var previousGitGlobal = Environment.GetEnvironmentVariable("GIT_CONFIG_GLOBAL");
@@ -129,6 +136,7 @@ internal static class Program
 
     private static async Task RunAllAsync(string workRoot)
     {
+        //CSJ,variable=filter,絞り込み
         var filter = Environment.GetEnvironmentVariable("YMM_TEST_FILTER");
         if (!string.IsNullOrWhiteSpace(filter))
         {
@@ -221,6 +229,7 @@ internal static class Program
         await RunGroupAsync("AssetManifestTests.RunAsync", () => AssetManifestTests.RunAsync(workRoot));
     }
 
+    //CSJ,method=RunGroupAsync,グループを実行する（非同期）
     private static async Task RunGroupAsync(string name, Func<Task> run)
     {
         var timer = System.Diagnostics.Stopwatch.StartNew();
@@ -234,6 +243,7 @@ internal static class Program
 
     private static async Task RunFilteredAsync(string workRoot, string filter)
     {
+        //CSJ,variable=testName,テスト名前
         foreach (var testName in filter.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
         {
             switch (testName)
@@ -363,11 +373,16 @@ internal static class Program
 
     private static async Task TestZeroGenerationsAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestZeroGenerationsAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
+        //CSJ,variable=generations,世代
         var generations = await service.GetGenerationsAsync(projectPath);
+        //CSJ,variable=diagnostics,診断情報
         var diagnostics = await service.GetDiagnosticsAsync(projectPath);
 
         AssertEx.Equal(0, generations.Count, "Empty project should have no generations.");
@@ -377,11 +392,15 @@ internal static class Program
 
     private static async Task TestCreateAndListAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestCreateAndListAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "first", "memo");
+        //CSJ,variable=generations,世代
         var generations = await service.GetGenerationsAsync(projectPath);
 
         AssertEx.Equal(1, generations.Count, "A single generation should be listed.");
@@ -389,26 +408,35 @@ internal static class Program
         AssertEx.True(generations[0].IsValid, "Created generation should be valid.");
     }
 
+    //CSJ,method=TestMultipleGenerationsAsync,複数世代をテストする（非同期）
     private static async Task TestMultipleGenerationsAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestMultipleGenerationsAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "first", null);
         await service.CreateGenerationAsync(projectPath, "second", "memo");
 
+        //CSJ,variable=generations,世代
         var generations = await service.GetGenerationsAsync(projectPath);
         AssertEx.Equal(2, generations.Count, "Two generations should be listed.");
     }
 
     private static async Task TestManifestCorruptionAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestManifestCorruptionAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "first", null);
+        //CSJ,variable=manifestPath,目録パス
         var manifestPath = Path.Combine(service.GetProjectDirectory(projectPath), "manifest.json");
         File.WriteAllText(manifestPath, "{ broken json");
 
@@ -418,36 +446,48 @@ internal static class Program
             throw new InvalidOperationException("Corrupted manifest must not appear as an empty list.");
         }
         catch (InvalidDataException) { }
+        //CSJ,variable=diagnostics,診断情報
         var diagnostics = await service.GetDiagnosticsAsync(projectPath);
         AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Corrupted, "Corrupted manifest should be reported.");
     }
 
     private static async Task TestMetadataCorruptionAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestMetadataCorruptionAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "first", null);
         var second = await service.CreateGenerationAsync(projectPath, "second", null);
+        //CSJ,variable=metadataPath,メタデータパス
         var metadataPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", second.GenerationId, "metadata.json");
         File.Delete(metadataPath);
 
+        //CSJ,variable=generations,世代
         var generations = await service.GetGenerationsAsync(projectPath);
         AssertEx.Equal(2, generations.Count, "Corrupted metadata should not remove the generation entry.");
         AssertEx.True(generations.Any(x => !x.IsValid), "Broken generation should be marked invalid.");
     }
 
+    //CSJ,method=TestRestoreAsync,復元をテストする（非同期）
     private static async Task TestRestoreAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestRestoreAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "original");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "restore", "memo");
         await File.WriteAllTextAsync(projectPath, "changed");
 
+        //CSJ,variable=generations,世代
         var generations = await service.GetGenerationsAsync(projectPath);
+        //CSJ,variable=generationId,世代ID
         var generationId = generations[0].GenerationId;
         var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, generationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
 
@@ -459,13 +499,19 @@ internal static class Program
         AssertEx.True(Directory.GetFiles(backupDir, "*.ymmp").Length > 0, "Backup file should be created.");
     }
 
+    //CSJ,method=TestDeleteAsync,削除をテストする（非同期）
     private static async Task TestDeleteAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestDeleteAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
+        //CSJ,variable=created,作成済み
         var created = await service.CreateGenerationAsync(projectPath, "delete", null);
+        //CSJ,variable=generationDirectory,世代ディレクトリ
         var generationDirectory = Path.Combine(service.GetProjectDirectory(projectPath), "generations", created.GenerationId);
 
         var (success, errorMessage) = await service.DeleteGenerationAsync(projectPath, created.GenerationId);
@@ -474,13 +520,19 @@ internal static class Program
         AssertEx.Equal(0, (await service.GetGenerationsAsync(projectPath)).Count, "Deleted generation should no longer be listed.");
     }
 
+    //CSJ,method=TestShaMismatchAsync,SHA不一致をテストする（非同期）
     private static async Task TestShaMismatchAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestShaMismatchAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
+        //CSJ,variable=created,作成済み
         var created = await service.CreateGenerationAsync(projectPath, "sha", null);
+        //CSJ,variable=generationPath,世代パス
         var generationPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", created.GenerationId, "project.ymmp");
         await File.WriteAllTextAsync(generationPath, "corrupted");
 
@@ -489,10 +541,14 @@ internal static class Program
         AssertEx.True(!string.IsNullOrWhiteSpace(errorMessage), "Failure should include a reason.");
     }
 
+    //CSJ,method=TestMissingGenerationAsync,欠落世代をテストする（非同期）
     private static async Task TestMissingGenerationAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestMissingGenerationAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, "missing-generation", GenerationRestoreMode.RestoreToOriginalWithBackup);
@@ -502,13 +558,18 @@ internal static class Program
 
     private static async Task TestLockedFileRestoreFailureAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestLockedFileRestoreFailureAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
+        //CSJ,variable=created,作成済み
         var created = await service.CreateGenerationAsync(projectPath, "locked", null);
         await File.WriteAllTextAsync(projectPath, "changed");
 
+        //CSJ,variable=lockStream,ロックストリーム
         using var lockStream = new FileStream(projectPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, created.GenerationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
 
@@ -518,25 +579,35 @@ internal static class Program
 
     private static async Task TestDeletedFolderExistsAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestDeletedFolderExistsAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
+        //CSJ,variable=created,作成済み
         var created = await service.CreateGenerationAsync(projectPath, "delete", null);
         await service.DeleteGenerationAsync(projectPath, created.GenerationId);
 
+        //CSJ,variable=deletedPath,削除済みのパス
         var deletedPath = Path.Combine(service.GetProjectDirectory(projectPath), "deleted");
         AssertEx.True(Directory.Exists(deletedPath), "Deleted folder should exist after deletion.");
         AssertEx.True(Directory.EnumerateDirectories(deletedPath).Any(), "Deleted folder should contain moved generations.");
     }
 
+    //CSJ,method=TestDiagnosticsAsync,診断情報をテストする（非同期）
     private static async Task TestDiagnosticsAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestDiagnosticsAsync));
+        //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
+        //CSJ,variable=service,サービス
         var service = CreateService(root);
 
         await service.CreateGenerationAsync(projectPath, "diag", null);
+        //CSJ,variable=diagnostics,診断情報
         var diagnostics = await service.GetDiagnosticsAsync(projectPath);
 
         AssertEx.Equal(1, diagnostics.GenerationCount, "Diagnostics should count valid generations.");
@@ -547,6 +618,7 @@ internal static class Program
 
     private static Task TestFastThumbnailOptionsDefaultsAsync()
     {
+        //CSJ,variable=options,オプション
         var options = new FastThumbnailGenerationOptions();
 
         AssertEx.True(!options.Enabled, "Fast thumbnail mode should be disabled by default.");
@@ -560,6 +632,7 @@ internal static class Program
 
     private static Task TestFastThumbnailFrameSamplingAsync()
     {
+        //CSJ,variable=frames,フレーム列
         var frames = FastThumbnailFrameSampler.CreateSampleFrames(64, 0, 63);
 
         AssertEx.Equal(64, frames.Length, "Sample count should be preserved.");
@@ -569,6 +642,7 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestFastThumbnailResultSerializationAsync,高速サムネイル結果シリアル化をテストする（非同期）
     private static Task TestFastThumbnailResultSerializationAsync()
     {
         var result = new FastThumbnailGenerationResult
@@ -598,9 +672,12 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<FastThumbnailGenerationResult>(json);
 
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
+        //CSJ,variable=diagnostics,診断情報
         var diagnostics = restoredValue.Diagnostics ?? throw new InvalidOperationException("Diagnostics should deserialize.");
 
         AssertEx.True(restoredValue.Success, "Success should round-trip.");
@@ -612,6 +689,7 @@ internal static class Program
 
     private static Task TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync()
     {
+        //CSJ,variable=options,オプション
         var options = new ThumbnailFastGenerationBenchmarkOptions();
 
         AssertEx.Equal(5, options.SampleCounts.Count, "Default benchmark sample counts should include five values.");
@@ -627,6 +705,7 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestThumbnailFastGenerationBenchmarkResultSerializationAsync,サムネイル高速世代性能計測結果シリアル化をテストする（非同期）
     private static Task TestThumbnailFastGenerationBenchmarkResultSerializationAsync()
     {
         var result = new ThumbnailFastGenerationBenchmarkResult
@@ -705,7 +784,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<ThumbnailFastGenerationBenchmarkResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.Equal(@"C:\Temp\project.ymmp", restoredValue.ProjectPath, "ProjectPath should round-trip.");
@@ -720,6 +801,7 @@ internal static class Program
 
     private static Task TestThumbnailFastGenerationBenchmarkSummaryReportSerializationAsync()
     {
+        //CSJ,variable=report,報告
         var report = new ThumbnailFastGenerationBenchmarkSummaryReport
         {
             ProjectPath = @"C:\Temp\project.ymmp",
@@ -751,7 +833,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(report);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<ThumbnailFastGenerationBenchmarkSummaryReport>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.Equal(9, restoredValue.RunCount, "RunCount should round-trip.");
@@ -771,8 +855,11 @@ internal static class Program
 
     private static async Task TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestThumbnailFastGenerationBenchmarkRunnerFileGenerationAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        //CSJ,variable=runner,実行器
         var runner = new ThumbnailFastGenerationBenchmarkRunner(
             logger,
             new FakeTimelineSeekAdapter(),
@@ -799,6 +886,7 @@ internal static class Program
         AssertEx.Equal(0, result.Runs[0].FailedFrameCount, "Runner should not fail the single run.");
     }
 
+    //CSJ,method=TestPreviewBitmapDiagnosticsResultSerializationAsync,プレビュービットマップ診断情報結果シリアル化をテストする（非同期）
     private static Task TestPreviewBitmapDiagnosticsResultSerializationAsync()
     {
         var result = new PreviewBitmapDiagnosticsResult
@@ -865,7 +953,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<PreviewBitmapDiagnosticsResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.True(restoredValue.DiscoverySucceeded, "DiscoverySucceeded should round-trip.");
@@ -897,8 +987,10 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestPreviewBitmapMethodSignatureSerializationAsync,プレビュービットマップメソッドシグネチャシリアル化をテストする（非同期）
     private static Task TestPreviewBitmapMethodSignatureSerializationAsync()
     {
+        //CSJ,variable=signature,シグネチャ
         var signature = new PreviewBitmapMethodSignatureInfo
         {
             MethodName = "GetBitmap",
@@ -930,7 +1022,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(signature);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<PreviewBitmapMethodSignatureInfo>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.Equal("GetBitmap", restoredValue.MethodName, "MethodName should round-trip.");
@@ -940,6 +1034,7 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestPreviewBitmapCaptureResultSerializationAsync,プレビュービットマップキャプチャ結果シリアル化をテストする（非同期）
     private static Task TestPreviewBitmapCaptureResultSerializationAsync()
     {
         var result = new PreviewBitmapCaptureResult
@@ -962,7 +1057,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<PreviewBitmapCaptureResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.True(restoredValue.InvocationSucceeded, "InvocationSucceeded should round-trip.");
@@ -975,8 +1072,10 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestPreviewBitmapComparisonResultSerializationAsync,プレビュービットマップ比較結果シリアル化をテストする（非同期）
     private static Task TestPreviewBitmapComparisonResultSerializationAsync()
     {
+        //CSJ,variable=comparison,比較
         var comparison = new PreviewBitmapComparisonResult
         {
             FalseSucceeded = true,
@@ -1004,7 +1103,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(comparison);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<PreviewBitmapComparisonResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.True(restoredValue.FalseSucceeded, "FalseSucceeded should round-trip.");
@@ -1015,7 +1116,9 @@ internal static class Program
 
     private static async Task TestPreviewBitmapDiagnosticsNoDispatcherAsync()
     {
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests", Guid.NewGuid().ToString("N"), "logs", "test.log"));
+        //CSJ,variable=service,サービス
         var service = new PreviewBitmapDiagnostics(logger);
         var result = await service.RunAsync(CancellationToken.None);
 
@@ -1026,6 +1129,7 @@ internal static class Program
 
     private static async Task TestSeekAdapterReflectionFailureAsync()
     {
+        //CSJ,variable=adapter,アダプター
         var adapter = new YmmTimelineSeekAdapter();
         var result = await adapter.SeekAsync(new object(), 10, CancellationToken.None);
 
@@ -1037,7 +1141,9 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=timeline,タイムライン
             var timeline = new FakeTimeline(length: 100) { CurrentFrame = 10 };
             return await adapter.SeekAsync(timeline, 5, CancellationToken.None);
         });
@@ -1056,6 +1162,7 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
             return await adapter.SeekAsync(new ThrowingTimeline(), 20, CancellationToken.None);
         });
@@ -1069,6 +1176,7 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
             return await adapter.SeekAsync(new NonMovingTimeline(initialFrame: 7), 20, CancellationToken.None);
         });
@@ -1083,8 +1191,11 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=timeline,タイムライン
             var timeline = new FakeTimeline(length: 100) { CurrentFrame = 3 };
+            //CSJ,variable=window,ウィンドウ
             var window = new Window
             {
                 DataContext = new TimelineContainer { Timeline = timeline },
@@ -1113,9 +1224,13 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=timeline,タイムライン
             var timeline = new CommandOnlyTimeline(initialFrame: 10);
+            //CSJ,variable=command,コマンド
             var command = new RoutedUICommand("Seek", "Seek", typeof(Program));
+            //CSJ,variable=window,ウィンドウ
             var window = new Window
             {
                 DataContext = new TimelineContainer { Timeline = timeline },
@@ -1156,6 +1271,7 @@ internal static class Program
         AssertEx.Equal("CommandBindingSeek", result.MethodUsed, "Seek command binding should be reported as the method used.");
     }
 
+    //CSJ,method=TestSeekResultSerializationAsync,フレーム移動結果シリアル化をテストする（非同期）
     private static Task TestSeekResultSerializationAsync()
     {
         var result = SeekResult.Failed(
@@ -1169,7 +1285,9 @@ internal static class Program
             tolerance: 1);
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<SeekResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("SeekResult should deserialize.");
 
         AssertEx.True(!restoredValue.Success, "Success should round-trip.");
@@ -1184,15 +1302,21 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestSeekProbeWriterAsync,フレーム移動調査書き込み処理をテストする（非同期）
     private static async Task TestSeekProbeWriterAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestSeekProbeWriterAsync));
+        //CSJ,variable=outputDirectory,出力ディレクトリ
         var outputDirectory = Path.Combine(root, "seek-probe");
+        //CSJ,variable=path,パス
         string path = string.Empty;
 
         await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=timeline,タイムライン
             var timeline = new FakeTimeline(length: 120) { CurrentFrame = 4 };
             path = await adapter.WriteSeekProbeAsync(timeline, 20, outputDirectory, CancellationToken.None);
             return true;
@@ -1211,8 +1335,11 @@ internal static class Program
     {
         var result = await WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=adapter,アダプター
             var adapter = new YmmTimelineSeekAdapter();
+            //CSJ,variable=timeline,タイムライン
             var timeline = new CommandOnlyTimeline(initialFrame: 2);
+            //CSJ,variable=window,ウィンドウ
             var window = new Window
             {
                 DataContext = new TimelineContainer { Timeline = timeline },
@@ -1237,8 +1364,10 @@ internal static class Program
         AssertEx.True(result.FailureReason?.Contains("command binding fallback", StringComparison.OrdinalIgnoreCase) == true, "FailureReason should explain that fallback was skipped safely.");
     }
 
+    //CSJ,method=TestPreviewCaptureFallbackAsync,プレビューキャプチャ代替をテストする（非同期）
     private static async Task TestPreviewCaptureFallbackAsync()
     {
+        //CSJ,variable=adapter,アダプター
         var adapter = new YmmPreviewBitmapCaptureAdapter();
         var result = await adapter.TryCaptureAsync(CancellationToken.None);
 
@@ -1246,6 +1375,7 @@ internal static class Program
         AssertEx.True(!string.IsNullOrWhiteSpace(result.FailureReason), "Preview capture failure should include a reason.");
     }
 
+    //CSJ,method=TestCurrentPreviewCaptureResultSerializationAsync,現在のプレビューキャプチャ結果シリアル化をテストする（非同期）
     private static Task TestCurrentPreviewCaptureResultSerializationAsync()
     {
         var result = new CurrentPreviewCaptureResult
@@ -1271,7 +1401,9 @@ internal static class Program
         };
 
         var json = JsonSerializer.Serialize(result);
+        //CSJ,variable=restored,復元済み
         var restored = JsonSerializer.Deserialize<CurrentPreviewCaptureResult>(json);
+        //CSJ,variable=restoredValue,復元済み値
         var restoredValue = restored ?? throw new InvalidOperationException("Result should deserialize.");
 
         AssertEx.True(restoredValue.Success, "Success should round-trip.");
@@ -1283,10 +1415,14 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestCurrentPreviewCapturePreviewViewModelFallbackAsync,現在のプレビューキャプチャプレビュービューモデル代替をテストする（非同期）
     private static async Task TestCurrentPreviewCapturePreviewViewModelFallbackAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestCurrentPreviewCapturePreviewViewModelFallbackAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        //CSJ,variable=service,サービス
         var service = new CurrentPreviewCaptureService(
             logger,
             captureAdapter: new FakeFailingPreviewBitmapCaptureAdapter("PreviewViewModel not found"),
@@ -1312,10 +1448,14 @@ internal static class Program
         AssertEx.True(File.Exists(result.DiagnosticsPath ?? string.Empty), "Diagnostics JSON should still be emitted.");
     }
 
+    //CSJ,method=TestCurrentPreviewCaptureGetBitmapFallbackAsync,現在のプレビューキャプチャ取得ビットマップ代替をテストする（非同期）
     private static async Task TestCurrentPreviewCaptureGetBitmapFallbackAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestCurrentPreviewCaptureGetBitmapFallbackAsync));
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        //CSJ,variable=service,サービス
         var service = new CurrentPreviewCaptureService(
             logger,
             captureAdapter: new FakeFailingPreviewBitmapCaptureAdapter("GetBitmap not found"),
@@ -1341,8 +1481,10 @@ internal static class Program
         AssertEx.True(File.Exists(result.DiagnosticsPath ?? string.Empty), "Diagnostics JSON should still be emitted.");
     }
 
+    //CSJ,method=TestLegacyProjectStoreCompatibilityAsync,旧形式プロジェクト保管先互換性をテストする（非同期）
     private static async Task TestLegacyProjectStoreCompatibilityAsync(string workRoot)
     {
+        //CSJ,variable=runtimeRoot,実行環境ルート
         var runtimeRoot = Path.Combine(CreateRoot(workRoot, nameof(TestLegacyProjectStoreCompatibilityAsync)), "YMM4");
         var dataDir = Path.Combine(runtimeRoot, "user", "plugin", "YMMProjectManager", "data");
         Directory.CreateDirectory(dataDir);
@@ -1364,11 +1506,15 @@ internal static class Program
         try
         {
             Environment.SetEnvironmentVariable("YMM4DirPath", runtimeRoot);
+            //CSJ,variable=jsonPath,JSONのパス
             var jsonPath = Path.Combine(dataDir, "projects.json");
             await File.WriteAllTextAsync(jsonPath, json);
 
+            //CSJ,variable=logger,ロガー
             var logger = new FileLogger(Path.Combine(runtimeRoot, "logs", "test.log"));
+            //CSJ,variable=repository,リポジトリ
             var repository = new JsonProjectRepository(logger);
+            //CSJ,variable=store,保管先
             var store = await repository.LoadAsync();
 
             AssertEx.Equal(1, store.Projects.Count, "Legacy project JSON should load.");
@@ -1381,6 +1527,7 @@ internal static class Program
         }
     }
 
+    //CSJ,method=TestProjectEntryThumbnailCacheDirectoryNotificationAsync,プロジェクト項目サムネイルキャッシュディレクトリ通知をテストする（非同期）
     private static Task TestProjectEntryThumbnailCacheDirectoryNotificationAsync()
     {
         var entry = new ProjectEntry();
@@ -1396,16 +1543,22 @@ internal static class Program
         return Task.CompletedTask;
     }
 
+    //CSJ,method=TestProjectGenerationStorageReplaceAsync,プロジェクト世代保管置換をテストする（非同期）
     private static async Task TestProjectGenerationStorageReplaceAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = CreateRoot(workRoot, nameof(TestProjectGenerationStorageReplaceAsync));
+        //CSJ,variable=storage,保管
         var storage = new ProjectGenerationStorage(Path.Combine(root, "store"));
+        //CSJ,variable=targetDirectory,対象ディレクトリ
         var targetDirectory = Path.Combine(root, "target");
         Directory.CreateDirectory(targetDirectory);
 
+        //CSJ,variable=targetPath,対象パス
         var targetPath = Path.Combine(targetDirectory, "project.ymmp");
         await File.WriteAllTextAsync(targetPath, "old");
 
+        //CSJ,variable=sourceTempPath,元一時パス
         var sourceTempPath = Path.Combine(root, "source.tmp");
         await File.WriteAllTextAsync(sourceTempPath, "new");
 
@@ -1415,32 +1568,42 @@ internal static class Program
         AssertEx.True(!File.Exists(sourceTempPath), "Atomic replace should consume the source temp file.");
     }
 
+    //CSJ,method=CreateService,サービスを作成する
     private static ProjectGenerationService CreateService(string root)
     {
+        //CSJ,variable=logger,ロガー
         var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
+        //CSJ,variable=storageRoot,保管ルート
         var storageRoot = Path.Combine(root, "AppData", "YMMProjectManager", "Generations");
         return new ProjectGenerationService(logger, storageRoot);
     }
 
+    //CSJ,method=CreateRoot,ルートを作成する
     private static string CreateRoot(string workRoot, string testName)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, testName);
         Directory.CreateDirectory(root);
         return root;
     }
 
+    //CSJ,method=CreateProjectFile,プロジェクトファイルを作成する
     private static string CreateProjectFile(string root, string fileName, string content)
     {
+        //CSJ,variable=path,パス
         var path = Path.Combine(root, fileName);
         File.WriteAllText(path, content);
         return path;
     }
 
+    //CSJ,class=TimelineContainer,タイムラインの格納先
     private sealed class TimelineContainer
     {
+        //CSJ,property=Timeline,タイムライン
         public object? Timeline { get; init; }
     }
 
+    //CSJ,class=FakeTimeline,テスト用タイムライン
     private sealed class FakeTimeline
     {
         public FakeTimeline(int length)
@@ -1448,13 +1611,17 @@ internal static class Program
             Length = length;
         }
 
+        //CSJ,property=Length,長さ
         public int Length { get; }
 
+        //CSJ,property=CurrentFrame,現在のフレーム
         public int CurrentFrame { get; set; }
     }
 
+    //CSJ,class=ThrowingTimeline,例外を送出するテスト用タイムライン
     private sealed class ThrowingTimeline
     {
+        //CSJ,property=CurrentFrame,現在のフレーム
         public int CurrentFrame
         {
             get => 10;
@@ -1462,8 +1629,10 @@ internal static class Program
         }
     }
 
+    //CSJ,class=NonMovingTimeline,移動しないテスト用タイムライン
     private sealed class NonMovingTimeline
     {
+        //CSJ,field=currentFrame,現在のフレーム
         private int currentFrame;
 
         public NonMovingTimeline(int initialFrame)
@@ -1471,6 +1640,7 @@ internal static class Program
             currentFrame = initialFrame;
         }
 
+        //CSJ,property=CurrentFrame,現在のフレーム
         public int CurrentFrame
         {
             get => currentFrame;
@@ -1480,8 +1650,10 @@ internal static class Program
         }
     }
 
+    //CSJ,class=CommandOnlyTimeline,コマンドのみのテスト用タイムライン
     private sealed class CommandOnlyTimeline
     {
+        //CSJ,field=currentFrame,現在のフレーム
         private int currentFrame;
 
         public CommandOnlyTimeline(int initialFrame)
@@ -1489,6 +1661,7 @@ internal static class Program
             currentFrame = initialFrame;
         }
 
+        //CSJ,property=CurrentFrame,現在のフレーム
         public int CurrentFrame => currentFrame;
 
         public void MoveBy(int delta)
@@ -1497,8 +1670,10 @@ internal static class Program
         }
     }
 
+    //CSJ,class=FakeTimelineSeekAdapter,テスト用フレーム移動アダプター
     private sealed class FakeTimelineSeekAdapter : ITimelineSeekAdapter
     {
+        //CSJ,method=SeekAsync,指定フレームへ移動する（非同期）
         public Task<SeekResult> SeekAsync(object? timeline, int targetFrame, CancellationToken cancellationToken)
         {
             if (timeline is FakeTimeline fakeTimeline)
@@ -1510,10 +1685,13 @@ internal static class Program
         }
     }
 
+    //CSJ,class=FakePreviewBitmapCaptureAdapter,テスト用プレビュー画像取得アダプター
     private sealed class FakePreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
     {
+        //CSJ,method=TryCaptureAsync,キャプチャを試みる（非同期）
         public Task<PreviewCaptureResult> TryCaptureAsync(CancellationToken cancellationToken)
         {
+            //CSJ,variable=pixels,画素列
             var pixels = new byte[2 * 2 * 4];
             pixels[0] = 0x20;
             pixels[1] = 0x40;
@@ -1532,6 +1710,7 @@ internal static class Program
             pixels[14] = 0xC0;
             pixels[15] = 0xFF;
 
+            //CSJ,variable=bitmap,ビットマップ
             var bitmap = BitmapSource.Create(
                 2,
                 2,
@@ -1551,8 +1730,10 @@ internal static class Program
         }
     }
 
+    //CSJ,class=FakeFailingPreviewBitmapCaptureAdapter,取得に失敗するテスト用プレビュー画像アダプター
     private sealed class FakeFailingPreviewBitmapCaptureAdapter : IPreviewBitmapCaptureAdapter
     {
+        //CSJ,field=reason,理由
         private readonly string reason;
 
         public FakeFailingPreviewBitmapCaptureAdapter(string reason)
@@ -1560,17 +1741,24 @@ internal static class Program
             this.reason = reason;
         }
 
+        //CSJ,method=TryCaptureAsync,キャプチャを試みる（非同期）
         public Task<PreviewCaptureResult> TryCaptureAsync(CancellationToken cancellationToken)
             => Task.FromResult(PreviewCaptureResult.Failed(reason));
     }
 
+    //CSJ,class=WpfTestHost,WPFテストホスト
     internal static class WpfTestHost
     {
+        //CSJ,field=SyncRoot,同期ルート
         private static readonly object SyncRoot = new();
+        //CSJ,field=thread,スレッド
         private static Thread? thread;
+        //CSJ,field=dispatcher,ディスパッチャー
         private static Dispatcher? dispatcher;
+        //CSJ,field=application,アプリケーション
         private static Application? application;
 
+        //CSJ,method=RunAsync,実行する（非同期）
         public static Task<T> RunAsync<T>(Func<Task<T>> action)
         {
             EnsureStarted();
@@ -1627,6 +1815,7 @@ internal static class Program
                 }
 
                 var started = new ManualResetEventSlim(false);
+                //CSJ,variable=startupException,起動例外
                 Exception? startupException = null;
 
                 thread = new Thread(() =>
@@ -1664,6 +1853,7 @@ internal static class Program
         }
     }
 
+    //CSJ,class=AssertEx,テスト検証ヘルパー
     private static class AssertEx
     {
         public static void True(bool condition, string message)

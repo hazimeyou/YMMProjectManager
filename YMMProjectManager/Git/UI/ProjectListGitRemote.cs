@@ -6,8 +6,10 @@ using YMMProjectManager.Infrastructure.Git;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,method=ShowGitDetailsAsync,Git詳細を表示する（非同期）
     private async Task ShowGitDetailsAsync(bool remote)
     {
         var selected = SelectedProject;
@@ -23,6 +25,7 @@ public sealed partial class ProjectListViewModel
             if (remote)
             {
                 if (result.FetchTarget is not { } target) { GitStatus = "origin の接続先を確認できません。"; return; }
+                //CSJ,variable=label,ラベル
                 var label = GitRepository.IsSupportedGitHubEndpoint(target.Endpoint) ? "GitHub origin" : "origin";
                 GitStatus = $"{label}\n{target.Endpoint}";
                 return;
@@ -31,17 +34,23 @@ public sealed partial class ProjectListViewModel
         });
     }
 
+    //CSJ,method=CloneGitAsync,Gitをクローンする（非同期）
     private async Task CloneGitAsync()
     {
+        //CSJ,variable=remote,リモート
         var remote = GitRemote;
+        //CSJ,variable=name,名前
         var name = GitCloneName;
         if (string.IsNullOrWhiteSpace(remote) || string.IsNullOrWhiteSpace(name) || name is "." or ".." || Path.GetFileName(name) != name || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
         { GitStatus = "HTTPS またはローカルの URL と、フォルダー名を入力してください。"; return; }
         var inspected = GitRepository.InspectCloneRemote(remote);
         if (!inspected.Success) { GitStatus = DescribeRemoteFailure(inspected); return; }
+        //CSJ,variable=dialog,ダイアログ
         var dialog = new OpenFolderDialog { Title = "clone 先の親フォルダーを選択" };
         if (dialog.ShowDialog() != true) return;
+        //CSJ,variable=destination,格納先
         var destination = Path.Combine(dialog.FolderName, name);
+        //CSJ,variable=authentication,認証
         var authentication = AuthenticationFor(remote);
         if (!ConfirmGitTrust("Clone", destination, inspected.StandardOutput + AuthenticationNotice(authentication))) return;
         await ExecuteToolAsync("Git clone", async token =>
@@ -60,8 +69,10 @@ public sealed partial class ProjectListViewModel
         });
     }
 
+    //CSJ,method=RunTrustedRemoteAsync,信頼済みリモートを実行する（非同期）
     private Task RunTrustedRemoteAsync(GitRemoteOperation operation) => ExecuteToolAsync($"Git {operation}", async token =>
     {
+        //CSJ,variable=project,プロジェクト
         var project = SelectedProject;
         if (project is null) return;
         var located = await LocateProjectGitRootAsync(project, token);
@@ -69,13 +80,17 @@ public sealed partial class ProjectListViewModel
         var (git, directory) = located.Value;
         var inspected = await git.InspectRemoteAsync(operation, token);
         if (!inspected.Success) { GitStatus = DescribeRemoteFailure(inspected); return; }
+        //CSJ,variable=push,プッシュ
         var push = inspected.PushTarget;
+        //CSJ,variable=fetch,フェッチ
         var fetch = inspected.FetchTarget;
         if (push is null && fetch is null) throw new InvalidDataException("承認対象のリポジトリと接続先を確認できません。");
+        //CSJ,variable=details,詳細
         var details = push is null ? fetch!.Endpoint :
             $"{push.Endpoint}\n対象 {push.BranchRef}\nコミット {push.ObjectId}";
         if (push is not null && Path.IsPathFullyQualified(push.Endpoint))
             details += "\nローカルの送信先では受信側Gitの設定と受信hookが適用されます。管理している送信先だけを承認してください。";
+        //CSJ,variable=authentication,認証
         var authentication = AuthenticationFor(push?.Endpoint ?? fetch!.Endpoint);
         if (!ReferenceEquals(project, SelectedProject) || !ConfirmGitTrust(operation.ToString(), directory,
                 details + AuthenticationNotice(authentication))) return;
@@ -101,9 +116,12 @@ public sealed partial class ProjectListViewModel
         MessageBox.Show($"{operation}\n{directory}\n{endpoint}\n\nインストール済みの Git、システム・利用者・リポジトリの Git 設定、認証ヘルパーなどを信頼する場合に限り続行してください。",
             "Git 操作の確認", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No) == MessageBoxResult.Yes;
 
+    //CSJ,method=DescribeRemoteFailure,リモート失敗を説明する
     internal static string DescribeRemoteFailure(GitResult result, bool isGitHub = false,
+        //CSJ,parameter=authentication,認証
         GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
+        //CSJ,variable=action,アクション
         var action = result.Failure switch
         {
             GitFailure.Authentication when isGitHub && authentication == GitHubAuthentication.Anonymous =>
@@ -121,6 +139,7 @@ public sealed partial class ProjectListViewModel
             GitFailure.UnsafeOperation => "接続先・ブランチ・リポジトリの状態または Git 設定を確認し、再度承認してください。",
             _ => "接続先、Git 設定またはブランチを確認してください。",
         };
+        //CSJ,variable=message,メッセージ
         var message = $"Git 操作を完了できませんでした。{action}";
         return result.RecoveryPath is { } path ? $"{message}\n残存フォルダー {path}" : message;
     }

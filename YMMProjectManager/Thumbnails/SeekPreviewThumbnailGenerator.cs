@@ -15,12 +15,16 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// タイムラインを代表フレームへシークし、現在のプレビュー画像を保存するサムネイル生成器です。
 /// </summary>
+//CSJ,class=SeekPreviewThumbnailGenerator,フレーム移動プレビューサムネイル生成器
 public sealed class SeekPreviewThumbnailGenerator
 {
+    //CSJ,field=ThumbnailCount,サムネイル件数
     private const int ThumbnailCount = 64;
     private const int PreviewSettleDelayMs = 60;
 
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
+    //CSJ,field=previewCaptureService,プレビューキャプチャサービス
     private readonly CurrentPreviewCaptureService previewCaptureService;
     private readonly ThumbnailSequenceFrameRenderer renderer = new();
 
@@ -30,18 +34,24 @@ public sealed class SeekPreviewThumbnailGenerator
         this.previewCaptureService = previewCaptureService;
     }
 
+    //CSJ,method=GenerateAsync,生成する（非同期）
     public async Task<SeekPreviewThumbnailGenerationResult> GenerateAsync(
+        //CSJ,parameter=ymmpPath,YMMPパス
         string ymmpPath,
+        //CSJ,parameter=timelineInfo,タイムライン情報
         TimelineToolInfo timelineInfo,
+        //CSJ,parameter=cancellationToken,キャンセルトークン
         CancellationToken cancellationToken)
     {
         var sw = Stopwatch.StartNew();
+        //CSJ,variable=timeline,タイムライン
         var timeline = timelineInfo.Timeline;
         if (timeline is null)
         {
             return new SeekPreviewThumbnailGenerationResult(false, "Timeline not found.", 0, 0, 0, 0, 0, string.Empty);
         }
 
+        //CSJ,variable=hash,ハッシュ
         var hash = FilmstripCacheKeyFactory.TryCreateHash(ymmpPath);
         if (string.IsNullOrWhiteSpace(hash))
         {
@@ -53,10 +63,13 @@ public sealed class SeekPreviewThumbnailGenerator
             return new SeekPreviewThumbnailGenerationResult(false, failureReason, 0, 0, 0, 0, 0, string.Empty);
         }
 
+        //CSJ,variable=totalFrames,合計フレーム列
         var totalFrames = Math.Max(1, lastFrame + 1);
+        //CSJ,variable=sampleFrames,サンプルフレーム列
         var sampleFrames = CreateSampleFrames(totalFrames);
 
         // キャッシュはプロジェクトファイルのパスと更新時刻に紐づける。
+        //CSJ,variable=cacheDirectory,キャッシュディレクトリ
         var cacheDirectory = Path.Combine(
             AppDirectories.UserDirectory,
             "plugin",
@@ -66,7 +79,9 @@ public sealed class SeekPreviewThumbnailGenerator
             hash);
         Directory.CreateDirectory(cacheDirectory);
         var renderedCount = 0;
+        //CSJ,variable=failedCount,失敗件数
         var failedCount = 0;
+        //CSJ,variable=seek,フレーム移動
         var seek = new TimeLineSeek(timelineInfo);
         logger.Info($"Seek preview thumbnail generation start. ymmp={ymmpPath}, hash={hash}, lastFrame={lastFrame}, samples={sampleFrames.Length}");
         logger.Flush();
@@ -75,7 +90,9 @@ public sealed class SeekPreviewThumbnailGenerator
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            //CSJ,variable=frame,フレーム
             var frame = sampleFrames[i];
+            //CSJ,variable=outputPath,出力パス
             var outputPath = Path.Combine(cacheDirectory, $"{i:000}.png");
             logger.Info($"Seek preview thumbnail slot={i} start frame={frame}");
             logger.Flush();
@@ -85,6 +102,7 @@ public sealed class SeekPreviewThumbnailGenerator
             await YieldDispatcherAsync().ConfigureAwait(true);
             await Task.Delay(PreviewSettleDelayMs, cancellationToken).ConfigureAwait(true);
 
+            //CSJ,variable=capture,キャプチャ
             var capture = await previewCaptureService.CaptureCurrentPreviewBitmapAsync(cancellationToken).ConfigureAwait(true);
             if (!capture.Success || capture.Bitmap is null)
             {
@@ -102,6 +120,7 @@ public sealed class SeekPreviewThumbnailGenerator
         }
 
         sw.Stop();
+        //CSJ,variable=success,成功
         var success = renderedCount > 0 && failedCount == 0;
         logger.Info($"Seek preview thumbnail generation end. rendered={renderedCount}, failed={failedCount}, totalMs={sw.ElapsedMilliseconds}");
         logger.Flush();
@@ -132,14 +151,18 @@ public sealed class SeekPreviewThumbnailGenerator
             source = converted;
         }
 
+        //CSJ,variable=frameBytes,フレームバイト列
         var frameBytes = new byte[source.PixelWidth * source.PixelHeight * 4];
         source.CopyPixels(frameBytes, source.PixelWidth * 4, 0);
         renderer.SaveThumbnailPng(frameBytes, source.PixelWidth, source.PixelHeight, outputPath);
     }
 
+    //CSJ,method=CreateSampleFrames,サンプルフレーム列を作成する
     private static int[] CreateSampleFrames(int totalFrames)
     {
+        //CSJ,variable=frames,フレーム列
         var frames = new int[ThumbnailCount];
+        //CSJ,variable=max,最大
         var max = Math.Max(0, totalFrames - 1);
         for (var i = 0; i < ThumbnailCount; i++)
         {
@@ -149,12 +172,14 @@ public sealed class SeekPreviewThumbnailGenerator
         return frames;
     }
 
+    //CSJ,method=TryGetLastFrame,最後フレームの取得を試みる
     private static bool TryGetLastFrame(object timeline, out int lastFrame, out string failureReason)
     {
         lastFrame = 0;
         failureReason = "No usable timeline length candidate was found.";
 
         // YMM 側のバージョン差分を吸収するため、複数の長さ候補プロパティを見る。
+        //CSJ,variable=propertyName,プロパティ名前
         foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount", "EndFrame" })
         {
             if (!TryReadIntLikeProperty(timeline, propertyName, out var value))
@@ -174,9 +199,11 @@ public sealed class SeekPreviewThumbnailGenerator
             return true;
         }
 
+        //CSJ,variable=videoInfo,動画情報
         var videoInfo = timeline.GetType().GetProperty("VideoInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(timeline);
         if (videoInfo is not null)
         {
+            //CSJ,variable=propertyName,プロパティ名前
             foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount" })
             {
                 if (!TryReadIntLikeProperty(videoInfo, propertyName, out var value) || value <= 0)
@@ -196,6 +223,7 @@ public sealed class SeekPreviewThumbnailGenerator
     private static bool TryReadIntLikeProperty(object instance, string propertyName, out int value)
     {
         value = 0;
+        //CSJ,variable=property,プロパティ
         var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
         if (property is null)
         {
@@ -220,6 +248,7 @@ public sealed class SeekPreviewThumbnailGenerator
 
     private static Task YieldDispatcherAsync()
     {
+        //CSJ,variable=dispatcher,ディスパッチャー
         var dispatcher = System.Windows.Application.Current?.Dispatcher;
         if (dispatcher is null)
         {
@@ -230,6 +259,7 @@ public sealed class SeekPreviewThumbnailGenerator
     }
 }
 
+//CSJ,record=SeekPreviewThumbnailGenerationResult,フレーム移動プレビューサムネイル生成結果
 public sealed record SeekPreviewThumbnailGenerationResult(
     bool Success,
     string Reason,

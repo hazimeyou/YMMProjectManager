@@ -5,27 +5,37 @@ using YMMProjectManager.Infrastructure.Relink;
 
 namespace YMMProjectManager.Infrastructure;
 
+//CSJ,class=AssetRelinkRecovery,素材の再リンク復旧
 internal static partial class AssetRelinkRecovery
 {
+    //CSJ,field=ExternalEvidencePrefix,外部証跡接頭辞
     private const string ExternalEvidencePrefix = ".ymmpm-relink-external-";
+    //CSJ,field=DerivedDirectoryPrefix,派生ディレクトリ接頭辞
     private const string DerivedDirectoryPrefix = ".ymmpm-derived-";
 
+    //CSJ,enum=ExternalRecoveryState,外部復旧状態
     internal enum ExternalRecoveryState { ReadyToVerify, NotStaged, Unknown }
+    //CSJ,record=ExternalRecoveryReview,外部復旧レビュー
     internal sealed record ExternalRecoveryReview(string Source, string Output, IReadOnlyList<string> ApprovedRoots,
         Guid DerivedProjectId, ExternalRecoveryState State);
 
+    //CSJ,record=DerivedOutputReceipt,派生出力照合記録
     internal sealed record DerivedOutputReceipt(OutputReceipt Output, string SeriesDirectory,
         AssetRevisionSeries.Head SourceRoot, AssetRevisionSeries.Head SourceParent);
 
+    //CSJ,record=ExternalIntent,外部実行意図
     private sealed record ExternalIntent(int Version, Guid OperationId, Guid DerivedProjectId, DateTimeOffset CreatedAt,
         string Source, string SourceSha256, PhysicalFileId SourceIdentity, string Output, string OutputSha256,
         AssetRevisionSeries.Head Root, AssetRevisionSeries.Head Parent, AssetRevisionSeries.Head[] ObservedTips,
         string[] ApprovedRoots, Comparison[] Approved, StrictAssetProof[] StrictAssets)
     {
+        //CSJ,property=DerivedRootSha256,派生ルートSHA-256
         public string? DerivedRootSha256 { get; init; }
     }
 
+    //CSJ,method=PrepareExternalOutputAsync,外部出力を準備する（非同期）
     internal static async Task<string> PrepareExternalOutputAsync(RelinkDocumentContext context, string destination,
+        //CSJ,parameter=seriesDirectory,系列ディレクトリ
         string seriesDirectory, AssetRevisionSeries.Head root, AssetRevisionSeries.Head parent,
         IReadOnlyList<AssetRevisionSeries.Head> observedTips, StrictAssetProof[] proofs,
         IReadOnlyList<string> approvedRoots, CancellationToken token)
@@ -38,34 +48,44 @@ internal static partial class AssetRelinkRecovery
         var roots = CanonicalizeApprovedRoots(approvedRoots);
         var original = context.OriginalBytes?.ToArray() ?? throw new InvalidDataException("The source snapshot is missing.");
         if (original.Length > MaxSourceBytes) throw new InvalidDataException("The project is too large for relink recovery.");
+        //CSJ,variable=rows,行一覧
         var rows = RelinkCandidateVerifier.SnapshotRows(context.Rows.Where(row => row.Status == RelinkStatus.Updated));
         var observed = observedTips.ToArray();
         var strictProofs = proofs.ToArray();
+        //CSJ,variable=media,メディア
         await using var media = new ExternalAssetPins();
+        //CSJ,variable=sourceLease,元リース
         await using var sourceLease = OpenVerifiedPath(source);
+        //CSJ,variable=sourceHash,元のハッシュ
         var sourceHash = Hash(original);
         if (await AssetContentHash.ReadSha256Async(sourceLease.Stream, token).ConfigureAwait(false) != sourceHash)
             throw new InvalidDataException("The source project changed before relink preparation.");
 
+        //CSJ,variable=evidence,証跡
         var evidence = await AssetRevisionSeries.WithVerifiedSourceTipAsync(seriesDirectory, root, parent, observed,
             async (manifest, heldToken) =>
             {
                 var expected = new StrictRelinkAssets(source, Encoding.UTF8.GetString(original), manifest);
                 var comparisons = rows.Select(row =>
                 {
+                    //CSJ,variable=hash,ハッシュ
                     var hash = expected.FindExpected(row.OriginalPath)?.Sha256 ??
                         throw new InvalidDataException("The source metadata does not establish the required full asset SHA-256.");
                     return new Comparison(row.RowIndex, row.OriginalPath,
                         row.SelectedCandidate ?? throw new InvalidDataException("A selected relink file is missing."), hash, hash, row.TypeHint);
                 }).ToArray();
+                //CSJ,variable=outputBytes,出力バイト列
                 var outputBytes = RelinkJsonUpdate.Apply(original, rows);
+                //CSJ,variable=intent,実行意図
                 var intent = new ExternalIntent(1, Guid.NewGuid(), Guid.NewGuid(), DateTimeOffset.UtcNow,
                     source, sourceHash, GetPhysicalId(sourceLease.Stream), output, Hash(outputBytes),
                     root, parent, observed, roots, comparisons, strictProofs);
                 ValidateExternalIntent(intent, requireDerivedRootHash: false);
                 await VerifyExternalAssetsAsync(intent, roots, media, heldToken).ConfigureAwait(false);
+                //CSJ,variable=derived,派生
                 var derived = BuildDerivedManifest(intent, original, outputBytes, manifest, media);
                 intent = intent with { DerivedRootSha256 = AssetRevisionSeries.DescribeRevision(derived).Sha256 };
+                //CSJ,variable=path,パス
                 var path = ExternalEvidencePath(source, intent.OperationId);
                 await WriteEvidenceAsync(path, intent, MaxIntentBytes, heldToken).ConfigureAwait(false);
                 return path;
@@ -73,34 +93,44 @@ internal static partial class AssetRelinkRecovery
         return evidence;
     }
 
+    //CSJ,method=InspectExternalRecoveryAsync,外部復旧を点検する（非同期）
     internal static async Task<ExternalRecoveryReview?> InspectExternalRecoveryAsync(string evidence, string expectedSource,
         CancellationToken token)
     {
         if (!Path.GetFileName(evidence).StartsWith(ExternalEvidencePrefix, StringComparison.OrdinalIgnoreCase))
             return null;
+        //CSJ,variable=path,パス
         var path = Path.GetFullPath(evidence);
         VerifyExternalEvidenceLocation(path, expectedSource);
+        //CSJ,variable=lease,リース
         await using var lease = OpenVerifiedPath(path);
+        //CSJ,variable=intent,実行意図
         var intent = await ReadExternalIntentAsync(lease.Stream, path, expectedSource, token).ConfigureAwait(false);
         return new ExternalRecoveryReview(intent.Source, intent.Output, Array.AsReadOnly(intent.ApprovedRoots),
             intent.DerivedProjectId, ObserveExternalRecoveryState(path, intent));
     }
 
+    //CSJ,method=StageExternalOutputAsync,外部出力を準備領域に置く（非同期）
     internal static async Task<(bool Success, string? ErrorMessage)> StageExternalOutputAsync(string evidence,
         RelinkDocumentContext context, RelinkSaveService saver, IReadOnlyList<string> approvedRoots, CancellationToken token)
     {
+        //CSJ,variable=path,パス
         var path = Path.GetFullPath(evidence);
         VerifyExternalEvidenceLocation(path, context.YmmpPath);
+        //CSJ,variable=intentLease,実行意図リース
         await using var intentLease = OpenVerifiedPath(path);
+        //CSJ,variable=intent,実行意図
         var intent = await ReadExternalIntentAsync(intentLease.Stream, path, context.YmmpPath, token).ConfigureAwait(false);
         if (ObserveExternalRecoveryState(path, intent) != ExternalRecoveryState.NotStaged)
             throw new InvalidDataException("An external relink publication attempt already exists. Preserve its evidence and use recovery.");
+        //CSJ,variable=media,メディア
         await using var media = new ExternalAssetPins();
         await VerifyExternalAssetsAsync(intent, approvedRoots, media, token).ConfigureAwait(false);
         await using var source = OpenVerifiedPath(intent.Source);
         var original = await ReadVerifiedSourceAsync(source.Stream, intent, token).ConfigureAwait(false);
         if (context.OriginalBytes is not { } observed || Hash(observed) != intent.SourceSha256)
             throw new InvalidDataException("The supplied project snapshot does not match the prepared external relink.");
+        //CSJ,variable=rows,行一覧
         var rows = ApprovedRows(intent);
         if (Hash(RelinkJsonUpdate.Apply(original, rows)) != intent.OutputSha256)
             throw new InvalidDataException("The prepared output no longer matches its original project and approved rows.");
@@ -109,28 +139,38 @@ internal static partial class AssetRelinkRecovery
             saver, token).ConfigureAwait(false);
     }
 
+    //CSJ,method=CompleteExternalOutputAsync,外部出力を完了する（非同期）
     internal static async Task<DerivedOutputReceipt> CompleteExternalOutputAsync(string evidence, string seriesDirectory,
         AssetRevisionSeries.Head associatedRoot, string expectedSource, IReadOnlyList<string> approvedRoots, CancellationToken token,
+        //CSJ,parameter=register,登録
         Func<DerivedOutputReceipt, CancellationToken, Task>? register = null)
     {
+        //CSJ,variable=path,パス
         var path = Path.GetFullPath(evidence);
         VerifyExternalEvidenceLocation(path, expectedSource);
+        //CSJ,variable=intentLease,実行意図リース
         await using var intentLease = OpenVerifiedPath(path);
+        //CSJ,variable=intent,実行意図
         var intent = await ReadExternalIntentAsync(intentLease.Stream, path, expectedSource, token).ConfigureAwait(false);
         if (intent.Root != associatedRoot)
             throw new InvalidDataException("The external relink belongs to a different source project.");
+        //CSJ,variable=state,状態
         var state = ObserveExternalRecoveryState(path, intent);
         if (state != ExternalRecoveryState.ReadyToVerify)
             throw new InvalidDataException(state == ExternalRecoveryState.NotStaged
                 ? "No output was staged. Keep this record and start a fresh explicitly approved operation."
                 : "The publication cannot be determined. Keep the original, output and all recovery records.");
+        //CSJ,variable=derivedDirectory,派生ディレクトリ
         var derivedDirectory = DerivedSeriesPath(intent);
         if (string.Equals(Path.TrimEndingDirectorySeparator(Path.GetFullPath(seriesDirectory)), derivedDirectory, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The derived metadata destination conflicts with the source series.");
 
+        //CSJ,variable=media,メディア
         await using var media = new ExternalAssetPins();
+        //CSJ,variable=sourceLease,元リース
         await using var sourceLease = OpenVerifiedPath(intent.Source);
         var original = await ReadVerifiedSourceAsync(sourceLease.Stream, intent, token).ConfigureAwait(false);
+        //CSJ,variable=expectedOutput,期待値出力
         var expectedOutput = RelinkJsonUpdate.Apply(original, ApprovedRows(intent));
         if (Hash(expectedOutput) != intent.OutputSha256)
             throw new InvalidDataException("The output no longer matches its original project and approved rows.");
@@ -139,11 +179,13 @@ internal static partial class AssetRelinkRecovery
         return await AssetRevisionSeries.WithVerifiedSourceTipAsync(seriesDirectory, associatedRoot,
             intent.Parent, intent.ObservedTips, async (manifest, heldToken) =>
             {
+                //CSJ,variable=derived,派生
                 var derived = BuildDerivedManifest(intent, original, expectedOutput, manifest, media);
                 if (AssetRevisionSeries.DescribeRevision(derived).Sha256 != intent.DerivedRootSha256)
                     throw new InvalidDataException("The rederived manifest no longer matches the prepared root SHA-256.");
                 var (lease, publish) = await OpenProvenOutputAsync(path, intent.Output, intent.OperationId, intent.OutputSha256,
                     resume: true, heldToken).ConfigureAwait(false);
+                //CSJ,variable=outputLease,出力リース
                 await using var outputLease = lease;
                 var output = lease.Stream;
                 var id = GetPhysicalId(output);
@@ -158,8 +200,10 @@ internal static partial class AssetRelinkRecovery
                     // The exclusive rename handle cannot coexist with the regular
                     // read lease. Reopen the final path and prove the same physical file.
                     await outputLease.DisposeAsync().ConfigureAwait(false);
+                    //CSJ,variable=proof,確認証跡
                     var proof = new OutputReceipt(child, intent.OperationId, intent.Source, intent.SourceSha256, intent.Output,
                         intent.OutputSha256, intent.SourceIdentity, id);
+                    //CSJ,variable=receipt,照合記録
                     var receipt = new DerivedOutputReceipt(proof, derivedDirectory, intent.Root, intent.Parent);
                     await WithVerifiedProjectsAsync(proof, verifiedToken =>
                         register is null ? Task.CompletedTask : register(receipt, verifiedToken), childToken).ConfigureAwait(false);
@@ -168,24 +212,32 @@ internal static partial class AssetRelinkRecovery
             }, token).ConfigureAwait(false);
     }
 
+    //CSJ,method=BuildDerivedManifest,派生目録を構築する
     private static AssetManifest BuildDerivedManifest(ExternalIntent intent, byte[] original, byte[] output, AssetManifest sourceManifest,
+        //CSJ,parameter=media,メディア
         ExternalAssetPins media)
     {
         var expected = new StrictRelinkAssets(intent.Source, Encoding.UTF8.GetString(original), sourceManifest);
+        //CSJ,variable=changes,変更一覧
         var changes = new Dictionary<string, AssetMetadata>(StringComparer.OrdinalIgnoreCase);
         var expectedDestinations = new List<(string Path, AssetMetadata Asset)>();
         foreach (var row in intent.Approved)
         {
+            //CSJ,variable=proof,確認証跡
             var proof = intent.StrictAssets.Single(item => item.RowIndex == row.RowIndex);
+            //CSJ,variable=asset,素材
             var asset = expected.FindExpected(row.OriginalPath);
             if (asset is null || !string.Equals(asset.Sha256, row.ExpectedSha256, StringComparison.OrdinalIgnoreCase) ||
                 asset.Size != media.VerifiedSizes[row.CandidatePath] ||
                 !string.Equals(asset.ExternalRelink?.OriginalFileName ?? AssetPool.GetOriginalFileName(row.OriginalPath),
                     proof.Name, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("The original asset name or full SHA-256 no longer agrees with the selected revision.");
+            //CSJ,variable=rootIndex,ルートインデックス
             var rootIndex = Array.FindIndex(intent.ApprovedRoots, root => StrictRelinkAssets.IsDescendant(root, row.CandidatePath));
+            //CSJ,variable=location,場所
             var location = new ExternalAssetLocation($"relink-{intent.DerivedProjectId:N}-{rootIndex + 1}",
                 Path.GetRelativePath(intent.ApprovedRoots[rootIndex], row.CandidatePath));
+            //CSJ,variable=replacement,置換
             var replacement = asset with
             {
                 ExternalLocation = location,
@@ -196,19 +248,23 @@ internal static partial class AssetRelinkRecovery
             changes[asset.RelativePath] = replacement;
             expectedDestinations.Add((row.CandidatePath, replacement));
         }
+        //CSJ,variable=assets,素材一覧
         var assets = sourceManifest.Assets.Select(asset => changes.GetValueOrDefault(asset.RelativePath) ?? asset).ToArray();
+        //CSJ,variable=derived,派生
         var derived = AssetManifestStore.Create(intent.Output, assets, intent.CreatedAt, projectId: intent.DerivedProjectId) with
         {
             RevisionId = intent.OperationId,
             DerivedFrom = new AssetDerivation(intent.Root.ProjectId, intent.Root.RevisionId, intent.Root.Sha256,
                 intent.Parent.RevisionId, intent.Parent.Sha256, intent.SourceSha256),
         };
+        //CSJ,variable=resolved,解決済み
         var resolved = new StrictRelinkAssets(intent.Output, Encoding.UTF8.GetString(output), derived);
         if (expectedDestinations.Any(item => resolved.FindExpected(item.Path) != item.Asset))
             throw new InvalidDataException("The derived project would resolve an asset to an incompatible metadata entry.");
         return derived;
     }
 
+    //CSJ,method=VerifyExternalAssetsAsync,外部素材一覧を検証する（非同期）
     private static async Task VerifyExternalAssetsAsync(ExternalIntent intent, IReadOnlyList<string> approvedRoots, ExternalAssetPins media,
         CancellationToken token)
     {
@@ -216,24 +272,29 @@ internal static partial class AssetRelinkRecovery
         var roots = CanonicalizeApprovedRoots(approvedRoots);
         if (!roots.SequenceEqual(intent.ApprovedRoots, StringComparer.Ordinal))
             throw new InvalidDataException("Explicitly approve the original search locations again before using this recovery record.");
+        //CSJ,variable=root,ルート
         foreach (var root in roots)
             media.Roots.Add(OwnedFilePublication.DirectoryFence.Open(root, enforceShare: true));
+        //CSJ,variable=proof,確認証跡
         foreach (var proof in intent.StrictAssets)
         {
             var row = intent.Approved.Single(item => item.RowIndex == proof.RowIndex);
             var candidate = new AssetPoolMatch(row.CandidatePath, proof.ManifestPath, proof.ManifestSha256);
+            //CSJ,variable=asset,素材
             var asset = await AssetPool.OpenVerifiedAsync(candidate, proof.Name, row.ExpectedSha256!, token).ConfigureAwait(false);
             media.Assets.Add(asset);
             media.VerifiedSizes[row.CandidatePath] = new FileInfo(asset.CandidatePath).Length;
         }
     }
 
+    //CSJ,method=ApprovedRows,承認済み行一覧
     private static List<RelinkRow> ApprovedRows(ExternalIntent intent) => intent.Approved.Select(row => new RelinkRow
     {
         RowIndex = row.RowIndex, OriginalPath = row.OriginalPath, SelectedCandidate = row.CandidatePath, TypeHint = row.TypeHint,
         Status = RelinkStatus.Updated,
     }).ToList();
 
+    //CSJ,method=ReadVerifiedSourceAsync,検証済み元を読み取る（非同期）
     private static async Task<byte[]> ReadVerifiedSourceAsync(FileStream source, ExternalIntent intent, CancellationToken token)
     {
         if (source.Length is <= 0 or > MaxSourceBytes || GetPhysicalId(source) != intent.SourceIdentity)
@@ -245,12 +306,14 @@ internal static partial class AssetRelinkRecovery
         return original;
     }
 
+    //CSJ,method=ReadExternalIntentAsync,外部実行意図を読み取る（非同期）
     private static async Task<ExternalIntent> ReadExternalIntentAsync(FileStream stream, string evidence, string expectedSource,
         CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
         if (stream.Length is <= 0 or > MaxIntentBytes)
             throw new InvalidDataException("The external relink recovery record has an invalid size.");
+        //CSJ,variable=intent,実行意図
         var intent = await JsonSerializer.DeserializeAsync<ExternalIntent>(stream, JsonOptions, token).ConfigureAwait(false)
             ?? throw new InvalidDataException("The external relink recovery record is missing.");
         if (!string.Equals(intent.Source, Path.GetFullPath(expectedSource), StringComparison.Ordinal) ||
@@ -260,6 +323,7 @@ internal static partial class AssetRelinkRecovery
         return intent;
     }
 
+    //CSJ,method=ValidateExternalIntent,外部実行意図を検証する
     private static void ValidateExternalIntent(ExternalIntent intent, bool requireDerivedRootHash = true)
     {
         if (intent.Version != 1 || intent.OperationId == Guid.Empty || intent.DerivedProjectId == Guid.Empty ||
@@ -281,6 +345,7 @@ internal static partial class AssetRelinkRecovery
             !IsHash(row.ExpectedSha256) || row.RequiresConfirmation || !IsCanonicalOrdinaryPath(row.CandidatePath) ||
             !intent.ApprovedRoots.Any(root => StrictRelinkAssets.IsDescendant(root, row.CandidatePath))))
             throw new InvalidDataException("A relink candidate is outside the approved locations or has invalid evidence.");
+        //CSJ,variable=proof,確認証跡
         foreach (var proof in intent.StrictAssets)
         {
             var row = intent.Approved.SingleOrDefault(item => item.RowIndex == proof.RowIndex);
@@ -307,6 +372,7 @@ internal static partial class AssetRelinkRecovery
         return roots;
     }
 
+    //CSJ,method=IsCanonicalOrdinaryPath,正規通常パスかを判定する
     private static bool IsCanonicalOrdinaryPath(string? path)
     {
         if (path is null) return false;
@@ -314,6 +380,7 @@ internal static partial class AssetRelinkRecovery
         catch (ArgumentException) { return false; }
     }
 
+    //CSJ,method=ValidateExternalOutputPaths,外部出力パス一覧を検証する
     private static void ValidateExternalOutputPaths(string source, string output)
     {
         ValidatePaths(source, output);
@@ -322,6 +389,7 @@ internal static partial class AssetRelinkRecovery
             throw new InvalidDataException("External relink requires an ordinary new output beside the original project.");
     }
 
+    //CSJ,method=VerifyExternalEvidenceLocation,外部証跡場所を検証する
     private static void VerifyExternalEvidenceLocation(string evidence, string source)
     {
         if (!IsCanonicalOrdinaryPath(evidence) ||
@@ -331,14 +399,18 @@ internal static partial class AssetRelinkRecovery
             throw new InvalidDataException("Choose an external relink recovery record beside its original project.");
     }
 
+    //CSJ,method=ExternalEvidencePath,外部証跡パス
     private static string ExternalEvidencePath(string source, Guid operationId) =>
         Path.Combine(Path.GetDirectoryName(source)!, $"{ExternalEvidencePrefix}{operationId:N}.json");
 
+    //CSJ,method=DerivedSeriesPath,派生系列パス
     private static string DerivedSeriesPath(ExternalIntent intent) =>
         Path.Combine(Path.GetDirectoryName(intent.Source)!, $"{DerivedDirectoryPrefix}{intent.DerivedProjectId:N}");
 
+    //CSJ,enum=ExternalArtifact,再リンク処理の外部成果物
     private enum ExternalArtifact { Missing, Ordinary, Uncertain }
 
+    //CSJ,method=ObserveExternalRecoveryState,外部復旧状態を観測する
     private static ExternalRecoveryState ObserveExternalRecoveryState(string evidence, ExternalIntent intent)
     {
         var witness = ObserveArtifact(PublicationPath(evidence));
@@ -358,6 +430,7 @@ internal static partial class AssetRelinkRecovery
     {
         try
         {
+            //CSJ,variable=attributes,属性
             var attributes = File.GetAttributes(path);
             var expected = directory ? FileAttributes.Directory : 0;
             return (attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) == expected
@@ -368,20 +441,25 @@ internal static partial class AssetRelinkRecovery
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return ExternalArtifact.Uncertain; }
     }
 
+    //CSJ,class=ExternalAssetPins,外部素材の照合保持
     private sealed class ExternalAssetPins : IAsyncDisposable
     {
+        //CSJ,property=Assets,素材一覧
         internal List<AssetPoolVerification> Assets { get; } = [];
         internal List<OwnedFilePublication.DirectoryFence> Roots { get; } = [];
         internal Dictionary<string, long> VerifiedSizes { get; } = new(StringComparer.Ordinal);
 
+        //CSJ,method=DisposeAsync,破棄する（非同期）
         public async ValueTask DisposeAsync()
         {
             try
             {
+                //CSJ,variable=asset,素材
                 foreach (var asset in Assets) await asset.DisposeAsync().ConfigureAwait(false);
             }
             finally
             {
+                //CSJ,variable=root,ルート
                 foreach (var root in Roots) root.Dispose();
             }
         }

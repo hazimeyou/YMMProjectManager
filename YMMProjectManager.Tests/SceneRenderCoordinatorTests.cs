@@ -1,17 +1,25 @@
 using YMMProjectManager.Application.PreviewComparison;
 
+//CSJ,class=SceneRenderCoordinatorTests,シーン描画調整役テスト
 internal static class SceneRenderCoordinatorTests
 {
+    //CSJ,field=Session,セッション
     private static readonly Guid Session = Guid.NewGuid();
+    //CSJ,field=Project,プロジェクト
     private static readonly Guid Project = Guid.NewGuid();
+    //CSJ,field=Revision,版
     private static readonly Guid Revision = Guid.NewGuid();
+    //CSJ,field=Configuration,構成
     private static readonly Guid Configuration = Guid.NewGuid();
+    //CSJ,field=StateVersion,状態バージョン
     private static readonly Guid StateVersion = Guid.NewGuid();
     private static readonly SceneSnapshot A = Snapshot(24, 48);
     private static readonly SceneSnapshot B = Snapshot(30, 30);
+    //CSJ,field=Timestamp,タイムスタンプ
     private static readonly TimeSpan Timestamp = TimeSpan.FromMilliseconds(500);
     private static readonly TimeSpan Budget = TimeSpan.FromSeconds(10);
 
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync()
     {
         await CaseAsync("TL-2B serial replay, owned bytes and fresh operations", TestSequence);
@@ -39,17 +47,23 @@ internal static class SceneRenderCoordinatorTests
         SceneComparisonPlan.Prepare(Timestamp, A, B, 1, height).Plan
         ?? throw new InvalidOperationException("Expected a valid synthetic plan.");
 
+    //CSJ,method=TestSequence,順序をテストする
     private static void TestSequence()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
+        //CSJ,variable=template,テンプレート
         var template = Plan();
+        //CSJ,variable=operationIds,操作ID一覧
         var operationIds = new HashSet<Guid> { template.A.OperationId, template.B.OperationId };
         for (int i = 0; i < 2; i++)
         {
+            //CSJ,variable=host,ホスト
             var host = new Host();
             var result = coordinator.Run(template, host, Budget);
             Assert(host.Opened.Select(x => x.Snapshot).SequenceEqual(new[] { A, B, A }), "Wrong Scene order.");
             Assert(host.Opened.Select(x => x.FrameIndex).SequenceEqual(new[] { 12, 15, 12 }), "Wrong frame order.");
+            //CSJ,variable=operation,操作
             foreach (var operation in host.Opened)
             {
                 Assert(operation.OperationId != Guid.Empty && operationIds.Add(operation.OperationId) &&
@@ -72,9 +86,11 @@ internal static class SceneRenderCoordinatorTests
             (B with { ProjectRevisionId = Guid.NewGuid() }, SceneHandoffError.ProjectRevisionMismatch),
             (B with { HostSessionId = Guid.NewGuid() }, SceneHandoffError.HostSessionMismatch),
         };
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
         foreach (var (changed, error) in faults)
         {
+            //CSJ,variable=host,ホスト
             var host = new Host { EditObservation = observation => observation with { B = changed } };
             ExpectRejection(() => coordinator.Run(Plan(), host, Budget), error, PreviewComparisonSide.B);
             Assert(host.Opened.Count == 0, $"Opened a Scene despite {error} before rendering.");
@@ -89,6 +105,7 @@ internal static class SceneRenderCoordinatorTests
 
         var otherSession = new SceneRenderCoordinator(Guid.NewGuid());
         var wrongHost = new Host();
+        //CSJ,variable=exception,例外
         var exception = Expect<SceneRenderException>(() => otherSession.Run(Plan(), wrongHost, Budget));
         Assert(exception.Kind == SceneRenderFailure.HandoffRejected &&
             exception.Rejection?.Error == SceneHandoffError.HostSessionMismatch && wrongHost.Opened.Count == 0,
@@ -97,6 +114,7 @@ internal static class SceneRenderCoordinatorTests
 
     private static void TestInvalidationWithinCapture()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
         var stale = A with { SceneLifetimeId = Guid.NewGuid() };
         var duringOpen = new Host();
@@ -121,6 +139,7 @@ internal static class SceneRenderCoordinatorTests
     }
     private static void TestReceipts()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
         var faults = new (Func<SceneRenderResponse, SceneRenderResponse> Edit, SceneHandoffError Error)[]
         {
@@ -132,6 +151,7 @@ internal static class SceneRenderCoordinatorTests
         };
         foreach (var (edit, error) in faults)
         {
+            //CSJ,variable=host,ホスト
             var host = new Host { EditResponse = (response, _) => edit(response) };
             ExpectRejection(() => coordinator.Run(Plan(), host, Budget), error, PreviewComparisonSide.A);
             Assert(host.Opened.Count == 1 && host.DisposedCount == 1 && host.Events[^1] == "observe",
@@ -141,7 +161,9 @@ internal static class SceneRenderCoordinatorTests
 
     private static void TestReplayAndFormat()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
+        //CSJ,variable=host,ホスト
         var host = new Host();
         host.EditResponse = (response, _) => host.Opened.Count == 3
             ? response with { Pixels = new byte[] { 21, 0, 0, 255, 97, 98 } }
@@ -159,14 +181,19 @@ internal static class SceneRenderCoordinatorTests
 
     private static void TestCancellationAndTimeout()
     {
+        //CSJ,variable=clock,時計
         var clock = new ManualClock();
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session, clock);
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
+        //CSJ,variable=host,ホスト
         var host = new Host { EditResponse = (response, _) => { cancellation.Cancel(); return response; } };
         Expect<OperationCanceledException>(() => coordinator.Run(Plan(), host, Budget, cancellation.Token));
         Assert(host.Opened.Count == 1 && host.DisposedCount == 1 && host.Events[^1] == "observe",
             "Cancellation was ignored or skipped final observation and disposal.");
 
+        //CSJ,variable=timeout,タイムアウト
         var timeout = new Host { EditResponse = (response, _) => { clock.Advance(Budget); return response; } };
         Expect<TimeoutException>(() => coordinator.Run(Plan(), timeout, Budget));
         Assert(timeout.Opened.Count == 1 && timeout.DisposedCount == 1 && timeout.Events[^1] == "observe",
@@ -176,11 +203,15 @@ internal static class SceneRenderCoordinatorTests
 
     private static async Task TestBusyAsync()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session, new ManualClock());
+        //CSJ,variable=plan,計画
         var plan = Plan();
         var competingHost = new Host();
         using var entered = new ManualResetEventSlim();
+        //CSJ,variable=release,解放
         using var release = new ManualResetEventSlim();
+        //CSJ,variable=host,ホスト
         var host = new Host();
         host.EditResponse = (response, _) =>
         {
@@ -216,10 +247,15 @@ internal static class SceneRenderCoordinatorTests
 
     private static void TestFailures()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
+        //CSJ,variable=renderError,描画エラー
         var renderError = new InvalidOperationException("render fault");
+        //CSJ,variable=disposeError,破棄エラー
         var disposeError = new InvalidOperationException("dispose fault");
+        //CSJ,variable=observeError,観測エラー
         var observeError = new InvalidOperationException("observe fault");
+        //CSJ,variable=rendering,描画
         var rendering = new Host { EditResponse = (_, _) => throw renderError };
         Assert(ReferenceEquals(Expect<InvalidOperationException>(() => coordinator.Run(Plan(), rendering, Budget)), renderError),
             "The original render failure was lost.");
@@ -227,10 +263,12 @@ internal static class SceneRenderCoordinatorTests
             coordinator.Run(Plan(), new Host(), Budget).Metrics?.ChangedPixels == 1,
             "Render failure skipped cleanup or prevented retry after successful disposal.");
 
+        //CSJ,variable=disposal,破棄
         var disposal = new Host { OnDispose = () => throw disposeError };
         Assert(ReferenceEquals(Expect<InvalidOperationException>(() => coordinator.Run(Plan(), disposal, Budget)), disposeError),
             "A disposal failure was masked.");
         Assert(disposal.Opened.Count == 1 && disposal.Events[^1] == "observe", "Disposal failure was ignored.");
+        //CSJ,variable=retry,再試行
         var retry = new Host();
         ExpectKind(() => coordinator.Run(Plan(), retry, Budget), SceneRenderFailure.CleanupFailed);
         Assert(retry.Events.Count == 0, "A source was accessed after a cleanup failure.");
@@ -245,17 +283,23 @@ internal static class SceneRenderCoordinatorTests
         ExpectKind(() => coordinator.Run(Plan(), new Host(), Budget), SceneRenderFailure.CleanupFailed);
     }
 
+    //CSJ,method=TestState,状態をテストする
     private static void TestState()
     {
+        //CSJ,variable=coordinator,調整役
         var coordinator = new SceneRenderCoordinator(Session);
+        //CSJ,variable=invalid,無効
         foreach (Guid? invalid in new Guid?[] { null, Guid.Empty })
         {
+            //CSJ,variable=host,ホスト
             var host = new Host { EditObservation = observation => observation with { EditorStateVersion = invalid } };
             ExpectKind(() => coordinator.Run(Plan(), host, Budget), SceneRenderFailure.UnobservableState);
             Assert(host.Opened.Count == 0, "Opened a Scene without a valid editor-state observation.");
         }
 
+        //CSJ,variable=version,バージョン
         var version = Guid.NewGuid();
+        //CSJ,variable=changed,変更済み
         var changed = new Host();
         changed.EditObservation = observation => changed.DisposedCount > 0
             ? observation with { EditorStateVersion = version }
@@ -265,6 +309,7 @@ internal static class SceneRenderCoordinatorTests
             "Change in editing state entered the next leg or skipped cleanup.");
 
         var fault = new InvalidOperationException("baseline failed");
+        //CSJ,variable=failed,失敗
         var failed = new Host { EditObservation = _ => throw fault };
         ExpectOnly(() => coordinator.Run(Plan(), failed, Budget), error => ReferenceEquals(error, fault),
             "The observer fault was masked.");
@@ -273,9 +318,11 @@ internal static class SceneRenderCoordinatorTests
 
     private static void TestExperimentalConversion()
     {
+        //CSJ,variable=plan,計画
         var plan = Plan(height: 3);
         byte[] input = [90, 80, 70, 255, 4, 5, 0, 0, 64, 128, 6, 7, 0, 0, 0, 0, 8, 9];
         byte[] expected = [90, 80, 70, 255, 0, 0, 128, 128, 0, 0, 0, 0];
+        //CSJ,variable=response,応答
         var response = new SceneRenderResponse(plan.A.OperationId, A, 12, 1, 3, 6, PreviewPixelFormat.Pbgra32, input);
         var converted = SceneCapturedFrame.CopyExperimentalPbgra32(plan, PreviewComparisonSide.A, response);
         var straight = SceneCapturedFrame.Copy(plan, PreviewComparisonSide.B,
@@ -294,6 +341,7 @@ internal static class SceneRenderCoordinatorTests
         Assert(SceneCapturedFrame.CopyExperimentalPbgra32(plan, PreviewComparisonSide.A, response).Error ==
             SceneHandoffError.InvalidPremultipliedPixel, "Accepted a channel larger than alpha.");
 
+        //CSJ,variable=cancel,キャンセル
         using var cancel = new CancellationTokenSource();
         using var borrowed = new CancelOnSpanAccess(input, cancel);
         Expect<OperationCanceledException>(() => SceneCapturedFrame.CopyExperimentalPbgra32(plan, PreviewComparisonSide.A,
@@ -303,6 +351,7 @@ internal static class SceneRenderCoordinatorTests
     private static void ExpectRejection(Action operation, SceneHandoffError error, PreviewComparisonSide side)
     {
         ExpectOnly(operation,
+            //CSJ,parameter=exception,例外
             exception => exception is SceneRenderException { Kind: SceneRenderFailure.HandoffRejected } failure &&
                 failure.Rejection == new SceneHandoffRejection(error, side),
             $"Expected {error} on side {side}.");
@@ -313,6 +362,7 @@ internal static class SceneRenderCoordinatorTests
 
     private static void ExpectOnly(Action operation, Func<Exception, bool> predicate, string message)
     {
+        //CSJ,variable=exception,例外
         var exception = Expect<Exception>(operation);
         IEnumerable<Exception> errors = exception is AggregateException aggregate
             ? aggregate.Flatten().InnerExceptions
@@ -327,38 +377,50 @@ internal static class SceneRenderCoordinatorTests
         throw new InvalidOperationException($"Expected {typeof(T).Name}.");
     }
 
+    //CSJ,method=Assert,検査する
     private static void Assert(bool condition, string message)
     {
         if (!condition)
             throw new InvalidOperationException(message);
     }
 
+    //CSJ,class=ManualClock,手動時計
     private sealed class ManualClock : TimeProvider
     {
+        //CSJ,field=timestamp,タイムスタンプ
         private long timestamp;
 
         public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        //CSJ,method=GetTimestamp,タイムスタンプを取得する
         public override long GetTimestamp() => timestamp;
         public void Advance(TimeSpan amount) => timestamp += amount.Ticks;
     }
 
+    //CSJ,class=Host,ホスト
     private sealed class Host : ISceneRenderContext
     {
+        //CSJ,property=Opened,表示済み
         public List<SceneRenderRequest> Opened { get; } = [];
         public List<string> Events { get; } = [];
         public List<byte[]> Buffers { get; } = [];
+        //CSJ,property=DisposedCount,破棄済みの件数
         public int DisposedCount { get; private set; }
+        //CSJ,property=EditObservation,編集観測記録
         public Func<SceneRenderObservation, SceneRenderObservation>? EditObservation { get; set; }
+        //CSJ,property=EditResponse,編集応答
         public Func<SceneRenderResponse, CancellationToken, SceneRenderResponse>? EditResponse { get; set; }
         public Action? OnDispose { get; init; }
 
+        //CSJ,method=Observe,観測する
         public SceneRenderObservation Observe()
         {
             Events.Add("observe");
+            //CSJ,variable=observation,観測記録
             var observation = new SceneRenderObservation(A, B, StateVersion);
             return EditObservation?.Invoke(observation) ?? observation;
         }
 
+        //CSJ,method=Open,開く
         public ISceneRenderSource Open(SceneRenderRequest request)
         {
             Assert(Opened.Count == DisposedCount, "Two render sources were open at once.");
@@ -367,21 +429,27 @@ internal static class SceneRenderCoordinatorTests
             return new Source(this, request);
         }
 
+        //CSJ,class=Source,元
         private sealed class Source(Host host, SceneRenderRequest request) : ISceneRenderSource
         {
+            //CSJ,field=pixels,画素列
             private readonly byte[] pixels = [request.Snapshot == A ? (byte)20 : (byte)40, 0, 0, 255, 97, 98];
+            //CSJ,field=disposed,破棄済み
             private bool disposed;
 
+            //CSJ,method=Render,描画する
             public SceneRenderResponse Render(CancellationToken cancellationToken)
             {
                 Assert(!disposed, "Rendered using a disposed source.");
                 host.Events.Add("render");
                 host.Buffers.Add(pixels);
+                //CSJ,variable=response,応答
                 var response = new SceneRenderResponse(request.OperationId, request.Snapshot, request.FrameIndex,
                     request.Width, request.Height, 6, PreviewPixelFormat.Bgra32, pixels);
                 return host.EditResponse?.Invoke(response, cancellationToken) ?? response;
             }
 
+            //CSJ,method=Dispose,破棄する
             public void Dispose()
             {
                 Assert(!disposed, "Source was disposed twice.");

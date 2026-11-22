@@ -18,10 +18,15 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool CreateDirectoryExclusive(string path, IntPtr securityAttributes);
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
+    //CSJ,field=hashService,ハッシュサービス
     private readonly ProjectGenerationHashService hashService;
+    //CSJ,field=createId,作成ID
     private readonly Func<DateTimeOffset, string> createId;
+    //CSJ,field=storage,保管
     private readonly ProjectGenerationStorage storage;
+    //CSJ,field=manifestRepository,目録リポジトリ
     private readonly ProjectGenerationManifestRepository manifestRepository;
 
     public ProjectGenerationService(FileLogger logger, string? storageRootDirectory = null)
@@ -36,20 +41,29 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         manifestRepository = new ProjectGenerationManifestRepository(storage, logger);
     }
 
+    //CSJ,method=GetRootDirectory,ルートディレクトリを取得する
     public string GetRootDirectory() => storage.RootDirectory;
 
+    //CSJ,method=GetProjectDirectory,プロジェクトディレクトリを取得する
     public string GetProjectDirectory(string projectPath) => storage.GetProjectDirectory(hashService.ComputeProjectId(projectPath));
 
     public async Task<ProjectGenerationRecord> CreateGenerationAsync(string projectPath, string displayName, string? memo, CancellationToken cancellationToken = default)
     {
+        //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
         var createdAt = DateTimeOffset.Now;
+        //CSJ,variable=generationId,世代ID
         var generationId = createId(createdAt);
+        //CSJ,variable=generationDirectory,世代ディレクトリ
         var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
+        //CSJ,variable=generationFilePath,世代ファイルパス
         var generationFilePath = storage.GetGenerationFilePath(projectId, generationId);
 
+        //CSJ,variable=manifestLoad,目録読み込み
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
+        //CSJ,variable=manifest,目録
         var manifest = RequireManifest(manifestLoad);
         storage.EnsureProjectLayout(projectId);
         if (manifest.Generations.Count == 0)
@@ -64,7 +78,9 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         {
             if (manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("Generation ID already exists in the manifest.");
+            //CSJ,variable=fullDirectory,完全ディレクトリ
             var fullDirectory = Path.GetFullPath(generationDirectory);
+            //CSJ,variable=nativeDirectory,ネイティブディレクトリ
             var nativeDirectory = fullDirectory.StartsWith(@"\\", StringComparison.Ordinal)
                 ? @"\\?\UNC\" + fullDirectory[2..]
                 : @"\\?\" + fullDirectory;
@@ -75,6 +91,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             var copiedFileInfo = new FileInfo(generationFilePath);
             var sha256 = await Task.Run(() => hashService.ComputeFileSha256(generationFilePath), cancellationToken).ConfigureAwait(false);
 
+            //CSJ,variable=metadata,メタデータ
             var metadata = new ProjectGenerationManifestItem
             {
                 GenerationId = generationId,
@@ -129,21 +146,31 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         }
     }
 
+    //CSJ,method=GetGenerationsAsync,世代を取得する（非同期）
     public async Task<IReadOnlyList<ProjectGenerationRecord>> GetGenerationsAsync(string projectPath, CancellationToken cancellationToken = default)
     {
+        //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
+        //CSJ,variable=manifestLoad,目録読み込み
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
+        //CSJ,variable=manifest,目録
         var manifest = RequireManifest(manifestLoad);
+        //CSJ,variable=results,結果一覧
         var results = new List<ProjectGenerationRecord>();
 
         foreach (var item in manifest.Generations.OrderByDescending(x => x.CreatedAt))
         {
             try
             {
+                //CSJ,variable=generationDirectory,世代ディレクトリ
                 var generationDirectory = storage.GetGenerationDirectory(projectId, item.GenerationId);
+                //CSJ,variable=generationPath,世代パス
                 var generationPath = storage.GetGenerationFilePath(projectId, item.GenerationId);
+                //CSJ,variable=metadata,メタデータ
                 var metadata = await storage.ReadMetadataAsync(projectId, item.GenerationId, cancellationToken).ConfigureAwait(false);
+                //CSJ,variable=record,記録
                 var record = new ProjectGenerationRecord
                 {
                     GenerationId = item.GenerationId,
@@ -181,6 +208,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 }
                 else
                 {
+                    //CSJ,variable=actualSha,実測値SHA
                     var actualSha = hashService.ComputeFileSha256(generationPath);
                     if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
                     {
@@ -219,16 +247,23 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         return results;
     }
 
+    //CSJ,method=GetDiagnosticsAsync,診断情報を取得する（非同期）
     public async Task<ProjectGenerationDiagnostics> GetDiagnosticsAsync(string projectPath, CancellationToken cancellationToken = default)
     {
+        //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
+        //CSJ,variable=manifestLoad,目録読み込み
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
+        //CSJ,variable=generations,世代
         var generations = manifestLoad.Manifest is null
             ? Array.Empty<ProjectGenerationRecord>()
             : await GetGenerationsAsync(projectPath, cancellationToken).ConfigureAwait(false);
+        //CSJ,variable=latest,最新
         var latest = generations.OrderByDescending(x => x.CreatedAt).FirstOrDefault(x => x.IsValid) ?? generations.OrderByDescending(x => x.CreatedAt).FirstOrDefault();
 
+        //CSJ,variable=diagnostics,診断情報
         var diagnostics = new ProjectGenerationDiagnostics
         {
             ProjectId = projectId,
@@ -250,12 +285,16 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     public async Task<(bool Success, string? ErrorMessage, ProjectGenerationRecord? Generation)> RestoreGenerationAsync(string projectPath, string generationId, GenerationRestoreMode restoreMode, CancellationToken cancellationToken = default)
     {
         if (!ProjectGenerationStorage.IsValidGenerationId(generationId)) return (false, "世代 ID が不正です。", null);
+        //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
+        //CSJ,variable=generationPath,世代パス
         var generationPath = storage.GetGenerationFilePath(projectId, generationId);
 
         logger.Info($"GenerationRestoreStarted projectPath={normalizedProjectPath}, generationId={generationId}, mode={restoreMode}");
 
+        //CSJ,variable=tempPath,一時パス
         string? tempPath = null;
         try
         {
@@ -266,6 +305,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 return (false, "世代ファイルが見つかりません。", null);
             }
 
+            //CSJ,variable=metadata,メタデータ
             var metadata = await storage.ReadMetadataAsync(projectId, generationId, cancellationToken).ConfigureAwait(false);
             if (metadata is null)
             {
@@ -273,6 +313,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 return (false, "metadata.json が見つかりません。", null);
             }
 
+            //CSJ,variable=actualSha,実測値SHA
             var actualSha = hashService.ComputeFileSha256(generationPath);
             if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
             {
@@ -282,7 +323,9 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
             if (restoreMode == GenerationRestoreMode.RestoreAsNewFile)
             {
+                //CSJ,variable=restoredPath,復元済みのパス
                 var restoredPath = CreateRestoreAsNewFilePath(normalizedProjectPath, generationId);
+                //CSJ,variable=tempDirectory,一時ディレクトリ
                 var tempDirectory = Path.GetDirectoryName(restoredPath) ?? AppContext.BaseDirectory;
                 tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, tempDirectory, cancellationToken).ConfigureAwait(false);
                 cancellationToken.ThrowIfCancellationRequested();
@@ -296,7 +339,9 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 TryOpenExclusive(normalizedProjectPath);
             }
 
+            //CSJ,variable=backupPath,バックアップ先のパス
             var backupPath = storage.ResolveRestoreBackupPath(projectId, normalizedProjectPath);
+            //CSJ,variable=targetDirectory,対象ディレクトリ
             var targetDirectory = Path.GetDirectoryName(normalizedProjectPath) ?? AppContext.BaseDirectory;
             tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, targetDirectory, cancellationToken).ConfigureAwait(false);
             await storage.ReplaceFileAtomicallyAsync(tempPath, normalizedProjectPath, backupPath, cancellationToken).ConfigureAwait(false);
@@ -327,12 +372,17 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         }
     }
 
+    //CSJ,method=DeleteGenerationAsync,世代を削除する（非同期）
     public async Task<(bool Success, string? ErrorMessage)> DeleteGenerationAsync(string projectPath, string generationId, CancellationToken cancellationToken = default)
     {
         if (!ProjectGenerationStorage.IsValidGenerationId(generationId)) return (false, "世代 ID が不正です。");
+        //CSJ,variable=normalizedProjectPath,正規化済みプロジェクトのパス
         var normalizedProjectPath = NormalizeProjectPath(projectPath);
+        //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
+        //CSJ,variable=generationDirectory,世代ディレクトリ
         var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
+        //CSJ,variable=deletedDirectory,削除済みのディレクトリ
         var deletedDirectory = storage.GetDeletedGenerationDirectory(projectId, generationId);
 
         logger.Info($"GenerationDeleteStarted projectPath={normalizedProjectPath}, generationId={generationId}");
@@ -340,7 +390,9 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
         try
         {
+            //CSJ,variable=manifestLoad,目録読み込み
             var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
+            //CSJ,variable=manifest,目録
             var manifest = RequireManifest(manifestLoad);
             if (!manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
                 return (false, "世代 manifest に対象がありません。");
@@ -384,12 +436,14 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         }
     }
 
+    //CSJ,method=RequireManifest,要求目録
     private static ProjectGenerationManifest RequireManifest(ProjectGenerationManifestLoadResult result)
     {
         return result.Manifest ?? throw new InvalidDataException(
             $"世代 manifest を読み込めません。既存データを保護するため処理を中止しました。状態: {result.Status}");
     }
 
+    //CSJ,method=BuildGenerationRecord,世代記録を構築する
     private static ProjectGenerationRecord BuildGenerationRecord(ProjectGenerationManifestItem metadata, string generationDirectory)
     {
         return new ProjectGenerationRecord
@@ -407,6 +461,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         };
     }
 
+    //CSJ,method=NormalizeProjectPath,プロジェクトのパスを正規化する
     private static string NormalizeProjectPath(string projectPath)
     {
         return Path.GetFullPath(projectPath);
@@ -414,6 +469,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
     private static string GetCreatedByVersion()
     {
+        //CSJ,variable=version,バージョン
         var version = typeof(ProjectGenerationService).Assembly.GetName().Version;
         return version?.ToString() ?? "0.0.0";
     }
@@ -425,34 +481,44 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
     private static string CreateRestoreAsNewFilePath(string projectPath, string generationId)
     {
+        //CSJ,variable=directory,ディレクトリ
         var directory = Path.GetDirectoryName(projectPath) ?? AppContext.BaseDirectory;
+        //CSJ,variable=fileName,ファイル名
         var fileName = Path.GetFileNameWithoutExtension(projectPath);
+        //CSJ,variable=extension,拡張子
         var extension = Path.GetExtension(projectPath);
         return Path.Combine(directory, $"{fileName}_{generationId}{extension}");
     }
 
     private static void TryOpenExclusive(string path)
     {
+        //CSJ,variable=stream,ストリーム
         using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
     }
 
     private static async Task<string> CreateValidatedRestoreTempAsync(string sourcePath, string expectedSha256, string targetDirectory, CancellationToken cancellationToken)
     {
         Directory.CreateDirectory(targetDirectory);
+        //CSJ,variable=tempPath,一時パス
         var tempPath = Path.Combine(targetDirectory, $"{Guid.NewGuid():N}.restore.tmp");
+        //CSJ,variable=owned,管理対象の
         var owned = false;
         try
         {
             await using (var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            //CSJ,variable=destination,格納先
             await using (var destination = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
             {
                 owned = true;
                 await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
             }
 
+            //CSJ,variable=tempSha,一時SHA
             var tempSha = await Task.Run(() =>
             {
+                //CSJ,variable=stream,ストリーム
                 using var stream = File.OpenRead(tempPath);
+                //CSJ,variable=bytes,バイト列
                 var bytes = SHA256.HashData(stream);
                 return Convert.ToHexString(bytes).ToLowerInvariant();
             }, cancellationToken).ConfigureAwait(false);

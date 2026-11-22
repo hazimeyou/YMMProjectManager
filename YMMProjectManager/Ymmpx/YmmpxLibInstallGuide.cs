@@ -5,11 +5,14 @@ using System.Text;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=YmmpxLibInstallGuide,YMMPXライブラリ導入ガイド
 public sealed class YmmpxLibInstallGuide
 {
+    //CSJ,field=YmmpxLibPluginLatestDownloadUrl,YMMPXライブラリプラグイン最新ダウンロードURL
     public const string YmmpxLibPluginLatestDownloadUrl =
         "https://github.com/hazimeyou/YmmpxLib/releases/latest/download/YmmpxLibPlugin.ymme";
 
+    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
     private readonly Action<ProcessStartInfo>? launcher;
     private readonly Func<string, Stream, CancellationToken, Task>? downloader;
@@ -17,6 +20,7 @@ public sealed class YmmpxLibInstallGuide
     public YmmpxLibInstallGuide(FileLogger logger) : this(logger, null, null) { }
 
     internal YmmpxLibInstallGuide(
+        //CSJ,parameter=logger,ロガー
         FileLogger logger,
         Action<ProcessStartInfo>? launcher,
         Func<string, Stream, CancellationToken, Task>? downloader)
@@ -26,13 +30,16 @@ public sealed class YmmpxLibInstallGuide
         this.downloader = downloader;
     }
 
+    //CSJ,method=GetPassiveStatusMessage,状態表示用のメッセージを取得する
     public string GetPassiveStatusMessage()
     {
         return "YmmpxLibPlugin が未導入です。.ymmpx の同梱には導入が必要です。";
     }
 
+    //CSJ,method=BuildMissingPluginMessage,欠落プラグインメッセージを構築する
     public string BuildMissingPluginMessage(IReadOnlyList<string> searchedPaths, IReadOnlyList<string> legacyPaths)
     {
+        //CSJ,variable=builder,ビルダー
         var builder = new StringBuilder();
         builder.AppendLine("YmmpxLibPlugin が見つかりません。");
         builder.AppendLine();
@@ -55,6 +62,7 @@ public sealed class YmmpxLibInstallGuide
             builder.AppendLine();
             builder.AppendLine("古い YmmpxLib フォルダーが残っている可能性があります。");
             builder.AppendLine("削除後、YMM4 を再起動してください。");
+            //CSJ,variable=legacyPath,旧形式パス
             foreach (var legacyPath in legacyPaths)
             {
                 builder.AppendLine($"- {legacyPath}");
@@ -65,6 +73,7 @@ public sealed class YmmpxLibInstallGuide
         {
             builder.AppendLine();
             builder.AppendLine("探索パス:");
+            //CSJ,variable=path,パス
             foreach (var path in searchedPaths)
             {
                 builder.AppendLine($"- {path}");
@@ -76,14 +85,17 @@ public sealed class YmmpxLibInstallGuide
         return builder.ToString();
     }
 
+    //CSJ,method=FindLegacyFolders,旧形式フォルダー一覧を探す
     public IReadOnlyList<string> FindLegacyFolders(string? baseDirectory = null)
     {
+        //CSJ,variable=resolvedBaseDirectory,解決済み基点ディレクトリ
         var resolvedBaseDirectory = ResolveBaseDirectory(baseDirectory);
         if (string.IsNullOrWhiteSpace(resolvedBaseDirectory))
         {
             return [];
         }
 
+        //CSJ,variable=results,結果一覧
         var results = new List<string>();
         foreach (var ancestor in EnumerateAncestors(resolvedBaseDirectory))
         {
@@ -96,13 +108,17 @@ public sealed class YmmpxLibInstallGuide
             .ToArray();
     }
 
+    //CSJ,method=DownloadAndLaunchInstallerAsync,インストーラーを取得して起動する（非同期）
     public async Task<YmmpxLibInstallResult> DownloadAndLaunchInstallerAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        //CSJ,variable=downloadPath,ダウンロードパス
         string? downloadPath = null;
+        //CSJ,variable=published,公開済み
         var published = false;
         try
         {
+            //CSJ,variable=fence,整合性境界
             using var fence = YmmpxPackageReader.ReserveInstallerDirectory(Path.GetTempPath(), out var directory);
             downloadPath = Path.Combine(directory, $"YmmpxLibPlugin-{Guid.NewGuid():N}.ymme");
             logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
@@ -129,6 +145,7 @@ public sealed class YmmpxLibInstallGuide
             }
 
             cancellationToken.ThrowIfCancellationRequested();
+            //CSJ,variable=startInfo,開始情報
             var startInfo = new ProcessStartInfo
             {
                 FileName = downloadPath,
@@ -170,16 +187,22 @@ public sealed class YmmpxLibInstallGuide
         }
     }
 
+    //CSJ,method=GetInstallerDownloadPath,インストーラーダウンロードパスを取得する
     public string GetInstallerDownloadPath()
     {
+        //CSJ,variable=baseDirectory,基点ディレクトリ
         var baseDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "YmmpxLibPlugin");
+        //CSJ,variable=fileName,ファイル名
         var fileName = "YmmpxLibPlugin.ymme";
         return Path.Combine(baseDirectory, fileName);
     }
 
+    //CSJ,method=DownloadFileAsync,ファイルをダウンロードする（非同期）
     private static async Task DownloadFileAsync(string url, Stream output, CancellationToken cancellationToken)
     {
+        //CSJ,variable=client,クライアント
         using var client = new HttpClient();
+        //CSJ,variable=response,応答
         using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
 
@@ -211,6 +234,7 @@ public sealed class YmmpxLibInstallGuide
         }
     }
 
+    //CSJ,method=ResolveBaseDirectory,基点ディレクトリを解決する
     private static string? ResolveBaseDirectory(string? baseDirectory)
     {
         var candidate = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory;
@@ -230,11 +254,15 @@ public sealed class YmmpxLibInstallGuide
     }
 }
 
+//CSJ,class=YmmpxLibInstallResult,YMMPXライブラリ導入結果
 public sealed class YmmpxLibInstallResult
 {
+    //CSJ,property=Success,成功
     public bool Success { get; init; }
 
+    //CSJ,property=DownloadPath,ダウンロードパス
     public string? DownloadPath { get; init; }
 
+    //CSJ,property=ErrorMessage,エラーメッセージ
     public string? ErrorMessage { get; init; }
 }

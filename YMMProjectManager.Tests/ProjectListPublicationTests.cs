@@ -7,10 +7,13 @@ using YMMProjectManager.Application;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 
+//CSJ,class=ProjectListPublicationTests,プロジェクト一覧確定反映テスト
 internal static class ProjectListPublicationTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     internal static async Task RunAsync(string workRoot)
     {
+        //CSJ,variable=point,地点
         foreach (var point in new[]
         {
             "before-receipt", "during-receipt", "after-receipt", "after-claim", "before-candidate", "write", "flushed", "sealed-receipt", "published",
@@ -18,6 +21,7 @@ internal static class ProjectListPublicationTests
             "missing-descendant", "corrupt-descendant", "duplicate-descendant", "missing-receipt", "corrupt-receipt", "corrupt-claim", "legacy-claim",
         })
             await Program.RunNamedCaseAsync($"List publication: {point}", () => RunPointAsync(workRoot, point));
+        //CSJ,variable=point,地点
         foreach (var point in new[] { "before-generation", "after-generation", "ambiguous-generation", "missing-intermediate-generation" })
             await Program.RunNamedCaseAsync($"List draft generation: {point}", () => RunGenerationPointAsync(workRoot, point));
         await Program.RunNamedCaseAsync("Publication receipt keeps exclusive ownership through rename",
@@ -34,11 +38,14 @@ internal static class ProjectListPublicationTests
             () => TestRetirementDuringPublicationAsync(workRoot));
         await Program.RunNamedCaseAsync("List publication holds an in-place write lease through replacement",
             () => TestListLeaseDuringPublicationAsync(workRoot));
+        //CSJ,variable=point,地点
         foreach (var point in new[] { "before-park", "parked", "before-cleanup" })
             await Program.RunNamedCaseAsync($"Interrupted list replacement: {point}", () => TestInterruptedReplacementAsync(workRoot, point));
+        //CSJ,variable=point,地点
         foreach (var point in new[] { "external-before-park", "external-after-park", "external-before-park-crash",
             "external-after-park-crash", "external-identical-before-park" })
             await Program.RunNamedCaseAsync($"Independent list replacement: {point}", () => TestExternalReplacementAsync(workRoot, point));
+        //CSJ,variable=change,変更
         foreach (var change in new[] { "changed-content", "equal-content-replacement", "legacy-started-receipt" })
             await Program.RunNamedCaseAsync($"Draft recovery rejects an unproven candidate: {change}",
                 () => TestChangedCandidateAsync(workRoot, change));
@@ -48,16 +55,20 @@ internal static class ProjectListPublicationTests
             () => TestCancelParkedListAsync(workRoot));
         await Program.RunNamedCaseAsync("Replacing an ordinary list preserves its creation time",
             () => TestListCreationTimeAsync(workRoot));
+        //CSJ,variable=option,オプション
         foreach (var option in new[] { "protected-acl", "integrity-label", "hidden", "named-stream" })
             await Program.RunNamedCaseAsync($"List file metadata is preserved by refusal: {option}", () => TestCustomListMetadataAsync(workRoot, option));
     }
 
+    //CSJ,method=TestInterruptedReplacementAsync,中断済み置換をテストする（非同期）
     private static async Task TestInterruptedReplacementAsync(string workRoot, string point)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-replacement-crash", point);
         var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
         await RunReplacementChildAsync(root, point, 86);
         Require(repository.HasInterruptedPublication, "Interruption lost its durable journal.");
+        //CSJ,variable=evidence,証跡
         var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
         var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
         var wanted = point switch
@@ -77,6 +88,7 @@ internal static class ProjectListPublicationTests
         await repository.RecoverInterruptedPublicationAsync(evidence);
         Require(!repository.HasInterruptedPublication, "Resolved replacement still blocks publication.");
         var committed = wanted == ProjectListReplacement.RecoveryState.Published;
+        //CSJ,variable=outcome,処理結果
         var outcome = await repository.ReconcileDraftAsync(claim);
         Require(outcome == (committed ? ProjectListPublications.Outcome.Committed : ProjectListPublications.Outcome.Unpublished),
             "Draft receipt did not reconcile the replacement outcome.");
@@ -89,17 +101,21 @@ internal static class ProjectListPublicationTests
         {
             Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)), "The exact baseline did not survive recovery.");
             var ready = repository.GetReadyDraftPath(claim);
+            //CSJ,variable=local,ローカル
             var local = (await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(ready)).Local;
             await repository.SaveReadyDraftAsync(local, ready);
             Require((await repository.LoadAsync()).Projects.Single().DisplayName == "after", "The released draft could not be reapplied.");
         }
     }
 
+    //CSJ,method=TestExternalReplacementAsync,外部置換をテストする（非同期）
     private static async Task TestExternalReplacementAsync(string workRoot, string point)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-external-replacement", point);
         var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
         var identical = point == "external-identical-before-park";
+        //CSJ,variable=externalBytes,外部バイト列
         var externalBytes = identical ? originalBytes :
             System.Text.Encoding.UTF8.GetBytes("""{"Projects":[],"Folders":[],"UnrecognizedExternalField":{"keep":42}}""");
         await File.WriteAllBytesAsync(Path.Combine(root, "synthetic-foreign.json"), externalBytes);
@@ -110,9 +126,11 @@ internal static class ProjectListPublicationTests
         }
         else
         {
+            //CSJ,variable=local,ローカル
             var local = await repository.LoadAsync();
             local.Projects.Single().DisplayName = "local";
             var ready = await repository.WritePendingDraftAsync(original, local, [], null);
+            //CSJ,variable=externalWrite,外部書き込み
             Action externalWrite = () => RunReplacementChildAsync(root,
                 replacedBeforeParking ? "external-before-park" : "external-after-park", 0).GetAwaiter().GetResult();
             var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "publisher.log")), path,
@@ -126,6 +144,7 @@ internal static class ProjectListPublicationTests
             catch (ProjectListConflictException) { }
         }
 
+        //CSJ,variable=evidence,証跡
         var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing collision evidence.");
         var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
         await ExpectRejectedAsync(() => repository.ReconcileDraftAsync(claim));
@@ -154,6 +173,7 @@ internal static class ProjectListPublicationTests
                 "The original parked bytes were lost.");
             await File.WriteAllBytesAsync(path, originalBytes);
             await ExpectRejectedAsync(() => repository.RecoverInterruptedPublicationAsync(evidence));
+            //CSJ,variable=latest,最新
             var latest = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Collision evidence was not retained.");
             await repository.RecoverInterruptedPublicationAsync(latest);
             Require(Enumerable.SequenceEqual(await File.ReadAllBytesAsync(path), originalBytes) &&
@@ -164,23 +184,31 @@ internal static class ProjectListPublicationTests
             "The competing version allowed stale draft replay.");
     }
 
+    //CSJ,method=TestChangedCandidateAsync,変更済み候補をテストする（非同期）
     private static async Task TestChangedCandidateAsync(string workRoot, string change)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-candidate-evidence", change);
         var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
         await RunReplacementChildAsync(root, "before-park", 86);
+        //CSJ,variable=evidence,証跡
         var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
         await repository.RecoverInterruptedPublicationAsync(evidence);
         var claim = Directory.GetFiles(repository.RecoveryDirectory, "*.saving").Single();
 
+        //CSJ,variable=originalCandidate,元の候補
         var originalCandidate = await File.ReadAllBytesAsync(evidence.CandidatePath);
         if (change == "legacy-started-receipt")
         {
+            //CSJ,variable=drafts,下書き一覧
             var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
             var (id, operation) = drafts.GetClaimedIdentity(claim);
+            //CSJ,variable=legacy,旧形式
             var legacy = new ProjectListPublications.Receipt(2, operation!.Value, id,
                 evidence.Proof.Original.Sha256, evidence.Proof.Result.Sha256, PublicationStarted: true);
+            //CSJ,variable=canonical,正規
             var canonical = Path.Combine(repository.RecoveryDirectory, $"{id:N}-{operation:N}.publication.json");
+            //CSJ,variable=payload,本体データ
             var payload = JsonSerializer.SerializeToUtf8Bytes(legacy);
             File.Move(canonical, canonical + ".fixture-v3", overwrite: false);
             await File.WriteAllBytesAsync(canonical, JsonSerializer.SerializeToUtf8Bytes(new
@@ -200,6 +228,7 @@ internal static class ProjectListPublicationTests
         }
 
         var observedCandidate = await File.ReadAllBytesAsync(evidence.CandidatePath);
+        //CSJ,variable=attempt,試行
         for (var attempt = 0; attempt < 2; attempt++)
             Require(await repository.ReconcileDraftAsync(claim) == ProjectListPublications.Outcome.Unknown && File.Exists(claim),
                 "A substituted or changed candidate incorrectly released an ambiguous draft.");
@@ -210,9 +239,11 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestCorruptReplacementJournalAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-replacement-crash", "corrupt-journal");
         var (repository, path, _, originalBytes) = await ReplacementFixtureAsync(root);
         await RunReplacementChildAsync(root, "parked", 86);
+        //CSJ,variable=evidence,証跡
         var evidence = await repository.InspectInterruptedPublicationAsync() ?? throw new Exception("Missing recovery evidence.");
         await File.WriteAllTextAsync(evidence.JournalPath, """{"Payload":"b3BhcXVl","Sha256":"unknown"}""");
         await ExpectRejectedAsync(() => repository.InspectInterruptedPublicationAsync());
@@ -225,11 +256,14 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestCancelParkedListAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-replacement-cancellation");
         var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        //CSJ,variable=local,ローカル
         var local = await repository.LoadAsync();
         local.Projects.Single().DisplayName = "not published";
         var ready = await repository.WritePendingDraftAsync(original, local, [], null);
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
         var publisher = new JsonProjectRepository(new FileLogger(Path.Combine(root, "cancel.log")), path,
             afterParking: cancellation.Cancel);
@@ -248,6 +282,7 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestListCreationTimeAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-replacement-creation-time");
         var (repository, path, pending, _) = await ReplacementFixtureAsync(root);
         var creation = new DateTime(2006, 2, 4, 13, 22, 33, DateTimeKind.Utc);
@@ -259,18 +294,25 @@ internal static class ProjectListPublicationTests
             "Replacement did not preserve the verified original creation time.");
     }
 
+    //CSJ,method=TestCustomListMetadataAsync,独自一覧メタデータをテストする（非同期）
     private static async Task TestCustomListMetadataAsync(string workRoot, string mode)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-replacement-metadata", mode);
         var (repository, path, pending, originalBytes) = await ReplacementFixtureAsync(root);
+        //CSJ,variable=info,情報
         var info = new FileInfo(path);
+        //CSJ,variable=originalSecurity,元のセキュリティ
         var originalSecurity = info.GetAccessControl();
+        //CSJ,variable=originalAttributes,元の属性
         var originalAttributes = File.GetAttributes(path);
+        //CSJ,variable=streamContent,ストリーム内容
         const string streamContent = "synthetic content outside the primary list stream";
         const AccessControlSections sections = AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group;
         switch (mode)
         {
             case "protected-acl":
+                //CSJ,variable=custom,独自
                 var custom = info.GetAccessControl();
                 custom.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
                 info.SetAccessControl(custom);
@@ -281,6 +323,7 @@ internal static class ProjectListPublicationTests
                 foreach (var arg in new[] { path, "/setintegritylevel", "Low" }) start.ArgumentList.Add(arg);
                 using (var child = Process.Start(start) ?? throw new Exception("Integrity-label fixture could not start."))
                 {
+                    //CSJ,variable=timeout,タイムアウト
                     using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
                     try { await child.WaitForExitAsync(timeout.Token); }
                     finally { if (!child.HasExited) child.Kill(entireProcessTree: true); }
@@ -296,7 +339,9 @@ internal static class ProjectListPublicationTests
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode));
         }
+        //CSJ,variable=expectedAttributes,期待値属性
         var expectedAttributes = File.GetAttributes(path);
+        //CSJ,variable=expectedSecurity,期待値セキュリティ
         var expectedSecurity = info.GetAccessControl().GetSecurityDescriptorSddlForm(sections);
         try
         {
@@ -324,14 +369,18 @@ internal static class ProjectListPublicationTests
     private static async Task<(JsonProjectRepository Repository, string Path, ProjectStore Store, byte[] Bytes)> ReplacementFixtureAsync(string root)
     {
         Directory.CreateDirectory(root);
+        //CSJ,variable=path,パス
         var path = Path.Combine(root, "projects.json");
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
+        //CSJ,variable=baseline,基準
         var baseline = await repository.LoadAsync();
         baseline.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "before" });
         await repository.SaveAsync(baseline);
         return (repository, path, baseline, await File.ReadAllBytesAsync(path));
     }
 
+    //CSJ,method=RunReplacementChildAsync,置換子を実行する（非同期）
     private static async Task RunReplacementChildAsync(string root, string point, int exitCode)
     {
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
@@ -341,6 +390,7 @@ internal static class ProjectListPublicationTests
         using var child = Process.Start(start) ?? throw new Exception("Replacement fixture could not start.");
         try
         {
+            //CSJ,variable=timeout,タイムアウト
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             await child.WaitForExitAsync(timeout.Token);
         }
@@ -350,10 +400,14 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestListLeaseDuringPublicationAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-in-place-lease");
         Directory.CreateDirectory(root);
+        //CSJ,variable=path,パス
         var path = Path.Combine(root, "projects.json");
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
+        //CSJ,variable=store,保管先
         var store = await repository.LoadAsync();
         store.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "original" });
         await repository.SaveAsync(store);
@@ -371,18 +425,24 @@ internal static class ProjectListPublicationTests
             "An in-place writer reached the checked list, or the lease prevented its legitimate replacement.");
     }
 
+    //CSJ,method=TestReceiptStagingOwnershipAsync,照合記録準備領域所有権をテストする（非同期）
     private static async Task TestReceiptStagingOwnershipAsync(string workRoot)
     {
+        //CSJ,variable=directory,ディレクトリ
         var directory = Path.Combine(workRoot, "list-receipt-stage");
+        //CSJ,variable=operation,操作
         var operation = Guid.NewGuid();
+        //CSJ,variable=receipt,照合記録
         var receipt = new ProjectListPublications.Receipt(3, operation, Guid.NewGuid(), new string('1', 64), new string('2', 64), false);
         var publications = new ProjectListPublications(directory);
         var sharingDenied = false;
         await publications.WriteAsync(receipt, default, beforePublication: () =>
         {
+            //CSJ,variable=stage,作業段階
             var stage = Directory.GetFiles(directory, "*.tmp").Single();
             try
             {
+                //CSJ,variable=writer,書き込み処理
                 using var writer = new FileStream(stage, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
             }
             catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { sharingDenied = true; }
@@ -395,13 +455,18 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestReceiptTargetOccupiedAsync(string workRoot)
     {
+        //CSJ,variable=directory,ディレクトリ
         var directory = Path.Combine(workRoot, "list-receipt-occupied");
+        //CSJ,variable=operation,操作
         var operation = Guid.NewGuid();
+        //CSJ,variable=draft,下書き
         var draft = Guid.NewGuid();
+        //CSJ,variable=receipt,照合記録
         var receipt = new ProjectListPublications.Receipt(3, operation, draft, new string('1', 64), new string('2', 64), false);
         var publications = new ProjectListPublications(directory);
         await publications.WriteAsync(receipt, default);
         var ready = Path.Combine(directory, $"{draft:N}-{operation:N}.publication.json");
+        //CSJ,variable=collision,衝突
         const string collision = "Other synthetic file at the intended receipt name";
         await File.WriteAllTextAsync(ready, collision);
         try
@@ -420,18 +485,23 @@ internal static class ProjectListPublicationTests
             Directory.GetFiles(directory, "*.tmp").Length == 0, "Failed receipt publication discarded its evidence or left an owned temp.");
     }
 
+    //CSJ,method=TestDraftStagingOwnershipAsync,下書き準備領域所有権をテストする（非同期）
     private static async Task TestDraftStagingOwnershipAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-draft-staging-ownership");
         var (repository, path, original, originalBytes) = await ReplacementFixtureAsync(root);
+        //CSJ,variable=local,ローカル
         var local = await repository.LoadAsync();
         local.Projects.Single().DisplayName = "pending";
         var sharingDenied = false;
         var ready = await repository.WritePendingDraftAsync(original, local, [], predecessor: null, beforePublication: () =>
         {
+            //CSJ,variable=stage,作業段階
             var stage = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json.tmp").Single();
             try
             {
+                //CSJ,variable=writer,書き込み処理
                 using var writer = new FileStream(stage, FileMode.Open, FileAccess.Write, FileShare.ReadWrite);
             }
             catch (IOException ex) when ((ex.HResult & 0xffff) == 32) { sharingDenied = true; }
@@ -442,14 +512,19 @@ internal static class ProjectListPublicationTests
         Require(Enumerable.SequenceEqual(originalBytes, await File.ReadAllBytesAsync(path)), "Draft publication changed the active list.");
     }
 
+    //CSJ,method=TestDraftPublicationCancellationAsync,下書き確定反映キャンセルをテストする（非同期）
     private static async Task TestDraftPublicationCancellationAsync(string workRoot, bool afterPublication)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, $"list-draft-cancel-{afterPublication}");
         var (repository, path, baseline, originalBytes) = await ReplacementFixtureAsync(root);
+        //CSJ,variable=local,ローカル
         var local = await repository.LoadAsync();
         local.Projects.Single().DisplayName = "previous draft";
+        //CSJ,variable=previous,直前の
         var previous = await repository.WritePendingDraftAsync(baseline, local, [], predecessor: null);
         local.Projects.Single().DisplayName = "next draft";
+        //CSJ,variable=cancellation,キャンセル
         using var cancellation = new CancellationTokenSource();
         string current;
         try
@@ -475,17 +550,23 @@ internal static class ProjectListPublicationTests
 
     private static async Task TestRetirementDuringPublicationAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-retirement-lock");
         Directory.CreateDirectory(root);
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
+        //CSJ,variable=baseline,基準
         var baseline = await repository.LoadAsync();
+        //CSJ,variable=local,ローカル
         var local = await repository.LoadAsync();
         local.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp") });
+        //CSJ,variable=previous,直前の
         var previous = await repository.WritePendingDraftAsync(baseline, local, [], null);
 
         async Task<T> PublishWithConcurrentRetirementAsync<T>(string ready, Func<Action, Task<T>> publish)
         {
             var acquired = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            //CSJ,variable=resume,再開
             using var resume = new ManualResetEventSlim();
             var running = Task.Run(() => publish(() =>
             {
@@ -522,17 +603,22 @@ internal static class ProjectListPublicationTests
             (await repository.LoadAsync()).Projects.Count == 1, "Contention changed the successful publication outcome.");
     }
 
+    //CSJ,method=RunGenerationPointAsync,世代地点を実行する（非同期）
     private static async Task RunGenerationPointAsync(string workRoot, string point)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-generation", point);
         Directory.CreateDirectory(root);
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
+        //CSJ,variable=baseline,基準
         var baseline = await repository.LoadAsync();
         baseline.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "base" });
         await repository.SaveAsync(baseline);
         var original = await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"));
         var older = await repository.LoadAsync();
         older.Projects.Single().DisplayName = "older";
+        //CSJ,variable=previous,直前の
         var previous = await repository.WritePendingDraftAsync(baseline, older, [], null);
         var priorBytes = await File.ReadAllBytesAsync(previous);
 
@@ -543,6 +629,7 @@ internal static class ProjectListPublicationTests
         using var child = Process.Start(start) ?? throw new Exception("Generation interruption fixture could not start.");
         try
         {
+            //CSJ,variable=timeout,タイムアウト
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             await child.WaitForExitAsync(timeout.Token);
         }
@@ -551,6 +638,7 @@ internal static class ProjectListPublicationTests
         Require(Enumerable.SequenceEqual(priorBytes, await File.ReadAllBytesAsync(previous)), "The predecessor changed during generation transition.");
         Require(Enumerable.SequenceEqual(original, await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"))), "A draft transition wrote the list.");
 
+        //CSJ,variable=drafts,下書き一覧
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
         var (review, superseded) = await drafts.ReadForReviewAsync(previous);
         Require(review.Local.Projects.Single().DisplayName == "older", "The old draft cannot be exported.");
@@ -592,6 +680,7 @@ internal static class ProjectListPublicationTests
             var detached = Path.Combine(root, "synthetic-detached-generation");
             File.Move(successor, detached);
             await ExpectRejectedAsync(() => repository.SaveReadyDraftAsync(review.Local, previous));
+            //CSJ,variable=latest,最新
             var latest = await drafts.ReadAsync(last);
             await repository.SaveReadyDraftAsync(latest.Local, last);
             Require(File.Exists(detached) && File.Exists(last + ".closed") &&
@@ -616,14 +705,18 @@ internal static class ProjectListPublicationTests
         catch (InvalidDataException) { }
     }
 
+    //CSJ,method=RunPointAsync,地点を実行する（非同期）
     private static async Task RunPointAsync(string workRoot, string point)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "list-publication", point);
         Directory.CreateDirectory(root);
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
         var original = await repository.LoadAsync();
         original.Projects.Add(new ProjectEntry { ProjectId = Guid.NewGuid(), FullPath = Path.Combine(root, "source.ymmp"), DisplayName = "before" });
         await repository.SaveAsync(original);
+        //CSJ,variable=originalBytes,元のバイト列
         var originalBytes = await File.ReadAllBytesAsync(Path.Combine(root, "projects.json"));
         var start = new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, CreateNoWindow = true };
         start.ArgumentList.Add("--list-publication-crash");
@@ -632,6 +725,7 @@ internal static class ProjectListPublicationTests
         using var child = Process.Start(start) ?? throw new Exception("Crash fixture could not start.");
         try
         {
+            //CSJ,variable=timeout,タイムアウト
             using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
             await child.WaitForExitAsync(timeout.Token);
         }
@@ -642,6 +736,7 @@ internal static class ProjectListPublicationTests
         {
             Require(!Directory.EnumerateFiles(repository.RecoveryDirectory, "*.saving").Any(), "Claim was made before receipt became durable.");
             var ready = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.draft.json").Single();
+            //CSJ,variable=retry,再試行
             var retry = await new ProjectListDrafts(repository.RecoveryDirectory).ReadAsync(ready);
             Require((await repository.LoadAsync()).Revision == original.Revision, "Unclaimed draft changed the list.");
             await repository.SaveReadyDraftAsync(retry.Local, ready);
@@ -651,8 +746,10 @@ internal static class ProjectListPublicationTests
         }
 
         var claim = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.saving").Single();
+        //CSJ,variable=drafts,下書き一覧
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
         var (draftId, operation) = drafts.GetClaimedIdentity(claim);
+        //CSJ,variable=draft,下書き
         var draft = await drafts.ReadAsync(claim, claimed: true);
         Require((point == "legacy-claim") == (operation is null), "The new claim did not bind exactly one operation.");
         if (point == "sealed-receipt")
@@ -668,6 +765,7 @@ internal static class ProjectListPublicationTests
                 "Receipt interruption changed the original project list.");
             return;
         }
+        //CSJ,variable=receipt,照合記録
         var receipt = Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication.json")
             .Concat(Directory.EnumerateFiles(repository.RecoveryDirectory, "*.publication-pending.json"))
             .Single(path => Path.GetFileName(path).StartsWith($"{draftId:N}-", StringComparison.Ordinal) &&
@@ -675,11 +773,13 @@ internal static class ProjectListPublicationTests
         if (point is "later-saves" or "staged-then-external-edit" or "raw-edit-after-later-save" or
             "missing-descendant" or "corrupt-descendant" or "duplicate-descendant")
         {
+            //CSJ,variable=external,外部
             var external = await repository.LoadAsync();
             external.Projects.Single().DisplayName = "external";
             await repository.SaveAsync(external);
             external.Projects.Single().DisplayName = "second later save";
             await repository.SaveAsync(external);
+            //CSJ,variable=latestReceipt,最新照合記録
             var latestReceipt = Path.Combine(repository.RecoveryDirectory, $"standalone-{external.Revision!.OperationId:N}.publication.json");
             if (point == "missing-descendant") File.Move(latestReceipt, latestReceipt + ".fixture-hidden");
             if (point == "corrupt-descendant") await File.WriteAllTextAsync(latestReceipt, "{}");
@@ -687,6 +787,7 @@ internal static class ProjectListPublicationTests
                 File.Copy(latestReceipt, Path.Combine(repository.RecoveryDirectory, $"{Guid.NewGuid():N}-{external.Revision.OperationId:N}.publication.json"));
             if (point == "raw-edit-after-later-save")
             {
+                //CSJ,variable=destination,格納先
                 var destination = Path.Combine(root, "projects.json");
                 var raw = System.Text.Json.Nodes.JsonNode.Parse(await File.ReadAllTextAsync(destination))!;
                 raw["ExternalExtra"] = "newer raw contents";
@@ -698,6 +799,7 @@ internal static class ProjectListPublicationTests
         if (point == "corrupt-receipt") await File.WriteAllTextAsync(receipt, "{}");
         if (point == "corrupt-claim") await File.WriteAllTextAsync(claim, "{}");
 
+        //CSJ,variable=revision,版
         var revision = (await repository.LoadAsync()).Revision;
         if (point is "corrupt-receipt" or "corrupt-claim")
         {
@@ -739,6 +841,7 @@ internal static class ProjectListPublicationTests
 
     internal static async Task CrashAsync(string root, string point)
     {
+        //CSJ,variable=prefix,接頭辞
         var prefix = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests")) + Path.DirectorySeparatorChar;
         root = Path.GetFullPath(root);
         if (!root.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Fixture must be isolated.");
@@ -747,18 +850,23 @@ internal static class ProjectListPublicationTests
         {
             if (Path.GetFileName(Path.GetDirectoryName(root)) != "list-external-replacement")
                 throw new InvalidOperationException("External replacement fixture must be isolated.");
+            //CSJ,variable=active,有効
             var active = Path.Combine(root, "projects.json");
             if (point == "external-before-park") File.Move(active, Path.Combine(root, "synthetic-prior.json"), overwrite: false);
             File.Move(Path.Combine(root, "synthetic-foreign.json"), active, overwrite: false);
             return;
         }
+        //CSJ,variable=repository,リポジトリ
         var repository = Open(root);
+        //CSJ,variable=baseline,基準
         var baseline = await repository.LoadAsync();
         var candidate = await repository.LoadAsync();
         candidate.Projects.Single().DisplayName = "after";
+        //CSJ,variable=drafts,下書き一覧
         var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
         if (point is "before-generation" or "after-generation" or "ambiguous-generation" or "missing-intermediate-generation")
         {
+            //CSJ,variable=previous,直前の
             var previous = Directory.GetFiles(repository.RecoveryDirectory, "*.draft.json").Single();
             candidate.Projects.Single().DisplayName = "newer";
             await repository.WritePendingDraftAsync(baseline, candidate, [], previous,
@@ -770,6 +878,7 @@ internal static class ProjectListPublicationTests
         if (point == "sealed-receipt")
         {
             var publications = new ProjectListPublications(repository.RecoveryDirectory);
+            //CSJ,variable=receipt,照合記録
             var receipt = new ProjectListPublications.Receipt(3, Guid.NewGuid(), drafts.GetReadyId(ready),
                 baseline.Revision!.Sha256, new string('2', 64), false);
             await publications.WriteAsync(receipt, default);
@@ -784,6 +893,7 @@ internal static class ProjectListPublicationTests
         if (point == "fresh-attempt")
         {
             var publications = new ProjectListPublications(repository.RecoveryDirectory);
+            //CSJ,variable=receipt,照合記録
             var receipt = new ProjectListPublications.Receipt(1, Guid.NewGuid(), drafts.GetReadyId(ready),
                 new string('1', 64), new string('2', 64), false);
             await publications.WriteAsync(receipt, default);
@@ -826,6 +936,7 @@ internal static class ProjectListPublicationTests
             File.Move(ready, legacyClaim, overwrite: false);
             await crash.SaveAsync(candidate);
             var legacyPublications = new ProjectListPublications(repository.RecoveryDirectory);
+            //CSJ,variable=legacyReceipt,旧形式照合記録
             var legacyReceipt = new ProjectListPublications.Receipt(1, candidate.Revision!.OperationId!.Value,
                 drafts.GetClaimedIdentity(legacyClaim).Id, baseline.Revision!.Sha256, candidate.Revision.Sha256!, PublicationStarted: false);
             await legacyPublications.WriteAsync(legacyReceipt, default);
@@ -836,6 +947,7 @@ internal static class ProjectListPublicationTests
         throw new Exception("Crash hook was not executed.");
     }
 
+    //CSJ,method=Open,開く
     private static JsonProjectRepository Open(string root) => new(new FileLogger(Path.Combine(root, "test.log")), Path.Combine(root, "projects.json"));
     private static void Require(bool value, string message) { if (!value) throw new Exception(message); }
 }

@@ -4,13 +4,17 @@ using System.Text.Json;
 namespace YMMProjectManager.Infrastructure.Relink;
 
 // Utf8JsonReader supplies token boundaries; only selected value tokens are replaced.
+//CSJ,class=RelinkJsonUpdate,再リンクJSON更新
 internal static class RelinkJsonUpdate
 {
+    //CSJ,record=Target,対象
     private readonly record struct Target(int Start, int Length, string Path, bool DirectItem);
 
+    //CSJ,method=Apply,適用する
     public static byte[] Apply(byte[] source, IReadOnlyList<RelinkRow> rows)
     {
         var bom = source.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? 3 : 0;
+        //CSJ,variable=reader,読み取り元
         var reader = new Utf8JsonReader(source.AsSpan(bom), new JsonReaderOptions { CommentHandling = JsonCommentHandling.Disallow });
         if (!reader.Read()) throw new InvalidDataException("JSON が空です。");
         var targets = new List<Target>();
@@ -50,19 +54,23 @@ internal static class RelinkJsonUpdate
             throw new InvalidDataException("PNG 連番の再リンクは未検証のため更新できません。");
     }
 
+    //CSJ,method=Collect,収集する
     private static void Collect(ref Utf8JsonReader reader, bool insideItems, bool directItem, bool itemsArray, List<Target> targets, int bom)
     {
         if (reader.TokenType == JsonTokenType.StartObject)
         {
+            //CSJ,variable=names,名前一覧
             var names = new HashSet<string>(StringComparer.Ordinal);
             while (reader.Read() && reader.TokenType != JsonTokenType.EndObject)
             {
                 if (reader.TokenType != JsonTokenType.PropertyName) throw new InvalidDataException("JSON プロパティが不正です。");
+                //CSJ,variable=name,名前
                 var name = reader.GetString()!;
                 if (!names.Add(name)) throw new InvalidDataException("重複した JSON プロパティがあるため安全に更新できません。");
                 if (!reader.Read()) throw new InvalidDataException("JSON 値が不正です。");
                 if (insideItems && name == "FilePath" && reader.TokenType == JsonTokenType.String)
                 {
+                    //CSJ,variable=path,パス
                     var path = reader.GetString();
                     if (!string.IsNullOrWhiteSpace(path))
                         targets.Add(new Target(checked((int)reader.TokenStartIndex + bom), checked((int)(reader.BytesConsumed - reader.TokenStartIndex)), path, directItem));

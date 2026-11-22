@@ -8,19 +8,24 @@ using YMMProjectManager.Infrastructure.Git;
 using YMMProjectManager.Presentation.ViewModels;
 using YMMProjectManager.Presentation.Views;
 
+//CSJ,class=OfflineControlsTests,オフライン制御テスト
 internal static class OfflineControlsTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
         await Program.WpfTestHost.RunAsync(async () =>
         {
+            //CSJ,variable=root,ルート
             var root = Path.Combine(workRoot, "offline-controls"); Directory.CreateDirectory(root);
+            //CSJ,variable=project,プロジェクト
             var project = Path.Combine(root, "project.ymmp");
             await File.WriteAllTextAsync(project, "{\"Items\":[{\"FilePath\":\"sample.png\"}],\"Other\":{\"FilePath\":\"note.txt\"}}");
             await File.WriteAllTextAsync(Path.Combine(root, "sample.png"), "synthetic");
             await File.WriteAllTextAsync(Path.Combine(root, "sample2.png"), "second");
             var git = new GitRepository(root);
             if (!(await git.InitializeAsync()).Success) throw new Exception("git init failed");
+            //CSJ,variable=logger,ロガー
             var logger = new FileLogger(Path.Combine(root, "test.log"));
             var vm = new ProjectListViewModel(logger, new JsonProjectRepository(logger, Path.Combine(root, "project-list.json")));
             await vm.InitializeAsync();
@@ -32,6 +37,7 @@ internal static class OfflineControlsTests
             if (!vm.RepairProjectListIdentitiesCommand.CanExecute(null))
                 throw new Exception("physical identity review is unavailable for a readable project list");
             if (!vm.ExtractBundleCommand.CanExecute(null)) throw new Exception("managed extraction command unavailable");
+            //CSJ,method=Invoke,呼び出す
             async Task Invoke(string name, params object[] args) => await (Task)typeof(ProjectListViewModel).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(vm, args)!;
             await Invoke("ShowGitStatusAsync", false);
             await Program.RunNamedCaseAsync("R21 WPF lists Git changes as explicit selectable paths", () =>
@@ -48,7 +54,9 @@ internal static class OfflineControlsTests
             await Program.RunNamedCaseAsync("R24 GitHub access approval and origin display use literal validated configuration", async () =>
             {
                 const string github = "https://github.com/example/project.git";
+                //CSJ,variable=replacement,置換
                 const string replacement = "https://rewritten.invalid/example/project.git";
+                //CSJ,variable=credentialUrl,資格情報URL
                 const string credentialUrl = "https://fixture-user:fixture-secret@github.com/example/project.git";
                 var unapprovedProbes = 0;
                 Task<GitResult> UnexpectedProbe(GitRepository _, GitFetchTarget __, GitHubAuthentication ___, CancellationToken token)
@@ -62,10 +70,12 @@ internal static class OfflineControlsTests
                 if (!vm.GitStatus.Contains(github) || vm.GitStatus.Contains(replacement))
                     throw new InvalidOperationException("Displayed origin was not the validated literal setting.");
 
+                //CSJ,variable=cached,キャッシュ済み
                 foreach (var cached in new[] { false, true })
                 {
                     vm.UseCachedGitHubAuthentication = cached;
                     var approvals = 0;
+                    //CSJ,variable=approvedDetails,承認済み詳細
                     var approvedDetails = "";
                     await vm.InspectGitHubAccessAsync((_, details) =>
                     {
@@ -115,7 +125,9 @@ internal static class OfflineControlsTests
                 bool Approve(string _, string __) { approvals++; return true; }
                 var started = new TaskCompletionSource<(string Endpoint, GitHubAuthentication Authentication)>(
                     TaskCreationOptions.RunContinuationsAsynchronously);
+                //CSJ,variable=blocked,停止
                 var blocked = new TaskCompletionSource<GitResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+                //CSJ,variable=operation,操作
                 var operation = vm.InspectGitHubAccessAsync(Approve, (_, target, authentication, token) =>
                 {
                     started.TrySetResult((target.Endpoint, authentication));
@@ -123,6 +135,7 @@ internal static class OfflineControlsTests
                 });
                 try
                 {
+                    //CSJ,variable=request,要求
                     var request = await started.Task.WaitAsync(TimeSpan.FromSeconds(10));
                     if (request != (github, GitHubAuthentication.CachedWindows) || !vm.IsBusy || !vm.CancelToolCommand.CanExecute(null))
                         throw new InvalidOperationException("The approved request is not pending with the selected credential mode.");
@@ -145,6 +158,7 @@ internal static class OfflineControlsTests
             {
                 var result = new GitResult(1, "fixture-output", "fixture-error", GitFailure.Authentication);
                 var anonymous = ProjectListViewModel.DescribeRemoteFailure(result, isGitHub: true);
+                //CSJ,variable=cached,キャッシュ済み
                 var cached = ProjectListViewModel.DescribeRemoteFailure(result, isGitHub: true, GitHubAuthentication.CachedWindows);
                 var denied = ProjectListViewModel.DescribeRemoteFailure(result with { Failure = GitFailure.Permission },
                     isGitHub: true, GitHubAuthentication.CachedWindows);
@@ -156,7 +170,9 @@ internal static class OfflineControlsTests
             });
             await Program.RunNamedCaseAsync("R24 browser login primes neither Git nor credential opt-in", async () =>
             {
+                //CSJ,variable=savedProject,保存済みプロジェクト
                 var savedProject = vm.SelectedProject;
+                //CSJ,variable=initialStatus,初期状態
                 var initialStatus = await RunGitFixtureAsync(root, "status", "--porcelain");
                 vm.SelectedProject = null;
                 vm.GitRemote = "https://example.invalid/not-a-login-target.git";
@@ -205,6 +221,7 @@ internal static class OfflineControlsTests
             });
             await Program.RunNamedCaseAsync("R24 unexpected browser authentication failures stay out of status and logs", async () =>
             {
+                //CSJ,variable=marker,マーカー
                 const string marker = "fixture-browser-failure-secret";
                 await vm.RunGitHubBrowserLoginAsync(false, _ => true, _ => Task.FromResult(true),
                     (_, _) => Task.FromException<GitResult>(new IOException(marker)));
@@ -229,9 +246,11 @@ internal static class OfflineControlsTests
 
                 var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                 var completed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                //CSJ,variable=operation,操作
                 var operation = vm.RunGitHubBrowserLoginAsync(true, _ => true, _ => Task.FromResult(true),
                     async (_, token) =>
                     {
+                        //CSJ,variable=cancelled,キャンセル済み
                         using var cancelled = token.Register(() => completed.TrySetResult());
                         entered.TrySetResult();
                         await completed.Task;
@@ -255,6 +274,7 @@ internal static class OfflineControlsTests
                     await operation;
                 }
             });
+            //CSJ,variable=nested,入れ子
             var nested = Path.Combine(root, "nested");
             Directory.CreateDirectory(nested);
             vm.SelectedProject = new ProjectEntry { FullPath = Path.Combine(nested, "nested.ymmp") };
@@ -288,7 +308,9 @@ internal static class OfflineControlsTests
             vm.AssetPath = "sample.png\nmissing.png";
             await Invoke("InspectAssetAsync");
             if (!vm.AssetStatus.Contains("素材が見つかりません")) throw new Exception("missing asset not reported");
+            //CSJ,variable=pending,保留
             Func<CancellationToken, Task> pending = token => Task.Delay(Timeout.Infinite, token);
+            //CSJ,variable=cancelled,キャンセル済み
             var cancelled = Invoke("ExecuteToolAsync", "Asset synthetic", pending);
             if (!vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancel command unavailable");
             vm.CancelToolCommand.Execute(null);
@@ -296,10 +318,12 @@ internal static class OfflineControlsTests
             if (!vm.AssetStatus.Contains("中止しました") || vm.CancelToolCommand.CanExecute(null)) throw new Exception("cancellation status missing");
             await Program.RunNamedCaseAsync("List publication cancellation is shown in the recovery panel", async () =>
             {
+                //CSJ,variable=operation,操作
                 var operation = (string)typeof(ProjectListViewModel).GetField("InspectListPublicationOperation",
                     BindingFlags.Static | BindingFlags.NonPublic)!.GetRawConstantValue()!;
                 var priorAsset = vm.AssetStatus;
                 var priorGit = vm.GitStatus;
+                //CSJ,variable=interrupted,中断済み
                 var interrupted = Invoke("ExecuteToolAsync", operation, pending);
                 vm.CancelToolCommand.Execute(null);
                 await interrupted;
@@ -315,6 +339,7 @@ internal static class OfflineControlsTests
             {
                 var first = new ProjectListConflict("first", "DisplayName", "local one", "disk one");
                 var second = new ProjectListConflict("second", "Memo", "local two", "disk two");
+                //CSJ,variable=dialog,ダイアログ
                 var dialog = new ProjectListConflictReview([first, second], owner: null);
                 try
                 {
@@ -329,13 +354,19 @@ internal static class OfflineControlsTests
             });
             await Program.RunNamedCaseAsync("Undoing pending changes fences the abandoned WPF draft", async () =>
             {
+                //CSJ,variable=listPath,一覧パス
                 var listPath = Path.Combine(root, "reverted", "projects.json");
+                //CSJ,variable=repository,リポジトリ
                 var repository = new JsonProjectRepository(logger, listPath);
+                //CSJ,variable=recoveryVm,復旧ビューモデル
                 var recoveryVm = new ProjectListViewModel(logger, repository);
                 await recoveryVm.InitializeAsync();
+                //CSJ,variable=pendingStore,保留保管先
                 var pendingStore = await repository.LoadAsync();
                 pendingStore.Projects.Add(new ProjectEntry { FullPath = project, ProjectId = Guid.NewGuid() });
+                //CSJ,variable=draftSave,下書き保存
                 var draftSave = typeof(ProjectListViewModel).GetMethod("SavePendingDraftAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+                //CSJ,variable=drafts,下書き一覧
                 var drafts = new ProjectListDrafts(repository.RecoveryDirectory);
 
                 await (Task)draftSave.Invoke(recoveryVm, [pendingStore])!;
@@ -344,6 +375,7 @@ internal static class OfflineControlsTests
                     throw new InvalidOperationException("The first pending change was not recoverable.");
                 await (Task)draftSave.Invoke(recoveryVm, [await repository.LoadAsync()])!;
                 var successor = Directory.EnumerateFiles(drafts.DirectoryPath, "*.draft.json").Single(path => path != predecessor);
+                //CSJ,variable=newest,最新
                 var newest = await drafts.ReadForReviewAsync(successor);
                 if (!(await drafts.ReadForReviewAsync(predecessor)).ExportOnly || newest.ExportOnly ||
                     newest.Draft.Local.Projects.Count != 0 || File.Exists(listPath))
@@ -351,12 +383,17 @@ internal static class OfflineControlsTests
             });
             await Program.RunNamedCaseAsync("WPF preserves an unreadable interrupted list record", async () =>
             {
+                //CSJ,variable=isolatedRoot,隔離ルート
                 var isolatedRoot = Path.Combine(root, "interrupted-list");
                 Directory.CreateDirectory(isolatedRoot);
+                //CSJ,variable=listPath,一覧パス
                 var listPath = Path.Combine(isolatedRoot, "projects.json");
+                //CSJ,variable=repository,リポジトリ
                 var repository = new JsonProjectRepository(logger, listPath);
+                //CSJ,variable=marker,マーカー
                 var marker = repository.InterruptedPublicationPath;
                 await File.WriteAllTextAsync(marker, "invalid journal fixture");
+                //CSJ,variable=interrupted,中断済み
                 var interrupted = new ProjectListViewModel(logger, repository);
                 await interrupted.InitializeAsync();
                 if (interrupted.Projects.Count != 0 || !interrupted.RecoverProjectListPublicationCommand.CanExecute(null) ||
@@ -371,11 +408,16 @@ internal static class OfflineControlsTests
             });
             await Program.RunNamedCaseAsync("List initialization can retry an earlier writer lock without reopening the UI", async () =>
             {
+                //CSJ,variable=dataRoot,データルート
                 var dataRoot = Path.Combine(root, "busy-list");
                 Directory.CreateDirectory(dataRoot);
+                //CSJ,variable=listPath,一覧パス
                 var listPath = Path.Combine(dataRoot, "projects.json");
+                //CSJ,variable=repository,リポジトリ
                 var repository = new JsonProjectRepository(logger, listPath);
+                //CSJ,variable=blockedVm,停止ビューモデル
                 var blockedVm = new ProjectListViewModel(logger, repository);
+                //CSJ,variable=retry,再試行
                 var retry = typeof(ProjectListViewModel).GetMethod("RecoverProjectListPublicationAsync",
                     BindingFlags.Instance | BindingFlags.NonPublic)!;
 
@@ -389,6 +431,7 @@ internal static class OfflineControlsTests
                         throw new InvalidOperationException("The UI did not preserve the busy list.");
                 }
 
+                //CSJ,variable=saved,保存済み
                 var saved = await repository.LoadAsync();
                 saved.Projects.Add(new ProjectEntry { FullPath = project, ProjectId = Guid.NewGuid() });
                 await repository.SaveAsync(saved);
@@ -404,6 +447,7 @@ internal static class OfflineControlsTests
 
     private static async Task TestProductPullAsync(ProjectListViewModel vm, string root)
     {
+        //CSJ,variable=fixture,テスト用データ
         var fixture = Directory.CreateDirectory(Path.Combine(root, "pull-ui")).FullName;
         var source = Path.Combine(fixture, "source");
         var bare = Path.Combine(fixture, "remote.git");
@@ -418,8 +462,11 @@ internal static class OfflineControlsTests
             await RunGitFixtureAsync(fixture, "init", "--bare", "--initial-branch=main", bare);
             await RunGitFixtureAsync(source, "config", "user.name", "WPF Test");
             await RunGitFixtureAsync(source, "config", "user.email", "wpf-test@example.invalid");
+            //CSJ,variable=sourceProject,元プロジェクト
             var sourceProject = Path.Combine(source, "project.ymmp");
+            //CSJ,variable=oldJson,旧JSON
             const string oldJson = """{"Title":"Before"}""";
+            //CSJ,variable=newJson,新規JSON
             const string newJson = """{"Title":"After"}""";
             await File.WriteAllTextAsync(sourceProject, oldJson);
             await RunGitFixtureAsync(source, "add", "--", "project.ymmp");
@@ -431,19 +478,25 @@ internal static class OfflineControlsTests
             await RunGitFixtureAsync(source, "add", "--", "project.ymmp");
             await RunGitFixtureAsync(source, "commit", "-m", "after");
             var after = await RunGitFixtureAsync(source, "rev-parse", "HEAD");
+            //CSJ,variable=afterTree,変更後ツリー
             var afterTree = await RunGitFixtureAsync(source, "rev-parse", "HEAD^{tree}");
             await RunGitFixtureAsync(source, "push", bare, "main:refs/heads/main");
 
+            //CSJ,variable=project,プロジェクト
             var project = Path.Combine(checkout, "project.ymmp");
             vm.SelectedProject = new ProjectEntry { FullPath = project };
+            //CSJ,variable=trusted,信頼済み
             var trusted = false;
+            //CSJ,variable=approved,承認済み
             var approved = false;
+            //CSJ,method=InspectTransport,通信を点検する
             bool InspectTransport(string repository, string remote)
             {
                 trusted = string.Equals(repository, checkout, StringComparison.OrdinalIgnoreCase) &&
                     remote.Contains("origin / refs/heads/main", StringComparison.Ordinal);
                 return trusted;
             }
+            //CSJ,method=InspectTarget,対象を点検する
             bool InspectTarget(ProjectListViewModel.PullApprovalDetails details)
             {
                 approved = details.ChangesWorktree && details.StartObjectId == before && details.TargetObjectId == after &&
@@ -468,15 +521,20 @@ internal static class OfflineControlsTests
 
             await Program.RunNamedCaseAsync("WPF keeps interrupted Pull evidence and refuses a second approval", async () =>
             {
+                //CSJ,variable=marker,マーカー
                 var marker = GitPullOperationJournal.GetPath(checkout);
                 using (GitPullOperationJournal.Create(checkout,
                     new GitPullOperationJournal.ApprovalEvidence("refs/heads/main", before, "origin", "refs/heads/main", after)))
                 {
                     // A disposed marker with no verified outcome represents an interrupted Pull.
                 }
+                //CSJ,variable=record,記録
                 var record = await File.ReadAllBytesAsync(marker);
+                //CSJ,variable=indexPath,インデックスパス
                 var indexPath = Path.Combine(checkout, ".git", "index");
+                //CSJ,variable=index,インデックス
                 var index = await File.ReadAllBytesAsync(indexPath);
+                //CSJ,variable=attempt,試行
                 for (var attempt = 0; attempt < 2; attempt++)
                 {
                     await vm.RunConfirmedGitPullAsync(
@@ -487,7 +545,9 @@ internal static class OfflineControlsTests
                         throw new InvalidOperationException("WPF did not report the unresolved operation and its recovery record.");
                 }
 
+                //CSJ,variable=finalRecord,最終記録
                 var finalRecord = await File.ReadAllBytesAsync(marker);
+                //CSJ,variable=finalIndex,最終インデックス
                 var finalIndex = await File.ReadAllBytesAsync(indexPath);
                 if (!record.SequenceEqual(finalRecord) || !index.SequenceEqual(finalIndex) ||
                     await File.ReadAllTextAsync(project) != newJson || await RunGitFixtureAsync(checkout, "rev-parse", "HEAD") != after)
@@ -501,6 +561,7 @@ internal static class OfflineControlsTests
         }
     }
 
+    //CSJ,method=RunGitFixtureAsync,Gitテスト用データを実行する（非同期）
     private static async Task<string> RunGitFixtureAsync(string directory, params string[] arguments)
     {
         var start = new ProcessStartInfo("git")
@@ -511,9 +572,12 @@ internal static class OfflineControlsTests
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        //CSJ,variable=argument,引数
         foreach (var argument in arguments) start.ArgumentList.Add(argument);
+        //CSJ,variable=process,プロセス
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot start fixture Git.");
         var output = process.StandardOutput.ReadToEndAsync();
+        //CSJ,variable=error,エラー
         var error = process.StandardError.ReadToEndAsync();
         await process.WaitForExitAsync();
         if (process.ExitCode != 0) throw new InvalidOperationException($"Git fixture failed with exit {process.ExitCode}: {await error}");
@@ -521,20 +585,25 @@ internal static class OfflineControlsTests
         return (await output).TrimEnd();
     }
 
+    //CSJ,method=TestPullPresentationAsync,プル表示をテストする（非同期）
     private static async Task TestPullPresentationAsync(ProjectListViewModel vm, string root)
     {
+        //CSJ,variable=remote,リモート
         var remote = new object();
         var target = new object();
         var detections = 0;
         var executions = 0;
         var unexpectedCallback = false;
+        //CSJ,method=InspectRemote,リモートを点検する
         Task<object?> InspectRemote(ProjectEntry project, CancellationToken token) => Task.FromResult<object?>(remote);
+        //CSJ,method=InspectTarget,対象を点検する
         Task<object?> InspectTarget(object approved, CancellationToken token)
         {
             if (!ReferenceEquals(approved, remote)) unexpectedCallback = true;
             detections++;
             return Task.FromResult<object?>(target);
         }
+        //CSJ,method=Execute,実行する
         Task<string> Execute(object approved, CancellationToken token)
         {
             if (!ReferenceEquals(approved, target) || !vm.GitStatus.Contains("実行中")) unexpectedCallback = true;
@@ -560,7 +629,9 @@ internal static class OfflineControlsTests
 
         await Program.RunNamedCaseAsync("Pull presentation stops on selection path change and cancellation before write", async () =>
         {
+            //CSJ,variable=project,プロジェクト
             var project = vm.SelectedProject!;
+            //CSJ,variable=originalPath,元のパス
             var originalPath = project.FullPath;
             try
             {
@@ -574,6 +645,7 @@ internal static class OfflineControlsTests
             if (executions != 1 || !vm.GitStatus.Contains("プロジェクトが変更"))
                 throw new InvalidOperationException("Stale approval was executed.");
 
+            //CSJ,variable=pending,保留
             var pending = vm.RunGitPullWorkflowAsync(InspectRemote, _ => true,
                 async (_, token) =>
                 {
@@ -584,6 +656,7 @@ internal static class OfflineControlsTests
             if (vm.PullGitCommand.CanExecute(null) || !vm.CancelToolCommand.CanExecute(null) ||
                 !vm.GitStatus.Contains("更新先コミットを確認中"))
                 throw new InvalidOperationException("Pull lookup did not expose cancellable progress.");
+            //CSJ,variable=dispatcher,ディスパッチャー
             var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             var dispatched = await dispatcher.InvokeAsync(() => vm.CancelToolCommand.CanExecute(null));
             if (!dispatched || pending.IsCompleted)
@@ -596,15 +669,20 @@ internal static class OfflineControlsTests
 
         await Program.RunNamedCaseAsync("Pull confirmation identifies the exact operation and explains external interference", () =>
         {
+            //CSJ,variable=details,詳細
             var details = new ProjectListViewModel.PullApprovalDetails(root, "refs/heads/main", "origin",
                 "refs/heads/upstream", "https://example.invalid/project", new string('a', 40), new string('b', 40), true);
+            //CSJ,variable=message,メッセージ
             var message = ProjectListViewModel.DescribePullApproval(details);
+            //CSJ,variable=field,フィールド
             foreach (var field in new[] { root, details.BranchRef, details.RemoteName, details.UpstreamRef,
                 details.Endpoint, details.StartObjectId, details.TargetObjectId, "Fast-forward", "作業ファイルを更新", "完全には防止できません" })
                 if (!message.Contains(field, StringComparison.Ordinal)) throw new InvalidOperationException("Missing approval detail.");
             if (!ProjectListViewModel.DescribePullApproval(details with { ChangesWorktree = false }).Contains("作業ファイルは更新しません"))
                 throw new InvalidOperationException("No-op Pull was presented as a write.");
+            //CSJ,variable=dialog,ダイアログ
             var dialog = ProjectListViewModel.CreatePullConfirmation(details);
+            //CSJ,variable=panel,パネル
             var panel = (System.Windows.Controls.DockPanel)dialog.Content;
             var buttons = ((System.Windows.Controls.StackPanel)panel.Children[0]).Children
                 .OfType<System.Windows.Controls.Button>().ToArray();
@@ -633,8 +711,10 @@ internal static class OfflineControlsTests
         });
         await Program.RunNamedCaseAsync("Pull recovery message identifies the repository and avoids claiming rollback", () =>
         {
+            //CSJ,variable=evidence,証跡
             var evidence = Path.Combine(root, ".git", "pull-recovery.json");
             var result = new GitResult(1, "", "untrusted process text", GitFailure.OutcomeUnknown) { RecoveryPath = evidence };
+            //CSJ,variable=message,メッセージ
             var message = ProjectListViewModel.DescribePullFailure(root, result, "refs/heads/main");
             if (!message.Contains(root) || !message.Contains("refs/heads/main") || !message.Contains(evidence) ||
                 !message.Contains("確定できません") || !message.Contains("確認が済むまで再実行") ||

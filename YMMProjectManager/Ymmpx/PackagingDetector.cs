@@ -3,8 +3,10 @@ using System.Text.Json.Nodes;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=PackagingDetector,パッケージ形式の検出処理
 public static class PackagingDetector
 {
+    //CSJ,method=GetProjectFilePaths,プロジェクトファイルパス一覧を取得する
     public static IReadOnlyList<string> GetProjectFilePaths(string projectPath)
     {
         if (!File.Exists(projectPath))
@@ -23,8 +25,10 @@ public static class PackagingDetector
         }
     }
 
+    //CSJ,method=FindFilePaths,ファイルパス一覧を探す
     public static IReadOnlyList<string> FindFilePaths(string projectJson)
     {
+        //CSJ,variable=root,ルート
         JsonNode? root;
         try
         {
@@ -45,6 +49,7 @@ public static class PackagingDetector
         return result;
     }
 
+    //CSJ,method=ResolveMaterialPath,素材パスを解決する
     public static string? ResolveMaterialPath(string filePath, string projectDir)
     {
         if (!TryNormalizeInputPath(filePath, out var normalizedPath))
@@ -74,6 +79,7 @@ public static class PackagingDetector
         }
     }
 
+    //CSJ,method=NormalizeFilePathKey,ファイルパスキーを正規化する
     public static string NormalizeFilePathKey(string filePath)
     {
         if (string.IsNullOrWhiteSpace(filePath))
@@ -90,6 +96,7 @@ public static class PackagingDetector
         return trimmed.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
     }
 
+    //CSJ,method=CollectFilePaths,ファイルパス一覧を収集する
     private static void CollectFilePaths(JsonNode node, IList<string> result)
     {
         switch (node)
@@ -129,6 +136,7 @@ public static class PackagingDetector
         }
     }
 
+    //CSJ,method=TryNormalizeInputPath,入力パスの正規化を試みる
     private static bool TryNormalizeInputPath(string path, out string normalized)
     {
         normalized = string.Empty;

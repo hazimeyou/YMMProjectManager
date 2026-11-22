@@ -6,8 +6,10 @@ using YMMProjectManager.Presentation.Relink;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,method=OpenSelectedProjectRelinkAsync,選択中のプロジェクト再リンクを開く（非同期）
     private async Task OpenSelectedProjectRelinkAsync()
     {
         var selected = SelectedProject;
@@ -24,7 +26,9 @@ public sealed partial class ProjectListViewModel
                 MessageBox.Show("タイムラインが開いている間はファイル側の再リンクを行いません。タイムライン用の再リンクを使用してください。", "再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
+            //CSJ,variable=resolve,解決
             Func<CancellationToken, Task<AssetRevisionSeries.BranchSelection>>? resolve = null;
+            //CSJ,variable=seriesDirectory,系列ディレクトリ
             string? seriesDirectory = null;
             if (selected.ProjectId is Guid id && selected.MetadataAssociation is { } association)
             {
@@ -33,6 +37,7 @@ public sealed partial class ProjectListViewModel
                 seriesDirectory = association.Directory;
                 resolve = token => ResolveMetadataBranchAsync(id, association, token);
             }
+            //CSJ,variable=dispatcher,ディスパッチャー
             var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
             OpenRelinkWindowDialog(new RelinkMainWindow(projectPath, logger, resolve, seriesDirectory)
             {
@@ -46,10 +51,12 @@ public sealed partial class ProjectListViewModel
         });
     }
 
+    //CSJ,method=OpenOpenedProjectRelinkWindowAsync,表示済みプロジェクト再リンクウィンドウを開く（非同期）
     private async Task OpenOpenedProjectRelinkWindowAsync()
     {
         await ExecuteWithBusyAsync("OpenOpenedProjectRelinkWindow", () =>
         {
+            //CSJ,variable=info,情報
             var info = TimelineContextService.Info;
             if (info?.Timeline is null)
             {
@@ -57,6 +64,7 @@ public sealed partial class ProjectListViewModel
                 return Task.CompletedTask;
             }
 
+            //CSJ,variable=projectPath,プロジェクトのパス
             var projectPath = YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
             if (!string.IsNullOrWhiteSpace(projectPath) &&
                 !TryGetOpenableProjectPath(projectPath, out projectPath, out _))
@@ -69,6 +77,7 @@ public sealed partial class ProjectListViewModel
         }).ConfigureAwait(true);
     }
 
+    //CSJ,method=OpenRelinkWindowDialog,再リンクウィンドウダイアログを開く
     private void OpenRelinkWindowDialog(RelinkMainWindow window)
     {
         var owner = GetActiveWindow();

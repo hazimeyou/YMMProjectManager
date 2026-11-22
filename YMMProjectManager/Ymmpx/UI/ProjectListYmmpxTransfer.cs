@@ -11,8 +11,10 @@ using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
+//CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
+    //CSJ,method=PackageProjectAsync,パッケージプロジェクト（非同期）
     private Task PackageProjectAsync(string sourcePath) => ExecuteToolAsync("Bundle creation", async token =>
     {
         if (!TryGetOpenableProjectPath(sourcePath, out var projectPath, out var reason))
@@ -21,6 +23,7 @@ public sealed partial class ProjectListViewModel
             return;
         }
 
+        //CSJ,variable=location,場所
         var location = MessageBox.Show(
             $"対象PF\n{projectPath}\n\nPFのフォルダー内で、PFが参照する素材を確認します。追加の素材フォルダーも選ぶには「はい」を選択してください。「いいえ」ではPFのフォルダーだけを使います。",
             "YMMPX 素材の確認範囲", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.No);
@@ -28,6 +31,7 @@ public sealed partial class ProjectListViewModel
         string[]? additionalRoots = null;
         if (location == MessageBoxResult.Yes)
         {
+            //CSJ,variable=folder,フォルダー
             var folder = new OpenFolderDialog { Title = "PFが参照する素材の読み取りを許可するフォルダー" };
             if (folder.ShowDialog() != true) return;
             additionalRoots = [folder.FolderName];
@@ -35,7 +39,9 @@ public sealed partial class ProjectListViewModel
 
         BundleProgress = 0;
         BundleStatus = "素材名と SHA-256 を確認しています。";
+        //CSJ,variable=plan,計画
         var plan = await bundleService.InspectTransferAsync(projectPath, token, additionalRoots);
+        //CSJ,variable=selection,選択
         var selection = ConfirmTransferAssets(plan, Path.GetFileNameWithoutExtension(projectPath) + "-素材受け渡し");
         if (selection is null)
         {
@@ -48,6 +54,7 @@ public sealed partial class ProjectListViewModel
             BundleStatus = "YMMPX の作成を取りやめました。";
             return;
         }
+        //CSJ,variable=outputDirectory,出力ディレクトリ
         var outputDirectory = Path.Combine(parent.FolderName, selection.DirectoryName);
         if (MessageBox.Show($"保存先\n{outputDirectory}\n\nここに新しいフォルダーを作り、YMMPXと照合記録を保存します。保存しますか？",
                 "YMMPX 出力の確認", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
@@ -57,6 +64,7 @@ public sealed partial class ProjectListViewModel
         }
 
         BundleStatus = "YMMPX と照合記録を作成しています。";
+        //CSJ,variable=progress,進捗
         var progress = new Progress<double>(value => BundleProgress = value * 100d);
         var result = await bundleService.CreateTransferAsync(plan, selection.Approvals, outputDirectory, token, progress);
         if (!result.Success)
@@ -71,24 +79,35 @@ public sealed partial class ProjectListViewModel
         MessageBox.Show(BundleStatus, "YMMPX 素材受け渡し", MessageBoxButton.OK, MessageBoxImage.Information);
     });
 
+    //CSJ,class=TransferAssetRow,受け渡し素材行
     private sealed class TransferAssetRow(YmmpxTransferCandidate candidate)
     {
+        //CSJ,property=CanInclude,同梱の可否
         public bool CanInclude => candidate.CanInclude;
+        //CSJ,property=SourcePath,元のパス
         public string SourcePath => candidate.SourcePath;
+        //CSJ,property=OriginalFileName,元のファイル名
         public string OriginalFileName => candidate.OriginalFileName;
+        //CSJ,property=Evidence,証跡
         public string Evidence => candidate.CanInclude
             ? $"{candidate.Length:N0} バイト\n{candidate.Sha256}"
             : candidate.ExclusionReason ?? "未確認・同梱不可";
+        //CSJ,property=Permission,権限
         public YmmpxTransferPermission Permission { get; set; } = YmmpxTransferPermission.Unconfirmed;
     }
 
+    //CSJ,record=TransferPermissionChoice,受け渡し時の同梱許可の選択
     private sealed record TransferPermissionChoice(YmmpxTransferPermission Value, string Label);
 
+    //CSJ,record=TransferSelection,受け渡し選択
     private sealed record TransferSelection(string DirectoryName, IReadOnlyDictionary<string, YmmpxTransferPermission> Approvals);
 
+    //CSJ,method=ConfirmTransferAssets,受け渡し素材一覧を確認する
     private static TransferSelection? ConfirmTransferAssets(YmmpxTransferPlan plan, string defaultDirectoryName)
     {
+        //CSJ,variable=rows,行一覧
         var rows = plan.Assets.Select(asset => new TransferAssetRow(asset)).ToArray();
+        //CSJ,variable=window,ウィンドウ
         var window = new Window
         {
             Title = "YMMPX に同梱する素材の確認",
@@ -97,6 +116,7 @@ public sealed partial class ProjectListViewModel
         };
         var owner = GetActiveWindow();
         if (owner is not null) window.Owner = owner;
+        //CSJ,variable=panel,パネル
         var panel = new DockPanel { Margin = new Thickness(12) };
         var instruction = new TextBlock
         {
@@ -112,10 +132,12 @@ public sealed partial class ProjectListViewModel
         buttons.Children.Add(accept);
         buttons.Children.Add(new Button { Content = "キャンセル", MinWidth = 100, IsCancel = true, Margin = new Thickness(0, 8, 0, 0) });
 
+        //CSJ,variable=namePanel,名前パネル
         var namePanel = new StackPanel { Margin = new Thickness(0, 0, 0, 6) };
         DockPanel.SetDock(namePanel, Dock.Top);
         panel.Children.Add(namePanel);
         namePanel.Children.Add(new TextBlock { Text = "新しい出力フォルダー名" });
+        //CSJ,variable=name,名前
         var name = new TextBox { Text = defaultDirectoryName };
         namePanel.Children.Add(name);
         var grid = new DataGrid

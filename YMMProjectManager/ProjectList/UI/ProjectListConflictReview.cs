@@ -4,11 +4,15 @@ using YMMProjectManager.Application;
 
 namespace YMMProjectManager.Presentation.Views;
 
+//CSJ,class=ProjectListConflictReview,プロジェクト一覧競合レビュー
 internal sealed class ProjectListConflictReview : Window
 {
     private readonly ListBox conflicts = new();
+    //CSJ,field=local,ローカル
     private readonly TextBox local = ValueBox();
+    //CSJ,field=remote,リモート
     private readonly TextBox remote = ValueBox();
+    //CSJ,field=confirm,確認
     private readonly Button confirm = new() { Content = "選択した内容を確認", IsDefault = true, IsEnabled = false, MinWidth = 130 };
     private readonly Dictionary<ProjectListConflict, bool> decisions = [];
 
@@ -22,6 +26,7 @@ internal sealed class ProjectListConflictReview : Window
         Owner = owner;
         WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner;
 
+        //CSJ,variable=panel,パネル
         var panel = new DockPanel { Margin = new Thickness(12) };
         var instructions = new TextBlock
         {
@@ -30,7 +35,9 @@ internal sealed class ProjectListConflictReview : Window
         };
         DockPanel.SetDock(instructions, Dock.Top);
         panel.Children.Add(instructions);
+        //CSJ,variable=actions,アクション一覧
         var actions = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right, Margin = new Thickness(0, 8, 0, 0) };
+        //CSJ,variable=cancel,キャンセル
         var cancel = new Button { Content = "キャンセル", IsCancel = true, MinWidth = 90, Margin = new Thickness(8, 0, 0, 0) };
         confirm.Click += (_, _) => DialogResult = true;
         actions.Children.Add(confirm);
@@ -41,6 +48,7 @@ internal sealed class ProjectListConflictReview : Window
         var columns = new Grid();
         columns.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(230) });
         columns.ColumnDefinitions.Add(new ColumnDefinition());
+        //CSJ,variable=details,詳細
         var details = new Grid { Margin = new Thickness(10, 0, 0, 0) };
         details.RowDefinitions.Add(new RowDefinition());
         details.RowDefinitions.Add(new RowDefinition());
@@ -78,12 +86,15 @@ internal sealed class ProjectListConflictReview : Window
         }
     }
 
+    //CSJ,method=Label,ラベル
     private string Label(ProjectListConflict item)
     {
+        //CSJ,variable=state,状態
         var state = decisions.TryGetValue(item, out var selected) ? selected ? "未保存" : "ディスク" : "未選択";
         return $"{state}  {item.Field}\n{item.Item}";
     }
 
+    //CSJ,method=ShowSelection,選択を表示する
     private void ShowSelection()
     {
         var item = (conflicts.SelectedItem as ListBoxItem)?.Tag as ProjectListConflict;
@@ -94,6 +105,7 @@ internal sealed class ProjectListConflictReview : Window
     private DockPanel Alternative(string label, TextBox value, bool useLocal)
     {
         var alternative = new DockPanel { Margin = new Thickness(0, 0, 0, 6) };
+        //CSJ,variable=button,ボタン
         var button = new Button { Content = $"{label}を残す", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 4) };
         button.Click += (_, _) => ChooseCurrent(useLocal);
         DockPanel.SetDock(button, Dock.Top);

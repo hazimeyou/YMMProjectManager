@@ -8,14 +8,19 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// <summary>
 /// 複数フレームの中央列を 64x36 の 1 枚画像へ並べるフィルムストリップ合成器です。
 /// </summary>
+//CSJ,class=FilmstripComposer,フィルムストリップ作成処理
 public sealed class FilmstripComposer
 {
+    //CSJ,field=OutputWidth,出力幅
     public const int OutputWidth = 64;
+    //CSJ,field=OutputHeight,出力高さ
     public const int OutputHeight = 36;
     private const int BytesPerPixel = 4;
 
+    //CSJ,field=outputPixels,出力画素列
     private readonly byte[] outputPixels = new byte[OutputWidth * OutputHeight * BytesPerPixel];
 
+    //CSJ,method=SetColumnFromFrame,フレーム画像から列を設定する
     public void SetColumnFromFrame(byte[] frameBytes, int frameWidth, int frameHeight, int column)
     {
         if (column < 0 || column >= OutputWidth)
@@ -50,6 +55,7 @@ public sealed class FilmstripComposer
         }
     }
 
+    //CSJ,method=FillMissingColumns,欠けた列を補う
     public void FillMissingColumns()
     {
         // 取得に失敗した列は直前列で埋め、スクラブ画像の透明な穴を避ける。
@@ -83,6 +89,7 @@ public sealed class FilmstripComposer
         }
     }
 
+    //CSJ,method=SavePng,PNGを保存する
     public void SavePng(string path)
     {
         // outputPixels は BGRA32 前提で保持しているため、そのまま PNG エンコードする。
@@ -92,6 +99,7 @@ public sealed class FilmstripComposer
             Directory.CreateDirectory(dir);
         }
 
+        //CSJ,variable=bitmap,ビットマップ
         var bitmap = BitmapSource.Create(
             OutputWidth,
             OutputHeight,
@@ -102,9 +110,11 @@ public sealed class FilmstripComposer
             outputPixels,
             OutputWidth * BytesPerPixel);
 
+        //CSJ,variable=encoder,エンコーダー
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
 
+        //CSJ,variable=stream,ストリーム
         using var stream = File.Create(path);
         encoder.Save(stream);
     }

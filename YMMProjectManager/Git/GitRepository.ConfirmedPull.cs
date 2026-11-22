@@ -4,20 +4,26 @@ using System.IO;
 
 namespace YMMProjectManager.Infrastructure.Git;
 
+//CSJ,class=GitRepository,Gitリポジトリ操作
 public sealed partial class GitRepository
 {
     internal Action<CancellationToken>? BeforePullExecutionRecheck { get; set; }
+    //CSJ,property=AfterPullJournalCreated,変更後プル作業記録作成済み
     internal Action? AfterPullJournalCreated { get; set; }
     internal Action<Process>? AfterPullProcessStarted { get; set; }
+    //CSJ,property=AfterPullProcessExit,変更後プルプロセス終了
     internal Action? AfterPullProcessExit { get; set; }
 
+    //CSJ,method=InspectPullRemoteAsync,プルリモートを点検する（非同期）
     public Task<GitResult> InspectPullRemoteAsync(CancellationToken token = default) =>
         InspectPullRemoteAsync(GitHubAuthentication.Anonymous, token);
 
+    //CSJ,method=InspectPullRemoteAsync,プルリモートを点検する（非同期）
     public Task<GitResult> InspectPullRemoteAsync(GitHubAuthentication authentication, CancellationToken token = default) =>
         WithinRemoteDeadlineAsync("Pull preview", async deadline =>
         {
             if (HasPendingPullEvidence()) return UnresolvedPull();
+            //CSJ,variable=session,セッション
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -25,12 +31,14 @@ public sealed partial class GitRepository
             return failure ?? new GitResult(0, "", "") { PullRemote = remote };
         }, token, RemoteTimeout);
 
+    //CSJ,method=InspectPullTargetAsync,プル対象を点検する（非同期）
     public Task<GitResult> InspectPullTargetAsync(GitPullRemote approvedRemote, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(approvedRemote);
         return WithinRemoteDeadlineAsync("Pull preview", async deadline =>
         {
             if (HasPendingPullEvidence()) return UnresolvedPull();
+            //CSJ,variable=session,セッション
             using var session = await OpenPullSessionAsync(deadline).ConfigureAwait(false);
             if (session is null) return UnsupportedPullRepository();
             if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -43,6 +51,7 @@ public sealed partial class GitRepository
         }, token, RemoteTimeout);
     }
 
+    //CSJ,method=PullTrustedAsync,信頼済みをプルする（非同期）
     public Task<GitResult> PullTrustedAsync(GitPullTarget target, CancellationToken token = default)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -53,6 +62,7 @@ public sealed partial class GitRepository
     private async Task<GitResult> PullConfirmedCoreAsync(GitPullTarget approved, CancellationToken preparationToken)
     {
         if (HasPendingPullEvidence()) return UnresolvedPull();
+        //CSJ,variable=session,セッション
         using var session = await OpenPullSessionAsync(preparationToken).ConfigureAwait(false);
         if (session is null) return UnsupportedPullRepository();
         if (GitPullOperationJournal.Exists(directory)) return UnresolvedPull();
@@ -92,12 +102,15 @@ public sealed partial class GitRepository
             != GitPullState.FastForwardCandidate)
             return UnsafeRemote("An ignored path overlaps the incoming changes or the paths could not be verified.");
 
+        //CSJ,variable=paths,パス一覧
         var paths = await VerifyIncomingPullPathsAsync(session, approved, preparationToken).ConfigureAwait(false);
         if (paths is not null) return paths;
 
         preparationToken.ThrowIfCancellationRequested();
+        //CSJ,variable=evidence,証跡
         var evidence = new GitPullOperationJournal.ApprovalEvidence(approved.BranchRef, approved.StartObjectId,
             approved.RemoteName, approved.UpstreamRef, approved.TargetObjectId);
+        //CSJ,variable=journal,作業記録
         GitPullOperationJournal journal;
         try { journal = GitPullOperationJournal.Create(directory, evidence); }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -121,6 +134,7 @@ public sealed partial class GitRepository
                 // From this point user cancellation does not kill Git during the checkout update.
                 // A separate bounded command deadline still stops a hung process.
                 using var execution = new CancellationTokenSource(RemoteTimeout);
+                //CSJ,variable=command,コマンド
                 GitResult? command = null;
                 try
                 {
@@ -134,6 +148,7 @@ public sealed partial class GitRepository
                     // An attempted command is never assumed rolled back.
                 }
 
+                //CSJ,variable=verification,検証
                 using var verification = new CancellationTokenSource(RemoteTimeout);
                 var after = await ReadCurrentPullStateAsync(session, approved, verification.Token).ConfigureAwait(false);
                 if (after is null) return UnresolvedPull();
@@ -158,26 +173,34 @@ public sealed partial class GitRepository
         }
     }
 
+    //CSJ,method=ClearPullJournal,プル作業記録を消去する
     private GitResult ClearPullJournal(GitPullOperationJournal journal, GitResult result) =>
         journal.Clear() ? result : UnresolvedPull();
 
+    //CSJ,method=ReadPullRemoteAsync,プルリモートを読み取る（非同期）
     private async Task<(GitPullRemote? Remote, GitResult? Error)> ReadPullRemoteAsync(PullSession session, CancellationToken token,
+        //CSJ,parameter=authentication,認証
         GitHubAuthentication authentication)
     {
         var (branch, error) = await ReadBranchTipAsync(trusted: true, token, session.Settings).ConfigureAwait(false);
         if (branch is null || error is not null)
             return (null, UnsafeRemote("The repository must have a checked-out local branch and commit."));
+        //CSJ,variable=gitDirectory,Git ディレクトリ
         var gitDirectory = Path.Combine(directory, ".git");
         if (!CanUsePullMetadataFile(gitDirectory, branch.BranchRef) ||
             !CanUsePullMetadataFile(gitDirectory, "logs/" + branch.BranchRef))
             return (null, UnsafeRemote("The selected branch metadata or its reflog uses an unsupported path."));
+        //CSJ,variable=name,名前
         var name = branch.BranchRef[BranchRefPrefix.Length..];
+        //CSJ,variable=remote,リモート
         var remote = await ReadSinglePullSettingAsync(session, $"branch.{name}.remote", token).ConfigureAwait(false);
+        //CSJ,variable=upstream,上流
         var upstream = await ReadSinglePullSettingAsync(session, $"branch.{name}.merge", token).ConfigureAwait(false);
         if (remote is null || remote is "" or "." || remote.StartsWith('-') || HasHiddenText(remote) ||
             upstream is null || !upstream.StartsWith(BranchRefPrefix, StringComparison.Ordinal) ||
             !(await RunPullCommandAsync(session, ["check-ref-format", upstream], token).ConfigureAwait(false)).Success)
             return (null, UnsafeRemote("Configure exactly one remote upstream for this checked-out branch."));
+        //CSJ,variable=endpoint,エンドポイント
         var endpoint = await ReadSinglePullSettingAsync(session, $"remote.{remote}.url", token).ConfigureAwait(false);
         try { ValidateRemote(endpoint ?? ""); }
         catch (ArgumentException) { return (null, UnsupportedPullRemote()); }
@@ -191,6 +214,7 @@ public sealed partial class GitRepository
             authentication), null);
     }
 
+    //CSJ,method=ReadSinglePullSettingAsync,単一プル設定を読み取る（非同期）
     private async Task<string?> ReadSinglePullSettingAsync(PullSession session, string name, CancellationToken token)
     {
         var value = await RunPullCommandAsync(session, ["config", "--local", "--no-includes", "-z", "--get-all", name], token).ConfigureAwait(false);
@@ -205,35 +229,43 @@ public sealed partial class GitRepository
         if (listing.ExitCode == 2)
             return (null, UnsafeRemote("The approved upstream branch is missing."));
         if (!listing.Success) return (null, SanitizeRemote(listing, classifyPushStatus: false, cloneStage: null));
+        //CSJ,variable=fields,フィールド一覧
         var fields = listing.StandardOutput.TrimEnd('\r', '\n').Split('\t');
         return fields.Length == 2 && IsObjectId(fields[0]) && fields[1] == remote.UpstreamRef
             ? (fields[0], null)
             : (null, UnsafeRemote("The remote did not report a unique commit for the selected upstream."));
     }
 
+    //CSJ,record=PullSnapshot,プルスナップショット
     private sealed record PullSnapshot(string StartObjectId, string Index, string Branches);
 
+    //CSJ,method=ReadPreparedPullAsync,準備済みプルを読み取る（非同期）
     private async Task<(PullSnapshot? State, GitResult? Error)> ReadPreparedPullAsync(PullSession session, GitPullTarget approved, CancellationToken token)
     {
         var (current, failure) = await ReadPullRemoteAsync(session, token, approved.Remote.Authentication).ConfigureAwait(false);
         if (failure is not null || !SamePullRemote(current!, approved.Remote)) return (null, ChangedPull());
+        //CSJ,variable=state,状態
         var state = await ReadCurrentPullStateAsync(session, approved, token).ConfigureAwait(false);
         return state is not null && state.StartObjectId == approved.StartObjectId
             ? (state, null)
             : (null, UnsafeRemote("Pull requires the approved checked-out branch, a clean index and worktree, and no unfinished Git operation."));
     }
 
+    //CSJ,method=ReadCurrentPullStateAsync,現在のプル状態を読み取る（非同期）
     private async Task<PullSnapshot?> ReadCurrentPullStateAsync(PullSession session, GitPullTarget approved, CancellationToken token)
     {
         using var observed = GitRepositoryLease.TryOpen(directory);
         if (observed?.Identity != approved.Identity) return null;
         var (branch, _) = await ReadBranchTipAsync(trusted: true, token, session.Settings).ConfigureAwait(false);
         if (branch is null || branch.BranchRef != approved.BranchRef) return null;
+        //CSJ,variable=worktree,作業ツリー
         var worktree = await ReadPullWorktreeAsync(branch.BranchRef, tracking: null, token, session.Settings).ConfigureAwait(false);
         if (worktree.Blocked is not null || worktree.Status != "") return null;
+        //CSJ,variable=index,インデックス
         var index = await RunPullCommandAsync(session, ["diff-index", "--cached", "--quiet", "--ignore-submodules=none", branch.ObjectId, "--"], token)
             .ConfigureAwait(false);
         if (!index.Success || index.StandardError.Length != 0) return null;
+        //CSJ,variable=refs,参照
         var refs = await RunPullCommandAsync(session, ["for-each-ref", "--sort=refname", "--format=%(refname)%09%(objectname)", "--", "refs/heads"], token)
             .ConfigureAwait(false);
         if (!refs.Success || refs.StandardError.Length != 0 ||
@@ -243,28 +275,36 @@ public sealed partial class GitRepository
         return last == branch ? new PullSnapshot(branch.ObjectId, worktree.Index!, refs.StandardOutput.Replace("\r\n", "\n", StringComparison.Ordinal)) : null;
     }
 
+    //CSJ,method=ReplaceBranchObjectId,ブランチオブジェクトIDを置換する
     private static string ReplaceBranchObjectId(string branches, string reference, string objectId)
     {
+        //CSJ,variable=prefix,接頭辞
         var prefix = reference + "\t";
         return string.Join('\n', branches.Split('\n').Select(line => line.StartsWith(prefix, StringComparison.Ordinal) ? prefix + objectId : line));
     }
 
+    //CSJ,method=SamePullRemote,同一プルリモート
     private static bool SamePullRemote(GitPullRemote current, GitPullRemote approved) =>
         current.RepositoryRoot == approved.RepositoryRoot && current.BranchRef == approved.BranchRef &&
         current.StartObjectId == approved.StartObjectId && current.RemoteName == approved.RemoteName &&
         current.UpstreamRef == approved.UpstreamRef && current.Endpoint == approved.Endpoint && current.Authentication == approved.Authentication &&
         current.Identity == approved.Identity && current.Settings.SequenceEqual(approved.Settings, StringComparer.Ordinal);
 
+    //CSJ,method=UnsupportedPullRepository,未対応プルリポジトリ
     private static GitResult UnsupportedPullRepository() =>
         UnsafeRemote("Pull requires a verified, direct repository without unsupported Git configuration.");
+    //CSJ,method=UnsupportedPullRemote,未対応プルリモート
     private static GitResult UnsupportedPullRemote() =>
         UnsafeRemote("Pull supports a configured anonymous HTTPS endpoint or a regular local Git remote.");
+    //CSJ,method=ChangedPull,変更済みプル
     private static GitResult ChangedPull() =>
         UnsafeRemote("The approved repository, branch, configuration or remote commit changed. Inspect and confirm the Pull again.");
 
+    //CSJ,method=HasPendingPullEvidence,保留プル証跡の有無を判定する
     private bool HasPendingPullEvidence() =>
         !HasHiddenText(directory) && OnFixedLocalNtfs(directory) && IsOrdinaryDirectory(Path.Combine(directory, ".git")) &&
         GitPullOperationJournal.Exists(directory);
+    //CSJ,method=UnresolvedPull,未解決プル
     private GitResult UnresolvedPull() =>
         new GitResult(1, "", "The outcome could not be verified. Keep the operation record and review the repository before using Pull again.",
             GitFailure.OutcomeUnknown) { RecoveryPath = GitPullOperationJournal.GetPath(directory) };
@@ -272,16 +312,20 @@ public sealed partial class GitRepository
     private async Task<GitResult> WithAppWriteLeaseAsync(Func<Task<GitResult>> run, CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        //CSJ,variable=lease,リース
         using var lease = GitAppWriteLease.TryAcquire(directory);
         return lease is null ? new GitResult(1, "", "Another Git write is in progress.", GitFailure.ConcurrentOperation)
             : await run().ConfigureAwait(false);
     }
 }
 
+//CSJ,class=GitPullRemote,Gitプルリモート
 public sealed class GitPullRemote
 {
     internal GitPullRemote(string repositoryRoot, string branchRef, string startObjectId, string remoteName,
+        //CSJ,parameter=upstreamRef,上流参照
         string upstreamRef, string endpoint, GitRepositoryIdentity identity, string[] settings,
+        //CSJ,parameter=authentication,認証
         GitHubAuthentication authentication = GitHubAuthentication.Anonymous)
     {
         RepositoryRoot = repositoryRoot;
@@ -295,17 +339,27 @@ public sealed class GitPullRemote
         Settings = settings.ToArray();
     }
 
+    //CSJ,property=RepositoryRoot,リポジトリルート
     public string RepositoryRoot { get; }
+    //CSJ,property=BranchRef,ブランチ参照
     public string BranchRef { get; }
+    //CSJ,property=StartObjectId,開始オブジェクトID
     public string StartObjectId { get; }
+    //CSJ,property=RemoteName,リモート名
     public string RemoteName { get; }
+    //CSJ,property=UpstreamRef,上流参照
     public string UpstreamRef { get; }
+    //CSJ,property=Endpoint,エンドポイント
     public string Endpoint { get; }
+    //CSJ,property=Authentication,認証
     public GitHubAuthentication Authentication { get; }
+    //CSJ,property=Identity,識別情報
     internal GitRepositoryIdentity Identity { get; }
+    //CSJ,property=Settings,設定
     internal string[] Settings { get; }
 }
 
+//CSJ,class=GitPullTarget,Gitプル対象
 public sealed class GitPullTarget
 {
     internal GitPullTarget(GitPullRemote remote, string targetObjectId)
@@ -314,14 +368,24 @@ public sealed class GitPullTarget
         TargetObjectId = targetObjectId;
     }
 
+    //CSJ,property=RepositoryRoot,リポジトリルート
     public string RepositoryRoot => Remote.RepositoryRoot;
+    //CSJ,property=BranchRef,ブランチ参照
     public string BranchRef => Remote.BranchRef;
+    //CSJ,property=StartObjectId,開始オブジェクトID
     public string StartObjectId => Remote.StartObjectId;
+    //CSJ,property=RemoteName,リモート名
     public string RemoteName => Remote.RemoteName;
+    //CSJ,property=UpstreamRef,上流参照
     public string UpstreamRef => Remote.UpstreamRef;
+    //CSJ,property=Endpoint,エンドポイント
     public string Endpoint => Remote.Endpoint;
+    //CSJ,property=TargetObjectId,対象オブジェクトID
     public string TargetObjectId { get; }
+    //CSJ,property=ChangesWorktree,変更一覧作業ツリー
     public bool ChangesWorktree => StartObjectId != TargetObjectId;
+    //CSJ,property=Remote,リモート
     internal GitPullRemote Remote { get; }
+    //CSJ,property=Identity,識別情報
     internal GitRepositoryIdentity Identity => Remote.Identity;
 }

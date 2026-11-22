@@ -3,15 +3,19 @@ using System.IO.Compression;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Packaging;
 
+//CSJ,class=YmmpxFailureTests,YMMPX失敗テスト
 internal static class YmmpxFailureTests
 {
+    //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
+        //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "ymmpx-failure"); Directory.CreateDirectory(root);
         await Program.RunNamedCaseAsync("Owned staging directory publishes only under its reserved parent", () =>
         {
             var elsewhere = Path.Combine(root, "other-parent");
             Directory.CreateDirectory(elsewhere);
+            //CSJ,variable=reserved,予約済み
             using var reserved = OwnedStagingDirectory.Reserve(root, ".stage-");
             try
             {
@@ -23,6 +27,7 @@ internal static class YmmpxFailureTests
                 throw new InvalidOperationException("Rejected destination changed the reserved stage.");
             return Task.CompletedTask;
         });
+        //CSJ,variable=project,プロジェクト
         var project = Path.Combine(root, "sample.ymmp"); var output = Path.Combine(root, "sample.ymmpx");
         await File.WriteAllTextAsync(project, "{}", new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
         await File.WriteAllTextAsync(output, "original package");
@@ -30,27 +35,33 @@ internal static class YmmpxFailureTests
         var refusal = await bridge.CreatePackageAsync(project, output, CancellationToken.None);
         if (refusal.Success || !refusal.ErrorMessage!.Contains("別の名前") || await File.ReadAllTextAsync(output) != "original package")
             throw new Exception("existing package was not protected");
+        //CSJ,variable=newPath,新規パス
         var newPath = Path.Combine(root, "new.ymmpx");
         var result = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (result.Success || File.Exists(newPath)) throw new Exception("partial package was published");
         YmmpxLib.YmmpxPackageService.Mode = "invalid";
+        //CSJ,variable=invalid,無効
         var invalid = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (invalid.Success || File.Exists(newPath)) throw new Exception("invalid archive was published");
         YmmpxLib.YmmpxPackageService.Mode = "unsafe";
         var unsafeArchive = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (unsafeArchive.Success || File.Exists(newPath)) throw new Exception("unsafe archive was published");
         YmmpxLib.YmmpxPackageService.Mode = "missing-marker";
+        //CSJ,variable=missingMarker,欠落マーカー
         var missingMarker = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (missingMarker.Success || File.Exists(newPath)) throw new Exception("package without project marker was published");
         YmmpxLib.YmmpxPackageService.Mode = "missing-project";
+        //CSJ,variable=missingProject,欠落プロジェクト
         var missingProject = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (missingProject.Success || File.Exists(newPath)) throw new Exception("package with dangling project marker was published");
         YmmpxLib.YmmpxPackageService.Mode = "missing-links";
+        //CSJ,variable=missingLinks,欠落リンク一覧
         var missingLinks = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (missingLinks.Success || File.Exists(newPath)) throw new Exception("package without links manifest was published");
         YmmpxLib.YmmpxPackageService.Mode = "oversized-marker";
         var oversizedMarker = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (oversizedMarker.Success || File.Exists(newPath)) throw new Exception("package with oversized marker was published");
+        //CSJ,variable=mode,モード
         foreach (var mode in new[] { "invalid-project-json", "invalid-links-json" })
         {
             YmmpxLib.YmmpxPackageService.Mode = mode;
@@ -59,6 +70,7 @@ internal static class YmmpxFailureTests
         }
         await Program.RunNamedCaseAsync("Packaging refuses an archive for another project", async () =>
         {
+            //CSJ,variable=mode,モード
             const string mode = "other-project";
             YmmpxLib.YmmpxPackageService.Mode = mode;
             var wrongProject = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
@@ -70,6 +82,7 @@ internal static class YmmpxFailureTests
             var selected = Path.Combine(root, "same.ymmp");
             const string original = """{"Title":"Selected","Items":[{"FilePath":"original.wav"}]}""";
             await File.WriteAllTextAsync(selected, original);
+            //CSJ,variable=destination,格納先
             var destination = Path.Combine(root, "same-name-output.ymmpx");
             YmmpxLib.YmmpxPackageService.Mode = "same-name-other-project";
             try
@@ -83,10 +96,12 @@ internal static class YmmpxFailureTests
         await Program.RunNamedCaseAsync("Packaging refuses the wrong material even when its size matches", async () =>
         {
             var selected = Path.Combine(root, "project-with-asset.ymmp");
+            //CSJ,variable=media,メディア
             var media = Path.Combine(root, "expected.wav");
             const string original = """{"Title":"Selected","Items":[{"FilePath":"expected.wav"}]}""";
             await File.WriteAllTextAsync(selected, original);
             await File.WriteAllTextAsync(media, "different content");
+            //CSJ,variable=destination,格納先
             var destination = Path.Combine(root, "project-with-asset.ymmpx");
             YmmpxLib.YmmpxPackageService.Mode = "same-project-wrong-media";
             try
@@ -102,23 +117,28 @@ internal static class YmmpxFailureTests
             }
             finally { YmmpxLib.YmmpxPackageService.Mode = "success"; }
         });
+        //CSJ,variable=cancelled,キャンセル済み
         using (var cancelled = new CancellationTokenSource())
         {
             cancelled.Cancel();
             try { await bridge.CreatePackageAsync(project, newPath, cancelled.Token); throw new Exception("cancellation ignored"); } catch (OperationCanceledException) { }
             if (File.Exists(newPath)) throw new Exception("cancelled operation created package");
+            //CSJ,variable=extractPath,抽出パス
             var extractPath = Path.Combine(root, "cancelled-extraction");
             var calls = YmmpxLib.YmmpxPackageService.ExtractionCalls;
             try { await bridge.ExtractPackageAsync(output, extractPath, cancelled.Token); throw new Exception("extraction cancellation ignored"); } catch (OperationCanceledException) { }
             if (Directory.Exists(extractPath) || YmmpxLib.YmmpxPackageService.ExtractionCalls != calls) throw new Exception("cancelled extraction created output or called extractor");
         }
         YmmpxLib.YmmpxPackageService.Mode = "success";
+        //CSJ,variable=missingOutput,欠落出力
         var missingOutput = Path.Combine(root, "missing-source.ymmpx");
+        //CSJ,variable=missingSource,欠落元
         var missingSource = await bridge.CreatePackageAsync(Path.Combine(root, "missing.ymmp"), missingOutput, CancellationToken.None);
         if (missingSource.Success || File.Exists(missingOutput)) throw new Exception("package creation accepted missing project");
         var malformedSource = Path.Combine(root, "malformed.ymmp");
         var invocationCount = 0;
         YmmpxLib.YmmpxPackageService.DuringPackaging = _ => invocationCount++;
+        //CSJ,variable=invalidJson,無効JSON
         foreach (var invalidJson in new[] { "{", "[]" })
         {
             await File.WriteAllTextAsync(malformedSource, invalidJson);
@@ -127,6 +147,7 @@ internal static class YmmpxFailureTests
                 throw new Exception("malformed project reached the library or published output");
         }
         YmmpxLib.YmmpxPackageService.DuringPackaging = null;
+        //CSJ,variable=interrupted,中断済み
         using (var interrupted = new CancellationTokenSource())
         {
             YmmpxLib.YmmpxPackageService.Mode = "cancel-after-write";
@@ -148,15 +169,19 @@ internal static class YmmpxFailureTests
         }
         await Program.RunNamedCaseAsync("Cancelled packaging preserves a replacement at its temporary name", async () =>
         {
+            //CSJ,variable=isolated,隔離
             var isolated = Path.Combine(root, "retained-replacement");
             Directory.CreateDirectory(isolated);
+            //CSJ,variable=destination,格納先
             var destination = Path.Combine(isolated, "cancel-replaced.ymmpx");
             var movedOriginal = Path.Combine(isolated, "moved-partial.ymmpx");
             string? replacedPath = null;
+            //CSJ,variable=cancelled,キャンセル済み
             using var cancelled = new CancellationTokenSource();
             YmmpxLib.YmmpxPackageService.Mode = "cancel-after-write";
             YmmpxLib.YmmpxPackageService.AfterPartialWrite = () =>
             {
+                //CSJ,variable=staging,準備領域
                 var staging = Directory.EnumerateDirectories(isolated, ".ymmpm-package-*").Single();
                 replacedPath = Directory.EnumerateFiles(staging, ".cancel-replaced.*.tmp.ymmpx").Single();
                 File.Move(replacedPath, movedOriginal);
@@ -179,10 +204,12 @@ internal static class YmmpxFailureTests
                 throw new InvalidOperationException("Cancellation removed a file that the active operation did not own.");
         });
         YmmpxLib.YmmpxPackageService.ExternalPath = newPath;
+        //CSJ,variable=conflict,競合
         var conflict = await bridge.CreatePackageAsync(project, newPath, CancellationToken.None);
         if (conflict.Success || await File.ReadAllTextAsync(newPath) != "external edit")
             throw new Exception("concurrent destination overwritten");
         YmmpxLib.YmmpxPackageService.ExternalPath = null;
+        //CSJ,variable=safePath,安全パス
         var safePath = Path.Combine(root, "save-as.ymmpx");
         var sourceWriteDenied = false;
         YmmpxLib.YmmpxPackageService.DuringPackaging = path =>
@@ -190,6 +217,7 @@ internal static class YmmpxFailureTests
             try { File.WriteAllText(path, "external edit"); }
             catch (IOException) { sourceWriteDenied = true; }
         };
+        //CSJ,variable=created,作成済み
         var created = await bridge.CreatePackageAsync(project, safePath, CancellationToken.None);
         YmmpxLib.YmmpxPackageService.DuringPackaging = null;
         if (!created.Success || created.OutputPath != safePath || !IsPackage(safePath)) throw new Exception("new package failed");
@@ -202,6 +230,7 @@ internal static class YmmpxFailureTests
         if (await File.ReadAllTextAsync(output) != "original package") throw new Exception("existing package changed");
         if (Directory.EnumerateDirectories(root, ".ymmpm-package-*").Any()) throw new Exception("temporary package remained");
         var generated = Path.Combine(root, "generated.tmp");
+        //CSJ,variable=existingOutput,既存出力
         var existingOutput = Path.Combine(root, "existing.ymmpx");
         await File.WriteAllTextAsync(generated, "synthetic new package");
         await File.WriteAllTextAsync(existingOutput, "synthetic existing package");
@@ -211,8 +240,10 @@ internal static class YmmpxFailureTests
         Console.WriteLine("YMMPX synthetic partial write preserves existing package.");
     }
 
+    //CSJ,method=IsPackage,パッケージかを判定する
     private static bool IsPackage(string path)
     {
+        //CSJ,variable=archive,アーカイブ
         using var archive = ZipFile.OpenRead(path);
         return archive.GetEntry("resources/synthetic.txt") is not null;
     }
@@ -220,21 +251,29 @@ internal static class YmmpxFailureTests
 
 namespace YmmpxLib
 {
+    //CSJ,class=YmmpxPackagingOptions,YMMPXパッケージ化オプション
     public sealed class YmmpxPackagingOptions { public bool IncludeProjectUiSettings { get; set; } }
+    //CSJ,class=YmmpxPackagingProgress,YMMPXパッケージ化進捗
     public sealed class YmmpxPackagingProgress { public int Percentage { get; set; } }
+    //CSJ,class=YmmpxPackageService,YMMPXパッケージサービス
     public static class YmmpxPackageService
     {
+        //CSJ,property=Mode,モード
         public static string Mode { get; set; } = "failure";
+        //CSJ,property=ExternalPath,外部パス
         public static string? ExternalPath { get; set; }
         public static Action<string>? DuringPackaging { get; set; }
+        //CSJ,property=AfterPartialWrite,変更後部分書き込み
         public static Action? AfterPartialWrite { get; set; }
         public static int ExtractionCalls { get; private set; }
+        //CSJ,method=GetAvailableDirectoryPath,利用可能ディレクトリのパスを取得する
         public static string GetAvailableDirectoryPath(string path) => path;
         public static object ExtractAndRestoreProject(string path, string destination)
         {
             ExtractionCalls++;
             throw new InvalidOperationException("synthetic extraction must not be called for unsafe archives");
         }
+        //CSJ,method=CreatePackageAsync,パッケージを作成する（非同期）
         public static async Task<object> CreatePackageAsync(string project, string output, HashSet<string> ignored, YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token)
         {
             DuringPackaging?.Invoke(project);
@@ -255,16 +294,22 @@ namespace YmmpxLib
                 await File.WriteAllTextAsync(output, "invalid archive", token);
                 return new { OutputPath = output, ResourceCount = 0 };
             }
+            //CSJ,variable=projectName,プロジェクト名
             var projectName = Mode == "other-project" ? "other-project.ymmp" : Path.GetFileName(project);
+            //CSJ,variable=stream,ストリーム
             using (var stream = new FileStream(output, FileMode.Create, FileAccess.Write))
+            //CSJ,variable=archive,アーカイブ
             using (var archive = new ZipArchive(stream, ZipArchiveMode.Create))
             {
+                //CSJ,variable=writer,書き込み処理
                 using (var writer = new StreamWriter(archive.CreateEntry(Mode == "unsafe" ? "../escape.txt" : "resources/synthetic.txt").Open()))
                     await writer.WriteAsync("synthetic package");
                 if (Mode != "missing-marker")
+                    //CSJ,variable=writer,書き込み処理
                     using (var writer = new StreamWriter(archive.CreateEntry("_ymmpx_project_path.txt").Open())) await writer.WriteAsync(Mode == "oversized-marker" ? new string('x', 4097) : projectName);
                 if (Mode != "missing-project")
                 {
+                    //CSJ,variable=document,文書
                     var document = Mode switch
                     {
                         "invalid-project-json" => "{",
@@ -272,10 +317,12 @@ namespace YmmpxLib
                         "same-project-wrong-media" => """{"Title":"Selected","Items":[{"FilePath":"resources/synthetic.txt"}]}""",
                         _ => await File.ReadAllTextAsync(project, token),
                     };
+                    //CSJ,variable=writer,書き込み処理
                     using var writer = new StreamWriter(archive.CreateEntry(projectName).Open());
                     await writer.WriteAsync(document.AsMemory(), token);
                 }
                 if (Mode != "missing-links")
+                    //CSJ,variable=writer,書き込み処理
                     using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync(Mode == "invalid-links-json" ? "[]" : """{"resources/synthetic.txt":"resources/synthetic.txt"}""");
             }
             if (ExternalPath is not null) await File.WriteAllTextAsync(ExternalPath, "external edit", token);
