@@ -87,7 +87,7 @@ internal sealed class SceneComparisonPlan
     {
         comparison = alignment.Request;
         A = new(Guid.NewGuid(), a, comparison.Timestamp, alignment.FrameA!.Value, width, height);
-        B = new(Guid.NewGuid(), b, comparison.Timestamp, alignment.FrameB!.Value, width, height);
+        B = new(Guid.NewGuid(), b, comparison.Timestamp + comparison.Offset, alignment.FrameB!.Value, width, height);
     }
 
     private SceneComparisonPlan(PreviewComparisonRequest comparison, SceneRenderRequest a, SceneRenderRequest b)
@@ -106,15 +106,26 @@ internal sealed class SceneComparisonPlan
     //CSJ,method=Prepare,準備する
     public static (SceneComparisonPlan? Plan, PreviewFrameAlignment Alignment, SceneHandoffRejection? Rejection) Prepare(
         //CSJ,parameter=timestamp,タイムスタンプ
-        TimeSpan timestamp, SceneSnapshot a, SceneSnapshot b, int width, int height, CancellationToken cancellationToken = default)
+        TimeSpan timestamp, SceneSnapshot a, SceneSnapshot b, int width, int height, CancellationToken cancellationToken = default) =>
+        PrepareCore(new(timestamp, a.Source, b.Source), a, b, width, height, requireSameRevision: true, cancellationToken);
+
+    internal static (SceneComparisonPlan? Plan, PreviewFrameAlignment Alignment, SceneHandoffRejection? Rejection) PrepareProjects(
+        TimeSpan timestamp, ComparisonTiming timing, SceneSnapshot original, SceneSnapshot current, int width, int height,
+        CancellationToken token = default) =>
+        PrepareCore(timing.Bind(timestamp, original.Source, current.Source), original, current, width, height,
+            requireSameRevision: false, token);
+
+    private static (SceneComparisonPlan? Plan, PreviewFrameAlignment Alignment, SceneHandoffRejection? Rejection) PrepareCore(
+        PreviewComparisonRequest request, SceneSnapshot a, SceneSnapshot b, int width, int height,
+        bool requireSameRevision, CancellationToken token)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        token.ThrowIfCancellationRequested();
         //CSJ,variable=alignment,整合
-        var alignment = PreviewFrameAlignment.Align(new(timestamp, a.Source, b.Source));
+        var alignment = PreviewFrameAlignment.Align(request);
         if (alignment.Error != PreviewComparisonError.None)
             return (null, alignment, new(SceneHandoffError.AlignmentRejected, alignment.ErrorSide));
 
-        var rejection = CheckPair(a, b);
+        var rejection = CheckPair(a, b, requireSameRevision);
         if (rejection is not null)
             return (null, alignment, rejection);
 
@@ -126,7 +137,7 @@ internal sealed class SceneComparisonPlan
     }
 
     //CSJ,method=CheckPair,組を確認する
-    private static SceneHandoffRejection? CheckPair(SceneSnapshot a, SceneSnapshot b)
+    private static SceneHandoffRejection? CheckPair(SceneSnapshot a, SceneSnapshot b, bool requireSameRevision)
     {
         if (!a.IsBound)
             return new(SceneHandoffError.InvalidBinding, PreviewComparisonSide.A);
@@ -134,9 +145,9 @@ internal sealed class SceneComparisonPlan
             return new(SceneHandoffError.InvalidBinding, PreviewComparisonSide.B);
         if (a.HostSessionId != b.HostSessionId)
             return new(SceneHandoffError.HostSessionMismatch);
-        if (a.ProjectId != b.ProjectId)
+        if (requireSameRevision && a.ProjectId != b.ProjectId)
             return new(SceneHandoffError.ProjectMismatch);
-        if (a.ProjectRevisionId != b.ProjectRevisionId)
+        if (requireSameRevision && a.ProjectRevisionId != b.ProjectRevisionId)
             return new(SceneHandoffError.ProjectRevisionMismatch);
         if (a.SceneId == b.SceneId || a.SceneLifetimeId == b.SceneLifetimeId)
             return new(SceneHandoffError.SameScene);

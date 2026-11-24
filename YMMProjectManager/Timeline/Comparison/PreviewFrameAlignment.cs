@@ -12,7 +12,8 @@ internal readonly record struct PreviewSource(
     int FrameCount);
 
 //CSJ,record=PreviewComparisonRequest,プレビュー比較要求
-internal readonly record struct PreviewComparisonRequest(TimeSpan Timestamp, PreviewSource A, PreviewSource B);
+internal readonly record struct PreviewComparisonRequest(
+    TimeSpan Timestamp, PreviewSource A, PreviewSource B, TimeSpan Offset = default);
 
 //CSJ,enum=PreviewComparisonError,プレビュー比較エラー
 internal enum PreviewComparisonError
@@ -63,7 +64,10 @@ internal sealed record PreviewFrameAlignment(
             return new(request, null, null, PreviewComparisonError.RenderingConfigurationMismatch);
 
         int? frameA = Resolve(request.Timestamp, request.A);
-        int? frameB = Resolve(request.Timestamp, request.B);
+        var bTicks = (Int128)request.Timestamp.Ticks + request.Offset.Ticks;
+        int? frameB = bTicks >= 0 && bTicks <= long.MaxValue
+            ? Resolve(TimeSpan.FromTicks((long)bTicks), request.B)
+            : null;
         if (frameA is null || frameB is null)
         {
             PreviewComparisonSide? side = frameA.HasValue ? PreviewComparisonSide.B

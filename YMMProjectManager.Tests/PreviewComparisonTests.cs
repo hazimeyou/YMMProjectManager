@@ -1,3 +1,4 @@
+using System.IO;
 using YMMProjectManager.Application.PreviewComparison;
 
 //CSJ,class=PreviewComparisonTests,プレビュー比較テスト
@@ -21,6 +22,8 @@ internal static class PreviewComparisonTests
         await CaseAsync("TL-1 cancellation during buffer acquisition", TestCancellationDuringBufferAcquisition);
         await CaseAsync("TL-1 4K metrics, wide accumulator and bounded allocation", TestLargeImage);
         await Program.RunNamedCaseAsync("TL-1 concurrent comparisons with stable independent buffers", TestConcurrencyAsync);
+        await CaseAsync("R32 comparison signed offsets, section boundaries and independent Scene bindings", TestProjectOffsets);
+        await Program.RunNamedCaseAsync("R32 comparison timing copy is bounded, round-trips and never overwrites", TestTimingCopyAsync);
         await LiveThumbnailSafetyTests.RunAsync();
     }
 
@@ -29,6 +32,71 @@ internal static class PreviewComparisonTests
         run();
         return Task.CompletedTask;
     });
+
+    private static void TestProjectOffsets()
+    {
+        var timing = new ComparisonTiming(TimeSpan.FromMilliseconds(-100),
+            [new(TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(200)),
+             new(TimeSpan.FromMilliseconds(900), TimeSpan.Zero)]);
+        ExpectAlignment(timing.Bind(TimeSpan.Zero, A, B), 0, null,
+            PreviewComparisonError.OutsideCommonDuration, PreviewComparisonSide.B);
+        ExpectAlignment(timing.Bind(TimeSpan.FromTicks(4_999_999), A, B), 11, 11);
+        ExpectAlignment(timing.Bind(TimeSpan.FromMilliseconds(500), A, B), 12, 21);
+        ExpectAlignment(timing.Bind(TimeSpan.FromMilliseconds(800), A, B), 19, null,
+            PreviewComparisonError.OutsideCommonDuration, PreviewComparisonSide.B);
+        ExpectAlignment(timing.Bind(TimeSpan.FromMilliseconds(900), A, B), 21, 27);
+        ExpectAlignment(new(TimeSpan.MaxValue, A, B, TimeSpan.FromTicks(1)), null, null,
+            PreviewComparisonError.OutsideCommonDuration);
+        try
+        {
+            _ = new ComparisonTiming(TimeSpan.Zero, [new(TimeSpan.Zero, TimeSpan.Zero), new(TimeSpan.Zero, TimeSpan.Zero)]);
+            throw new InvalidOperationException("A duplicate section start was accepted.");
+        }
+        catch (InvalidDataException) { }
+
+        var session = Guid.NewGuid();
+        var original = new SceneSnapshot(session, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), A);
+        var current = new SceneSnapshot(session, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), B);
+        var prepared = SceneComparisonPlan.PrepareProjects(TimeSpan.FromMilliseconds(500), timing, original, current, 2, 2);
+        if (prepared.Plan?.A.Timestamp != TimeSpan.FromMilliseconds(500) ||
+            prepared.Plan?.B.Timestamp != TimeSpan.FromMilliseconds(700) || prepared.Plan?.B.FrameIndex != 21)
+            throw new InvalidOperationException("Scene requests do not match the independently calculated times.");
+        if (prepared.Plan.CheckObserved(original, current with { ProjectRevisionId = Guid.NewGuid() })?.Error
+            != SceneHandoffError.ProjectRevisionMismatch)
+            throw new InvalidOperationException("A replaced comparison source was accepted.");
+    }
+
+    private static async Task TestTimingCopyAsync()
+    {
+        var root = Directory.CreateTempSubdirectory("ymmpm-timing-");
+        try
+        {
+            var path = Path.Combine(root.FullName, "comparison.json");
+            var timing = new ComparisonTiming(TimeSpan.FromSeconds(-2), [new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10))]);
+            await timing.SaveCopyAsync(path, default);
+            var bytes = File.ReadAllBytes(path);
+            var loaded = await ComparisonTiming.LoadAsync(path, default);
+            if (loaded.GetOffset(TimeSpan.Zero) != timing.DefaultOffset ||
+                !loaded.Sections.SequenceEqual(timing.Sections))
+                throw new InvalidOperationException("Comparison timing did not round-trip.");
+            try
+            {
+                await timing.SaveCopyAsync(path, default);
+                throw new InvalidOperationException("An existing comparison file was overwritten.");
+            }
+            catch (IOException) { }
+            if (!bytes.SequenceEqual(File.ReadAllBytes(path)) || Directory.EnumerateFiles(root.FullName).Count() != 1)
+                throw new InvalidOperationException("A comparison copy changed existing data or left a staging file.");
+            await File.WriteAllTextAsync(path, """{"Version":1,"DefaultOffsetTicks":0,"Sections":[{"StartTicks":1,"OffsetTicks":0},{"StartTicks":1,"OffsetTicks":4}]}""");
+            try
+            {
+                _ = await ComparisonTiming.LoadAsync(path, default);
+                throw new InvalidOperationException("A malformed section list was loaded.");
+            }
+            catch (InvalidDataException) { }
+        }
+        finally { root.Delete(recursive: true); }
+    }
 
     //CSJ,method=TestAlignment,整合をテストする
     private static void TestAlignment()
