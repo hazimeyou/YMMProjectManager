@@ -112,8 +112,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
     private bool TrySave(List<string> folders)
     {
         var directory = Path.GetDirectoryName(settingsPath)!;
+        var parent = Path.GetDirectoryName(directory)
+            ?? throw new IOException("The settings directory needs a containing directory.");
+        using var fence = OwnedFilePublication.DirectoryFence.Open(parent, enforceShare: true);
         Directory.CreateDirectory(directory);
-        using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        fence.Add(directory);
         using var original = OpenCurrent(allowRename: true);
         var currentVersion = original is null ? null : GetVersion(original, ReadSettings(original));
         if (currentVersion != confirmedVersion) return false;
