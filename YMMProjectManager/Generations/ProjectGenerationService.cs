@@ -329,6 +329,8 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             var published = false;
             try
             {
+                if (original is not null)
+                    ProjectListReplacement.VerifyCompatibleFileSecurity(original, candidate, allowAclCreationMarkerDifference: true);
                 await source.CopyToAsync(candidate, cancellationToken).ConfigureAwait(false);
                 await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
                 if (original is not null)
