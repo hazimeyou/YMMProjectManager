@@ -192,6 +192,12 @@ public sealed partial class GitRepository
             HasOperationName(component, "projects.json.publication-") ||
             HasOperationName(component, "YMMProjectManagerSettings.json.previous-") ||
             HasOperationName(component, "YMMProjectManagerSettings.json.recovery-") ||
+            component.Equals("YMMProjectManagerSettings.json", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals("YMMProjectManager.log", StringComparison.OrdinalIgnoreCase) ||
+            component.StartsWith("YMMProjectManager.log.", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals("pm-ymmpx-exclude.json", StringComparison.OrdinalIgnoreCase) ||
+            component.Contains(".ymmpm-exclude.json", StringComparison.OrdinalIgnoreCase) ||
+            component.StartsWith("pm-ymmpx-exclude.json.", StringComparison.OrdinalIgnoreCase) ||
             component.Equals("projects.json.recovery", StringComparison.OrdinalIgnoreCase) ||
             component.Equals("projects.json.publication-pending", StringComparison.OrdinalIgnoreCase) ||
             component.Equals(".git-credentials", StringComparison.OrdinalIgnoreCase) ||
@@ -219,10 +225,16 @@ public sealed partial class GitRepository
 
         var extension = name.IndexOf('.');
         var stem = extension < 0 ? name : name[..extension];
-        if (stem.Length == operationLength + fallbackBackupSuffix.Length &&
-            stem.EndsWith(fallbackBackupSuffix, StringComparison.OrdinalIgnoreCase) &&
-            Guid.TryParseExact(stem[..operationLength], "N", out _))
-            return true;
+        if (stem.EndsWith(fallbackBackupSuffix, StringComparison.OrdinalIgnoreCase))
+        {
+            var keyBeforeRestore = stem[..^fallbackBackupSuffix.Length];
+            if (Guid.TryParseExact(keyBeforeRestore, "N", out _) ||
+                DateTime.TryParseExact(keyBeforeRestore, "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out _) ||
+                (keyBeforeRestore.Length == 48 && keyBeforeRestore[15] == '_' &&
+                 DateTime.TryParseExact(keyBeforeRestore[..15], "yyyyMMdd-HHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out _) &&
+                 Guid.TryParseExact(keyBeforeRestore[16..], "N", out _)))
+                return true;
+        }
 
         if (name.Length < journalPrefix.Length + keyLength + journalSuffix.Length ||
             !name.StartsWith(journalPrefix, StringComparison.OrdinalIgnoreCase))
@@ -389,6 +401,8 @@ public sealed partial class GitRepository
                 var root = document.RootElement;
                 if (IsPrivateProjectListRecord(root))
                     return "Git contains a local project list or recovery record.";
+                if (IsPrivateSettingsRecord(root))
+                    return "Git contains local settings or recovery data.";
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
                 if (IsPrivateGenerationRestoreRecord(root))
@@ -429,6 +443,15 @@ public sealed partial class GitRepository
             hash.ValueKind == JsonValueKind.String && hash.GetString() is { Length: 64 } digest &&
             digest.All(Uri.IsHexDigit);
     }
+
+    private static bool IsPrivateSettingsRecord(JsonElement root) =>
+        (root.TryGetProperty("SearchFolders", out var folders) && folders.ValueKind == JsonValueKind.Array &&
+         folders.EnumerateArray().Any(folder => folder.ValueKind == JsonValueKind.String &&
+             IsMachineLocalReference(folder.GetString()!))) ||
+        (root.TryGetProperty("Version", out _) && root.TryGetProperty("OperationId", out _) &&
+         root.TryGetProperty("TargetName", out _) && root.TryGetProperty("DirectoryId", out _) &&
+         root.TryGetProperty("FileId", out _) && root.TryGetProperty("Sha256", out _) &&
+         root.TryGetProperty("StagedId", out _) && root.TryGetProperty("StagedSha256", out _));
 
     private static bool IsPrivateRelinkRecord(JsonElement root) =>
         root.ValueKind == JsonValueKind.Object &&

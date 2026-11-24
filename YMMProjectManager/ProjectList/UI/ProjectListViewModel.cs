@@ -613,33 +613,18 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             var projectPath = project.FullPath;
             //CSJ,variable=projectEvidence,プロジェクト証跡
             var projectEvidence = await ProjectFileEvidence.ReadAsync(projectPath);
-            var before = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
-            //CSJ,variable=manifest,目録
-            var manifest = AssetManifestStore.Parse(before);
-            //CSJ,variable=afterLoad,変更後読み込み
-            var afterLoad = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
-            if (!before.SequenceEqual(afterLoad)) throw new InvalidDataException("metadata が変更されました。再選択してください。");
+            var metadataPath = Path.GetFullPath(dialog.FileName);
+            using var metadataDirectory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(metadataPath)!, enforceShare: true);
+            using var metadata = new FileStream(OwnedFilePublication.OpenOrdinaryPath(metadataPath,
+                expectDirectory: false, allowRename: false), FileAccess.Read);
+            var manifest = await AssetManifestStore.LoadAsync(metadata);
             if (!ReferenceEquals(project, SelectedProject) || project.ProjectId is not null || HasUnsavedProjectList || project.FullPath != projectPath) return;
             //CSJ,variable=confirm,確認
             var confirm = MessageBox.Show($"一覧項目: {projectPath}\n選択 metadata: {dialog.FileName}\nmetadata の project 名: {manifest.ProjectFileName}\nproject ID: {manifest.ProjectId}\nrevision ID: {manifest.RevisionId}\n\nmetadata の場所は保存しません。今後もファイルを選択する必要があります。名前や内容だけでは同一性を確認できません。同じ論理プロジェクトとして関連付けますか？", "旧素材メタデータ", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
             if (confirm != MessageBoxResult.Yes) return;
-            //CSJ,variable=afterConfirm,変更後確認
-            var afterConfirm = await ReadMetadataEvidenceAsync(dialog.FileName).ConfigureAwait(true);
-            if (!before.SequenceEqual(afterConfirm) || project.FullPath != projectPath) throw new InvalidDataException("metadata または project が変更されました。再確認してください。");
+            if (project.FullPath != projectPath) throw new InvalidDataException("project が変更されました。再確認してください。");
             await AssociateLegacyMetadataAsync(project, manifest, projectEvidence).ConfigureAwait(true);
         }).ConfigureAwait(true);
-    }
-
-    //CSJ,method=ReadMetadataEvidenceAsync,メタデータ証跡を読み取る（非同期）
-    private static async Task<byte[]> ReadMetadataEvidenceAsync(string path)
-    {
-        //CSJ,variable=stream,ストリーム
-        await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
-        if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("素材 metadata が大きすぎます。");
-        //CSJ,variable=bytes,バイト列
-        var bytes = new byte[checked((int)stream.Length)];
-        await stream.ReadExactlyAsync(bytes).ConfigureAwait(false);
-        return bytes;
     }
 
     //CSJ,method=AssociateLegacyMetadataAsync,関連付け旧形式メタデータ（非同期）

@@ -268,6 +268,10 @@ internal static class GitPublicationTests
                     [".git-credentials"] = "synthetic placeholder",
                     ["projects.json.recovery/draft.json"] = "{}",
                     ["recovery-renamed.json"] = """{"Projects":[],"Folders":[]}""",
+                    ["settings-renamed.json"] = """{"SearchFolders":["C:/synthetic/private"]}""",
+                    ["journal-renamed.json"] = """{"Version":1,"OperationId":"fixture","TargetName":"settings","DirectoryId":"fixture","FileId":"fixture","Sha256":"fixture","StagedId":"fixture","StagedSha256":"fixture"}""",
+                    ["20261125-010203_before-restore.ymmp"] = "{}",
+                    ["20261125-010203_12345678901234567890123456789012_before-restore.ymmp"] = "{}",
                     ["key-renamed.txt"] = "-----BEGIN PRIVATE KEY-----\nsynthetic only\n",
                 };
                 foreach (var (relative, contents) in records)

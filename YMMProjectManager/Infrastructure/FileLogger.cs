@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text.Json;
 using System.Text;
 
 namespace YMMProjectManager.Infrastructure;
@@ -11,6 +13,10 @@ public sealed class FileLogger
     internal const long DefaultByteLimit = 1024 * 1024;
     internal const int DefaultArchiveLimit = 7;
     internal static readonly TimeSpan DefaultRetention = TimeSpan.FromDays(7);
+
+    private const int MaxOwnershipBytes = 512;
+    private sealed record ArchiveReceipt(int Version, ulong Volume, Guid FileId, long Bytes, string Sha256);
+    private sealed record Archive(string Path, DateTime Timestamp, ArchiveReceipt Receipt, (ulong, Guid) OwnershipIdentity);
 
     private readonly string logPath;
     private readonly object sync = new();
@@ -100,8 +106,31 @@ public sealed class FileLogger
                     using (var previous = OwnedFilePublication.OpenOrdinaryPath(logPath, expectDirectory: false, allowRename: true))
                     {
                         if (ProjectFileEvidence.ReadPhysicalIdentity(previous) != expected) return;
-                        var archive = logPath + $".{now.UtcDateTime:yyyyMMddHHmmss}-{Guid.NewGuid():N}";
-                        OwnedFilePublication.RenameOpenedPath(previous, archive);
+                        var stamp = now.UtcDateTime.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+                        var archive = logPath + $".{stamp}-{Guid.NewGuid():N}";
+                        using var oldLog = new FileStream(previous, FileAccess.Read);
+                        if (oldLog.Length > DefaultByteLimit * DefaultArchiveLimit)
+                        {
+                            // Old versions could produce unbounded logs. Park them without a cleanup receipt.
+                            OwnedFilePublication.RenameOpenedPath(previous, archive);
+                        }
+                        else
+                        {
+                            using var receipt = OwnedFilePublication.CreateOwnedOutputFile(archive + ".owner");
+                            try
+                            {
+                                var seal = new ArchiveReceipt(1, expected.Item1, expected.Item2, oldLog.Length,
+                                    Convert.ToHexString(SHA256.HashData(oldLog)));
+                                JsonSerializer.Serialize(receipt, seal);
+                                receipt.Flush(flushToDisk: true);
+                                OwnedFilePublication.RenameOpenedPath(previous, archive);
+                            }
+                            catch
+                            {
+                                OwnedFilePublication.TryDeleteOpenedPath(receipt.SafeFileHandle);
+                                throw;
+                            }
+                        }
                     }
                     using var output = OwnedFilePublication.CreateOwnedOutputFile(logPath);
                     output.Write(line);
@@ -129,7 +158,7 @@ public sealed class FileLogger
             var archives = GetArchives(directory).ToArray();
             var active = new FileInfo(logPath);
             var activeBytes = active.Exists && (active.Attributes & FileAttributes.ReparsePoint) == 0 ? active.Length : 0;
-            return (activeBytes + archives.Sum(x => x.Length), archives.Length);
+            return (activeBytes + archives.Sum(x => x.Receipt.Bytes), archives.Length);
         }
     }
 
@@ -149,30 +178,24 @@ public sealed class FileLogger
         var liveBytes = 0L;
         var liveCount = 0;
         var deleted = 0;
-        foreach (var (path, timestamp, length, identity) in GetArchives(directory).OrderByDescending(x => x.Timestamp))
+        foreach (var archive in GetArchives(directory).OrderByDescending(x => x.Timestamp))
         {
-            if (!deleteAll && timestamp >= now - DefaultRetention && liveCount < DefaultArchiveLimit &&
-                length <= (DefaultArchiveLimit * byteLimit) - liveBytes)
+            if (!deleteAll && archive.Timestamp >= now - DefaultRetention && liveCount < DefaultArchiveLimit &&
+                archive.Receipt.Bytes <= (DefaultArchiveLimit * byteLimit) - liveBytes)
             {
                 liveCount++;
-                liveBytes += length;
+                liveBytes += archive.Receipt.Bytes;
                 continue;
             }
-            try
-            {
-                using var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: true);
-                if (ProjectFileEvidence.ReadPhysicalIdentity(handle) == identity &&
-                    OwnedFilePublication.TryDeleteOpenedPath(handle)) deleted++;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            if (TryDeleteArchive(archive)) deleted++;
         }
         return deleted;
     }
 
-    private IEnumerable<(string Path, DateTime Timestamp, long Length, (ulong, Guid) Identity)> GetArchives(string directory)
+    private IEnumerable<Archive> GetArchives(string directory)
     {
         var prefix = Path.GetFileName(logPath) + ".";
-        foreach (var entry in new DirectoryInfo(directory).EnumerateFiles())
+        foreach (var entry in new DirectoryInfo(directory).EnumerateFiles(prefix + "*"))
         {
             if (!entry.Name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
                 (entry.Attributes & FileAttributes.ReparsePoint) != 0)
@@ -181,18 +204,57 @@ public sealed class FileLogger
             if (suffix.Length == 47 && suffix[14] == '-' &&
                 DateTime.TryParseExact(suffix[..14], "yyyyMMddHHmmss", CultureInfo.InvariantCulture,
                     DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp) &&
-                Guid.TryParseExact(suffix[15..], "N", out _) && ReadArchive(entry.FullName) is { } file)
-                yield return (entry.FullName, timestamp, file.Length, file.Identity);
+                Guid.TryParseExact(suffix[15..], "N", out _) &&
+                ReadArchive(entry.FullName, timestamp) is { } archive)
+                yield return archive;
         }
     }
 
-    private static (long Length, (ulong, Guid) Identity)? ReadArchive(string path)
+    private static Archive? ReadArchive(string path, DateTime stamp)
     {
         try
         {
             using var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
-            return (RandomAccess.GetLength(handle), ProjectFileEvidence.ReadPhysicalIdentity(handle));
+            using var ownership = OwnedFilePublication.OpenOrdinaryPath(path + ".owner", expectDirectory: false, allowRename: false);
+            var receipt = ReadReceipt(ownership);
+            return MatchesArchive(handle, receipt)
+                ? new Archive(path, stamp, receipt, ProjectFileEvidence.ReadPhysicalIdentity(ownership))
+                : null;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return null; }
     }
+
+    private static bool TryDeleteArchive(Archive archive)
+    {
+        try
+        {
+            using var handle = OwnedFilePublication.OpenOrdinaryPath(archive.Path, expectDirectory: false, allowRename: true);
+            using var ownership = OwnedFilePublication.OpenOrdinaryPath(archive.Path + ".owner", expectDirectory: false, allowRename: true);
+            if (ProjectFileEvidence.ReadPhysicalIdentity(ownership) != archive.OwnershipIdentity ||
+                ReadReceipt(ownership) != archive.Receipt || !MatchesArchive(handle, archive.Receipt))
+                return false;
+
+            using var file = new FileStream(handle, FileAccess.Read);
+            if (Convert.ToHexString(SHA256.HashData(file)) != archive.Receipt.Sha256 ||
+                !OwnedFilePublication.TryDeleteOpenedPath(handle))
+                return false;
+            OwnedFilePublication.TryDeleteOpenedPath(ownership);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return false; }
+    }
+
+    private static ArchiveReceipt ReadReceipt(Microsoft.Win32.SafeHandles.SafeFileHandle handle)
+    {
+        var length = RandomAccess.GetLength(handle);
+        if (length is <= 0 or > MaxOwnershipBytes) throw new IOException("Invalid log archive ownership record.");
+        Span<byte> bytes = stackalloc byte[(int)length];
+        if (RandomAccess.Read(handle, bytes, 0) != bytes.Length) throw new IOException("Incomplete log archive ownership record.");
+        return JsonSerializer.Deserialize<ArchiveReceipt>(bytes) is { Version: 1, Bytes: >= 0 and <= DefaultByteLimit * DefaultArchiveLimit,
+            Sha256.Length: 64 } seal ? seal : throw new IOException("Invalid log archive ownership record.");
+    }
+
+    private static bool MatchesArchive(Microsoft.Win32.SafeHandles.SafeFileHandle handle, ArchiveReceipt seal) =>
+        ProjectFileEvidence.ReadPhysicalIdentity(handle) == (seal.Volume, seal.FileId) &&
+        RandomAccess.GetLength(handle) == seal.Bytes;
 }

@@ -18,6 +18,31 @@ internal static class ProjectListRecoveryTests
     //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
+        await Program.RunNamedCaseAsync("R32 legacy metadata bytes remain pinned throughout the explicit association", async () =>
+        {
+            var root = Directory.CreateDirectory(Path.Combine(workRoot, "legacy-association")).FullName;
+            var path = Path.Combine(root, "selected.json");
+            var replacement = Path.Combine(root, "candidate.json");
+            var source = AssetManifestStore.Create(Path.Combine(root, "example.ymmp"), [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+            await AssetManifestStore.SaveNewAsync(path, source);
+            await AssetManifestStore.SaveNewAsync(replacement, source with { ProjectId = Guid.NewGuid() });
+
+            using (var directory = OwnedFilePublication.DirectoryFence.Open(root, enforceShare: true))
+            using (var stream = new FileStream(OwnedFilePublication.OpenOrdinaryPath(path, false, false), FileAccess.Read))
+            {
+                var selected = await AssetManifestStore.LoadAsync(stream);
+                if (selected.ProjectId != source.ProjectId)
+                    throw new InvalidOperationException("Unexpected legacy metadata selected.");
+                try
+                {
+                    File.Move(replacement, path, overwrite: true);
+                    throw new InvalidOperationException("The approved metadata could be replaced while pinned.");
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            }
+            if (!File.Exists(replacement) || (await AssetManifestStore.LoadAsync(path)).ProjectId != source.ProjectId)
+                throw new InvalidOperationException("Verification modified either legacy record.");
+        });
         await Program.WpfTestHost.RunAsync(async () =>
         {
             //CSJ,variable=root,ルート

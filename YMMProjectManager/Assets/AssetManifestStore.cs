@@ -94,6 +94,11 @@ public static class AssetManifestStore
     {
         //CSJ,variable=stream,ストリーム
         await using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true);
+        return await LoadAsync(stream, token).ConfigureAwait(false);
+    }
+
+    internal static async Task<AssetManifest> LoadAsync(Stream stream, CancellationToken token = default)
+    {
         if (stream.Length > 4 * 1024 * 1024) throw new InvalidDataException("Asset metadata is too large.");
         //CSJ,variable=bytes,バイト列
         var bytes = new byte[checked((int)stream.Length)];

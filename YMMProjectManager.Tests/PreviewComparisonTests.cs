@@ -56,7 +56,7 @@ internal static class PreviewComparisonTests
 
         var session = Guid.NewGuid();
         var original = new SceneSnapshot(session, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), A);
-        var current = new SceneSnapshot(session, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), B);
+        var current = new SceneSnapshot(session, original.ProjectId, Guid.NewGuid(), original.SceneId, Guid.NewGuid(), B);
         var prepared = SceneComparisonPlan.PrepareProjects(TimeSpan.FromMilliseconds(500), timing, original, current, 2, 2);
         if (prepared.Plan?.A.Timestamp != TimeSpan.FromMilliseconds(500) ||
             prepared.Plan?.B.Timestamp != TimeSpan.FromMilliseconds(700) || prepared.Plan?.B.FrameIndex != 21)
@@ -64,6 +64,9 @@ internal static class PreviewComparisonTests
         if (prepared.Plan.CheckObserved(original, current with { ProjectRevisionId = Guid.NewGuid() })?.Error
             != SceneHandoffError.ProjectRevisionMismatch)
             throw new InvalidOperationException("A replaced comparison source was accepted.");
+        if (SceneComparisonPlan.PrepareProjects(TimeSpan.FromMilliseconds(500), timing, original,
+                current with { SceneLifetimeId = original.SceneLifetimeId }, 2, 2).Rejection?.Error != SceneHandoffError.SameScene)
+            throw new InvalidOperationException("The same live Scene lifetime was accepted twice.");
     }
 
     private static async Task TestTimingCopyAsync()

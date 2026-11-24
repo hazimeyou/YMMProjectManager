@@ -33,13 +33,20 @@ internal static class SettingsAndDiagnosticsTests
             File.WriteAllText(expired, "expired");
             var unknown = path + ".unknown";
             File.WriteAllText(unknown, "independent file");
-            var logger = new FileLogger(path, TimeProvider.System, byteLimit: 240);
+            var time = new DiagnosticTime(now);
+            var logger = new FileLogger(path, time, byteLimit: 240);
             for (var index = 0; index < 64; index++)
                 logger.Error("private fixture path", new IOException("private fixture exception"));
             var usage = logger.InspectLogs();
             Require(usage.Archives is > 0 and <= FileLogger.DefaultArchiveLimit &&
-                usage.Bytes <= 240 * (1 + FileLogger.DefaultArchiveLimit) && !File.Exists(expired),
+                usage.Bytes <= 240 * (1 + FileLogger.DefaultArchiveLimit) && File.Exists(expired),
                 "Known archives or current log exceeded the limits.");
+            var archives = Directory.GetFiles(logs, "*.owner");
+            time.Now = now.AddDays(8);
+            logger.Error("new private fixture", new IOException("private fixture exception"));
+            Require(archives.All(archive => !File.Exists(archive)) && File.ReadAllText(expired) == "expired",
+                "Expiration did not distinguish verified archives from lookalikes.");
+            usage = logger.InspectLogs();
             var active = File.ReadAllText(path);
             Require(active.Contains(nameof(IOException), StringComparison.Ordinal) &&
                 !Directory.EnumerateFiles(logs).Any(file =>
@@ -267,6 +274,12 @@ internal static class SettingsAndDiagnosticsTests
     internal const string InterruptedSaveArgument = "--r29-settings-interrupted-save";
     private const string FixtureFileName = "settings.json";
     private static string ReadyEventName(string root) => @"Local\YmmPmR29Settings-" + Path.GetFileName(root);
+
+    private sealed class DiagnosticTime(DateTimeOffset now) : TimeProvider
+    {
+        internal DateTimeOffset Now { get; set; } = now;
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
 
     private static string CreateCapture(string root)
     {

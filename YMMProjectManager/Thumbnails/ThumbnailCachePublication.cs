@@ -72,13 +72,13 @@ internal sealed class ThumbnailCachePublication : IDisposable
         var reservedBytes = checked(bytes + ThumbnailCacheMaintenance.MaxReceiptBytes);
         if (reservedBytes > ThumbnailCacheMaintenance.ByteLimit)
             throw new IOException("サムネイル一式がキャッシュ容量上限を超えています。");
+        validate();
         ThumbnailCacheMaintenance.Trim(Path.GetDirectoryName(cacheDirectory)!, ThumbnailCacheMaintenance.ByteLimit - reservedBytes, token);
         var ordinal = Math.Max(DateTime.UtcNow.Ticks, LatestGeneration(cacheDirectory).Ordinal + 1);
         if (ordinal > DateTime.MaxValue.Ticks)
             throw new IOException("サムネイルキャッシュの順序を確定できません。");
         var destination = Path.Combine(cacheDirectory,
             PublishedPrefix + ordinal.ToString("D19", CultureInfo.InvariantCulture) + "-" + Guid.NewGuid().ToString("N"));
-        validate();
         stagePin.Dispose(); // The staging directory's separate identity lease guards the rename.
         stage.Publish(destination, token);
         published = true;

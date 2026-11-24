@@ -149,7 +149,8 @@ internal sealed class SceneComparisonPlan
             return new(SceneHandoffError.ProjectMismatch);
         if (requireSameRevision && a.ProjectRevisionId != b.ProjectRevisionId)
             return new(SceneHandoffError.ProjectRevisionMismatch);
-        if (a.SceneId == b.SceneId || a.SceneLifetimeId == b.SceneLifetimeId)
+        if (a.SceneLifetimeId == b.SceneLifetimeId ||
+            (a.ProjectId == b.ProjectId && a.ProjectRevisionId == b.ProjectRevisionId && a.SceneId == b.SceneId))
             return new(SceneHandoffError.SameScene);
 
         return null;
