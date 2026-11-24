@@ -11,6 +11,8 @@ internal static class LiveThumbnailSafetyTests
 {
     internal static async Task RunAsync()
     {
+        await DetachedThumbnailTests.RunAsync();
+
         await Program.RunNamedCaseAsync("R28 thumbnail publishes a complete strip and restores the host frame", () =>
             WithFixtureAsync(async (generator, project, cacheRoot, legacy, source) =>
             {

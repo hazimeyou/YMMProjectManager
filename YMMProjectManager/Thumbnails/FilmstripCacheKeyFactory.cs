@@ -3,6 +3,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using Microsoft.Win32.SafeHandles;
+using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
@@ -41,6 +42,12 @@ public static class FilmstripCacheKeyFactory
         var (volume, fileId) = ProjectFileEvidence.ReadPhysicalIdentity(file);
         var modified = File.GetLastWriteTimeUtc(file);
         var input = FormattableString.Invariant($"live|{fullPath.ToUpperInvariant()}|{modified.Ticks}|{volume:X16}|{fileId:N}");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
+    }
+
+    internal static string CreateDetachedHash(string fullPath, ProjectFileIdentity version)
+    {
+        var input = FormattableString.Invariant($"detached|{fullPath.ToUpperInvariant()}|{version.Volume:X16}|{version.FileId:N}|{version.Sha256}");
         return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
     }
 }

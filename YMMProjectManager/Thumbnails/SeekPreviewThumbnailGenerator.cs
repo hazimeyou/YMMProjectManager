@@ -14,7 +14,7 @@ namespace YMMProjectManager.Infrastructure.Output;
 /// タイムラインを代表フレームへシークし、現在のプレビュー画像を保存するサムネイル生成器です。
 /// </summary>
 //CSJ,class=SeekPreviewThumbnailGenerator,フレーム移動プレビューサムネイル生成器
-public sealed class SeekPreviewThumbnailGenerator
+public sealed partial class SeekPreviewThumbnailGenerator
 {
     private const int ThumbnailCount = ThumbnailCachePublication.SlotCount;
     private static readonly SemaphoreSlim CaptureGate = new(1);
@@ -100,7 +100,7 @@ public sealed class SeekPreviewThumbnailGenerator
                 for (var slot = 0; slot < ThumbnailCount; slot++)
                 {
                     RequireCurrent(confirmed.Frame, confirmed.Position);
-                    var frame = (int)((long)slot * (length - 1) / (ThumbnailCount - 1));
+                    var frame = SampleFrame(slot, length);
                     var position = source.TimeAtFrame(frame);
                     if ((frame, position) != confirmed)
                     {
@@ -161,6 +161,9 @@ public sealed class SeekPreviewThumbnailGenerator
             CaptureGate.Release();
         }
     }
+
+    private static int SampleFrame(int slot, int length) =>
+        (int)((long)slot * (length - 1) / (ThumbnailCount - 1));
 
     private static SeekPreviewThumbnailGenerationResult Failed(string reason) =>
         new(false, reason, 0, 0, 0, 0, 0, string.Empty);
