@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Settings;
 
 internal static class SettingsAndDiagnosticsTests
@@ -21,6 +22,60 @@ internal static class SettingsAndDiagnosticsTests
             logger.Flush();
             logger.Close();
             Require(File.ReadAllText(blocked) == "unrelated file", "Logging changed the blocked path.");
+            return Task.CompletedTask;
+        });
+        await Program.RunNamedCaseAsync("R32 logs rotate with a byte and age limit and omit private details", () =>
+        {
+            var logs = Directory.CreateDirectory(Path.Combine(root, "bounded-logs")).FullName;
+            var path = Path.Combine(logs, "test.log");
+            var now = DateTimeOffset.UtcNow;
+            var expired = path + $".{now.AddDays(-8):yyyyMMddHHmmss}-{Guid.NewGuid():N}";
+            File.WriteAllText(expired, "expired");
+            var unknown = path + ".unknown";
+            File.WriteAllText(unknown, "independent file");
+            var logger = new FileLogger(path, TimeProvider.System, byteLimit: 240);
+            for (var index = 0; index < 64; index++)
+                logger.Error("private fixture path", new IOException("private fixture exception"));
+            var usage = logger.InspectLogs();
+            Require(usage.Archives is > 0 and <= FileLogger.DefaultArchiveLimit &&
+                usage.Bytes <= 240 * (1 + FileLogger.DefaultArchiveLimit) && !File.Exists(expired),
+                "Known archives or current log exceeded the limits.");
+            var active = File.ReadAllText(path);
+            Require(active.Contains(nameof(IOException), StringComparison.Ordinal) &&
+                !Directory.EnumerateFiles(logs).Any(file =>
+                    File.ReadAllText(file).Contains("private fixture", StringComparison.Ordinal)),
+                "Sensitive diagnostic details were persisted.");
+            Require(logger.DeleteArchives() == usage.Archives && logger.InspectLogs().Archives == 0 &&
+                File.ReadAllText(path) == active && File.ReadAllText(unknown) == "independent file",
+                "Manual removal touched an unrelated or active file.");
+            return Task.CompletedTask;
+        });
+        await Program.RunNamedCaseAsync("R32 filmstrip cleanup bounds completed cache and preserves recovery and unknown contents", () =>
+        {
+            var cache = Directory.CreateDirectory(Path.Combine(root, "filmstrip")).FullName;
+            var key = Directory.CreateDirectory(Path.Combine(cache, new string('a', 64))).FullName;
+            var olderCapture = CreateCapture(key);
+            var newerCapture = CreateCapture(key);
+            var unknownCapture = CreateCapture(key);
+            var witness = Path.Combine(unknownCapture, "original.txt");
+            File.WriteAllText(witness, "unowned");
+            var pending = Directory.CreateDirectory(Path.Combine(key, ".capture-pending-" + Guid.NewGuid().ToString("N"))).FullName;
+            var recovery = Path.Combine(pending, "record.json");
+            File.WriteAllText(recovery, "preserve");
+            var replacedCapture = CreateCapture(key);
+            var replaced = Path.Combine(replacedCapture, "000.png");
+            var replacement = Path.Combine(replacedCapture, "replacement.png");
+            File.Copy(replaced, replacement);
+            File.Move(replacement, replaced, overwrite: true);
+            var usage = ThumbnailCacheMaintenance.Inspect(cache);
+            Require(usage.Count == 2 && usage.Bytes > 2 * 64 * 8,
+                "An unknown cache was counted or an owned cache was skipped.");
+            var oneCapture = new FileInfo(Path.Combine(newerCapture, "ownership.json")).Length + 64 * 8;
+            Require(ThumbnailCacheMaintenance.Trim(cache, oneCapture) == 1 &&
+                !Directory.Exists(olderCapture) && Directory.Exists(newerCapture), "The older complete cache was not trimmed.");
+            Require(ThumbnailCacheMaintenance.Trim(cache, 0, deleteAll: true) == 1 &&
+                !Directory.Exists(newerCapture) && File.ReadAllText(witness) == "unowned" &&
+                File.ReadAllText(recovery) == "preserve" && File.Exists(replaced), "Removal touched unknown or recoverable data.");
             return Task.CompletedTask;
         });
         await Program.RunNamedCaseAsync("Global exception summary excludes raw messages and exception data", () =>
@@ -212,6 +267,14 @@ internal static class SettingsAndDiagnosticsTests
     internal const string InterruptedSaveArgument = "--r29-settings-interrupted-save";
     private const string FixtureFileName = "settings.json";
     private static string ReadyEventName(string root) => @"Local\YmmPmR29Settings-" + Path.GetFileName(root);
+
+    private static string CreateCapture(string root)
+    {
+        using var capture = new ThumbnailCachePublication(root);
+        for (var slot = 0; slot < ThumbnailCachePublication.SlotCount; slot++)
+            capture.WriteFrame(slot, stream => stream.Write([137, 80, 78, 71, 13, 10, 26, 10]));
+        return capture.Publish(default, () => { });
+    }
 
     internal static void RunInterruptedSaveChild(string root)
     {

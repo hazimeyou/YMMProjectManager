@@ -55,14 +55,24 @@ internal sealed class ThumbnailCachePublication : IDisposable
         encode(stream);
         stream.Flush();
         stream.Position = 0;
-        ownedFiles[name] = evidence with { Sha256 = Convert.ToHexString(SHA256.HashData(stream)) };
+        ownedFiles[name] = evidence with { Bytes = stream.Length, Sha256 = Convert.ToHexString(SHA256.HashData(stream)) };
     }
 
     internal string Publish(CancellationToken token, Action validate)
     {
+        lock (ThumbnailCacheMaintenance.Sync) return PublishWithinBudget(token, validate);
+    }
+
+    private string PublishWithinBudget(CancellationToken token, Action validate)
+    {
         using var verify = new OwnedFilePublication.DirectoryFence(enforceShare: true);
         var ownedDirectory = ProjectFileEvidence.ReadPhysicalIdentity(stagePin);
-        using (PinVerifiedFiles(stage.Path)) { }
+        long bytes;
+        using (var frames = PinVerifiedFiles(stage.Path)) bytes = frames.Bytes;
+        var reservedBytes = checked(bytes + ThumbnailCacheMaintenance.MaxReceiptBytes);
+        if (reservedBytes > ThumbnailCacheMaintenance.ByteLimit)
+            throw new IOException("サムネイル一式がキャッシュ容量上限を超えています。");
+        ThumbnailCacheMaintenance.Trim(Path.GetDirectoryName(cacheDirectory)!, ThumbnailCacheMaintenance.ByteLimit - reservedBytes, token);
         var ordinal = Math.Max(DateTime.UtcNow.Ticks, LatestGeneration(cacheDirectory).Ordinal + 1);
         if (ordinal > DateTime.MaxValue.Ticks)
             throw new IOException("サムネイルキャッシュの順序を確定できません。");
@@ -78,6 +88,10 @@ internal sealed class ThumbnailCachePublication : IDisposable
             throw new IOException("公開したサムネイルの保存先を確認できません。");
         using var verifiedFrames = PinVerifiedFiles(destination);
         validate();
+        token.ThrowIfCancellationRequested();
+        ThumbnailCacheMaintenance.WriteReceipt(destination, ownedDirectory, ownedFiles.Select(frame =>
+            new ThumbnailCacheMaintenance.FrameProof(frame.Key, frame.Value.Identity.Volume, frame.Value.Identity.FileId,
+                frame.Value.Sha256!, frame.Value.Bytes)));
         token.ThrowIfCancellationRequested();
         // Readers ignore a directory until the complete set has been verified after the rename.
         using var complete = OwnedFilePublication.CreateOwnedOutputFile(Path.Combine(destination, CompletionName));
@@ -212,6 +226,7 @@ internal sealed class ThumbnailCachePublication : IDisposable
     private sealed class VerifiedFrames : IDisposable
     {
         private readonly List<FileStream> streams = [];
+        internal long Bytes => streams.Sum(stream => stream.Length);
 
         internal FileStream Open(string path)
         {
@@ -260,5 +275,5 @@ internal sealed class ThumbnailCachePublication : IDisposable
             fence.Dispose();
         }
     }
-    private sealed record FrameEvidence((ulong Volume, Guid FileId) Identity, string? Sha256);
+    private sealed record FrameEvidence((ulong Volume, Guid FileId) Identity, string? Sha256, long Bytes = 0);
 }

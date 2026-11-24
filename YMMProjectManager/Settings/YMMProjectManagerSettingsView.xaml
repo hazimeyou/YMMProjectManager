@@ -1,4 +1,4 @@
-﻿<UserControl
+<UserControl
     x:Class="YMMProjectManager.Settings.YMMProjectManagerSettingsView"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
@@ -23,5 +23,15 @@
         </StackPanel>
 
         <TextBlock x:Name="SummaryText" DockPanel.Dock="Top" Margin="0,0,0,6" />
+
+        <StackPanel>
+            <TextBlock Text="キャッシュと診断ログ" FontWeight="SemiBold" Margin="0,10,0,4" />
+            <StackPanel x:Name="MaintenanceActions" Orientation="Horizontal" Margin="0,0,0,6">
+                <Button Content="使用容量を確認" Padding="8,2" Margin="0,0,8,0" Click="OnRefreshStorageClick" />
+                <Button Content="完了キャッシュを削除" Padding="8,2" Margin="0,0,8,0" Click="OnClearCacheClick" />
+                <Button Content="過去ログを削除" Padding="8,2" Click="OnClearLogsClick" />
+            </StackPanel>
+            <TextBlock x:Name="StorageSummary" TextWrapping="Wrap" />
+        </StackPanel>
     </DockPanel>
 </UserControl>

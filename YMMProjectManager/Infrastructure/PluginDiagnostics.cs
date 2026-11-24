@@ -86,7 +86,10 @@ internal static class PluginDiagnostics
         try
         {
             lock (Sync)
-                if (!stopping) Logger.Info($"{source}: {DescribeException(error)}");
+                if (!stopping && error is Exception exception)
+                    Logger.Error(source, exception);
+                else if (!stopping)
+                    Logger.Info(source);
         }
         catch
         {

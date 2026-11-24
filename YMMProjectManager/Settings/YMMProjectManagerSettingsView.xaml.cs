@@ -1,4 +1,8 @@
 using System.Collections.ObjectModel;
+using System.IO;
+using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Output;
+using YukkuriMovieMaker.Commons;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -101,6 +105,54 @@ public partial class YMMProjectManagerSettingsView : UserControl
             SummaryText.Text = settings.RetainedBackupPath is { } backup
                 ? $"設定を再読込できませんでした。退避先を確認してください。\n{backup}"
                 : "設定の再読込に失敗しました。";
+        }
+    }
+
+    private static string FilmstripRoot =>
+        Path.Combine(AppDirectories.UserDirectory, "plugin", "YMMProjectManager", "cache", "filmstrip");
+
+    private async void OnRefreshStorageClick(object sender, RoutedEventArgs e) =>
+        await RefreshStorageAsync(null);
+
+    private async void OnClearCacheClick(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("完了済みのサムネイルキャッシュを削除しますか？", "キャッシュの削除",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+            await RefreshStorageAsync(() => ThumbnailCacheMaintenance.Trim(FilmstripRoot, 0, deleteAll: true));
+    }
+
+    private async void OnClearLogsClick(object sender, RoutedEventArgs e)
+    {
+        if (MessageBox.Show("ローテーション済みの診断ログを削除しますか？", "過去ログの削除",
+                MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+            await RefreshStorageAsync(PluginDiagnostics.Logger.DeleteArchives);
+    }
+
+    private async Task RefreshStorageAsync(Func<int>? cleanup)
+    {
+        MaintenanceActions.IsEnabled = false;
+        try
+        {
+            var root = FilmstripRoot;
+            var result = await Task.Run(() =>
+            {
+                var deleted = cleanup?.Invoke();
+                var cache = ThumbnailCacheMaintenance.Inspect(root);
+                var logs = PluginDiagnostics.Logger.InspectLogs();
+                return (deleted, cache, logs);
+            });
+            var operation = result.deleted is int count ? $"削除 {count:N0} 件。\n" : "";
+            StorageSummary.Text = operation +
+                $"確認済みキャッシュ {result.cache.Count:N0} 件 / {result.cache.Bytes:N0} バイト\n" +
+                $"診断ログ {result.logs.Bytes:N0} バイト（過去ログ {result.logs.Archives:N0} 件）";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            StorageSummary.Text = "対象を確認できませんでした。開いているファイルや保存先を確認してください。";
+        }
+        finally
+        {
+            MaintenanceActions.IsEnabled = true;
         }
     }
 
