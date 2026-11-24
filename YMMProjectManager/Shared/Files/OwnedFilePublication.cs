@@ -54,7 +54,7 @@ internal static class OwnedFilePublication
     }
 
     //CSJ,method=CreateOwnedOutputFile,管理対象の出力ファイルを作成する
-    internal static FileStream CreateOwnedOutputFile(string path, bool readBack = false)
+    internal static FileStream CreateOwnedOutputFile(string path, bool readBack = false, bool deleteOnClose = false)
     {
         const uint genericRead = 0x80000000;
         const uint genericWrite = 0x40000000;
@@ -63,11 +63,12 @@ internal static class OwnedFilePublication
         //CSJ,variable=createNew,作成新規
         const uint createNew = 1;
         const uint openWithoutFollowingLink = 0x00200000;
+        const uint deleteWhenClosed = 0x04000000;
         const uint overlapped = 0x40000000;
         //CSJ,variable=access,アクセス
         var access = genericWrite | delete | (readBack ? genericRead : 0);
-        var handle = OpenPath(ExtendedPath(path), access, FileShare.None, IntPtr.Zero,
-            createNew, openWithoutFollowingLink | overlapped, IntPtr.Zero);
+        var flags = openWithoutFollowingLink | overlapped | (deleteOnClose ? deleteWhenClosed : 0);
+        var handle = OpenPath(ExtendedPath(path), access, FileShare.None, IntPtr.Zero, createNew, flags, IntPtr.Zero);
         if (!handle.IsInvalid)
         {
             try { return new FileStream(handle, readBack ? FileAccess.ReadWrite : FileAccess.Write, bufferSize: 1, isAsync: true); }

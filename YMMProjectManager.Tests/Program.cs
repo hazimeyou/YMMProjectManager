@@ -90,6 +90,11 @@ internal static class Program
             await ProjectListConcurrencyTests.RunWorkerAsync(args[1], args[2]);
             return;
         }
+        if (args.Length == 2 && args[0] == YmmpxTransferTests.RuleReservationChildArgument)
+        {
+            await YmmpxTransferTests.HoldRuleReservationAsync(args[1]);
+            return;
+        }
         if (args.Length == 2 && args[0] == "--ymmpx-missing-fixture")
         {
             //CSJ,variable=allowed,許可済み

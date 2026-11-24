@@ -33,6 +33,11 @@ internal static class YmmpxArchiveValidationTests
         Rejected("resources/Folder/a.txt", "resources/folder/b.txt");
         Rejected("resources/Folder/a.txt", "resources/folder/nested/b.txt");
         Rejected("folder/a.txt", "FOLDER/A.TXT"); Rejected("file", "file/child"); Rejected("NUL.txt"); Rejected("file.txt:stream");
+        await Program.RunNamedCaseAsync("R33 identical ordinary ZIP entry names are rejected", () =>
+        {
+            Rejected("resources/clip.txt", "resources/clip.txt");
+            return Task.CompletedTask;
+        });
         using (var oversized = Archive("file.txt"))
         {
             try { YmmpxLibBridge.ValidateArchiveForExtraction(oversized, CancellationToken.None, maxTotalBytes: 2); throw new Exception("oversize archive accepted"); }

@@ -74,12 +74,17 @@ internal static class YmmpxExclusionRules
 
         Snapshot Missing()
         {
-            var parent = Path.GetDirectoryName(path)!;
-            var pattern = Path.GetFileName(path) + ".previous-*";
-            if (Directory.EnumerateFileSystemEntries(parent, pattern).Any())
-                throw new InvalidDataException("中断された YMMPX 除外設定の更新があります。元の設定を確認してください。");
+            EnsureNoInterruptedUpdate(path);
             return new([], null, null);
         }
+    }
+
+    private static void EnsureNoInterruptedUpdate(string path)
+    {
+        var parent = Path.GetDirectoryName(path)!;
+        var pattern = Path.GetFileName(path) + ".previous-*";
+        if (Directory.EnumerateFileSystemEntries(parent, pattern).Any())
+            throw new InvalidDataException("中断された YMMPX 除外設定の更新があります。元の設定を確認してください。");
     }
 
     internal static IReadOnlyList<YmmpxExclusionRule> Merge(IEnumerable<YmmpxExclusionRule> global,
@@ -112,8 +117,22 @@ internal static class YmmpxExclusionRules
         {
             foreach (var (path, reviewed) in expected)
             {
+                token.ThrowIfCancellationRequested();
                 guard.Handles.Add(OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true));
-                if (reviewed.Identity is null) continue;
+                if (reviewed.Identity is null)
+                {
+                    // Claim the exact canonical name. A competing create or no-replace rename
+                    // either already owns it or must wait for this publication to finish.
+                    try { guard.Handles.Add(OwnedFilePublication.CreateOwnedOutputFile(path, deleteOnClose: true)); }
+                    catch (IOException ex)
+                    {
+                        throw new InvalidDataException("除外設定が作成されたか、不在を保護できません。同梱対象を確認してください。", ex);
+                    }
+                    // An interrupted import may leave the canonical name vacant. Its
+                    // previous settings must be noticed after the reservation is acquired.
+                    EnsureNoInterruptedUpdate(path);
+                    continue;
+                }
                 var file = YmmpxTransfer.OpenOrdinaryRead(path);
                 guard.Handles.Add(file);
                 if (file.Length is <= 0 or > MaxRuleBytes ||
@@ -122,9 +141,7 @@ internal static class YmmpxExclusionRules
                     throw new InvalidDataException("除外設定が変更されました。同梱対象をもう一度確認してください。");
             }
 
-            foreach (var (path, reviewed) in expected)
-                if (reviewed.Identity is null && (await LoadAsync(path, token, missingIsEmpty: true).ConfigureAwait(false)).Identity is not null)
-                    throw new InvalidDataException("除外設定が変更されました。同梱対象をもう一度確認してください。");
+            token.ThrowIfCancellationRequested();
             return guard;
         }
         catch

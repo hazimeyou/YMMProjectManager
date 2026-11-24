@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
@@ -10,6 +11,11 @@ using YMMProjectManager.Infrastructure.Packaging;
 //CSJ,class=YmmpxTransferTests,YMMPX受け渡しテスト
 internal static class YmmpxTransferTests
 {
+    internal const string RuleReservationChildArgument = "--r33-ymmpx-reserve-absent-rule";
+    private const string ReservationFixture = "reservation-crash";
+    private const string ReservationReady = "rule reservation acquired";
+    private static readonly TimeSpan ProcessDeadline = TimeSpan.FromSeconds(20);
+
     //CSJ,method=RunAsync,実行する（非同期）
     public static async Task RunAsync(string workRoot)
     {
@@ -118,6 +124,94 @@ internal static class YmmpxTransferTests
             File.Move(target, target + ".previous-interrupted");
             await ExpectAsync<InvalidDataException>(() => YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true));
             Check(File.Exists(target + ".previous-interrupted"), "Interrupted record destroyed");
+        });
+
+        await Program.RunNamedCaseAsync("R33 absent rules remain protected until publication finishes", async () =>
+        {
+            var globalName = Path.Combine(root, "reserved-global.json");
+            var localName = Path.Combine(input, "reserved-local.json");
+            var global = await YmmpxExclusionRules.LoadAsync(globalName, default, missingIsEmpty: true);
+            var local = await YmmpxExclusionRules.LoadAsync(localName, default, missingIsEmpty: true);
+            var incoming = Path.Combine(input, "incoming-exclusions.json");
+            await File.WriteAllTextAsync(incoming, """[{"FilePath":"frame01.png"}]""");
+            using (await YmmpxExclusionRules.PinReviewedAsync([(globalName, global), (localName, local)], default))
+            {
+                await ExpectRuleClaimBlockedAsync(() => File.WriteAllTextAsync(globalName, "[]"));
+                await ExpectRuleClaimBlockedAsync(() => File.Move(incoming, localName));
+                await ExpectRuleClaimBlockedAsync(() => YmmpxExclusionRules.ImportAsync(localName, local, [], default));
+                Check(File.Exists(incoming), "Competing rename did not preserve the incoming rules.");
+            }
+
+            Check((await YmmpxExclusionRules.LoadAsync(globalName, default, missingIsEmpty: true)).Identity is null,
+                "Global rule reservation remained after disposal.");
+            await YmmpxExclusionRules.ImportAsync(localName, local, [new("frame01.png", false, true)], default);
+
+            await ExpectAsync<InvalidDataException>(() =>
+                YmmpxExclusionRules.PinReviewedAsync([(globalName, global), (localName, local)], default));
+            Check((await YmmpxExclusionRules.LoadAsync(globalName, default, missingIsEmpty: true)).Identity is null &&
+                (await YmmpxExclusionRules.LoadAsync(localName, default)).Rules.Single().Path == "frame01.png",
+                "A rival won the destination but its settings or the first reservation were changed.");
+        });
+
+        await Program.RunNamedCaseAsync("R33 a recovery file appearing after review blocks an absent-rule publication", async () =>
+        {
+            var target = Path.Combine(root, "recovered-rules.json");
+            var reviewed = await YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true);
+            var previous = target + ".previous-interrupted";
+            const string previousBytes = """[{"FilePath":"frame01.png"}]""";
+            await File.WriteAllTextAsync(previous, previousBytes);
+
+            await ExpectAsync<InvalidDataException>(() => YmmpxExclusionRules.PinReviewedAsync([(target, reviewed)], default));
+            Check(await File.ReadAllTextAsync(previous) == previousBytes && !File.Exists(target),
+                "Publication modified interrupted recovery or left a reservation behind.");
+        });
+
+        await Program.RunNamedCaseAsync("R33 reservation is released after abrupt helper termination", async () =>
+        {
+            var fixture = Directory.CreateDirectory(Path.Combine(root, ReservationFixture)).FullName;
+            var target = Path.Combine(fixture, YmmpxExclusionRules.GlobalFileName);
+            var reviewed = await YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true);
+            var start = new ProcessStartInfo(Environment.ProcessPath!)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardInput = true,
+                RedirectStandardOutput = true,
+            };
+            if (string.Equals(Path.GetFileNameWithoutExtension(start.FileName), "dotnet", StringComparison.OrdinalIgnoreCase))
+                start.ArgumentList.Add(typeof(YmmpxTransferTests).Assembly.Location);
+            start.ArgumentList.Add(RuleReservationChildArgument);
+            start.ArgumentList.Add(fixture);
+            using var child = Process.Start(start) ?? throw new InvalidOperationException("Rule fixture could not start.");
+            try
+            {
+                var ready = await child.StandardOutput.ReadLineAsync().WaitAsync(ProcessDeadline);
+                Check(ready == ReservationReady, "The child did not acquire the exclusive reservation.");
+                await ExpectRuleClaimBlockedAsync(() => YmmpxExclusionRules.ImportAsync(target, reviewed, [], default));
+            }
+            finally
+            {
+                if (!child.HasExited) child.Kill();
+                await child.WaitForExitAsync().WaitAsync(ProcessDeadline);
+            }
+            Check(child.ExitCode != 0, "The child exited without demonstrating abrupt termination.");
+
+            // Windows may signal child exit before all owned handles have detached.
+            using var deadline = new CancellationTokenSource(ProcessDeadline);
+            while (true)
+            {
+                try
+                {
+                    await YmmpxExclusionRules.ImportAsync(target, reviewed, [new("frame01.png", false, true)], deadline.Token);
+                    break;
+                }
+                catch (IOException ex) when ((ex.HResult & 0xffff) == 32 || ex.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 32 })
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(20), deadline.Token);
+                }
+            }
+            Check((await YmmpxExclusionRules.LoadAsync(target, default)).Rules.Single().Path == "frame01.png",
+                "The canonical name could not be used after termination.");
         });
 
         await Program.RunNamedCaseAsync("R32 choice to load folder-wide and file-level rules is independent", async () =>
@@ -342,7 +436,66 @@ internal static class YmmpxTransferTests
             using (await YmmpxExclusionRules.PinReviewedAsync([(target, reviewed)], default))
                 await ExpectAsync<IOException>(() => File.WriteAllTextAsync(target, "overwritten"));
             Check(await File.ReadAllTextAsync(target) == "[]", "Guard altered configuration");
-            Check(!Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Failure left owned staging");
+
+            var vacant = Path.Combine(input, "publication-reservation.json");
+            var empty = await YmmpxExclusionRules.LoadAsync(vacant, default, missingIsEmpty: true);
+            var guardEntered = false;
+            var published = await service.CreateStandardPackageAsync(plan!, output, true, true, default,
+                pinRules: async token =>
+                {
+                    var lease = await YmmpxExclusionRules.PinReviewedAsync([(vacant, empty)], token);
+                    try
+                    {
+                        await ExpectRuleClaimBlockedAsync(() => File.WriteAllTextAsync(vacant, "[]"));
+                        guardEntered = true;
+                        return lease;
+                    }
+                    catch
+                    {
+                        lease.Dispose();
+                        throw;
+                    }
+                });
+            Check(guardEntered && published.Success && File.Exists(output) &&
+                (await YmmpxExclusionRules.LoadAsync(vacant, default, missingIsEmpty: true)).Identity is null,
+                "Publication did not release the absence reservation.");
+
+            using var cancelledAtPublication = new CancellationTokenSource();
+            var cancelledOutput = Path.Combine(root, "cancelled-after-reservation.ymmpx");
+            await ExpectAsync<OperationCanceledException>(() =>
+                service.CreateStandardPackageAsync(plan!, cancelledOutput, true, true, cancelledAtPublication.Token,
+                    pinRules: async token =>
+                    {
+                        var lease = await YmmpxExclusionRules.PinReviewedAsync([(vacant, empty)], token);
+                        cancelledAtPublication.Cancel();
+                        return lease;
+                    }));
+            Check(!File.Exists(cancelledOutput) &&
+                (await YmmpxExclusionRules.LoadAsync(vacant, default, missingIsEmpty: true)).Identity is null &&
+                !Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(),
+                "Cancelled publication left its output, staging data or rule reservation.");
+
+            var occupied = Path.Combine(root, "occupied-after-reservation.ymmpx");
+            await ExpectAsync<IOException>(() => service.CreateStandardPackageAsync(plan!, occupied, true, true, default,
+                pinRules: async token =>
+                {
+                    var lease = await YmmpxExclusionRules.PinReviewedAsync([(vacant, empty)], token);
+                    try
+                    {
+                        await File.WriteAllTextAsync(occupied, "separate output", token);
+                        return lease;
+                    }
+                    catch
+                    {
+                        lease.Dispose();
+                        throw;
+                    }
+                }));
+            Check(await File.ReadAllTextAsync(occupied) == "separate output" &&
+                (await YmmpxExclusionRules.LoadAsync(vacant, default, missingIsEmpty: true)).Identity is null &&
+                !Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(),
+                "A late output collision changed the rival output or left a reservation.");
+
         });
 
         await Program.RunNamedCaseAsync("R23 transfer rejects missing and forged per-member evidence without publishing", async () =>
@@ -624,6 +777,38 @@ internal static class YmmpxTransferTests
         //CSJ,variable=writer,書き込み処理
         using var writer = new StreamWriter(archive.CreateEntry(name).Open());
         writer.Write(content);
+    }
+
+    internal static async Task HoldRuleReservationAsync(string fixture)
+    {
+        var testBase = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "YMMProjectManager-tests"));
+        var full = Path.GetFullPath(fixture);
+        var relative = Path.GetRelativePath(testBase, full).Split(Path.DirectorySeparatorChar);
+        if (!string.Equals(fixture, full, StringComparison.Ordinal) || relative.Length != 3 ||
+            !Guid.TryParseExact(relative[0], "N", out _) || relative[1] != "r23-transfer" ||
+            relative[2] != ReservationFixture || !full.StartsWith(testBase + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+            throw new InvalidOperationException("Rule reservation fixture is outside the isolated test directory.");
+
+        var target = Path.Combine(full, YmmpxExclusionRules.GlobalFileName);
+        var reviewed = await YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true);
+        if (reviewed.Identity is not null) throw new InvalidOperationException("Expected an absent rule fixture.");
+        using var lease = await YmmpxExclusionRules.PinReviewedAsync([(target, reviewed)], default);
+        Console.WriteLine(ReservationReady);
+        Console.ReadLine();
+    }
+
+    private static Task ExpectRuleClaimBlockedAsync(Action attempt) =>
+        ExpectRuleClaimBlockedAsync(() =>
+        {
+            attempt();
+            return Task.CompletedTask;
+        });
+
+    private static async Task ExpectRuleClaimBlockedAsync(Func<Task> attempt)
+    {
+        try { await attempt(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return; }
+        throw new InvalidOperationException("A second operation wrote to a reserved rule file name.");
     }
 
     private static async Task ExpectAsync<T>(Func<Task> action) where T : Exception
