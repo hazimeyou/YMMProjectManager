@@ -2,8 +2,10 @@ using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Microsoft.Win32.SafeHandles;
+using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Output;
+using YMMProjectManager.Presentation.ViewModels;
 
 internal static class LiveThumbnailSafetyTests
 {
@@ -75,6 +77,38 @@ internal static class LiveThumbnailSafetyTests
                 };
                 var result = await generator.GenerateAsync(project, source, () => sameSelection, cacheRoot, CancellationToken.None);
                 Ensure(!result.Success && source.Captures == 64 && source.Frame == 2, "stale selection reached publication");
+                EnsurePreserved(cacheRoot, project, legacy);
+            }));
+
+        await Program.RunNamedCaseAsync("R29 thumbnail refuses an intermediate selection or path change even if reverted", () =>
+            WithFixtureAsync(async (generator, project, cacheRoot, legacy, source) =>
+            {
+                var root = Path.GetDirectoryName(project)!;
+                var logger = new FileLogger(root);
+                var view = new ProjectListViewModel(logger, new JsonProjectRepository(logger, Path.Combine(root, "list.json")));
+                var selected = new ProjectEntry { FullPath = project };
+                var other = new ProjectEntry { FullPath = Path.Combine(root, "other.ymmp") };
+                view.SelectedProject = selected;
+                using (var selection = new ProjectListViewModel.ThumbnailProjectSelection(view, selected))
+                {
+                    source.AfterSeek = () =>
+                    {
+                        view.SelectedProject = other;
+                        view.SelectedProject = selected;
+                    };
+                    var result = await generator.GenerateAsync(project, source, selection.IsCurrent, cacheRoot, CancellationToken.None);
+                    Ensure(!result.Success && source.Captures == 0 && source.Frame == 2, "a reverted selection change reached capture");
+                    EnsurePreserved(cacheRoot, project, legacy);
+                }
+
+                using var nextSelection = new ProjectListViewModel.ThumbnailProjectSelection(view, selected);
+                source.AfterSeek = () =>
+                {
+                    selected.FullPath = other.FullPath;
+                    selected.FullPath = project;
+                };
+                var pathChange = await generator.GenerateAsync(project, source, nextSelection.IsCurrent, cacheRoot, CancellationToken.None);
+                Ensure(!pathChange.Success && source.Captures == 0 && source.Frame == 2, "a reverted path change reached capture");
                 EnsurePreserved(cacheRoot, project, legacy);
             }));
 

@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Diagnostics;
@@ -22,7 +23,7 @@ public sealed partial class ProjectListViewModel
             return;
         }
 
-        var projectPath = project.FullPath;
+        using var selection = new ThumbnailProjectSelection(this, project);
 
         await ExecuteToolAsync("Generate thumbnails (fast)", async token =>
         {
@@ -39,8 +40,7 @@ public sealed partial class ProjectListViewModel
             try
             {
                 result = await seekPreviewThumbnailGenerator
-                    .GenerateAsync(projectPath, info, () => ReferenceEquals(SelectedProject, project) &&
-                        string.Equals(project.FullPath, projectPath, StringComparison.Ordinal), token)
+                    .GenerateAsync(selection.Path, info, selection.IsCurrent, token)
                     .ConfigureAwait(true);
             }
             catch (OperationCanceledException) when (token.IsCancellationRequested)
@@ -63,6 +63,50 @@ public sealed partial class ProjectListViewModel
             // 生成後はキャッシュパスを再通知し、一覧のスクラブサムネイルを更新する。
             UpdateThumbnailMetadata(project);
         }).ConfigureAwait(true);
+    }
+
+    internal sealed class ThumbnailProjectSelection : IDisposable
+    {
+        private readonly ProjectListViewModel owner;
+        private readonly ProjectEntry project;
+        private int invalidated;
+
+        internal ThumbnailProjectSelection(ProjectListViewModel owner, ProjectEntry project)
+        {
+            this.owner = owner;
+            this.project = project;
+            Path = project.FullPath;
+            owner.PropertyChanged += OnSelectionChanged;
+            project.PropertyChanged += OnProjectChanged;
+        }
+
+        internal string Path { get; }
+
+        internal bool IsCurrent() =>
+            Volatile.Read(ref invalidated) == 0 &&
+            ReferenceEquals(owner.SelectedProject, project) &&
+            string.Equals(project.FullPath, Path, StringComparison.Ordinal);
+
+        private void OnSelectionChanged(object? sender, PropertyChangedEventArgs args)
+        {
+            if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == nameof(SelectedProject))
+                Invalidate();
+        }
+
+        private void OnProjectChanged(object? sender, PropertyChangedEventArgs args)
+        {
+            if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == nameof(ProjectEntry.FullPath))
+                Invalidate();
+        }
+
+        private void Invalidate() => Interlocked.Exchange(ref invalidated, 1);
+
+        public void Dispose()
+        {
+            Invalidate();
+            owner.PropertyChanged -= OnSelectionChanged;
+            project.PropertyChanged -= OnProjectChanged;
+        }
     }
 
     //CSJ,method=RunSeekProbeAsync,フレーム移動調査を実行する（非同期）
