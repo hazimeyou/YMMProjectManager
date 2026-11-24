@@ -121,13 +121,18 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new PersistedSettings { SearchFolders = folders },
             new JsonSerializerOptions { WriteIndented = true });
         var temporary = settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using var output = OwnedFilePublication.CreateOwnedOutputFile(temporary);
+        using var output = OwnedFilePublication.CreateOwnedOutputFile(temporary, readBack: original is not null);
         var parkedPath = settingsPath + ".previous-" + Guid.NewGuid().ToString("N");
         var parked = false;
         var published = false;
         try
         {
             var stagedVersion = GetVersion(output, bytes);
+            if (original is not null)
+            {
+                ProjectListReplacement.VerifyCompatibleFileMetadata(original, output, settingsPath);
+                File.SetCreationTimeUtc(output.SafeFileHandle, File.GetCreationTimeUtc(original.SafeFileHandle));
+            }
             output.Write(bytes);
             output.Flush(flushToDisk: true);
             if (original is not null)

@@ -78,6 +78,23 @@ internal static class SettingsAndDiagnosticsTests
             Require(json.RootElement.GetProperty("SearchFolders")[0].GetString() == newer, "Settings schema changed.");
             return Task.CompletedTask;
         });
+        await Program.RunNamedCaseAsync("Settings refuse to replace an original with unsupported file attributes", () =>
+        {
+            var path = Path.Combine(root, "read-only.json");
+            var settings = new YMMProjectManagerSettings(path);
+            Require(settings.SetSearchFolders([older]), "Initial save failed.");
+            var original = File.ReadAllBytes(path);
+            var attributes = File.GetAttributes(path);
+            File.SetAttributes(path, attributes | FileAttributes.ReadOnly);
+            try
+            {
+                Require(!settings.SetSearchFolders([newer]) && settings.GetSearchFolders().SequenceEqual([older]) &&
+                    original.SequenceEqual(File.ReadAllBytes(path)) && File.GetAttributes(path).HasFlag(FileAttributes.ReadOnly),
+                    "Read-only settings lost contents, metadata or in-memory state.");
+            }
+            finally { File.SetAttributes(path, attributes); }
+            return Task.CompletedTask;
+        });
         await Program.RunNamedCaseAsync("Settings reject stale concurrent saves and support reloading before retry", async () =>
         {
             var path = Path.Combine(root, "concurrent.json");
