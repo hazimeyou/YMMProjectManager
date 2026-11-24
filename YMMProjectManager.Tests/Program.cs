@@ -223,6 +223,7 @@ internal static class Program
         new(nameof(AssetManifestTests), () => AssetManifestTests.RunAsync(workRoot)),
         new(nameof(GitHttpsAcceptanceTests), () => GitHttpsAcceptanceTests.RunAsync(workRoot), Default: false),
         new(nameof(RealYmmpxR5Tests), () => RealYmmpxR5Tests.RunAsync(workRoot), Default: false, Alias: "RealYmmpxR5"),
+        new(nameof(SettingsAndDiagnosticsTests), () => SettingsAndDiagnosticsTests.RunAsync(workRoot)),
         new(nameof(TestRunnerSelectionAsync), () => TestRunnerSelectionAsync(workRoot)),
     ];
 
