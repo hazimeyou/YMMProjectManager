@@ -54,7 +54,7 @@ foreach ($name in $requiredReferences) {
 }
 
 $ymmpxArchiveSha = '9D5EE82C96D6A5ED57D805306CFE037A6669F0D3D15D6C28919E1A59158680DA'
-$ymmpxDllSha = '107A522AAC5C0AAFD32494C0C93AC9404694FBA6A4BAD7902B78D0F000C2E552'
+$ymmpxDllSha = '9D6E0A5F1A6FE096098CE77F2FD7A970A83A5C7F0476844E441F003AAA10FE23'
 $ymmpxDll = Join-Path $output 'YmmpxLib.dll'
 Assert-Hash $ymmpxArchive $ymmpxArchiveSha
 $libZip = [IO.Compression.ZipFile]::OpenRead($ymmpxArchive)
