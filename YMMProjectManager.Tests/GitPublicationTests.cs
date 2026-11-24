@@ -258,6 +258,70 @@ internal static class GitPublicationTests
                 await CommandAsync(source, "commit", "-m", "synthetic rename");
                 return (false, null);
             }));
+        await Program.RunNamedCaseAsync("R29 Stage and Commit block restore evidence beside an ordinary PF", () =>
+            TestAsync(root, "restore-local", async (source, git) =>
+            {
+                var operation = Guid.NewGuid().ToString("N");
+                var pending = ".ymm-restore-" + new string('a', 64) + ".pending.json";
+                var index = Path.Combine(source, ".git", "index");
+                foreach (var path in new[] { pending, $"{pending}.{operation}.tmp", $"{operation}.restore.tmp",
+                    $"{operation}_before-restore.ymmp", $".ymm-restore-recovery-{operation}/project.ymmp" })
+                {
+                    var local = Path.Combine(source, path);
+                    Directory.CreateDirectory(Path.GetDirectoryName(local)!);
+                    await File.WriteAllTextAsync(local, """{"Timelines":[]}""");
+                    var before = File.Exists(index) ? await File.ReadAllBytesAsync(index) : null;
+                    var refused = await git.StageAsync([path]);
+                    var after = File.Exists(index) ? await File.ReadAllBytesAsync(index) : null;
+                    var changed = before is null ? after is not null : after is null || !before.AsSpan().SequenceEqual(after);
+                    if (refused.Failure != GitFailure.MediaPublication || changed)
+                        throw new InvalidOperationException("Stage accepted local restore evidence or changed the index: " + path);
+                    await CommandAsync(source, "-c", "core.longpaths=true", "add", "--", path);
+                    var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                    if ((await git.CommitAsync(approved, "must stay local")).Failure != GitFailure.MediaPublication ||
+                        File.Exists(Path.Combine(source, ".git", "refs", "heads", "main")))
+                        throw new InvalidOperationException("Commit accepted local restore evidence: " + path);
+                    await CommandAsync(source, "-c", "core.longpaths=true", "rm", "--cached", "--", path);
+                }
+
+                await File.WriteAllTextAsync(Path.Combine(source, "ordinary.ymmp"), """{"Timelines":[]}""");
+                await File.WriteAllTextAsync(Path.Combine(source, ".ymm-restore-notes.pending.json"), """{"Revision":1}""");
+                if (!(await git.StageAsync(["ordinary.ymmp", ".ymm-restore-notes.pending.json"])).Success ||
+                    !(await git.CommitAsync("ordinary PF and notes")).Success)
+                    throw new InvalidOperationException("Git rejected an ordinary PF or notes outside the reserved names.");
+                return (true, null);
+            }));
+        await Program.RunNamedCaseAsync("R29 Push blocks deleted restore history and renamed recovery records", async () =>
+        {
+            await TestAsync(root, "restore-candidate-history", async (source, _) =>
+            {
+                var candidate = $"{Guid.NewGuid():N}.restore.tmp";
+                await CommitFileAsync(source, candidate, """{"Timelines":[]}"""u8.ToArray());
+                await CommandAsync(source, "rm", "--", candidate);
+                await CommandAsync(source, "commit", "-m", "remove synthetic private backup");
+                return (false, null);
+            });
+
+            await TestAsync(root, "restore-journal-history", async (source, git) =>
+            {
+                const string portableName = "notes.json";
+                var sha = new string('B', 64);
+                var id = Guid.NewGuid();
+                var record = $$"""{"Version":1,"Operation":"{{id}}","TargetPath":"project.ymmp","RetainedPath":"original.ymmp","CandidatePath":"snapshot.tmp","Original":{"Volume":1,"FileId":"{{id}}","Sha256":"{{sha}}"},"Intended":{"Volume":1,"FileId":"{{Guid.NewGuid()}}","Sha256":"{{sha}}"} }""";
+                await File.WriteAllTextAsync(Path.Combine(source, portableName), record);
+                if ((await git.StageAsync([portableName])).Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Stage accepted renamed restore evidence.");
+                await CommandAsync(source, "add", "--", portableName);
+                var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                if ((await git.CommitAsync(approved, "keep the journal private")).Failure != GitFailure.MediaPublication ||
+                    File.Exists(Path.Combine(source, ".git", "refs", "heads", "main")))
+                    throw new InvalidOperationException("Commit accepted renamed restore evidence.");
+                await CommandAsync(source, "commit", "-m", "synthetic private journal");
+                await CommandAsync(source, "rm", "--", portableName);
+                await CommandAsync(source, "commit", "-m", "remove synthetic private journal");
+                return (false, null);
+            });
+        });
     }
 
     //CSJ,method=TestAsync,テストする（非同期）

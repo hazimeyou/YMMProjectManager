@@ -180,7 +180,45 @@ public sealed partial class GitRepository
             HasOperationName(component, ".ymmpm-relink-external-") ||
             HasOperationName(component, ".ymmpm-relink.tmp-") ||
             HasOperationName(component, ".ymmpm-derived-") ||
-            HasOperationName(component, ".ymmpm-derived-pending-"));
+            HasOperationName(component, ".ymmpm-derived-pending-") ||
+            IsGenerationRestorePathComponent(component));
+
+    private static bool IsGenerationRestorePathComponent(string component)
+    {
+        const int operationLength = 32;
+        const string candidateSuffix = ".restore.tmp";
+        const string fallbackBackupSuffix = "_before-restore";
+        const string journalPrefix = ".ymm-restore-";
+        const string journalSuffix = ".pending.json";
+        const int keyLength = 64;
+
+        if (HasOperationName(component, ".ymm-restore-recovery-"))
+            return true;
+        var name = component.AsSpan();
+        if (name.Length == operationLength + candidateSuffix.Length && name.EndsWith(candidateSuffix, StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParseExact(name[..operationLength], "N", out _))
+            return true;
+
+        var extension = name.IndexOf('.');
+        var stem = extension < 0 ? name : name[..extension];
+        if (stem.Length == operationLength + fallbackBackupSuffix.Length &&
+            stem.EndsWith(fallbackBackupSuffix, StringComparison.OrdinalIgnoreCase) &&
+            Guid.TryParseExact(stem[..operationLength], "N", out _))
+            return true;
+
+        if (name.Length < journalPrefix.Length + keyLength + journalSuffix.Length ||
+            !name.StartsWith(journalPrefix, StringComparison.OrdinalIgnoreCase))
+            return false;
+        var key = name.Slice(journalPrefix.Length, keyLength);
+        var suffix = name[(journalPrefix.Length + keyLength)..];
+        if (key.IndexOfAnyExcept("0123456789abcdefABCDEF") >= 0 || !suffix.StartsWith(journalSuffix, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var tail = suffix[journalSuffix.Length..];
+        return tail.IsEmpty ||
+            (tail.Length == operationLength + ".tmp".Length + 1 && tail[0] == '.' &&
+                tail.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase) && Guid.TryParseExact(tail.Slice(1, operationLength), "N", out _));
+    }
 
     //CSJ,method=HasOperationName,操作名が含まれているか判定する
     private static bool HasOperationName(string component, string prefix) =>
@@ -331,6 +369,8 @@ public sealed partial class GitRepository
                 var root = document.RootElement;
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
+                if (IsPrivateGenerationRestoreRecord(root))
+                    return "Git contains local generation restore evidence.";
                 if (IsTransferManifest(root))
                     return "Git contains a local YMMPX asset-transfer manifest.";
                 if (ReadProjectAssetNames(root, historicalAssetNames))
@@ -363,6 +403,23 @@ public sealed partial class GitRepository
         root.TryGetProperty("OutputSha256", out _) &&
         (root.TryGetProperty("Identity", out _) ||
             (root.TryGetProperty("SourceSha256", out _) && root.TryGetProperty("Approved", out _)));
+
+    private static bool IsPrivateGenerationRestoreRecord(JsonElement root) =>
+        root.ValueKind == JsonValueKind.Object &&
+        root.TryGetProperty("Version", out _) &&
+        root.TryGetProperty("Operation", out var operation) && operation.ValueKind == JsonValueKind.String && operation.TryGetGuid(out _) &&
+        root.TryGetProperty("TargetPath", out _) &&
+        root.TryGetProperty("RetainedPath", out _) &&
+        root.TryGetProperty("CandidatePath", out _) &&
+        root.TryGetProperty("Original", out var original) && IsRestoreFileVersion(original) &&
+        root.TryGetProperty("Intended", out var intended) && IsRestoreFileVersion(intended);
+
+    private static bool IsRestoreFileVersion(JsonElement value) =>
+        value.ValueKind == JsonValueKind.Object &&
+        value.TryGetProperty("Volume", out _) &&
+        value.TryGetProperty("FileId", out var identity) && identity.ValueKind == JsonValueKind.String && identity.TryGetGuid(out _) &&
+        value.TryGetProperty("Sha256", out var hash) && hash.ValueKind == JsonValueKind.String &&
+        hash.GetString() is { Length: 64 } digest && digest.All(Uri.IsHexDigit);
 
     //CSJ,method=IsTransferManifest,受け渡し目録かを判定する
     private static bool IsTransferManifest(JsonElement root)
