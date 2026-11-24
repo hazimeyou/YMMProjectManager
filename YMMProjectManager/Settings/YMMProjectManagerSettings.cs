@@ -70,12 +70,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         {
             try
             {
-                if (!hasConfirmedSettings) return false;
-                var candidate = NormalizeFolders(folders);
-                if (!TrySave(candidate, out var version)) return false;
-                confirmedVersion = version;
-                SearchFolders = candidate;
-                return true;
+                return hasConfirmedSettings && TrySave(NormalizeFolders(folders));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
@@ -112,9 +107,8 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         }
     }
 
-    private bool TrySave(List<string> folders, out SettingsVersion? version)
+    private bool TrySave(List<string> folders)
     {
-        version = null;
         var directory = Path.GetDirectoryName(settingsPath)!;
         Directory.CreateDirectory(directory);
         using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
@@ -143,7 +137,8 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             beforePublish?.Invoke();
             OwnedFilePublication.RenameOpenedPath(output.SafeFileHandle, settingsPath);
             published = true;
-            version = stagedVersion;
+            confirmedVersion = stagedVersion;
+            SearchFolders = folders;
             if (parked) OwnedFilePublication.TryDeleteOpenedPath(original!.SafeFileHandle);
             return true;
         }
