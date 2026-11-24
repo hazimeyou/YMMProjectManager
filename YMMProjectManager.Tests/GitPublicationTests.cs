@@ -266,6 +266,8 @@ internal static class GitPublicationTests
                 var records = new Dictionary<string, string>
                 {
                     [".git-credentials"] = "synthetic placeholder",
+                    [$".ymmpm-package-input-{Guid.NewGuid():N}/project.ymmp"] = "{}",
+                    ["rename-generation.json"] = """{"GenerationId":"fixture","SourceProjectPath":"C:/synthetic/source.ymmp","FileSize":2,"Sha256":"fixture"}""",
                     ["projects.json.recovery/draft.json"] = "{}",
                     ["recovery-renamed.json"] = """{"Projects":[],"Folders":[]}""",
                     ["settings-renamed.json"] = """{"SearchFolders":["C:/synthetic/private"]}""",

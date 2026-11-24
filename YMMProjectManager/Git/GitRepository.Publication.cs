@@ -179,6 +179,7 @@ public sealed partial class GitRepository
             component.Equals("ymmpm-transfer.json", StringComparison.OrdinalIgnoreCase) ||
             HasOperationName(component, ".ymmpm-transfer-") ||
             HasOperationName(component, ".ymmpm-package-") ||
+            HasOperationName(component, ".ymmpm-package-input-") ||
             HasOperationName(component, ".ymmpx-") ||
             HasOperationName(component, ".ymmpm-relink-") ||
             HasOperationName(component, ".ymmpm-relink-external-") ||
@@ -405,8 +406,10 @@ public sealed partial class GitRepository
                     return "Git contains local settings or recovery data.";
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
-                if (IsPrivateGenerationRestoreRecord(root))
-                    return "Git contains local generation restore evidence.";
+                if (IsPrivateGenerationRestoreRecord(root) ||
+                    (root.TryGetProperty("GenerationId", out _) && root.TryGetProperty("SourceProjectPath", out _) &&
+                     root.TryGetProperty("FileSize", out _) && root.TryGetProperty("Sha256", out _)))
+                    return "Git contains a local generation snapshot record or restore evidence.";
                 if (IsTransferManifest(root))
                     return "Git contains a local YMMPX asset-transfer manifest.";
                 if (ReadProjectAssetNames(root, historicalAssetNames))

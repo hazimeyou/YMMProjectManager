@@ -639,6 +639,8 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
             throw new InvalidDataException("この metadata の ID は別の一覧項目に使用されています。");
         //CSJ,variable=projectPath,プロジェクトのパス
         var projectPath = project.FullPath;
+        using var projectDirectory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(Path.GetFullPath(projectPath))!,
+            enforceShare: true);
         //CSJ,variable=file,ファイル
         await using var file = ProjectFileEvidence.OpenRead(projectPath);
         //CSJ,variable=projectEvidence,プロジェクト証跡

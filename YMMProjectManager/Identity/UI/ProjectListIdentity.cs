@@ -375,6 +375,7 @@ public sealed partial class ProjectListViewModel
             Projects.Any(p => !ReferenceEquals(p, project) && string.Equals(Path.GetFullPath(p.FullPath), newPath, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidDataException("移動前後の状態が変わったか、移動先が既に登録されています。");
 
+        using var destinationDirectory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(newPath)!, enforceShare: true);
         //CSJ,variable=destination,格納先
         await using var destination = ProjectFileEvidence.OpenRead(newPath);
         //CSJ,variable=identity,識別情報
