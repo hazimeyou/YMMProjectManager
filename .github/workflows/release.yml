@@ -1,127 +1,141 @@
-name: Build and Release
+name: Build and Stage Draft Release
 
 on:
   push:
     tags:
       - "v*"
 
-jobs:
-  build_and_release:
-    runs-on: windows-latest
+permissions: {}
 
+concurrency:
+  group: ymmpm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: github.repository == 'hazimeyou/YMMProjectManager' && !github.event.deleted
+    runs-on: windows-2025
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release, Debug]
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Confirm the pushed tag selects this checkout
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF_TYPE -ne 'tag' -or $env:GITHUB_REF_NAME -cnotmatch '\Av\d+\.\d+\.\d+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\z') {
+            throw 'The candidate must be created from a version tag.'
+          }
+          $tagCommit = git rev-parse --verify ($env:GITHUB_REF + '^{commit}')
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $env:GITHUB_SHA) {
+            throw 'The checked-out tag no longer points to the triggering commit.'
+          }
+
+      - uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        with:
+          dotnet-version: "10.0.404"
+
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13.7"
+
+      - name: Fetch pinned build and test references
+        shell: pwsh
+        run: |
+          ./scripts/fetch-ymm4-libs.ps1 -OutputDir (Join-Path $env:RUNNER_TEMP 'ymmpm-refs')
+          Invoke-WebRequest -Uri 'https://github.com/hazimeyou/YmmpxLib/releases/download/v1.1.0/YmmpxLibPlugin.ymme' -OutFile (Join-Path $env:RUNNER_TEMP 'ymmpx-fixture.ymme')
+
+      - name: Build and run isolated regression
+        shell: pwsh
+        env:
+          CONFIGURATION: ${{ matrix.configuration }}
+        run: |
+          $parameters = @{
+            Configuration = $env:CONFIGURATION
+            Tag = $env:GITHUB_REF_NAME
+            ExpectedCommit = $env:GITHUB_SHA
+            ReferenceDirectory = Join-Path $env:RUNNER_TEMP 'ymmpm-refs'
+            YmmpxArchive = Join-Path $env:RUNNER_TEMP 'ymmpx-fixture.ymme'
+            OutputDirectory = Join-Path $env:RUNNER_TEMP 'yt'
+          }
+          ./scripts/verify-release-build.ps1 @parameters
+
+      - name: Stage the tested candidate and provenance
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: verified-${{ matrix.configuration }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/yt/candidate/
+          if-no-files-found: error
+
+  draft:
+    needs: verify
+    runs-on: windows-2025
+    timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v3
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
-          dotnet-version: "10.0.x"
+          pattern: verified-*-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/candidate
 
-      - name: Set Version
+      - name: Verify evidence and create a draft only
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart('v')
-          echo "VERSION=$version" >> $env:GITHUB_ENV
-
-      - name: Fetch pinned YMM4 build references
-        shell: pwsh
-        run: |
-          $refs = Join-Path $env:RUNNER_TEMP 'ymmpm-refs'
-          ./scripts/fetch-ymm4-libs.ps1 -OutputDir $refs
-          "YMM4_PATH=$refs" >> $env:GITHUB_ENV
-
-      - name: Build
-        run: dotnet build .\YMMProjectManager.sln -c Release -p:Version=$env:VERSION
-
-      - name: Verify the build in isolation
-        shell: pwsh
-        run: |
-          $testRoot = Join-Path $env:RUNNER_TEMP 'yt'
-          New-Item -ItemType Directory -Path $testRoot | Out-Null
-          $env:TEMP = $testRoot
-          $env:TMP = $testRoot
-          Remove-Item Env:YMMPX_LIB_PATH,Env:YMM_TEST_FILTER -ErrorAction SilentlyContinue
-          dotnet run --project .\YMMProjectManager.Tests -c Release --no-build
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-      - name: Prepare Publish Folder
-        run: |
-          if (Test-Path publish) { Remove-Item publish -Recurse -Force }
-          New-Item -ItemType Directory -Path publish
-
-      - name: Copy LICENSE
-        run: Copy-Item "LICENSE" "publish\LICENSE"
-
-      - name: Copy README
-        run: Copy-Item "README.md" "publish\readme.txt"
-
-      - name: Collect Plugin Files
-        shell: pwsh
-        run: |
-          $pluginBin = "YMMProjectManager\bin\Release\net10.0-windows"
-          $requiredFiles = @(
-            "YMMProjectManager.dll",
-            "YMMProjectManager.deps.json"
-          )
-
-          foreach ($file in $requiredFiles) {
-            $src = Join-Path $pluginBin $file
-            if (!(Test-Path $src)) {
-              throw "Required file not found: $src"
+          function Assert-RemoteTag {
+            $rawRef = gh api ("repos/" + $env:GITHUB_REPOSITORY + "/git/ref/tags/" + [Uri]::EscapeDataString($env:GITHUB_REF_NAME))
+            if ($LASTEXITCODE -ne 0) { throw 'Could not resolve the remote tag.' }
+            $object = ($rawRef | ConvertFrom-Json).object
+            for ($depth = 0; $object.type -eq 'tag' -and $depth -lt 8; $depth++) {
+              if ($object.sha -notmatch '\A[0-9a-f]{40}\z') { throw 'Invalid annotated tag object.' }
+              $rawTag = gh api ("repos/" + $env:GITHUB_REPOSITORY + "/git/tags/" + $object.sha)
+              if ($LASTEXITCODE -ne 0) { throw 'Could not peel the remote tag.' }
+              $object = ($rawTag | ConvertFrom-Json).object
             }
-            Copy-Item $src "publish\$file" -Force
-          }
-
-          $pdb = Join-Path $pluginBin "YMMProjectManager.pdb"
-          if (Test-Path $pdb) {
-            Copy-Item $pdb "publish\YMMProjectManager.pdb" -Force
-          }
-
-      - name: Prepare Package Folder
-        run: |
-          if (Test-Path package) { Remove-Item package -Recurse -Force }
-          New-Item -ItemType Directory -Path package
-          Copy-Item publish\* package -Recurse
-
-      - name: Create ZIP
-        run: Compress-Archive -Path "package\*" -DestinationPath "YMMProjectManager.zip"
-
-      - name: Rename ZIP to .ymme
-        run: Move-Item YMMProjectManager.zip YMMProjectManager.ymme
-
-      - name: Record release provenance
-        shell: pwsh
-        run: |
-          $testedCommit = git rev-parse HEAD
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $referenceMetadata = Get-Content -LiteralPath (Join-Path $env:YMM4_PATH 'YMM4-reference.json') -Raw | ConvertFrom-Json
-          foreach ($reference in $referenceMetadata.files) {
-            $path = Join-Path $env:YMM4_PATH $reference.name
-            if ((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -ne $reference.sha256) {
-              throw "A build reference changed: $($reference.name)"
+            if ($object.type -ne 'commit' -or $object.sha -ne $env:GITHUB_SHA) {
+              throw 'The remote tag no longer targets the tested commit.'
             }
           }
-          $sdk = dotnet --version
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          [ordered]@{
-            testedCommit = $testedCommit
-            tag = $env:GITHUB_REF_NAME
-            sdk = $sdk
-            testSuite = 'Release default synthetic suite; conditional skips are recorded in the workflow log'
-            workflowRunId = $env:GITHUB_RUN_ID
-            references = $referenceMetadata
-            package = 'YMMProjectManager.ymme'
-            packageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath 'YMMProjectManager.ymme').Hash
-          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'YMMProjectManager.build.json' -Encoding utf8
 
-      - name: Create Release
-        uses: ncipollo/release-action@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}
-          artifacts: YMMProjectManager.ymme,YMMProjectManager.build.json
-          draft: true
-          prerelease: true
+          $root = Join-Path $env:RUNNER_TEMP 'candidate'
+          foreach ($configuration in 'Release', 'Debug') {
+            $verified = Join-Path $root "verified-$configuration-$env:GITHUB_RUN_ATTEMPT"
+            $provenance = Join-Path $verified 'YMMProjectManager.build.json'
+            $build = Get-Content -LiteralPath $provenance -Raw | ConvertFrom-Json
+            if ($build.schemaVersion -ne 1 -or $build.testedCommit -ne $env:GITHUB_SHA -or
+                $build.tag -cne $env:GITHUB_REF_NAME -or $build.configuration -cne $configuration -or
+                $build.workflowRunId -ne $env:GITHUB_RUN_ID -or $build.workflowRunAttempt -ne $env:GITHUB_RUN_ATTEMPT -or
+                ($build.regression.name -join ',') -ne 'none,real,https,ymmpx') {
+              throw "Unexpected $configuration verification evidence."
+            }
+            if ($configuration -eq 'Release') {
+              $package = Join-Path $verified 'YMMProjectManager.ymme'
+              if ($build.package -cne 'YMMProjectManager.ymme' -or
+                  (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash -ne $build.packageSha256) {
+                throw 'The downloaded package does not match the tested Release artifact.'
+              }
+              $releaseProvenance = $provenance
+            }
+          }
+
+          $existing = gh api --paginate ("repos/" + $env:GITHUB_REPOSITORY + "/releases") --jq '.[].tag_name'
+          if ($LASTEXITCODE -ne 0) { throw 'Could not verify that this tag has no release.' }
+          if ($existing -ccontains $env:GITHUB_REF_NAME) { throw 'A release already exists for this tag.' }
+          Assert-RemoteTag
+
+          $notes = "Tested commit: $env:GITHUB_SHA. See YMMProjectManager.build.json and the verification jobs. Draft for manual acceptance."
+          gh release create $env:GITHUB_REF_NAME $package $releaseProvenance --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title $env:GITHUB_REF_NAME --notes $notes --verify-tag --draft --prerelease --latest=false
+          if ($LASTEXITCODE -ne 0) { throw 'Draft release creation or asset upload failed.' }
+          Assert-RemoteTag
