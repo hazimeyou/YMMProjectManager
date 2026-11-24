@@ -64,7 +64,7 @@
                     MinWidth="90"
                     Margin="0,0,8,0"
                     Command="{Binding ExtractBundleCommand}" />
-                <Button Content="PF 整理" Margin="8,0,0,0" Command="{Binding ReviewProjectCleanupCommand}" />
+                <Button Content="旧世代からPFを取り出す" Margin="8,0,0,0" Command="{Binding ExportLegacyGenerationCommand}" />
             </StackPanel>
             <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" Margin="0,0,0,8">
                 <Button
@@ -180,15 +180,7 @@
             <ListBox
                 ItemsSource="{Binding Projects}"
                 SelectedItem="{Binding SelectedProject, Mode=TwoWay}"
-                MouseDoubleClick="OnProjectListMouseDoubleClick"
-                PreviewMouseRightButtonDown="OnProjectListPreviewMouseRightButtonDown">
-                <ListBox.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="世代を保存" Click="OnSaveGenerationMenuClick" />
-                        <MenuItem Header="世代一覧" Click="OnShowGenerationListMenuClick" />
-                        <MenuItem Header="世代診断" Click="OnShowGenerationDiagnosticsMenuClick" />
-                    </ContextMenu>
-                </ListBox.ContextMenu>
+                MouseDoubleClick="OnProjectListMouseDoubleClick">
                 <ListBox.ItemTemplate>
                     <DataTemplate>
                         <Grid Margin="0,2">

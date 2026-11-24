@@ -9,13 +9,11 @@ using YMMProjectManager.Application;
 using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
-using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Git;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Packaging;
 using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Presentation.Commands;
-using YMMProjectManager.Presentation.Generation;
 using YMMProjectManager.Presentation.Relink;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
@@ -31,8 +29,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
     private readonly IProjectRepository repository;
     //CSJ,field=seekPreviewThumbnailGenerator,フレーム移動プレビューサムネイル生成器
     private readonly SeekPreviewThumbnailGenerator seekPreviewThumbnailGenerator;
-    //CSJ,field=generationService,世代サービス
-    private readonly IProjectGenerationService generationService;
     //CSJ,field=bundleService,一括パッケージサービス
     private readonly YmmpxLibBundleService bundleService;
     //CSJ,field=folders,フォルダー一覧
@@ -246,7 +242,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         //CSJ,variable=currentPreviewCaptureService,現在のプレビューキャプチャサービス
         var currentPreviewCaptureService = new CurrentPreviewCaptureService(logger);
         seekPreviewThumbnailGenerator = new SeekPreviewThumbnailGenerator(logger, currentPreviewCaptureService);
-        generationService = new ProjectGenerationService(logger);
         bundleService = new YmmpxLibBundleService(logger);
 
         RetryProjectListSaveCommand = new AsyncRelayCommand(RetryProjectListSaveAsync, () => isInitialized && !IsBusy && HasUnsavedProjectList && retainedRecoverySnapshot is null);
@@ -267,7 +262,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
         // The external extractor's destination and cleanup guarantees are not yet verified.
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
-        ReviewProjectCleanupCommand = new AsyncRelayCommand(ReviewProjectCleanupAsync, () => !IsBusy && SelectedProject is not null);
+        ExportLegacyGenerationCommand = new AsyncRelayCommand(ExportLegacyGenerationAsync, () => !IsBusy);
         CollectAssetToPoolCommand = new AsyncRelayCommand(CollectAssetToPoolAsync, () => !IsBusy && SelectedProject is not null);
         InspectGitHubAccessCommand = new AsyncRelayCommand(InspectGitHubAccessAsync, () => !IsBusy && SelectedProject is not null);
         GitHubBrowserLoginCommand = new AsyncRelayCommand(() => RunGitHubBrowserLoginAsync(reauthenticate: false), () => !IsBusy);
@@ -955,12 +950,6 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         {
             logger.Error(ex, "Project list contains unsupported data.");
             MessageBox.Show("一覧に安全に保存できない項目があるため、元ファイルを保護して保存を中止しました。未保存の変更は画面に残っています。", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Warning);
-        }
-        catch (InvalidDataException ex) when (operationName == "GenerationSave")
-        {
-            logger.Error(ex, "世代 manifest の読み込みに失敗しました。");
-            logger.Flush();
-            MessageBox.Show("世代情報を読み込めません。既存データを保護するため保存を中止しました。ログを確認してください。", "世代管理", MessageBoxButton.OK, MessageBoxImage.Warning);
         }
         catch (Exception) when (operationName == GitHubBrowserLoginOperation)
         {

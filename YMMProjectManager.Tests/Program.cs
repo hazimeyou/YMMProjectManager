@@ -11,7 +11,6 @@ using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Diagnostics;
-using YMMProjectManager.Infrastructure.Generations;
 using YMMProjectManager.Infrastructure.Thumbnails;
 using YMMProjectManager.Tests;
 using CurrentPreviewCaptureResult = YMMProjectManager.Infrastructure.Output.CurrentPreviewCaptureResult;
@@ -46,11 +45,6 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
-        if (args.Length == 3 && args[0] == GenerationManifestInterruptionTests.ChildArgument)
-        {
-            await GenerationManifestInterruptionTests.RunChildAsync(args[1], args[2]);
-            return;
-        }
         if (args.Length == 2 && args[0] == SettingsAndDiagnosticsTests.InterruptedSaveArgument)
         {
             SettingsAndDiagnosticsTests.RunInterruptedSaveChild(args[1]);
@@ -158,24 +152,9 @@ internal static class Program
         new(nameof(AssetPoolTests), () => AssetPoolTests.RunAsync(workRoot)),
         new(nameof(DerivedRelinkAssociationTests), () => DerivedRelinkAssociationTests.RunAsync(workRoot)),
         new(nameof(ExternalRelinkRecoveryTests), () => ExternalRelinkRecoveryTests.RunAsync(workRoot)),
-        new(nameof(ProjectFileCleanupTests), ProjectFileCleanupTests.RunAsync),
+        new(nameof(LegacyGenerationExportTests), () => LegacyGenerationExportTests.RunAsync(workRoot)),
         new(nameof(StrictRelinkWorkflowTests), () => StrictRelinkWorkflowTests.RunAsync(workRoot)),
-        new(nameof(TestZeroGenerationsAsync), () => TestZeroGenerationsAsync(workRoot)),
-        new(nameof(TestCreateAndListAsync), () => TestCreateAndListAsync(workRoot)),
-        new(nameof(TestMultipleGenerationsAsync), () => TestMultipleGenerationsAsync(workRoot)),
-        new(nameof(TestManifestCorruptionAsync), () => TestManifestCorruptionAsync(workRoot)),
-        new(nameof(GenerationManifestProtectionTests), () => GenerationManifestProtectionTests.RunAsync(workRoot)),
-        new(nameof(ManifestWriteHardeningTests), () => ManifestWriteHardeningTests.RunAsync(workRoot)),
-        new(nameof(GenerationIdCollisionTests), () => GenerationIdCollisionTests.RunAsync(workRoot)),
         new(nameof(RelinkIntegrityTests), () => RelinkIntegrityTests.RunAsync(workRoot)),
-        new(nameof(TestMetadataCorruptionAsync), () => TestMetadataCorruptionAsync(workRoot)),
-        new(nameof(TestRestoreAsync), () => TestRestoreAsync(workRoot)),
-        new(nameof(TestDeleteAsync), () => TestDeleteAsync(workRoot)),
-        new(nameof(TestDeletedFolderExistsAsync), () => TestDeletedFolderExistsAsync(workRoot)),
-        new(nameof(TestShaMismatchAsync), () => TestShaMismatchAsync(workRoot)),
-        new(nameof(TestMissingGenerationAsync), () => TestMissingGenerationAsync(workRoot)),
-        new(nameof(TestLockedFileRestoreFailureAsync), () => TestLockedFileRestoreFailureAsync(workRoot)),
-        new(nameof(TestDiagnosticsAsync), () => TestDiagnosticsAsync(workRoot)),
         new(nameof(TestFastThumbnailOptionsDefaultsAsync), () => TestFastThumbnailOptionsDefaultsAsync()),
         new(nameof(TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync), () => TestThumbnailFastGenerationBenchmarkOptionsDefaultsAsync()),
         new(nameof(TestFastThumbnailFrameSamplingAsync), () => TestFastThumbnailFrameSamplingAsync()),
@@ -217,7 +196,6 @@ internal static class Program
         new("ProjectListWpfFixtureProcess.VerifyTimeoutAsync", () =>
             RunNamedCaseAsync("WPF watchdog stops only the owned child", () => ProjectListWpfFixtureProcess.VerifyTimeoutAsync(workRoot))),
         new(nameof(TestProjectEntryThumbnailCacheDirectoryNotificationAsync), () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync()),
-        new(nameof(TestProjectGenerationStorageReplaceAsync), () => TestProjectGenerationStorageReplaceAsync(workRoot)),
         new(nameof(YmmpxBundleTests), () => YmmpxBundleTests.RunAsync(workRoot)),
         new(nameof(R30ReflectionTests), () => R30ReflectionTests.RunAsync(workRoot)),
         new(nameof(YmmpxFailureTests), () => YmmpxFailureTests.RunAsync(workRoot)),
@@ -333,251 +311,6 @@ internal static class Program
             }
             return Task.CompletedTask;
         });
-
-    private static async Task TestZeroGenerationsAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestZeroGenerationsAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        //CSJ,variable=generations,世代
-        var generations = await service.GetGenerationsAsync(projectPath);
-        //CSJ,variable=diagnostics,診断情報
-        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
-
-        AssertEx.Equal(0, generations.Count, "Empty project should have no generations.");
-        AssertEx.Equal(0, diagnostics.GenerationCount, "Diagnostics should report no valid generations.");
-        AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Missing, "Missing manifest should be reported for empty storage.");
-    }
-
-    private static async Task TestCreateAndListAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestCreateAndListAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "first", "memo");
-        //CSJ,variable=generations,世代
-        var generations = await service.GetGenerationsAsync(projectPath);
-
-        AssertEx.Equal(1, generations.Count, "A single generation should be listed.");
-        AssertEx.Equal("first", generations[0].DisplayName, "Display name should match.");
-        AssertEx.True(generations[0].IsValid, "Created generation should be valid.");
-    }
-
-    //CSJ,method=TestMultipleGenerationsAsync,複数世代をテストする（非同期）
-    private static async Task TestMultipleGenerationsAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestMultipleGenerationsAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "first", null);
-        await service.CreateGenerationAsync(projectPath, "second", "memo");
-
-        //CSJ,variable=generations,世代
-        var generations = await service.GetGenerationsAsync(projectPath);
-        AssertEx.Equal(2, generations.Count, "Two generations should be listed.");
-    }
-
-    private static async Task TestManifestCorruptionAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestManifestCorruptionAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "first", null);
-        //CSJ,variable=manifestPath,目録パス
-        var manifestPath = Path.Combine(service.GetProjectDirectory(projectPath), "manifest.json");
-        File.WriteAllText(manifestPath, "{ broken json");
-
-        try
-        {
-            await service.GetGenerationsAsync(projectPath);
-            throw new InvalidOperationException("Corrupted manifest must not appear as an empty list.");
-        }
-        catch (InvalidDataException) { }
-        //CSJ,variable=diagnostics,診断情報
-        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
-        AssertEx.True(diagnostics.ManifestStatus is ProjectGenerationManifestStatus.Corrupted, "Corrupted manifest should be reported.");
-    }
-
-    private static async Task TestMetadataCorruptionAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestMetadataCorruptionAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "first", null);
-        var second = await service.CreateGenerationAsync(projectPath, "second", null);
-        //CSJ,variable=metadataPath,メタデータパス
-        var metadataPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", second.GenerationId, "metadata.json");
-        File.Delete(metadataPath);
-
-        //CSJ,variable=generations,世代
-        var generations = await service.GetGenerationsAsync(projectPath);
-        AssertEx.Equal(2, generations.Count, "Corrupted metadata should not remove the generation entry.");
-        AssertEx.True(generations.Any(x => !x.IsValid), "Broken generation should be marked invalid.");
-    }
-
-    //CSJ,method=TestRestoreAsync,復元をテストする（非同期）
-    private static async Task TestRestoreAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestRestoreAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "original");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "restore", "memo");
-        await File.WriteAllTextAsync(projectPath, "changed");
-
-        //CSJ,variable=generations,世代
-        var generations = await service.GetGenerationsAsync(projectPath);
-        //CSJ,variable=generationId,世代ID
-        var generationId = generations[0].GenerationId;
-        var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, generationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
-
-        AssertEx.True(success, errorMessage ?? "Restore should succeed.");
-        AssertEx.Equal("original", await File.ReadAllTextAsync(projectPath), "Project file should be restored.");
-
-        var backupDir = Path.Combine(root, "AppData", "YMMProjectManager", "Generations", "projects", new ProjectGenerationHashService().ComputeProjectId(projectPath), "restore-backups");
-        AssertEx.True(Directory.Exists(backupDir), "Backup directory should exist.");
-        AssertEx.True(Directory.GetFiles(backupDir, "*.ymmp").Length > 0, "Backup file should be created.");
-    }
-
-    //CSJ,method=TestDeleteAsync,削除をテストする（非同期）
-    private static async Task TestDeleteAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestDeleteAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        //CSJ,variable=created,作成済み
-        var created = await service.CreateGenerationAsync(projectPath, "delete", null);
-        //CSJ,variable=generationDirectory,世代ディレクトリ
-        var generationDirectory = Path.Combine(service.GetProjectDirectory(projectPath), "generations", created.GenerationId);
-
-        var (success, errorMessage) = await service.DeleteGenerationAsync(projectPath, created.GenerationId);
-        AssertEx.True(success, errorMessage ?? "Delete should succeed.");
-        AssertEx.True(!Directory.Exists(generationDirectory), "Generation directory should be moved away.");
-        AssertEx.Equal(0, (await service.GetGenerationsAsync(projectPath)).Count, "Deleted generation should no longer be listed.");
-    }
-
-    //CSJ,method=TestShaMismatchAsync,SHA不一致をテストする（非同期）
-    private static async Task TestShaMismatchAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestShaMismatchAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        //CSJ,variable=created,作成済み
-        var created = await service.CreateGenerationAsync(projectPath, "sha", null);
-        //CSJ,variable=generationPath,世代パス
-        var generationPath = Path.Combine(service.GetProjectDirectory(projectPath), "generations", created.GenerationId, "project.ymmp");
-        await File.WriteAllTextAsync(generationPath, "corrupted");
-
-        var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, created.GenerationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
-        AssertEx.True(!success, "Restore should fail for SHA mismatch.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(errorMessage), "Failure should include a reason.");
-    }
-
-    //CSJ,method=TestMissingGenerationAsync,欠落世代をテストする（非同期）
-    private static async Task TestMissingGenerationAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestMissingGenerationAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, "missing-generation", GenerationRestoreMode.RestoreToOriginalWithBackup);
-        AssertEx.True(!success, "Missing generation should fail.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(errorMessage), "Missing generation should provide a reason.");
-    }
-
-    private static async Task TestLockedFileRestoreFailureAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestLockedFileRestoreFailureAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        //CSJ,variable=created,作成済み
-        var created = await service.CreateGenerationAsync(projectPath, "locked", null);
-        await File.WriteAllTextAsync(projectPath, "changed");
-
-        //CSJ,variable=lockStream,ロックストリーム
-        using var lockStream = new FileStream(projectPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-        var (success, errorMessage, _) = await service.RestoreGenerationAsync(projectPath, created.GenerationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
-
-        AssertEx.True(!success, "Restore should fail when target file is locked.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(errorMessage), "Locked restore should provide a reason.");
-    }
-
-    private static async Task TestDeletedFolderExistsAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestDeletedFolderExistsAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        //CSJ,variable=created,作成済み
-        var created = await service.CreateGenerationAsync(projectPath, "delete", null);
-        await service.DeleteGenerationAsync(projectPath, created.GenerationId);
-
-        //CSJ,variable=deletedPath,削除済みのパス
-        var deletedPath = Path.Combine(service.GetProjectDirectory(projectPath), "deleted");
-        AssertEx.True(Directory.Exists(deletedPath), "Deleted folder should exist after deletion.");
-        AssertEx.True(Directory.EnumerateDirectories(deletedPath).Any(), "Deleted folder should contain moved generations.");
-    }
-
-    //CSJ,method=TestDiagnosticsAsync,診断情報をテストする（非同期）
-    private static async Task TestDiagnosticsAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestDiagnosticsAsync));
-        //CSJ,variable=projectPath,プロジェクトのパス
-        var projectPath = CreateProjectFile(root, "project.ymmp", "alpha");
-        //CSJ,variable=service,サービス
-        var service = CreateService(root);
-
-        await service.CreateGenerationAsync(projectPath, "diag", null);
-        //CSJ,variable=diagnostics,診断情報
-        var diagnostics = await service.GetDiagnosticsAsync(projectPath);
-
-        AssertEx.Equal(1, diagnostics.GenerationCount, "Diagnostics should count valid generations.");
-        AssertEx.True(!string.IsNullOrWhiteSpace(diagnostics.ProjectId), "ProjectId should be populated.");
-        AssertEx.True(diagnostics.StorageSize > 0, "StorageSize should be populated.");
-        AssertEx.True(diagnostics.LatestGeneration is not null, "LatestGeneration should be populated.");
-    }
 
     private static Task TestFastThumbnailOptionsDefaultsAsync()
     {
@@ -1506,41 +1239,6 @@ internal static class Program
         return Task.CompletedTask;
     }
 
-    //CSJ,method=TestProjectGenerationStorageReplaceAsync,プロジェクト世代保管置換をテストする（非同期）
-    private static async Task TestProjectGenerationStorageReplaceAsync(string workRoot)
-    {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, nameof(TestProjectGenerationStorageReplaceAsync));
-        //CSJ,variable=storage,保管
-        var storage = new ProjectGenerationStorage(Path.Combine(root, "store"));
-        //CSJ,variable=targetDirectory,対象ディレクトリ
-        var targetDirectory = Path.Combine(root, "target");
-        Directory.CreateDirectory(targetDirectory);
-
-        //CSJ,variable=targetPath,対象パス
-        var targetPath = Path.Combine(targetDirectory, "project.ymmp");
-        await File.WriteAllTextAsync(targetPath, "old");
-
-        //CSJ,variable=sourceTempPath,元一時パス
-        var sourceTempPath = Path.Combine(root, "source.tmp");
-        await File.WriteAllTextAsync(sourceTempPath, "new");
-
-        await storage.ReplaceFileAtomicallyAsync(sourceTempPath, targetPath, null);
-
-        AssertEx.Equal("new", await File.ReadAllTextAsync(targetPath), "Atomic replace should overwrite the target content.");
-        AssertEx.True(!File.Exists(sourceTempPath), "Atomic replace should consume the source temp file.");
-    }
-
-    //CSJ,method=CreateService,サービスを作成する
-    private static ProjectGenerationService CreateService(string root)
-    {
-        //CSJ,variable=logger,ロガー
-        var logger = new FileLogger(Path.Combine(root, "logs", "test.log"));
-        //CSJ,variable=storageRoot,保管ルート
-        var storageRoot = Path.Combine(root, "AppData", "YMMProjectManager", "Generations");
-        return new ProjectGenerationService(logger, storageRoot);
-    }
-
     //CSJ,method=CreateRoot,ルートを作成する
     private static string CreateRoot(string workRoot, string testName)
     {
@@ -1548,15 +1246,6 @@ internal static class Program
         var root = Path.Combine(workRoot, testName);
         Directory.CreateDirectory(root);
         return root;
-    }
-
-    //CSJ,method=CreateProjectFile,プロジェクトファイルを作成する
-    private static string CreateProjectFile(string root, string fileName, string content)
-    {
-        //CSJ,variable=path,パス
-        var path = Path.Combine(root, fileName);
-        File.WriteAllText(path, content);
-        return path;
     }
 
     //CSJ,class=TimelineContainer,タイムラインの格納先

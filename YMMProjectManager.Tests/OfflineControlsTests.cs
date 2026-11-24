@@ -44,7 +44,7 @@ internal static class OfflineControlsTests
             {
                 if (!vm.GitStatus.Contains("Git:") || vm.GitChanges.SingleOrDefault(change => change.Path == "project.ymmp") is not { } projectChange ||
                     !projectChange.Display.Contains("project.ymmp") || !vm.CommitGitCommand.CanExecute(null) ||
-                    !vm.ReviewProjectCleanupCommand.CanExecute(null) || !vm.CollectAssetToPoolCommand.CanExecute(null) ||
+                    !vm.ExportLegacyGenerationCommand.CanExecute(null) || !vm.CollectAssetToPoolCommand.CanExecute(null) ||
                     !vm.InspectGitHubAccessCommand.CanExecute(null))
                     throw new InvalidOperationException("The Git changes list or R21 commands are missing.");
                 vm.SelectedGitChange = projectChange;

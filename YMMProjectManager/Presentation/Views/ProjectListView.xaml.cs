@@ -80,64 +80,6 @@ public partial class ProjectListView : UserControl
         await vm.AddProjectsAsync(ymmpFiles);
     }
 
-    private void OnProjectListPreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (sender is not ListBox listBox)
-        {
-            return;
-        }
-
-        //CSJ,variable=dependencyObject,依存関係オブジェクト
-        var dependencyObject = e.OriginalSource as DependencyObject;
-        if (dependencyObject is null)
-        {
-            return;
-        }
-
-        var item = FindAncestor<ListBoxItem>(dependencyObject);
-        if (item is not null)
-        {
-            item.IsSelected = true;
-            item.Focus();
-            return;
-        }
-
-        listBox.SelectedItem = null;
-    }
-
-    //CSJ,method=OnSaveGenerationMenuClick,保存世代メニュークリック時の処理
-    private async void OnSaveGenerationMenuClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not ProjectListViewModel vm)
-        {
-            return;
-        }
-
-        await vm.SaveGenerationAsync();
-    }
-
-    //CSJ,method=OnShowGenerationListMenuClick,表示世代一覧メニュークリック時の処理
-    private async void OnShowGenerationListMenuClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not ProjectListViewModel vm)
-        {
-            return;
-        }
-
-        await vm.ShowGenerationListAsync();
-    }
-
-    //CSJ,method=OnShowGenerationDiagnosticsMenuClick,表示世代診断情報メニュークリック時の処理
-    private async void OnShowGenerationDiagnosticsMenuClick(object sender, RoutedEventArgs e)
-    {
-        if (DataContext is not ProjectListViewModel vm)
-        {
-            return;
-        }
-
-        await vm.ShowGenerationDiagnosticsAsync();
-    }
-
     private void OnProjectListMouseDoubleClick(object sender, MouseButtonEventArgs e)
     {
         if (sender is not ListBox listBox)
@@ -183,20 +125,4 @@ public partial class ProjectListView : UserControl
         return false;
     }
 
-    private static T? FindAncestor<T>(DependencyObject child)
-        where T : DependencyObject
-    {
-        var current = child;
-        while (current is not null)
-        {
-            if (current is T typed)
-            {
-                return typed;
-            }
-
-            current = VisualTreeHelper.GetParent(current);
-        }
-
-        return null;
-    }
 }
