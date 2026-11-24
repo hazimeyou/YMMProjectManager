@@ -34,8 +34,6 @@ public sealed class FileLogger
         this.byteLimit = byteLimit;
     }
 
-    internal string LogPath => logPath;
-
     // Callers use the live message in their UI where appropriate. The persisted log records
     // only a compiler-supplied operation name and typed diagnostics.
     public void Info(string message, [CallerMemberName] string operation = "") =>
