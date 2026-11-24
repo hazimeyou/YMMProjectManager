@@ -325,12 +325,14 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             using var sourceHandle = OwnedFilePublication.OpenOrdinaryPath(generationPath, expectDirectory: false, allowRename: false);
             using var source = new FileStream(sourceHandle, FileAccess.Read);
             var temporaryPath = Path.Combine(projectDirectory, $"{Guid.NewGuid():N}.restore.tmp");
-            await using var candidate = OwnedFilePublication.CreateOwnedOutputFile(temporaryPath, readBack: true);
+            await using var candidate = ProjectGenerationRestorePublication.CreateCandidate(temporaryPath, original);
             var published = false;
             try
             {
                 await source.CopyToAsync(candidate, cancellationToken).ConfigureAwait(false);
                 await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (original is not null)
+                    File.SetCreationTimeUtc(candidate.SafeFileHandle, File.GetCreationTimeUtc(original.SafeFileHandle));
                 candidate.Flush(flushToDisk: true);
                 candidate.Position = 0;
                 var actualSha = Convert.ToHexString(await SHA256.HashDataAsync(candidate, cancellationToken).ConfigureAwait(false));
@@ -371,34 +373,44 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         var deletedDirectory = storage.GetDeletedGenerationDirectory(projectId, generationId);
 
         logger.Info($"GenerationDeleteStarted projectPath={normalizedProjectPath}, generationId={generationId}");
-        var moved = false;
-
         try
         {
             //CSJ,variable=manifestLoad,目録読み込み
             var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
             //CSJ,variable=manifest,目録
             var manifest = RequireManifest(manifestLoad);
-            if (!manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
+            var retiring = manifest.Generations.FirstOrDefault(item => string.Equals(item.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
+            if (retiring is null)
                 return (false, "世代 manifest に対象がありません。");
-            if (!Directory.Exists(generationDirectory))
+            using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(generationDirectory)!, enforceShare: true);
+            using var destinationFence = ProjectGenerationStorage.OpenOrCreateOutputDirectory(Path.GetDirectoryName(deletedDirectory)!);
+            using var generation = OwnedFilePublication.OpenOrdinaryPath(generationDirectory, expectDirectory: true,
+                allowRename: true, share: FileShare.ReadWrite, enforceDirectoryShare: true);
+            cancellationToken.ThrowIfCancellationRequested();
+            OwnedFilePublication.RenameOpenedPath(generation, deletedDirectory);
+
+            try
             {
-                return (false, "世代フォルダが見つかりません。");
+                manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
+                manifest.UpdatedAt = DateTimeOffset.Now;
+                await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
             }
-            if ((File.GetAttributes(generationDirectory) & FileAttributes.ReparsePoint) != 0)
-                return (false, "世代フォルダがリンクのため削除を中止しました。");
-
-            if (Directory.Exists(deletedDirectory))
+            catch (Exception error)
             {
-                return (false, "削除先が既に存在します。既存データを保護するため処理を中止しました。 ");
+                // Roll back the exact retired directory. A new directory at either path must not be moved or overwritten.
+                var current = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, CancellationToken.None).ConfigureAwait(false);
+                if (current.Manifest?.Generations.Any(item => string.Equals(item.GenerationId, generationId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.Sha256, retiring.Sha256, StringComparison.OrdinalIgnoreCase) && item.FileSize == retiring.FileSize) != true)
+                    throw new IOException($"世代の削除を確定できませんでした。移動先を保全して manifest と照合してください。\n移動先 {deletedDirectory}", error);
+
+                try { OwnedFilePublication.RenameOpenedPath(generation, generationDirectory); }
+                catch (IOException rollbackError)
+                {
+                    throw new IOException($"世代の削除を確定できず、元の場所にも戻せませんでした。両方のフォルダーを保全して状態を確認してください。\n元の場所 {generationDirectory}\n移動先 {deletedDirectory}",
+                        new AggregateException(error, rollbackError));
+                }
+                throw;
             }
-
-            await storage.MoveDirectoryAsync(generationDirectory, deletedDirectory, cancellationToken).ConfigureAwait(false);
-            moved = true;
-
-            manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
-            manifest.UpdatedAt = DateTimeOffset.Now;
-            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationDeleteCompleted projectPath={normalizedProjectPath}, generationId={generationId}, deletedPath={deletedDirectory}");
             return (true, null);
@@ -406,18 +418,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationDeleteFailed projectPath={normalizedProjectPath}, generationId={generationId}");
-            if (!moved) return (false, ex.Message);
-            try
-            {
-                Directory.Move(deletedDirectory, generationDirectory);
-                return (false, ex.Message);
-            }
-            catch (Exception rollbackError) when (rollbackError is IOException or UnauthorizedAccessException)
-            {
-                logger.Error(rollbackError, $"GenerationDeleteRollbackFailed generationId={generationId}, movedPath={deletedDirectory}");
-                logger.Flush();
-                return (false, $"世代の削除を確定できず、元の場所にも戻せませんでした。両方のフォルダーを保全して状態を確認してください。\n元の場所 {generationDirectory}\n移動先 {deletedDirectory}");
-            }
+            return (false, ex.Message);
         }
     }
 

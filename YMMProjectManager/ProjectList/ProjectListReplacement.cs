@@ -188,29 +188,41 @@ internal sealed class ProjectListReplacement(string listPath)
         { return null; }
     }
 
-    internal static void VerifyCompatibleFileSecurity(FileStream original, FileStream candidate)
+    internal static void VerifyCompatibleFileSecurity(FileStream original, FileStream candidate,
+        bool allowAclCreationMarkerDifference = false)
     {
         // The new file inherits from its directory. Refuse to write list bytes until its security is known to match.
         const AccessControlSections sections = AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group;
-        if (original.GetAccessControl().GetSecurityDescriptorSddlForm(sections) !=
-            candidate.GetAccessControl().GetSecurityDescriptorSddlForm(sections))
-            throw new InvalidDataException("The staged list does not have the original file permissions.");
+        if (Descriptor(original) != Descriptor(candidate))
+            throw new InvalidDataException("The staged file does not have the original file permissions.");
         if (HasSpecialAccessPolicy(original.SafeFileHandle) || HasSpecialAccessPolicy(candidate.SafeFileHandle))
-            throw new InvalidDataException("Project list replacement cannot preserve a custom access policy.");
+            throw new InvalidDataException("File replacement cannot preserve a custom access policy.");
+
+        string Descriptor(FileStream stream)
+        {
+            var sddl = stream.GetAccessControl().GetSecurityDescriptorSddlForm(sections);
+            if (!allowAclCreationMarkerDifference) return sddl;
+            // An explicitly recreated ACL can lack the marker showing that it was initially
+            // auto-inherited. Preserve protection, owner, group, every ACE and ACE inheritance flags.
+            var descriptor = new RawSecurityDescriptor(sddl);
+            descriptor.SetFlags(descriptor.ControlFlags & ~ControlFlags.DiscretionaryAclAutoInherited);
+            return descriptor.GetSddlForm(sections);
+        }
     }
 
-    internal static void VerifyCompatibleFileMetadata(FileStream original, FileStream candidate, string parkedPath)
+    internal static void VerifyCompatibleFileMetadata(FileStream original, FileStream candidate, string originalPath,
+        bool allowAclCreationMarkerDifference = false)
     {
         // A rename does not inherit the displaced file's metadata as File.Replace did.
-        VerifyCompatibleFileSecurity(original, candidate);
+        VerifyCompatibleFileSecurity(original, candidate, allowAclCreationMarkerDifference);
         //CSJ,variable=ordinary,通常
         const FileAttributes ordinary = FileAttributes.Archive | FileAttributes.Normal;
         if ((File.GetAttributes(original.SafeFileHandle) & ~ordinary) != 0 ||
             (File.GetAttributes(candidate.SafeFileHandle) & ~ordinary) != 0)
-            throw new InvalidDataException("Project list replacement requires ordinary files without custom file attributes.");
+            throw new InvalidDataException("File replacement requires ordinary files without custom file attributes.");
 
         //CSJ,variable=find,検索
-        using var find = FindFirstStream(OwnedFilePublication.ExtendedPath(parkedPath), 0, out var stream, 0);
+        using var find = FindFirstStream(OwnedFilePublication.ExtendedPath(originalPath), 0, out var stream, 0);
         if (find.IsInvalid)
         {
             //CSJ,variable=error,エラー
@@ -219,7 +231,7 @@ internal sealed class ProjectListReplacement(string listPath)
             throw new IOException("Could not verify the project's file streams.", new Win32Exception(error));
         }
         if (stream.Name != "::$DATA" || FindNextStream(find, out _))
-            throw new InvalidDataException("The project list has additional file streams that a rename cannot preserve.");
+            throw new InvalidDataException("The file has additional data streams that a rename cannot preserve.");
         //CSJ,variable=streamError,ストリームエラー
         var streamError = Marshal.GetLastWin32Error();
         if (streamError != 38)

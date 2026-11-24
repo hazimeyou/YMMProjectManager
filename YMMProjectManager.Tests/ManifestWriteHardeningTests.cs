@@ -106,6 +106,46 @@ internal static class ManifestWriteHardeningTests
                 await File.ReadAllTextAsync(Path.Combine(generation.GenerationPath, "separate.txt")) == "separate folder" &&
                 initialHash == Hash(manifest), "failed rollback hid or changed a retained version");
         });
+        await Program.RunNamedCaseAsync("Generation retirement pins the exact directory until rollback", async () =>
+        {
+            var isolatedProject = Path.Combine(root, "retirement-pin.ymmp");
+            await File.WriteAllTextAsync(isolatedProject, "exact generation");
+            var generation = await service.CreateGenerationAsync(isolatedProject, "pin", null);
+            var projectId = new ProjectGenerationHashService().ComputeProjectId(isolatedProject);
+            var manifest = storage.GetManifestPath(projectId);
+            var initialHash = Hash(manifest);
+            var renameRefused = false;
+            var failingStorage = new ProjectGenerationStorage(storageRoot, null, null, () =>
+            {
+                var retired = Directory.EnumerateDirectories(storage.GetDeletedDirectory(projectId)).Single();
+                try { Directory.Move(retired, retired + "-different"); }
+                catch (IOException) { renameRefused = true; }
+                throw new IOException("synthetic manifest failure");
+            });
+            var removal = await new ProjectGenerationService(logger, failingStorage).DeleteGenerationAsync(isolatedProject, generation.GenerationId);
+            Check(!removal.Success && renameRefused && initialHash == Hash(manifest) &&
+                await File.ReadAllTextAsync(Path.Combine(generation.GenerationPath, "project.ymmp")) == "exact generation",
+                "rollback did not keep the original generation pinned");
+        });
+        await Program.RunNamedCaseAsync("Generation retirement retains data when the manifest outcome cannot be verified", async () =>
+        {
+            var isolatedProject = Path.Combine(root, "retirement-uncertain.ymmp");
+            await File.WriteAllTextAsync(isolatedProject, "recoverable generation");
+            var generation = await service.CreateGenerationAsync(isolatedProject, "uncertain", null);
+            var projectId = new ProjectGenerationHashService().ComputeProjectId(isolatedProject);
+            var manifest = storage.GetManifestPath(projectId);
+            var failingStorage = new ProjectGenerationStorage(storageRoot, null, null, () =>
+            {
+                File.WriteAllText(manifest, "unreadable external manifest");
+                throw new IOException("synthetic manifest failure");
+            });
+            var removal = await new ProjectGenerationService(logger, failingStorage).DeleteGenerationAsync(isolatedProject, generation.GenerationId);
+            var retired = Directory.EnumerateDirectories(storage.GetDeletedDirectory(projectId)).Single();
+            Check(!removal.Success && removal.ErrorMessage?.Contains(retired, StringComparison.Ordinal) == true &&
+                await File.ReadAllTextAsync(Path.Combine(retired, "project.ymmp")) == "recoverable generation" &&
+                await File.ReadAllTextAsync(manifest) == "unreadable external manifest",
+                "an unreadable manifest lost generation recovery evidence");
+        });
         var flushFailure = new ProjectGenerationService(logger, new ProjectGenerationStorage(storageRoot, null, _ => throw new IOException("synthetic flush"), null));
         await Expect<IOException>(() => flushFailure.CreateGenerationAsync(project,"flush",null)); CheckPreserved();
         // Actual OS replacement failure, no real ACL changes.

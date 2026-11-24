@@ -1,4 +1,6 @@
 using System.IO;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Generations;
@@ -17,7 +19,7 @@ internal static class GenerationRestoreSafetyTests
             var fixture = await CreateAsync(root, "repeat");
             var original = await ProjectFileEvidence.ReadAsync(fixture.Project);
             var first = await fixture.RestoreAsync();
-            Require(first.Success && File.ReadAllText(fixture.Project) == Snapshot, "Ordinary restore failed.");
+            Require(first.Success && File.ReadAllText(fixture.Project) == Snapshot, "Ordinary restore failed: " + first.ErrorMessage);
             var backup = Directory.EnumerateFiles(fixture.BackupDirectory).Single();
             Require(await ProjectFileEvidence.ReadAsync(backup) == original && File.ReadAllText(backup) == Original,
                 "The exact original file was not retained.");
@@ -28,6 +30,69 @@ internal static class GenerationRestoreSafetyTests
             Require(Directory.GetFiles(fixture.BackupDirectory).Select(File.ReadAllText).ToHashSet()
                 .SetEquals([Original, "subsequent work"]), "Each restore needs its own backup.");
             fixture.RequireCleanCandidate();
+        });
+
+        await Program.RunNamedCaseAsync("Restore preserves an explicit access rule and the original creation time", async () =>
+        {
+            var fixture = await CreateAsync(root, "explicit-acl");
+            var file = new FileInfo(fixture.Project);
+            var security = file.GetAccessControl();
+            security.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+            security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(WellKnownSidType.BuiltinGuestsSid, null),
+                FileSystemRights.Read, AccessControlType.Allow));
+            file.SetAccessControl(security);
+            File.SetCreationTimeUtc(fixture.Project, new DateTime(2015, 1, 23, 12, 0, 0, DateTimeKind.Utc));
+            var expectedTime = File.GetCreationTimeUtc(fixture.Project);
+            const AccessControlSections sections = AccessControlSections.Access | AccessControlSections.Owner | AccessControlSections.Group;
+            string Descriptor()
+            {
+                var acl = new RawSecurityDescriptor(file.GetAccessControl().GetSecurityDescriptorSddlForm(sections));
+                acl.SetFlags(acl.ControlFlags & ~ControlFlags.DiscretionaryAclAutoInherited);
+                return acl.GetSddlForm(sections);
+            }
+            var expected = Descriptor();
+
+            var restored = await fixture.RestoreAsync();
+            Require(restored.Success, restored.ErrorMessage ?? "Restore failed.");
+            Require(Descriptor() == expected &&
+                File.GetCreationTimeUtc(fixture.Project) == expectedTime,
+                "Restore changed the original access rules or creation time.");
+            fixture.RequireCleanCandidate();
+        });
+
+        await Program.RunNamedCaseAsync("Restore rejects unsupported extra streams before changing a project", async () =>
+        {
+            var fixture = await CreateAsync(root, "alternate-stream");
+            var extraStream = fixture.Project + ":synthetic";
+            await File.WriteAllTextAsync(extraStream, Unrelated);
+            var original = await ProjectFileEvidence.ReadAsync(fixture.Project);
+
+            var restored = await fixture.RestoreAsync();
+            Require(!restored.Success && await ProjectFileEvidence.ReadAsync(fixture.Project) == original &&
+                File.ReadAllText(extraStream) == Unrelated && !Directory.EnumerateFiles(fixture.BackupDirectory).Any(),
+                "Restore lost or changed the extra data stream.");
+            fixture.RequireCleanCandidate();
+        });
+
+        await Program.RunNamedCaseAsync("Restore refuses a read-only project before parking it", async () =>
+        {
+            var fixture = await CreateAsync(root, "read-only");
+            var attributes = File.GetAttributes(fixture.Project);
+            var original = await ProjectFileEvidence.ReadAsync(fixture.Project);
+            try
+            {
+                File.SetAttributes(fixture.Project, attributes | FileAttributes.ReadOnly);
+                var restored = await fixture.RestoreAsync();
+                Require(!restored.Success && await ProjectFileEvidence.ReadAsync(fixture.Project) == original &&
+                    (File.GetAttributes(fixture.Project) & FileAttributes.ReadOnly) != 0 &&
+                    !Directory.EnumerateFiles(fixture.BackupDirectory).Any(),
+                    "Restore modified a read-only PF.");
+                fixture.RequireCleanCandidate();
+            }
+            finally
+            {
+                File.SetAttributes(fixture.Project, attributes);
+            }
         });
 
         await Program.RunNamedCaseAsync("Restore refuses an occupied backup without changing either file", async () =>

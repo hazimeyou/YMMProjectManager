@@ -309,15 +309,41 @@ public sealed class ProjectGenerationStorage
         var source = Path.GetFullPath(sourceTempPath);
         var target = Path.GetFullPath(targetPath);
         var directory = Path.GetDirectoryName(target)!;
-        Directory.CreateDirectory(directory);
-
-        using var targetFence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        using var targetFence = OpenOrCreateOutputDirectory(directory);
         using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(source)!, enforceShare: true);
         await using var original = ProjectGenerationRestorePublication.OpenTarget(target);
         using var candidateHandle = OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false,
             allowRename: true, FileShare.None);
         using var candidate = new FileStream(candidateHandle, FileAccess.Read);
         await ProjectGenerationRestorePublication.PublishAsync(candidate, original, target, backupPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    internal static OwnedFilePublication.DirectoryFence OpenOrCreateOutputDirectory(string fullPath)
+    {
+        var missing = new Stack<string>();
+        var existing = fullPath;
+        while (!Directory.Exists(existing))
+        {
+            missing.Push(existing);
+            existing = Path.GetDirectoryName(existing) ?? throw new DirectoryNotFoundException(fullPath);
+        }
+
+        var fence = OwnedFilePublication.DirectoryFence.Open(existing, enforceShare: true);
+        try
+        {
+            while (missing.TryPop(out var directory))
+            {
+                // Only create one level below a directory already checked and pinned.
+                Directory.CreateDirectory(directory);
+                fence.Add(directory);
+            }
+            return fence;
+        }
+        catch
+        {
+            fence.Dispose();
+            throw;
+        }
     }
 
     //CSJ,method=CreateTemporaryCopyAsync,一時コピーを作成する（非同期）
