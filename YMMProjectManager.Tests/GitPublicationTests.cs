@@ -301,7 +301,7 @@ internal static class GitPublicationTests
             {
                 var folder = Directory.CreateDirectory(Path.Combine(source, "notes")).FullName;
                 await File.WriteAllTextAsync(Path.Combine(folder, "local.json"),
-                    """[{"IsFolder":true,"IsExcluded":true,"Path":"C:/synthetic/private"}]""");
+                    """[{"Path":"C:/synthetic/private"}]""");
                 await File.WriteAllTextAsync(Path.Combine(folder, "portable.json"),
                     """[{"IsFolder":true,"IsExcluded":true,"Path":"fixtures/reference"}]""");
                 await File.WriteAllTextAsync(Path.Combine(folder, "PACKAGE.YMMPX"), "synthetic filename test");
@@ -324,7 +324,7 @@ internal static class GitPublicationTests
             await TestAsync(root, "old-rules", async (source, git) =>
             {
                 const string name = "local-copy.json";
-                var record = """[{"IsFolder":false,"IsExcluded":true,"FilePath":"C:/synthetic/private.dat"}]"""u8.ToArray();
+                var record = """[{"FilePath":"C:/synthetic/private.dat"}]"""u8.ToArray();
                 await File.WriteAllBytesAsync(Path.Combine(source, name), record);
                 await CommandAsync(source, "add", "--", name);
                 var approved = (await git.InspectCommitAsync()).CommitTarget!;
@@ -336,6 +336,18 @@ internal static class GitPublicationTests
                 return (false, null);
             });
         });
+        await Program.RunNamedCaseAsync("R33 Commit and Push refuse a Git tree link", () =>
+            TestAsync(root, "git-link", async (source, git) =>
+            {
+                await CommitFileAsync(source, "seed.txt", "seed.txt"u8.ToArray());
+                var blob = (await CommandAsync(source, "rev-parse", "HEAD:seed.txt")).Trim();
+                await CommandAsync(source, "update-index", "--add", "--cacheinfo", $"120000,{blob},fixture-link.txt");
+                var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                if ((await git.CommitAsync(approved, "link fixture")).Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Commit accepted a Git tree link.");
+                await CommandAsync(source, "commit", "-m", "synthetic Git link mode");
+                return (false, null);
+            }));
         await Program.RunNamedCaseAsync("R29 Stage and Commit block restore evidence beside an ordinary PF", () =>
             TestAsync(root, "restore-local", async (source, git) =>
             {
@@ -438,7 +450,7 @@ internal static class GitPublicationTests
         await CommandAsync(folder, "commit", "-m", "synthetic input");
     }
 
-    private static async Task CommandAsync(string folder, params string[] arguments)
+    private static async Task<string> CommandAsync(string folder, params string[] arguments)
     {
         var start = new ProcessStartInfo("git")
         {
@@ -460,5 +472,6 @@ internal static class GitPublicationTests
         var error = process.StandardError.ReadToEndAsync();
         await Task.WhenAll(process.WaitForExitAsync(), output, error);
         if (process.ExitCode != 0) throw new InvalidOperationException($"Synthetic Git fixture failed: {await error}");
+        return await output;
     }
 }

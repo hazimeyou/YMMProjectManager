@@ -506,14 +506,26 @@ public sealed partial class GitRepository
     }
 
     //CSJ,method=IsMachineLocalReference,端末ローカル参照かを判定する
-    private static bool IsPrivateExclusionRule(JsonElement entry) =>
-        entry.ValueKind == JsonValueKind.Object &&
-        (HasBoolean(entry, "IsFolder") || HasBoolean(entry, "IsExcluded")) &&
-        (entry.TryGetProperty("Path", out var path) || entry.TryGetProperty("FilePath", out path)) &&
-        path.ValueKind == JsonValueKind.String && IsMachineLocalReference(path.GetString()!);
-
-    private static bool HasBoolean(JsonElement entry, string name) =>
-        entry.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+    private static bool IsPrivateExclusionRule(JsonElement entry)
+    {
+        if (entry.ValueKind != JsonValueKind.Object) return false;
+        string? path = null;
+        foreach (var property in entry.EnumerateObject())
+        {
+            switch (property.Name)
+            {
+                case "Path" or "FilePath" when path is null && property.Value.ValueKind == JsonValueKind.String:
+                    path = property.Value.GetString();
+                    break;
+                case "IsFolder" or "IsExcluded" when property.Value.ValueKind is JsonValueKind.True or JsonValueKind.False:
+                case "KindText" when property.Value.ValueKind == JsonValueKind.String:
+                    break;
+                default:
+                    return false;
+            }
+        }
+        return path is not null && IsMachineLocalReference(path);
+    }
 
     private static bool IsMachineLocalReference(string reference)
     {

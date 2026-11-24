@@ -71,12 +71,17 @@ internal static partial class ThumbnailCacheMaintenance
                         var child = Path.GetFileName(folder);
                         var pending = child.StartsWith(".capture-pending-", StringComparison.Ordinal) &&
                             Guid.TryParseExact(child.AsSpan(".capture-pending-".Length), "N", out _);
-                        if (!pending && !TryReadOrder(child, out _)) continue;
+                        if (!pending && !TryReadOrder(child, out _))
+                        {
+                            skipped++;
+                            continue;
+                        }
                         try
                         {
                             using var pin = OwnedFilePublication.OpenOrdinaryPath(folder, expectDirectory: true, allowRename: false,
                                 FileShare.ReadWrite, enforceDirectoryShare: true);
                             var bytes = MeasureOrdinaryFiles(folder, ref skipped);
+                            skipped += Directory.EnumerateDirectories(folder).Count();
                             if (pending || !File.Exists(Path.Combine(folder, "complete"))) interrupted += bytes;
                             else unverified += bytes;
                         }

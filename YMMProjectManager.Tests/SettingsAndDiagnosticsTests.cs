@@ -69,6 +69,9 @@ internal static class SettingsAndDiagnosticsTests
             var pending = Directory.CreateDirectory(Path.Combine(key, ".capture-pending-" + Guid.NewGuid().ToString("N"))).FullName;
             var recovery = Path.Combine(pending, "record.json");
             File.WriteAllText(recovery, "preserve");
+            var nested = Directory.CreateDirectory(Path.Combine(pending, "unexpected")).FullName;
+            var nestedEvidence = Path.Combine(nested, "keep.txt");
+            File.WriteAllText(nestedEvidence, "preserve nested");
             var oldPng = Path.Combine(key, "000.png");
             File.WriteAllBytes(oldPng, [1, 2, 3]);
             var unfinished = Path.Combine(key, $"capture-{DateTime.UtcNow.Ticks:D19}-{Guid.NewGuid():N}");
@@ -84,7 +87,7 @@ internal static class SettingsAndDiagnosticsTests
                 "An unknown cache was counted or an owned cache was skipped.");
             var fullUsage = ThumbnailCacheMaintenance.InspectUsage(cache);
             Require(fullUsage.ManagedCount == usage.Count && fullUsage.ManagedBytes == usage.Bytes &&
-                fullUsage.UnverifiedBytes >= 3 && fullUsage.InterruptedBytes == new FileInfo(recovery).Length + 2,
+                fullUsage.UnverifiedBytes >= 3 && fullUsage.InterruptedBytes == new FileInfo(recovery).Length + 2 && fullUsage.Skipped >= 1,
                 "Read-only accounting missed older or unfinished data.");
             Require(ThumbnailCacheMaintenance.Trim(cache, usage.Bytes) == 0,
                 "A cache exactly at capacity was removed.");
@@ -94,7 +97,8 @@ internal static class SettingsAndDiagnosticsTests
             Require(ThumbnailCacheMaintenance.Trim(cache, 0, deleteAll: true) == 1 &&
                 !Directory.Exists(newerCapture) && File.ReadAllText(witness) == "unowned" &&
                 File.ReadAllText(recovery) == "preserve" && File.Exists(replaced) && File.Exists(oldPng) &&
-                Directory.Exists(unfinished), "Removal touched unknown or recoverable data.");
+                Directory.Exists(unfinished) && File.ReadAllText(nestedEvidence) == "preserve nested",
+                "Removal touched unknown or recoverable data.");
             return Task.CompletedTask;
         });
         await Program.RunNamedCaseAsync("Global exception summary excludes raw messages and exception data", () =>

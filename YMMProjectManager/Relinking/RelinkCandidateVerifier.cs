@@ -6,18 +6,23 @@ namespace YMMProjectManager.Infrastructure.Relink;
 //CSJ,class=RelinkCandidateVerifier,再リンク候補の検証処理
 internal static class RelinkCandidateVerifier
 {
+    internal const int MaxReviewCandidates = 10;
     //CSJ,class=CandidateReadLocks,候補の読み取りロック
     internal sealed class CandidateReadLocks : IDisposable
     {
         //CSJ,field=files,ファイル一覧
-        private readonly List<FileStream> files = [];
+        private readonly List<IDisposable> files = [];
 
         internal CandidateReadLocks(IEnumerable<RelinkRow> rows)
         {
             try
             {
                 foreach (var row in rows.Where(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)))
-                    files.Add(new FileStream(row.SelectedCandidate!, FileMode.Open, FileAccess.Read, FileShare.Read));
+                {
+                    var path = Path.GetFullPath(row.SelectedCandidate!);
+                    files.Add(OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true));
+                    files.Add(OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false));
+                }
             }
             catch
             {
@@ -30,7 +35,7 @@ internal static class RelinkCandidateVerifier
         public void Dispose()
         {
             //CSJ,variable=file,ファイル
-            foreach (var file in files) file.Dispose();
+            for (var i = files.Count - 1; i >= 0; i--) files[i].Dispose();
         }
     }
 
@@ -50,7 +55,7 @@ internal static class RelinkCandidateVerifier
     public static async Task<IReadOnlyList<string>> HashSelectedAsync(IEnumerable<RelinkRow> rows, CancellationToken token)
     {
         var selected = rows.Where(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)).ToArray();
-        if (selected.Length > 10) throw new InvalidDataException("候補をすべて確認できるよう、10件以下に分けてください。");
+        if (selected.Length > MaxReviewCandidates) throw new InvalidDataException("候補をすべて確認できるよう、10件以下に分けてください。");
         var result = new List<string>(selected.Length);
         foreach (var row in selected)
         {
@@ -72,7 +77,7 @@ internal static class RelinkCandidateVerifier
         //CSJ,variable=root,ルート
         var root = Path.GetDirectoryName(Path.GetFullPath(projectPath)) ?? throw new InvalidDataException("プロジェクトフォルダーがありません。");
         var selected = rows.Where(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)).ToArray();
-        if (selected.Length > 10) throw new InvalidDataException("候補は10件以下に分けてください。");
+        if (selected.Length > MaxReviewCandidates) throw new InvalidDataException("候補は10件以下に分けてください。");
         //CSJ,variable=results,結果一覧
         var results = new List<string>();
         foreach (var row in selected)

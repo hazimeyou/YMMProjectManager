@@ -111,8 +111,8 @@ public sealed class TimelineMediaRelinkService
 
     internal static bool IsCurrentReview(TimelineRelinkContext context, IReadOnlyList<RelinkRow> rows)
     {
-        var current = TimelineContextService.Timeline;
-        return current is not null &&
+        var info = TimelineContextService.Info;
+        return ReferenceEquals(info, context.Info) && info?.Timeline is { } current &&
             MatchesReview(context.ScannedTimeline, current, current.Items,
                 context.Targets.Select(target => (target.RowIndex, target.Item)), rows,
                 item => TimelineItemFilePathAccessor.TryGetFilePath(item, out var path) ? path : null);

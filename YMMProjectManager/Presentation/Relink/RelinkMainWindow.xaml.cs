@@ -297,7 +297,15 @@ public partial class RelinkMainWindow : Window
                     SetSummaryText("対象タイムラインが変わりました。画面を閉じて再読み込みしてください。");
                     return;
                 }
-                var hashes = await RelinkCandidateVerifier.HashSelectedAsync(timelineRows, token);
+                var selected = timelineRows.Where(row => row.Status == RelinkStatus.Updated &&
+                    !string.IsNullOrWhiteSpace(row.SelectedCandidate)).ToArray();
+                if (selected.Length > RelinkCandidateVerifier.MaxReviewCandidates)
+                {
+                    SetSummaryText("候補は10件以下に分けてください。");
+                    return;
+                }
+                using var candidateLocks = new RelinkCandidateVerifier.CandidateReadLocks(selected);
+                var hashes = await RelinkCandidateVerifier.HashSelectedAsync(selected, token);
                 token.ThrowIfCancellationRequested();
                 SyncRows();
                 if (!TimelineMediaRelinkService.IsCurrentReview(timelineContext, timelineRows) ||
