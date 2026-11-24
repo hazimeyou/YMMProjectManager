@@ -22,7 +22,9 @@ public sealed partial class ProjectListViewModel
             return;
         }
 
-        await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
+        var projectPath = project.FullPath;
+
+        await ExecuteToolAsync("Generate thumbnails (fast)", async token =>
         {
             // 高速サムネイル生成は、YMM 側で開いているタイムライン情報を前提にする。
             //CSJ,variable=info,情報
@@ -33,9 +35,20 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
-            var result = await seekPreviewThumbnailGenerator
-                .GenerateAsync(project.FullPath, info, CancellationToken.None)
-                .ConfigureAwait(true);
+            SeekPreviewThumbnailGenerationResult result;
+            try
+            {
+                result = await seekPreviewThumbnailGenerator
+                    .GenerateAsync(projectPath, info, () => ReferenceEquals(SelectedProject, project) &&
+                        string.Equals(project.FullPath, projectPath, StringComparison.Ordinal), token)
+                    .ConfigureAwait(true);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                MessageBox.Show("サムネイル生成を中止しました。", "YMM Project Manager",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
             if (!result.Success)
             {
@@ -131,29 +144,18 @@ public sealed partial class ProjectListViewModel
     {
         try
         {
-            // キャッシュキーはプロジェクトパス由来なので、移動や別名保存時も再計算する。
-            //CSJ,variable=hash,ハッシュ
-            var hash = FilmstripCacheKeyFactory.TryCreateHash(entry.FullPath);
-            if (string.IsNullOrWhiteSpace(hash))
-            {
-                entry.ThumbnailCacheDirectory = null;
-                entry.ThumbnailSource = null;
-                return;
-            }
-
             //CSJ,variable=cacheDirectory,キャッシュディレクトリ
             var cacheDirectory = Path.Combine(
                 AppDirectories.UserDirectory,
                 "plugin",
                 "YMMProjectManager",
                 "cache",
-                "filmstrip",
-                hash);
+                "filmstrip");
+            var displayDirectory = ThumbnailCachePublication.GetDisplayDirectory(cacheDirectory, entry.FullPath);
             entry.ThumbnailCacheDirectory = null;
-            entry.ThumbnailCacheDirectory = cacheDirectory;
+            entry.ThumbnailCacheDirectory = displayDirectory;
 
-            var thumbPath = Path.Combine(cacheDirectory, "000.png");
-            if (!File.Exists(thumbPath))
+            if (displayDirectory is null || !File.Exists(Path.Combine(displayDirectory, "000.png")))
             {
                 entry.ThumbnailSource = null;
             }

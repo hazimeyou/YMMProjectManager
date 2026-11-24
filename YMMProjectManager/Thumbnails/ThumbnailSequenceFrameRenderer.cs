@@ -26,6 +26,12 @@ public sealed class ThumbnailSequenceFrameRenderer
         SavePng(pixels, outputPath);
     }
 
+    internal void SaveThumbnailPng(byte[] frameBytes, int frameWidth, int frameHeight, Stream output)
+    {
+        RenderThumbnailPixels(frameBytes, frameWidth, frameHeight, pixels);
+        SavePng(pixels, output);
+    }
+
     //CSJ,method=SaveBlankPng,空のPNGを保存する
     public static void SaveBlankPng(string outputPath)
     {
@@ -90,6 +96,12 @@ public sealed class ThumbnailSequenceFrameRenderer
             Directory.CreateDirectory(dir);
         }
 
+        using var stream = File.Create(outputPath);
+        SavePng(pixels, stream);
+    }
+
+    private static void SavePng(byte[] pixels, Stream output)
+    {
         //CSJ,variable=bitmap,ビットマップ
         var bitmap = BitmapSource.Create(
             ThumbnailWidth,
@@ -104,8 +116,6 @@ public sealed class ThumbnailSequenceFrameRenderer
         //CSJ,variable=encoder,エンコーダー
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));
-        //CSJ,variable=stream,ストリーム
-        using var stream = File.Create(outputPath);
-        encoder.Save(stream);
+        encoder.Save(output);
     }
 }

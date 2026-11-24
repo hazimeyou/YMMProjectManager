@@ -54,7 +54,9 @@ public static class ThumbnailImageLoader
             return await Task.Run(() =>
             {
                 //CSJ,variable=stream,ストリーム
-                using var stream = File.OpenRead(path);
+                using var folder = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
+                using var stream = new FileStream(OwnedFilePublication.OpenOrdinaryPath(path,
+                    expectDirectory: false, allowRename: false), FileAccess.Read);
                 //CSJ,variable=image,画像
                 var image = new BitmapImage();
                 image.BeginInit();
