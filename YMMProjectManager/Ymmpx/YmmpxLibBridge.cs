@@ -60,7 +60,8 @@ public sealed class YmmpxLibBridge
         IProgress<double>? progress = null) => CreatePackageAsync(ymmpPath, outputYmmpxPath, new HashSet<string>(StringComparer.OrdinalIgnoreCase), token, progress);
 
     internal async Task<YmmpxPackageResult> CreatePackageAsync(string ymmpPath, string outputYmmpxPath,
-        ISet<string> excludedFiles, CancellationToken token, IProgress<double>? progress)
+        ISet<string> excludedFiles, CancellationToken token, IProgress<double>? progress,
+        bool includeUiSettings = true, bool approvedSnapshot = false)
     {
         token.ThrowIfCancellationRequested();
         var api = ResolveApi(out var resolvedAssemblyPath);
@@ -118,13 +119,14 @@ public sealed class YmmpxLibBridge
             logger.Info(
                 $"YmmpxLib 同梱開始。対象 ymmp={ymmpPath}, 出力 ymmpx={outputYmmpxPath}, 探索パス={string.Join(" | ", searchedPaths)}");
 
-            var result = await api.CreatePackageAsync(ymmpPath, temporaryPath, excludedFiles, progress, token).ConfigureAwait(false);
+            var result = await api.CreatePackageAsync(ymmpPath, temporaryPath, excludedFiles, progress, token, includeUiSettings).ConfigureAwait(false);
             var packagedOutputPath = result.OutputPath;
             if (!string.Equals(Path.GetFullPath(packagedOutputPath), temporaryPath, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
-            await YmmpxPackageReader.ValidateAsync(validatedPackage, ymmpPath, source.RootElement, token).ConfigureAwait(false);
+            await YmmpxPackageReader.ValidateAsync(validatedPackage, ymmpPath, source.RootElement, token,
+                includeUiSettings, approvedSnapshot).ConfigureAwait(false);
             var resourceCount = result.ResourceCount;
             var fileMap = new Dictionary<string, string>(result.FileMap, StringComparer.OrdinalIgnoreCase);
             //CSJ,variable=links,リンク一覧

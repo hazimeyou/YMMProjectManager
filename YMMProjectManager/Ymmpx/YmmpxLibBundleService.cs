@@ -53,29 +53,15 @@ public sealed class YmmpxLibBundleService
         return bridge.ExtractPackageAsync(ymmpxPath, outputDirectory, token, progress);
     }
 
-    //CSJ,method=InspectTransferAsync,受け渡しを点検する（非同期）
-    public Task<YmmpxTransferPlan> InspectTransferAsync(
-        //CSJ,parameter=projectPath,プロジェクトのパス
-        string projectPath,
-        CancellationToken token,
-        IReadOnlyList<string>? allowedMaterialRoots = null)
-    {
-        return Task.Run(() => YmmpxTransfer.InspectAsync(projectPath, token, allowedMaterialRoots), token);
-    }
+    internal Task<YmmpxTransferPlan> InspectTransferAsync(string projectPath, CancellationToken token,
+        IReadOnlyList<string>? allowedMaterialRoots = null, IReadOnlyList<YmmpxExclusionRule>? exclusions = null) =>
+        Task.Run(() => YmmpxStandardPackage.InspectAsync(projectPath, token, allowedMaterialRoots, exclusions), token);
 
-    //CSJ,method=CreateTransferAsync,受け渡しを作成する（非同期）
-    public Task<YmmpxPackageResult> CreateTransferAsync(
-        //CSJ,parameter=plan,計画
-        YmmpxTransferPlan plan,
-        IReadOnlyDictionary<string, YmmpxTransferPermission> approvals,
-        //CSJ,parameter=newOutputDirectory,新規出力ディレクトリ
-        string newOutputDirectory,
-        CancellationToken token,
-        //CSJ,parameter=progress,進捗
-        IProgress<double>? progress = null)
-    {
-        return Task.Run(() => YmmpxTransfer.CreateAsync(plan, approvals, newOutputDirectory, token, progress, logger, bridge), token);
-    }
+    internal Task<YmmpxPackageResult> CreateStandardPackageAsync(YmmpxTransferPlan plan, string destination,
+        bool includeUiSettings, bool acceptUnavailable, CancellationToken token, IProgress<double>? progress = null,
+        Func<CancellationToken, Task<IDisposable>>? pinRules = null) =>
+        Task.Run(() => YmmpxStandardPackage.CreateAsync(plan, destination, includeUiSettings, acceptUnavailable,
+            token, progress, bridge, logger, pinRules), token);
 
     //CSJ,method=ExtractTransferAsync,受け渡しを抽出する（非同期）
     public Task<YmmpxExtractResult> ExtractTransferAsync(

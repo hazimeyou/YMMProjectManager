@@ -30,19 +30,27 @@ internal static class YmmpxPackageReader
     //CSJ,record=OwnedPath,管理対象のパス
     private sealed record OwnedPath(string Path, FileIdentity? Identity);
     //CSJ,record=ProjectSource,プロジェクト元
-    private sealed record ProjectSource(string Directory, JsonElement Document)
+    private sealed record ProjectSource(string Directory, JsonElement Document, bool ApprovedSnapshot)
     {
         //CSJ,property=MaterialPaths,素材パス一覧
         public Dictionary<string, string> MaterialPaths { get; } = new(StringComparer.Ordinal);
     }
 
     //CSJ,method=ValidateAsync,検証する（非同期）
-    internal static async Task ValidateAsync(Stream source, string projectPath, JsonElement expectedProject, CancellationToken token)
+    internal static async Task ValidateAsync(Stream source, string projectPath, JsonElement expectedProject, CancellationToken token,
+        bool includeUiSettings = true, bool approvedSnapshot = false)
     {
         //CSJ,variable=archive,アーカイブ
         using var archive = OpenValidated(source, token);
         //CSJ,variable=projectSource,プロジェクト元
-        var projectSource = new ProjectSource(Path.GetDirectoryName(Path.GetFullPath(projectPath))!, expectedProject);
+        if (!includeUiSettings)
+        {
+            var root = JsonNode.Parse(expectedProject.GetRawText())!.AsObject();
+            root.Remove("LayoutXml");
+            root.Remove("ToolStates");
+            expectedProject = JsonSerializer.SerializeToElement(root);
+        }
+        var projectSource = new ProjectSource(Path.GetDirectoryName(Path.GetFullPath(projectPath))!, expectedProject, approvedSnapshot);
         //CSJ,variable=package,パッケージ
         var package = await ReadPackageAsync(archive, token, projectSource).ConfigureAwait(false);
         if (!string.Equals(package.ProjectName, Path.GetFileName(projectPath), StringComparison.OrdinalIgnoreCase))
@@ -130,7 +138,9 @@ internal static class YmmpxPackageReader
                 var ordinal = asset.ArchivePath.Substring(YmmpxTransfer.LibraryMediaPrefix.Length, 8);
                 restoredNames.Add(asset.ArchivePath, YmmpxTransfer.MediaPrefix + ordinal + "/" + asset.OriginalFileName);
             }
-        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer, package.HasLegacyAliases, restoredNames);
+        var unavailable = new Dictionary<string, string>(StringComparer.Ordinal);
+        var replacements = RewriteReferences(package.Project, package.Resources, final, token, transfer,
+            restoredNames, unavailable);
 
         token.ThrowIfCancellationRequested();
         //CSJ,variable=stage,作業段階
@@ -258,7 +268,7 @@ internal static class YmmpxPackageReader
             ExtractedResourceCount = package.Resources.Count,
             ReplacedPathCount = replacements,
             TransferEvidenceVerified = transfer is not null,
-            MissingMaterials = transfer?.Missing.Select(missing => missing.OriginalFileName).ToArray() ?? [],
+            MissingMaterials = transfer?.Missing.Select(missing => missing.OriginalFileName).ToArray() ?? unavailable.Values.ToArray(),
         };
 
         void EnsureParents(string path)
@@ -608,6 +618,13 @@ internal static class YmmpxPackageReader
                 {
                     token.ThrowIfCancellationRequested();
                     if (!remaining.Remove(property.Name, out var previous)) return false;
+                    if (source.ApprovedSnapshot &&
+                        property.Name.Equals("EnableLayersFilePath", StringComparison.OrdinalIgnoreCase) &&
+                        previous.ValueKind == JsonValueKind.String && property.Value.ValueKind == JsonValueKind.String &&
+                        TryFindPrimaryPath(original, out var originalPrimary) &&
+                        TryFindPrimaryPath(packaged, out var packagedPrimary) &&
+                        JsonElement.DeepEquals(previous, originalPrimary) && JsonElement.DeepEquals(property.Value, packagedPrimary))
+                        continue;
                     // Current YMMPX rewrites nonempty FilePath strings to members of its resource map.
                     if (property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) &&
                         previous.ValueKind == JsonValueKind.String &&
@@ -643,6 +660,18 @@ internal static class YmmpxPackageReader
         }
     }
 
+    private static bool TryFindPrimaryPath(JsonElement item, out JsonElement path)
+    {
+        foreach (var property in item.EnumerateObject())
+            if (property.Name.Equals("FilePath", StringComparison.OrdinalIgnoreCase) && property.Value.ValueKind == JsonValueKind.String)
+            {
+                path = property.Value;
+                return true;
+            }
+        path = default;
+        return false;
+    }
+
     //CSJ,method=ValidateProjectJson,プロジェクトJSONを検証する
     private static void ValidateProjectJson(JsonElement element, HashSet<string> resources, CancellationToken token)
     {
@@ -668,7 +697,8 @@ internal static class YmmpxPackageReader
 
     private static int RewriteReferences(JsonNode node, HashSet<string> resources, string final, CancellationToken token,
         //CSJ,parameter=transfer,受け渡し
-        YmmpxTransfer.Manifest? transfer, bool hasLegacyAliases, IReadOnlyDictionary<string, string> restoredNames)
+        YmmpxTransfer.Manifest? transfer, IReadOnlyDictionary<string, string> restoredNames,
+        IDictionary<string, string> unavailable)
     {
         token.ThrowIfCancellationRequested();
         //CSJ,variable=count,件数
@@ -676,21 +706,40 @@ internal static class YmmpxPackageReader
         if (node is JsonObject obj)
         {
             foreach (var (name, value) in obj.ToArray())
-                if ((transfer is not null ? YmmpxTransfer.IsReferenceProperty(name) :
-                    name.Equals("FilePath", hasLegacyAliases ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) &&
-                    value is JsonValue pathValue && pathValue.TryGetValue<string>(out var path) &&
-                    ((TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath)) ||
-                        (transfer is not null && path.StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal))))
+            {
+                if (YmmpxTransfer.IsReferenceProperty(name) && value is JsonValue pathValue &&
+                    pathValue.TryGetValue<string>(out var path))
                 {
-                    obj[name] = Path.Combine(final, restoredNames.GetValueOrDefault(internalPath, internalPath).Replace('/', Path.DirectorySeparatorChar));
-                    count++;
+                    if ((TryGetInternalPath(path, out var internalPath) && resources.Contains(internalPath)) ||
+                        (transfer is not null && path.StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal)) ||
+                        (transfer is null && TryGetUnavailableName(path, out var originalName) &&
+                            (unavailable.ContainsKey(path) || unavailable.TryAdd(path, originalName))))
+                    {
+                        obj[name] = Path.Combine(final, restoredNames.GetValueOrDefault(internalPath, internalPath).Replace('/', Path.DirectorySeparatorChar));
+                        count++;
+                    }
                 }
-                else if (value is not null) count += RewriteReferences(value, resources, final, token, transfer, hasLegacyAliases, restoredNames);
+                else if (value is not null)
+                    count += RewriteReferences(value, resources, final, token, transfer, restoredNames, unavailable);
+            }
         }
         else if (node is JsonArray array)
             foreach (var child in array)
-                if (child is not null) count += RewriteReferences(child, resources, final, token, transfer, hasLegacyAliases, restoredNames);
+                if (child is not null)
+                    count += RewriteReferences(child, resources, final, token, transfer, restoredNames, unavailable);
         return count;
+    }
+
+    private static bool TryGetUnavailableName(string path, out string originalName)
+    {
+        originalName = "";
+        if (!path.StartsWith(YmmpxStandardPackage.UnavailablePrefix, StringComparison.Ordinal)) return false;
+        var parts = path[YmmpxStandardPackage.UnavailablePrefix.Length..].Split('/');
+        if (parts.Length != 2 || parts[0].Length != 14 ||
+            !parts[0].StartsWith("asset-", StringComparison.Ordinal) || !parts[0][6..].All(Uri.IsHexDigit) ||
+            !YmmpxTransfer.IsPortableName(parts[1])) return false;
+        originalName = parts[1];
+        return true;
     }
 
     //CSJ,method=Normalize,正規化する

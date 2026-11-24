@@ -12,7 +12,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <None Update="Fixtures/TransferV1/*" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="Fixtures/TransferV1/*;Fixtures/TransferV2/*" CopyToOutputDirectory="PreserveNewest" />
     <ProjectReference Include="..\YMMProjectManager\YMMProjectManager.csproj" />
   </ItemGroup>
 

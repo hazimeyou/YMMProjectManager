@@ -46,13 +46,13 @@ internal sealed class YmmpxLibApi
     }
 
     internal async Task<PackageResult> CreatePackageAsync(string projectPath, string destination, ISet<string> excluded,
-        IProgress<double>? progress, CancellationToken cancellationToken)
+        IProgress<double>? progress, CancellationToken cancellationToken, bool includeProjectUiSettings = true)
     {
         Task task;
         try
         {
             var options = optionsConstructor.Invoke(null);
-            includeUiSettings.SetValue(options, true);
+            includeUiSettings.SetValue(options, includeProjectUiSettings);
             object? reporter = progress is null ? null : progressConstructor.Invoke([(Action<object>)(value =>
             {
                 var percent = (double)percentage.GetValue(value)!;

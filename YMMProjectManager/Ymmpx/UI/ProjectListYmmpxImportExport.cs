@@ -73,7 +73,7 @@ public sealed partial class ProjectListViewModel
         BundleStatus = $"展開完了 {result.RestoredProjectPath}\n素材参照の更新 {result.ReplacedPathCount} 件";
         BundleStatus += result.TransferEvidenceVerified
             ? $"\n素材名・サイズ・SHA-256 照合済み {result.ExtractedResourceCount} 件"
-            : "\n従来形式で展開しました。素材名・SHA-256 の照合記録はありません。";
+            : "\n標準手順で展開しました。PMの旧照合記録は適用していません。";
         if (result.MissingMaterials.Count > 0)
         {
             BundleStatus += $"\n不足・同梱対象外 {result.MissingMaterials.Count} 件";

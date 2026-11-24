@@ -260,6 +260,7 @@ public sealed partial class ProjectListViewModel : ViewModelBase, ITimelineToolV
         OpenSelectedProjectRelinkCommand = new AsyncRelayCommand(OpenSelectedProjectRelinkAsync, () => !IsBusy && SelectedProject is not null);
         PackageSelectedProjectCommand = new AsyncRelayCommand(PackageSelectedProjectAsync, () => !IsBusy && SelectedProject is not null);
         PackageOpenedProjectCommand = new AsyncRelayCommand(PackageOpenedProjectAsync, () => !IsBusy && TimelineContextService.Timeline is not null);
+        ImportYmmpxExclusionsCommand = new AsyncRelayCommand(ImportYmmpxExclusionsAsync, () => !IsBusy);
         // The external extractor's destination and cleanup guarantees are not yet verified.
         ExtractBundleCommand = new AsyncRelayCommand(ExtractBundleAsync, () => !IsBusy);
         ExportLegacyGenerationCommand = new AsyncRelayCommand(ExportLegacyGenerationAsync, () => !IsBusy);

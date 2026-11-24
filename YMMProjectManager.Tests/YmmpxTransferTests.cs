@@ -1,6 +1,5 @@
 using System.IO;
 using System.IO.Compression;
-using System.Reflection;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -40,34 +39,104 @@ internal static class YmmpxTransferTests
         var sourceBytes = await File.ReadAllBytesAsync(original);
         //CSJ,variable=service,サービス
         var service = new YmmpxLibBundleService(new FileLogger(Path.Combine(root, "test.log")), baseDirectory: root);
-        var permissions = new Dictionary<string, YmmpxTransferPermission>(StringComparer.Ordinal)
-        {
-            [left] = YmmpxTransferPermission.OwnWork,
-            [right] = YmmpxTransferPermission.RedistributionAllowed,
-            [alias] = YmmpxTransferPermission.OwnWork,
-            [denied] = YmmpxTransferPermission.Prohibited,
-        };
-        //CSJ,variable=plan,計画
+        var rules = new[] { new YmmpxExclusionRule(denied, false, true) };
         YmmpxTransferPlan? plan = null;
-        //CSJ,variable=created,作成済み
-        YmmpxPackageResult? created = null;
-        var send = Path.Combine(root, "send");
+        var send = Directory.CreateDirectory(Path.Combine(root, "v2")).FullName;
         var companion = Path.Combine(send, YmmpxTransfer.ManifestName);
+        var v2 = Path.Combine(AppContext.BaseDirectory, "Fixtures", "TransferV2");
+        var created = new YmmpxPackageResult { Success = true, OutputPath = Path.Combine(send, "作品.ymmpx") };
+        await WriteLegacyV2Async(v2, created.OutputPath, companion);
+        var standardPath = Path.Combine(root, "standard.ymmpx");
 
         await Program.RunNamedCaseAsync("R23 transfer preview resolves only explicitly permitted roots", async () =>
         {
-            plan = await service.InspectTransferAsync(original, default);
+            plan = await service.InspectTransferAsync(original, default, exclusions: rules);
             Check(plan.Assets.Count == 6, "Candidate count");
             Check(plan.Assets.Single(asset => asset.SourcePath == left).Sha256 ==
                 plan.Assets.Single(asset => asset.SourcePath == alias).Sha256, "Same contents under different names");
             Check(plan.Assets.Single(asset => asset.SourcePath == left).Sha256 !=
                 plan.Assets.Single(asset => asset.SourcePath == right).Sha256, "Different contents under same name");
-            Check(!plan.Assets.Single(asset => asset.SourcePath == external).CanInclude &&
-                !plan.Assets.Single(asset => asset.SourcePath.StartsWith(@"\\")).CanInclude, "Unapproved path was inspected");
+            Check(plan.Assets.Single(asset => asset.SourcePath == external).Disposition == YmmpxMaterialDisposition.Unavailable &&
+                plan.Assets.Single(asset => asset.SourcePath.StartsWith(@"\\")).Disposition == YmmpxMaterialDisposition.Unavailable, "Unapproved path was inspected");
             var explicitlyAllowed = await service.InspectTransferAsync(original, default, [outside]);
-            Check(explicitlyAllowed.Assets.Single(asset => asset.SourcePath == external).CanInclude, "Explicit outside root");
+            Check(explicitlyAllowed.Assets.Single(asset => asset.SourcePath == external).Disposition == YmmpxMaterialDisposition.Included, "Explicit outside root");
             var wrongCase = await service.InspectTransferAsync(original, default, [outside.ToUpperInvariant()]);
-            Check(!wrongCase.Assets.Single(asset => asset.SourcePath == external).CanInclude, "Case-variant root was implicitly authorized");
+            Check(wrongCase.Assets.Single(asset => asset.SourcePath == external).Disposition == YmmpxMaterialDisposition.Unavailable, "Case-variant root was implicitly authorized");
+        });
+
+        await Program.RunNamedCaseAsync("R32 imports independent Packager global and local exclusion rules", async () =>
+        {
+            var packager = Path.Combine(root, "exclude.json");
+            var packagerLocal = Path.Combine(input, "作品.exclude.json");
+            await File.WriteAllTextAsync(packager, """
+                [{"Path":"left","IsFolder":true,"IsExcluded":true,"KindText":"フォルダー"},
+                 {"Path":"right","IsFolder":true,"IsExcluded":true,"KindText":"フォルダー"}]
+                """);
+            await File.WriteAllTextAsync(packagerLocal, """
+                [{"FilePath":"RIGHT/","IsFolder":true,"IsExcluded":false},
+                 {"FilePath":"別名.png"}]
+                """);
+            var packagerBytes = await File.ReadAllBytesAsync(packager);
+            var globalName = Path.Combine(root, YmmpxExclusionRules.GlobalFileName);
+            var localName = Path.Combine(input, YmmpxExclusionRules.GetLocalName(original));
+            var global = await YmmpxExclusionRules.LoadAsync(packager, default);
+            var local = await YmmpxExclusionRules.LoadAsync(packagerLocal, default);
+            var emptyGlobal = await YmmpxExclusionRules.LoadAsync(globalName, default, missingIsEmpty: true);
+            var emptyLocal = await YmmpxExclusionRules.LoadAsync(localName, default, missingIsEmpty: true);
+            await YmmpxExclusionRules.ImportAsync(globalName, emptyGlobal, global.Rules, default);
+            await YmmpxExclusionRules.ImportAsync(localName, emptyLocal, local.Rules, default);
+            var approvedGlobal = await YmmpxExclusionRules.LoadAsync(globalName, default);
+            var approvedLocal = await YmmpxExclusionRules.LoadAsync(localName, default);
+            var effective = YmmpxExclusionRules.Merge(approvedGlobal.Rules, approvedLocal.Rules);
+            Check(YmmpxExclusionRules.IsExcluded(new Uri(left).AbsoluteUri, input, effective) &&
+                !YmmpxExclusionRules.IsExcluded(right, input, effective) &&
+                !YmmpxExclusionRules.IsExcluded("leftover\\child.wav", input, effective) &&
+                YmmpxExclusionRules.IsExcluded(alias, input, effective), "Packager matching and local overrides");
+            var preview = await service.InspectTransferAsync(original, default, exclusions: effective);
+            Check(preview.Assets.Single(item => item.SourcePath == left).Disposition == YmmpxMaterialDisposition.Excluded &&
+                preview.Assets.Single(item => item.SourcePath == right).Disposition == YmmpxMaterialDisposition.Included,
+                "Exclusions were not applied to actual packaging inputs");
+            var bytesBeforeMerge = await File.ReadAllBytesAsync(globalName);
+            await YmmpxExclusionRules.ImportAsync(globalName, approvedGlobal,
+                YmmpxExclusionRules.Merge(approvedGlobal.Rules, approvedLocal.Rules), default);
+            Check((await File.ReadAllBytesAsync(packager)).SequenceEqual(packagerBytes), "Packager file was changed");
+            var kept = Directory.GetFiles(root, YmmpxExclusionRules.GlobalFileName + ".previous-*").Single();
+            Check((await File.ReadAllBytesAsync(kept)).SequenceEqual(bytesBeforeMerge), "Old PM rules were lost");
+            await ExpectAsync<IOException>(() => YmmpxExclusionRules.ImportAsync(globalName, approvedGlobal, [], default));
+        });
+
+        await Program.RunNamedCaseAsync("R32 corrupt and interrupted exclusion settings fail closed", async () =>
+        {
+            var target = Path.Combine(root, "invalid-exclusions.json");
+            foreach (var invalid in new[] { "{", "null", "[{}]", """[{"Path":"a","IsExcluded":"false"}]""",
+                         """[{"Path":"a","Path":"b","IsExcluded":true}]""",
+                         """[{"Path":"https://example.invalid/asset"}]""" })
+            {
+                await File.WriteAllTextAsync(target, invalid);
+                await ExpectAsync<InvalidDataException>(() => YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true));
+            }
+            File.Move(target, target + ".previous-interrupted");
+            await ExpectAsync<InvalidDataException>(() => YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true));
+            Check(File.Exists(target + ".previous-interrupted"), "Interrupted record destroyed");
+        });
+
+        await Program.RunNamedCaseAsync("R32 choice to load folder-wide and file-level rules is independent", async () =>
+        {
+            var globalRules = new YmmpxExclusionRule[] { new("left", true, true), new("right", true, true) };
+            var localRules = new YmmpxExclusionRule[] { new("left/場面.png", false, false), new("right", true, false) };
+            var effective = YmmpxExclusionRules.Merge(globalRules, localRules);
+            Check(YmmpxExclusionRules.IsExcluded(left, input, effective) &&
+                !YmmpxExclusionRules.IsExcluded(right, input, effective),
+                "A file-level unexclude incorrectly overrode a different folder rule");
+            var independent = Path.Combine(input, "identity.ymmp");
+            File.Copy(original, independent);
+            var approved = await service.InspectTransferAsync(independent, default, exclusions: effective);
+            var changed = independent + ".alternate";
+            File.Copy(independent, changed);
+            File.Move(changed, independent, overwrite: true);
+            if (service.TryEnsureAvailable(out _))
+                await ExpectAsync<InvalidDataException>(() =>
+                    service.CreateStandardPackageAsync(approved, Path.Combine(root, "stale-project.ymmpx"), true, true, default));
         });
 
         // Captured from the R25 tested writer (398d09a), with synthetic materials only.
@@ -95,34 +164,28 @@ internal static class YmmpxTransferTests
         }
         if (!hasLibrary)
         {
-            var refused = await service.CreateTransferAsync(plan!, permissions, send, default);
-            Check(!refused.Success && refused.ErrorMessage == service.MissingLibraryMessage && !Directory.Exists(send),
+            var refused = await service.CreateStandardPackageAsync(plan!, standardPath, true, true, default);
+            Check(!refused.Success && refused.ErrorMessage == service.MissingLibraryMessage && !File.Exists(standardPath),
                 "Missing YmmpxLib must not publish");
-            send = golden;
-            companion = Path.Combine(send, YmmpxTransfer.ManifestName);
-            created = new YmmpxPackageResult { Success = true, OutputPath = legacyPackage };
         }
 
-        await WithLibrary("R23 transfer publishes confirmed names and hashes with no overwrite", async () =>
+        await Program.RunNamedCaseAsync("R32 missing assets need explicit approval", async () =>
         {
-            created = await service.CreateTransferAsync(plan!, permissions, send, default);
-            Check(created.Success && created.PackagedMaterialCount == 3 && created.MissingMaterialCount == 3, "Pack counts");
-            Check(Directory.GetFiles(send).Length == 2, "Package and companion only");
-            //CSJ,variable=archive,アーカイブ
-            using var archive = ZipFile.OpenRead(created.OutputPath!);
+            await ExpectAsync<InvalidDataException>(() => service.CreateStandardPackageAsync(plan!, standardPath, true, false, default));
+            Check(!File.Exists(standardPath), "Missing assets were implicitly accepted.");
+        });
+
+        await WithLibrary("R32 writes a standard-only package with approved names and no overwrite", async () =>
+        {
+            var output = await service.CreateStandardPackageAsync(plan!, standardPath, true, true, default);
+            Check(output.Success && output.PackagedMaterialCount == 3 && output.MissingMaterialCount == 2, output.ErrorMessage ?? "Pack counts");
+            using var archive = ZipFile.OpenRead(standardPath);
             Check(archive.Comment == "" && archive.Entries.Count == 6, "Standard library archive with no custom ZIP comment");
-            await using var sidecar = File.OpenRead(companion);
-            var evidence = await YmmpxTransfer.ReadManifestAsync(sidecar, Path.GetFileName(created.OutputPath!), default);
-            Check(evidence.Version == 2 && evidence.Assets.Count(asset => asset.OriginalFileName == "場面.png") == 2 &&
-                evidence.Assets.Count(asset => asset.OriginalFileName == "別名.png") == 1 &&
-                evidence.Assets.All(asset => archive.GetEntry(asset.ArchivePath) is not null), "Original names bound to actual members");
-            //CSJ,variable=metadata,メタデータ
-            var metadata = await File.ReadAllTextAsync(companion);
-            Check(!metadata.Contains(input, StringComparison.Ordinal) && !metadata.Contains(outside, StringComparison.Ordinal), "Local root leaked");
-            await ExpectAsync<IOException>(() => service.CreateTransferAsync(plan!, permissions, send, default));
-            //CSJ,variable=currentSource,現在の元
-            var currentSource = await File.ReadAllBytesAsync(original);
-            Check(sourceBytes.SequenceEqual(currentSource) &&
+            Check(!File.Exists(Path.Combine(root, YmmpxTransfer.ManifestName)), "A custom sidecar was published");
+            var before = await File.ReadAllBytesAsync(standardPath);
+            await ExpectAsync<IOException>(() => service.CreateStandardPackageAsync(plan!, standardPath, true, true, default));
+            Check((await File.ReadAllBytesAsync(standardPath)).SequenceEqual(before), "Existing output was overwritten");
+            Check((await File.ReadAllBytesAsync(original)).SequenceEqual(sourceBytes) &&
                 await File.ReadAllTextAsync(denied) == "strictly excluded", "Source changed");
         });
 
@@ -151,28 +214,135 @@ internal static class YmmpxTransferTests
             Check(File.Exists(Path.Combine(destination, YmmpxTransfer.ManifestName)), "Evidence available for inspection");
         });
 
-        await WithLibrary("Transfer v2 preserves independent PSD layer references and redacts rejected layers", async () =>
+        await WithLibrary("R32 packages native PSD references, PNG sequences and optional UI state", async () =>
         {
             var source = Path.Combine(input, "layers.ymmp");
             var layers = CreateMaterial(input, "layer.psd", "approved layer");
-            await File.WriteAllTextAsync(source, new JsonObject { ["Items"] = new JsonArray(
-                new JsonObject { ["FilePath"] = left, ["EnableLayersFilePath"] = layers },
-                new JsonObject { ["FilePath"] = right, ["EnableLayersFilePath"] = denied },
-                new JsonObject { ["FilePath"] = layers, ["EnableLayers"] = new JsonArray("Layer A") }) }.ToJsonString());
-            var choices = new Dictionary<string, YmmpxTransferPermission>(permissions) { [layers] = YmmpxTransferPermission.OwnWork };
-            choices.Remove(alias);
-            var packed = await service.CreateTransferAsync(await service.InspectTransferAsync(source, default), choices,
-                Path.Combine(root, "layers-send"), default);
-            Check(packed.Success, packed.ErrorMessage ?? "layer export");
-            var imported = await service.ExtractPackageAsync(packed.OutputPath!, Path.Combine(root, "layers-receive"), default);
-            Check(imported.Success && imported.MissingMaterials.Count == 1, imported.ErrorMessage ?? "layer import");
-            var text = await File.ReadAllTextAsync(imported.RestoredProjectPath!);
-            var items = JsonNode.Parse(text)!["Items"]!.AsArray();
-            var stored = items[0]!["EnableLayersFilePath"]!.GetValue<string>();
-            Check(Path.GetFileName(stored) == "layer.psd" && File.ReadAllText(stored) == "approved layer" &&
-                !File.Exists(items[1]!["EnableLayersFilePath"]!.GetValue<string>()) &&
-                items[2]!["EnableLayersFilePath"]!.GetValue<string>() == items[2]!["FilePath"]!.GetValue<string>() &&
-                !text.Contains(JsonSerializer.Serialize(denied), StringComparison.Ordinal), "wrong layer binding");
+            var sequence = Directory.CreateDirectory(Path.Combine(input, "sequence")).FullName;
+            var first = CreateMaterial(sequence, "shot01.png", "frame one");
+            _ = CreateMaterial(sequence, "shot02.png", "frame two");
+            var excludedFrame = CreateMaterial(sequence, "shot03.png", "frame three");
+            await File.WriteAllTextAsync(source, new JsonObject
+            {
+                ["LayoutXml"] = "keep layout if selected",
+                ["ToolStates"] = new JsonArray("UI state"),
+                ["Items"] = new JsonArray(
+                    new JsonObject { ["FilePath"] = left, ["EnableLayersFilePath"] = denied },
+                    new JsonObject { ["FilePath"] = layers, ["EnableLayers"] = new JsonArray("Layer A") },
+                    new JsonObject { ["$type"] = "YukkuriMovieMaker.Project.Items.VideoItem, YukkuriMovieMaker", ["FilePath"] = first }),
+            }.ToJsonString());
+            var bytes = await File.ReadAllBytesAsync(source);
+            var preview = await service.InspectTransferAsync(source, default, exclusions: [.. rules, new(excludedFrame, false, true)]);
+            Check(preview.Assets.Count == 6 &&
+                preview.Assets.Count(item => item.SequenceMember) == 3 &&
+                preview.Assets.Count(item => item.Disposition == YmmpxMaterialDisposition.Excluded) == 2, "Sequence preview");
+            var packed = await service.CreateStandardPackageAsync(preview, Path.Combine(root, "sequence.ymmpx"), false, false, default);
+            Check(packed.Success && packed.PackagedMaterialCount == 4, packed.ErrorMessage ?? "sequence and layer export");
+            using var package = ZipFile.OpenRead(packed.OutputPath!);
+            Check(package.Entries.Count(entry => entry.FullName.StartsWith("resources/sequence_", StringComparison.Ordinal)) == 2, "Native sequence entries");
+            var imported = await service.ExtractPackageAsync(packed.OutputPath!, Path.Combine(root, "native-format-restored"), default);
+            Check(imported.Success && imported.MissingMaterials.Count == 1, imported.ErrorMessage ?? "Standard import");
+            var project = JsonNode.Parse(await File.ReadAllTextAsync(imported.RestoredProjectPath!))!.AsObject();
+            var items = project["Items"]!.AsArray();
+            var filePath = items[1]!["FilePath"]!.GetValue<string>();
+            Check(File.Exists(filePath) && items[1]!["EnableLayersFilePath"]!.GetValue<string>() == filePath &&
+                !File.Exists(items[0]!["EnableLayersFilePath"]!.GetValue<string>()) &&
+                project["LayoutXml"] is null && project["ToolStates"] is null &&
+                (await File.ReadAllBytesAsync(source)).SequenceEqual(bytes), "PSD binding, UI toggle, source preservation");
+            var withUi = await service.CreateStandardPackageAsync(preview, Path.Combine(root, "sequence-with-ui.ymmpx"), true, false, default);
+            Check(withUi.Success, withUi.ErrorMessage ?? "Include UI state");
+            var importedWithUi = await service.ExtractPackageAsync(withUi.OutputPath!, Path.Combine(root, "native-format-with-ui"), default);
+            Check(importedWithUi.Success, importedWithUi.ErrorMessage ?? "Import with UI state");
+            var originalLayout = JsonNode.Parse(await File.ReadAllTextAsync(importedWithUi.RestoredProjectPath!))!["LayoutXml"];
+            Check(originalLayout?.GetValue<string>() == "keep layout if selected", "UI flag was ignored");
+        });
+
+        await WithLibrary("R32 matches native PNG selection when the representative is missing or excluded", async () =>
+        {
+            var group = Directory.CreateDirectory(Path.Combine(input, "selection")).FullName;
+            var source = Path.Combine(group, "frames.ymmp");
+            var first = CreateMaterial(group, "shot01.png", "rep");
+            var second = CreateMaterial(group, "shot02.png", "second");
+            var third = CreateMaterial(group, "shot03.png", "third");
+            await File.WriteAllTextAsync(source, """
+                {"Items":[{"$type":"YukkuriMovieMaker.Project.Items.VideoItem, YukkuriMovieMaker","FilePath":"shot01.png"}]}
+                """);
+            foreach (bool representativeMissing in new[] { false, true })
+            {
+                var excluded = representativeMissing ? new HashSet<string>() : new HashSet<string> { first, third };
+                if (representativeMissing) File.Delete(first);
+                var preview = await service.InspectTransferAsync(source, default,
+                    exclusions: excluded.Select(path => new YmmpxExclusionRule(path, false, true)).ToArray());
+                Check(preview.Assets.Count == 3 && preview.Assets.All(candidate => candidate.SequenceMember), "Full sequence detection");
+                var output = Path.Combine(root, $"sequence-edge-{representativeMissing}.ymmpx");
+                var result = await service.CreateStandardPackageAsync(preview, output, true, representativeMissing, default);
+                Check(result.Success, result.ErrorMessage ?? "Sequence edge-case package");
+                var native = Path.Combine(root, $"sequence-native-{representativeMissing}.ymmpx");
+                Check(YmmpxLibResolver.TryResolveAssembly(out var assembly, out _, out _), "Native library verification");
+                var method = assembly!.GetType("YmmpxLib.YmmpxPackageService")!.GetMethod("CreatePackageAsync")!;
+                var task = (Task)method.Invoke(null, [source, native, excluded, null, null, CancellationToken.None])!;
+                await task;
+                using var pmArchive = ZipFile.OpenRead(output);
+                using var libArchive = ZipFile.OpenRead(native);
+                var pm = await ReadResources(pmArchive);
+                var expected = await ReadResources(libArchive);
+                Check(pm.SequenceEqual(expected) && pm.Contains("second") && pm.Contains("third") == representativeMissing,
+                    "The PM package differs from the native sequence selection");
+                var imported = await service.ExtractPackageAsync(output, Path.Combine(root, $"sequence-edge-restored-{representativeMissing}"), default);
+                Check(imported.Success && imported.MissingMaterials.Contains("shot01.png"), "Missing representative not disclosed");
+            }
+            Check(!Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Sequence staging remained");
+            Check(File.Exists(second) && File.Exists(third), "A source frame was removed");
+
+            static async Task<string[]> ReadResources(ZipArchive archive)
+            {
+                var values = new List<string>();
+                foreach (var entry in archive.Entries.Where(entry => entry.FullName.StartsWith("resources/", StringComparison.Ordinal)))
+                {
+                    using var reader = new StreamReader(entry.Open());
+                    values.Add(await reader.ReadToEndAsync());
+                }
+                return values.Order(StringComparer.Ordinal).ToArray();
+            }
+        });
+
+        await WithLibrary("R32 round trips a standard source whose basename resembles old PM v2", async () =>
+        {
+            var name = "ymmpm-asset-00000000-file.png";
+            var asset = CreateMaterial(input, name, "ordinary file with a legacy-looking name");
+            var source = Path.Combine(input, "historical-name.ymmp");
+            await File.WriteAllTextAsync(source, JsonSerializer.Serialize(new { Items = new[] { new { FilePath = asset } } }));
+            var preview = await service.InspectTransferAsync(source, default);
+            var output = Path.Combine(root, "historical-name.ymmpx");
+            var packed = await service.CreateStandardPackageAsync(preview, output, true, false, default);
+            Check(packed.Success, packed.ErrorMessage ?? "Standard creation");
+            var restored = await service.ExtractPackageAsync(output, Path.Combine(root, "historical-name"), default);
+            Check(restored.Success && !restored.TransferEvidenceVerified, restored.ErrorMessage ?? "Classified as a legacy transfer");
+            var project = JsonNode.Parse(await File.ReadAllTextAsync(restored.RestoredProjectPath!));
+            var relative = project!["Items"]![0]!["FilePath"]!.GetValue<string>();
+            Check(await File.ReadAllTextAsync(relative) == await File.ReadAllTextAsync(asset) &&
+                Path.GetFileName(asset) == name, "Filename adaptation changed source content");
+        });
+
+        await WithLibrary("R32 checks the exclusion version at publication and pins an existing configuration", async () =>
+        {
+            var target = Path.Combine(root, "publication-exclusions.json");
+            var reviewed = await YmmpxExclusionRules.LoadAsync(target, default, missingIsEmpty: true);
+            var output = Path.Combine(root, "stale-exclusions-output.ymmpx");
+            bool fileAppeared = false;
+            await ExpectAsync<InvalidDataException>(() => service.CreateStandardPackageAsync(plan!, output, true, true, default,
+                new InlineProgress(() =>
+                {
+                    if (fileAppeared) return;
+                    File.WriteAllText(target, "[]");
+                    fileAppeared = true;
+                }), token => YmmpxExclusionRules.PinReviewedAsync([(target, reviewed)], token)));
+            Check(fileAppeared && !File.Exists(output), "Changed configuration allowed publication");
+            reviewed = await YmmpxExclusionRules.LoadAsync(target, default);
+            using (await YmmpxExclusionRules.PinReviewedAsync([(target, reviewed)], default))
+                await ExpectAsync<IOException>(() => File.WriteAllTextAsync(target, "overwritten"));
+            Check(await File.ReadAllTextAsync(target) == "[]", "Guard altered configuration");
+            Check(!Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Failure left owned staging");
         });
 
         await Program.RunNamedCaseAsync("R23 transfer rejects missing and forged per-member evidence without publishing", async () =>
@@ -242,7 +412,7 @@ internal static class YmmpxTransferTests
             using (var archive = ZipFile.Open(stripped, ZipArchiveMode.Update))
             {
                 archive.Comment = "";
-                if (hasLibrary)
+
                 {
                     var entry = archive.GetEntry("作品.ymmp")!;
                     JsonObject doc;
@@ -336,13 +506,13 @@ internal static class YmmpxTransferTests
             //CSJ,variable=oldContent,旧内容
             var oldContent = await File.ReadAllBytesAsync(left);
             //CSJ,variable=destination,格納先
-            var destination = Path.Combine(root, "rejected");
+            var destination = Path.Combine(root, "rejected.ymmpx");
             try
             {
                 // Same byte length isolates the SHA-256 check.
                 await File.WriteAllTextAsync(left, "third version");
-                await ExpectAsync<InvalidDataException>(() => service.CreateTransferAsync(plan!, permissions, destination, default));
-                Check(!Directory.Exists(destination) && !Directory.EnumerateDirectories(root, ".ymmpm-transfer-*").Any(), "Failed staging cleanup");
+                await ExpectAsync<InvalidDataException>(() => service.CreateStandardPackageAsync(plan!, destination, true, true, default));
+                Check(!File.Exists(destination) && !Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Failed staging cleanup");
             }
             finally { await File.WriteAllBytesAsync(left, oldContent); }
         });
@@ -350,17 +520,17 @@ internal static class YmmpxTransferTests
         await WithLibrary("R23 transfer cancellation and late target creation preserve output and permit retry", async () =>
         {
             //CSJ,variable=retry,再試行
-            var retry = Path.Combine(root, "retry");
+            var retry = Path.Combine(root, "retry.ymmpx");
             //CSJ,variable=cancelled,キャンセル済み
             using var cancelled = new CancellationTokenSource();
-            await ExpectAsync<OperationCanceledException>(() => service.CreateTransferAsync(plan!, permissions, retry, cancelled.Token,
+            await ExpectAsync<OperationCanceledException>(() => service.CreateStandardPackageAsync(plan!, retry, true, true, cancelled.Token,
                 new InlineProgress(cancelled.Cancel)));
-            Check(!Directory.Exists(retry) && !Directory.EnumerateDirectories(root, ".ymmpm-transfer-*").Any(), "Cancelled staging cleanup");
+            Check(!File.Exists(retry) && !Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Cancelled staging cleanup");
             //CSJ,variable=collision,衝突
-            var collision = Path.Combine(root, "collision");
+            var collision = Path.Combine(root, "collision.ymmpx");
             var sentinel = Path.Combine(collision, "sentinel");
             var setOnce = false;
-            await ExpectAsync<IOException>(() => service.CreateTransferAsync(plan!, permissions, collision, default,
+            await ExpectAsync<IOException>(() => service.CreateStandardPackageAsync(plan!, collision, true, true, default,
                 new InlineProgress(() =>
                 {
                     if (setOnce) return;
@@ -370,24 +540,8 @@ internal static class YmmpxTransferTests
                 })));
             Check(await File.ReadAllTextAsync(sentinel) == "external" &&
                 Directory.GetFiles(collision).Length == 1 &&
-                !Directory.EnumerateDirectories(root, ".ymmpm-transfer-*").Any(), "Existing target or staging changed");
-            Check((await service.CreateTransferAsync(plan!, permissions, retry, default)).Success, "Safe retry");
-        });
-
-        await Program.RunNamedCaseAsync("R23 transfer keeps unsupported PNG sequences unresolved", async () =>
-        {
-            //CSJ,variable=sequence,順序
-            var sequence = Path.Combine(input, "sequence.ymmp");
-            _ = CreateMaterial(input, "frame01.png", "frame");
-            await File.WriteAllTextAsync(sequence, """
-                {"Items":[{"$type":"YukkuriMovieMaker.Project.Items.VideoItem, YukkuriMovieMaker","FilePath":"frame01.png"}]}
-                """);
-            //CSJ,variable=preview,プレビュー
-            var preview = await service.InspectTransferAsync(sequence, default);
-            Check(preview.Assets is [{ CanInclude: false, ExclusionReason: not null }], "Potential sequence was selectable");
-            await ExpectAsync<InvalidDataException>(() => service.CreateTransferAsync(preview,
-                new Dictionary<string, YmmpxTransferPermission> { [preview.Assets[0].SourcePath] = YmmpxTransferPermission.OwnWork },
-                Path.Combine(root, "unexpected-sequence"), default));
+                !Directory.EnumerateDirectories(root, ".ymmpm-package-input-*").Any(), "Existing target or staging changed");
+            Check((await service.CreateStandardPackageAsync(plan!, retry, true, true, default)).Success, "Safe retry");
         });
 
         await Program.RunNamedCaseAsync("R23 transfer refuses invalid source Unicode and ambiguous property spellings", async () =>
@@ -413,12 +567,12 @@ internal static class YmmpxTransferTests
         await Program.RunNamedCaseAsync("R23 transfer archive restores names and bytes using real YmmpxLib 1.1 API", async () =>
         {
             //CSJ,variable=assembly,アセンブリ
-            var assembly = Assembly.LoadFrom(library);
+            Check(YmmpxLibResolver.TryResolveAssembly(out var assembly, out _, out _), "Native library verification");
             //CSJ,variable=method,メソッド
-            var method = assembly.GetType("YmmpxLib.YmmpxPackageService")!.GetMethod("ExtractAndRestoreProject")!;
+            var method = assembly!.GetType("YmmpxLib.YmmpxPackageService")!.GetMethod("ExtractAndRestoreProject")!;
             //CSJ,variable=native,ネイティブ
             var native = Path.Combine(root, "native-restore");
-            var extracted = method.Invoke(null, [created!.OutputPath!, native]) ?? throw new InvalidOperationException("Real extract failed");
+            var extracted = method.Invoke(null, [standardPath, native]) ?? throw new InvalidOperationException("Real extract failed");
             //CSJ,variable=restored,復元済み
             var restored = extracted.GetType().GetProperty("ProjectFilePath")!.GetValue(extracted) as string;
             Check(restored is not null && File.Exists(restored), "Real extract project");
@@ -429,10 +583,29 @@ internal static class YmmpxTransferTests
             Check(references[0] != references[1] &&
                 await File.ReadAllTextAsync(references[0]) == "first version" &&
                 await File.ReadAllTextAsync(references[1]) == "second version", "Real extraction of namespaced resources");
-            Check(references[3].StartsWith(YmmpxTransfer.MissingPrefix, StringComparison.Ordinal), "Real extraction preserves relative unresolved placeholder");
+            Check(references[3].StartsWith(YmmpxStandardPackage.UnavailablePrefix, StringComparison.Ordinal), "Real extraction preserves relative unresolved placeholder");
         });
 
         static JsonObject Reference(string path) => new() { ["FilePath"] = path };
+    }
+
+    private static async Task WriteLegacyV2Async(string fixture, string package, string companion)
+    {
+        // The project and manifest digest come from the frozen R30 synthetic output. The test
+        // stores no archive and does not need the retired writer or YmmpxLib to build it.
+        var manifest = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(fixture, "manifest.json")))!;
+        var members = manifest["assets"]!.AsArray().Select(asset => asset!["archivePath"]!.GetValue<string>()).ToArray();
+        using (var zip = ZipFile.Open(package, ZipArchiveMode.Create))
+        {
+            WriteEntry(zip, "作品.ymmp", await File.ReadAllTextAsync(Path.Combine(fixture, "project.json")));
+            WriteEntry(zip, "_ymmpx_project_path.txt", "作品.ymmp");
+            WriteEntry(zip, "links.json", JsonSerializer.Serialize(members.ToDictionary(path => path)));
+            WriteEntry(zip, members[0], "first version");
+            WriteEntry(zip, members[1], "second version");
+            WriteEntry(zip, members[2], "first version");
+        }
+        manifest["packageSha256"] = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(package)));
+        await File.WriteAllTextAsync(companion, manifest.ToJsonString());
     }
 
     //CSJ,method=CreateMaterial,素材を作成する

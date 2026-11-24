@@ -124,6 +124,7 @@ function Invoke-Regression([string]$Name, [bool]$WithLibrary, [string]$Filter) {
         YMMPX_LIB_PATH = if ($WithLibrary) { $ymmpxDll } else { $null }
         YMM_TEST_FILTER = $Filter
         YMM_TEST_YMMPX_RELEASED_FIXTURES = $null
+        YMM_TEST_YMMPX_PLUGIN_ARCHIVE = $ymmpxArchive
     }
     $oldVariables = @{}
     foreach ($variableName in $variables.Keys) {
@@ -175,8 +176,11 @@ function Invoke-Regression([string]$Name, [bool]$WithLibrary, [string]$Filter) {
         $allowedSkips += @(
             'PF research: YmmpxLib RemoveUiSettings unavailable'
             'real YmmpxLib unavailable'
-            'R23 transfer publishes confirmed names and hashes with no overwrite (requires YmmpxLib)'
-            'Transfer v2 preserves independent PSD layer references and redacts rejected layers (requires YmmpxLib)'
+            'R32 writes a standard-only package with approved names and no overwrite (requires YmmpxLib)'
+            'R32 packages native PSD references, PNG sequences and optional UI state (requires YmmpxLib)'
+            'R32 matches native PNG selection when the representative is missing or excluded (requires YmmpxLib)'
+            'R32 round trips a standard source whose basename resembles old PM v2 (requires YmmpxLib)'
+            'R32 checks the exclusion version at publication and pins an existing configuration (requires YmmpxLib)'
             'R23 transfer rejects approved asset replacement and leaves no partial public output (requires YmmpxLib)'
             'R23 transfer cancellation and late target creation preserve output and permit retry (requires YmmpxLib)'
             'R23 transfer compatibility with real YmmpxLib unavailable'
