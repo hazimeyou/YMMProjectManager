@@ -8,6 +8,9 @@ namespace YMMProjectManager.Infrastructure.Generations;
 
 internal static class ProjectGenerationRestorePublication
 {
+    internal sealed class PendingException(string retained, string target, Exception cause)
+        : IOException($"元の場所へ戻せませんでした。元のプロジェクトを次の場所に保全しました。\n{retained}\n回復記録 {ProjectGenerationRestoreRecovery.JournalPath(target)}", cause);
+
     internal static FileStream? OpenTarget(string path)
     {
         try
@@ -38,10 +41,11 @@ internal static class ProjectGenerationRestorePublication
 
     // Both file handles and the destination parent stay open from verification through publication.
     // The original handle owns the exact version taken out of the way, including its metadata.
-    internal static async Task<string?> PublishAsync(FileStream candidate, FileStream? original, string targetPath,
+    internal static async Task<string?> PublishAsync(FileStream candidate, string candidatePath, FileStream? original, string targetPath,
         string? backupPath, CancellationToken token, Action? afterParking = null)
     {
         token.ThrowIfCancellationRequested();
+        ProjectGenerationRestoreRecovery.RequireNoPending(targetPath);
         if (original is null)
         {
             RenameOpenedPath(candidate.SafeFileHandle, targetPath);
@@ -59,8 +63,10 @@ internal static class ProjectGenerationRestorePublication
         OwnedStagingDirectory? recoveryDirectory = null;
         Microsoft.Win32.SafeHandles.SafeFileHandle? recoveryPin = null;
         FileStream? backupCopy = null;
+        FileStream? journal = null;
         var backupPublished = false;
         var parked = false;
+        var published = false;
         try
         {
             if (backup is not null)
@@ -99,12 +105,15 @@ internal static class ProjectGenerationRestorePublication
                 }
             }
 
+            journal = await ProjectGenerationRestoreRecovery.PrepareAsync(targetPath, parkedPath, candidatePath,
+                original, candidate, token).ConfigureAwait(false);
             token.ThrowIfCancellationRequested();
             RenameOpenedPath(original.SafeFileHandle, parkedPath);
             parked = true;
             afterParking?.Invoke();
             token.ThrowIfCancellationRequested();
             RenameOpenedPath(candidate.SafeFileHandle, targetPath);
+            published = true;
             if (backup is null && TryDeleteOpenedPath(original.SafeFileHandle))
                 return null;
             return parkedPath;
@@ -118,13 +127,17 @@ internal static class ProjectGenerationRestorePublication
             }
             catch (IOException rollbackError)
             {
-                throw new IOException($"元の場所へ戻せませんでした。元のプロジェクトを次の場所に保全しました。\n{parkedPath}",
-                    new AggregateException(error, rollbackError));
+                throw new PendingException(parkedPath, targetPath, new AggregateException(error, rollbackError));
             }
             throw;
         }
         finally
         {
+            if (journal is not null)
+            {
+                if (!parked || published) TryDeleteOpenedPath(journal.SafeFileHandle);
+                journal.Dispose();
+            }
             if (backupCopy is not null)
             {
                 if (!backupPublished) TryDeleteOpenedPath(backupCopy.SafeFileHandle);

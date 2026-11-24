@@ -167,11 +167,55 @@ internal static class ManifestWriteHardeningTests
         var conflictDelete=await conflictService.DeleteGenerationAsync(project,first.GenerationId);
         Check(!conflictDelete.Success && Directory.Exists(first.GenerationPath) && Hash(snapshot)==snapshotHash && Hash(path)==lastExternalHash && externalEdits==2,"conflict delete rollback");
         Check(Hash(fixedTemp)==existingTempHash && !Directory.EnumerateFiles(Path.GetDirectoryName(path)!,"manifest.json.tmp-*").Any(),"conflict temp cleanup");
+        await Program.RunNamedCaseAsync("Manifest publication rejects a same-bytes replacement of the validated file", async () =>
+        {
+            var replacement = path + ".competing";
+            string? replacementHash = null;
+            var replacingStorage = new ProjectGenerationStorage(storageRoot, null, null, () =>
+            {
+                var currentBytes = File.ReadAllBytes(path);
+                File.WriteAllBytes(replacement, currentBytes);
+                replacementHash = Hash(replacement);
+                File.Move(replacement, path, overwrite: true);
+            });
+            await Expect<InvalidDataException>(() => new ProjectGenerationService(logger, replacingStorage)
+                .CreateGenerationAsync(project, "stale file identity", null));
+            Check(replacementHash == Hash(path) && Hash(snapshot) == snapshotHash, "byte-identical competing manifest was overwritten");
+        });
+        await Program.RunNamedCaseAsync("Failed generation publication never deletes a separate file in its directory", async () =>
+        {
+            var candidateDirectory = storage.GetGenerationDirectory(id, "cancelled-snapshot");
+            var separatePath = Path.Combine(candidateDirectory, "separate.txt");
+            const string separate = "separate writer data";
+            var previous = Hash(path);
+            var failingCreate = new ProjectGenerationStorage(storageRoot, null, null, () =>
+            {
+                File.WriteAllText(separatePath, separate);
+                throw new IOException("synthetic failed manifest publication");
+            });
+            await Expect<IOException>(() => new ProjectGenerationService(logger, failingCreate, _ => "cancelled-snapshot")
+                .CreateGenerationAsync(project, "cancelled snapshot", null));
+            Check(await File.ReadAllTextAsync(separatePath) == separate && Hash(path) == previous &&
+                !File.Exists(storage.GetGenerationFilePath(id, "cancelled-snapshot")) &&
+                !File.Exists(storage.GetGenerationMetadataPath(id, "cancelled-snapshot")), "cleanup removed independent work or leaked owned files");
+        });
+        await Program.RunNamedCaseAsync("Cancellation after manifest parking rolls back the exact active file", async () =>
+        {
+            var previous = await ProjectFileEvidence.ReadAsync(path);
+            using var cancelled = new CancellationTokenSource();
+            var parking = new ProjectGenerationStorage(storageRoot, null, null, null, cancelled.Cancel);
+            await Expect<OperationCanceledException>(() => new ProjectGenerationService(logger, parking)
+                .CreateGenerationAsync(project, "cancelled parked manifest", null, cancelled.Token));
+            Check(await ProjectFileEvidence.ReadAsync(path) == previous && Hash(snapshot) == snapshotHash &&
+                !Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "manifest.json.previous-*").Any() &&
+                !Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "manifest.json.tmp-*").Any(),
+                "successful rollback did not restore the original or left operation files behind");
+        });
         // Separate writes to the same target create different owned temporary files.
         //CSJ,variable=tempNames,一時名前一覧
         var tempNames = new List<string>();
         //CSJ,variable=nameStorage,名前保管
-        var nameStorage = new ProjectGenerationStorage(storageRoot, async (stream,data,token) => { tempNames.Add(((FileStream)stream).Name); await stream.WriteAsync(data,token); }, null, null);
+        var nameStorage = new ProjectGenerationStorage(storageRoot, async (stream,data,token) => { tempNames.Add(Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "manifest.json.tmp-*").Single()); await stream.WriteAsync(data,token); }, null, null);
         //CSJ,variable=sameManifest,同一目録
         var sameManifest = await nameStorage.ReadManifestAsync(id) ?? throw new Exception("manifest missing");
         await nameStorage.WriteManifestAsync(id,sameManifest); await nameStorage.WriteManifestAsync(id,sameManifest);
@@ -206,5 +250,6 @@ internal static class ManifestWriteHardeningTests
         Check(restored.Success && Hash(snapshot)==snapshotHash,"restore");
         Console.WriteLine("R1-B2 manifest failure, concurrency and external edit checks passed.");
         await GenerationRestoreSafetyTests.RunAsync(Path.Combine(workRoot, "r28-restore"));
+        await GenerationManifestInterruptionTests.RunAsync(workRoot);
     }
 }

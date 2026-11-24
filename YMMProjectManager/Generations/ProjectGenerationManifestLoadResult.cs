@@ -21,4 +21,5 @@ public sealed class ProjectGenerationManifestLoadResult
     public string? ErrorMessage { get; }
     //CSJ,property=ContentHash,内容のハッシュ
     internal string? ContentHash { get; }
+    internal ProjectListReplacement.FileVersion? FileVersion { get; init; }
 }

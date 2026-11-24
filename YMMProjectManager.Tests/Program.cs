@@ -46,6 +46,11 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        if (args.Length == 3 && args[0] == GenerationManifestInterruptionTests.ChildArgument)
+        {
+            await GenerationManifestInterruptionTests.RunChildAsync(args[1], args[2]);
+            return;
+        }
         if (args.Length == 2 && args[0] == SettingsAndDiagnosticsTests.InterruptedSaveArgument)
         {
             SettingsAndDiagnosticsTests.RunInterruptedSaveChild(args[1]);

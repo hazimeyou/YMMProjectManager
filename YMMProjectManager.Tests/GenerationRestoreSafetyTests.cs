@@ -171,7 +171,10 @@ internal static class GenerationRestoreSafetyTests
                 await ProjectFileEvidence.ReadAsync(backup) == original &&
                 result.ErrorMessage?.Contains(backup, StringComparison.Ordinal) == true,
                 "A restore conflict lost the original or hid its recovery path.");
-            fixture.RequireCleanCandidate();
+            var candidate = Directory.EnumerateFiles(fixture.Root, "*.restore.tmp").Single();
+            var journal = ProjectGenerationRestoreRecovery.JournalPath(fixture.Project);
+            Require(File.ReadAllText(candidate) == Snapshot && File.Exists(journal) &&
+                result.ErrorMessage?.Contains(journal, StringComparison.Ordinal) == true, "A restore conflict lost recovery evidence.");
         });
     }
 
