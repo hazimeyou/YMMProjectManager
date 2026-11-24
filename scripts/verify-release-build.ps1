@@ -36,21 +36,34 @@ function Assert-Checkout {
     if ($LASTEXITCODE -ne 0 -or $commit -ne $ExpectedCommit) {
         throw 'The checkout does not match the requested commit.'
     }
-    $changed = git -C $repo status --porcelain --untracked-files=no
+    $changed = git -C $repo status --porcelain --untracked-files=all --ignored=matching
     if ($LASTEXITCODE -ne 0 -or $changed) {
-        throw 'The tracked checkout must remain unchanged throughout verification.'
+        throw 'Verification requires a clean checkout, including untracked and ignored files.'
     }
 }
 
 $metadataPath = Join-Path $referenceDirectory 'YMM4-reference.json'
 $metadataHash = (Get-FileHash -LiteralPath $metadataPath -Algorithm SHA256).Hash
 $references = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
-$requiredReferences = 'YukkuriMovieMaker.Plugin.dll', 'YukkuriMovieMaker.dll', 'YukkuriMovieMaker.Controls.dll'
-if ($references.files.Count -ne $requiredReferences.Count) { throw 'Unexpected YMM4 reference count.' }
-foreach ($name in $requiredReferences) {
+$referencePins = @{
+    'YukkuriMovieMaker.Plugin.dll' = '4B64AE98A97F8FC11C374DD3409CEF368B9B3D15059DF031DBD450C2BDEBC3C0'
+    'YukkuriMovieMaker.dll' = '20485A97F2C5717446F0834CE35131DA13BD2F2135E7F51EA63385A211CA5C2A'
+    'YukkuriMovieMaker.Controls.dll' = '720F1B1D9BE22233B582CDBEE8CEDC5378B6FCEA45D3367922FDB516F9C2AD6B'
+}
+if ($references.release -cne 'v4.57.0.1' -or
+    $references.source -cne 'https://github.com/manju-summoner/YukkuriMovieMaker4/releases/download/v4.57.0.1/YukkuriMovieMaker_v4.57.0.1_Lite.zip' -or
+    $references.archiveSha256 -ne '47837E0AA514533BDEB3D018FF28FBAC8D2A57E8D6A5665DDFB72E9329EC0553' -or
+    $references.files.Count -ne $referencePins.Count) { throw 'Unexpected YMM4 reference archive.' }
+foreach ($name in $referencePins.Keys) {
     $reference = @($references.files | Where-Object name -CEQ $name)
-    if ($reference.Count -ne 1) { throw "Missing or duplicate YMM4 reference: $name" }
-    Assert-Hash (Join-Path $referenceDirectory $name) $reference[0].sha256
+    if ($reference.Count -ne 1 -or $reference[0].sha256 -ne $referencePins[$name]) {
+        throw "Unexpected reference metadata: $name"
+    }
+    $path = Join-Path $referenceDirectory $name
+    Assert-Hash $path $referencePins[$name]
+    if ([Diagnostics.FileVersionInfo]::GetVersionInfo($path).FileVersion -ne $reference[0].fileVersion) {
+        throw "Unexpected reference version: $name"
+    }
 }
 
 $ymmpxArchiveSha = '9D5EE82C96D6A5ED57D805306CFE037A6669F0D3D15D6C28919E1A59158680DA'
@@ -71,15 +84,12 @@ Assert-Hash $ymmpxDll $ymmpxDllSha
 $expectedSdk = '10.0.404'
 @{ sdk = @{ version = $expectedSdk; rollForward = 'disable' } } | ConvertTo-Json |
     Set-Content -LiteralPath (Join-Path $output 'global.json') -Encoding utf8
-$env:YMM4_PATH = $referenceDirectory
-$env:YMM4DirPath = $referenceDirectory
-Remove-Item Env:YMM4DeployPath -ErrorAction SilentlyContinue
 Assert-Checkout
 Push-Location -LiteralPath $output
 try {
     $sdk = dotnet --version
     if ($LASTEXITCODE -ne 0 -or $sdk -ne $expectedSdk) { throw 'The pinned SDK is not active.' }
-    dotnet build (Join-Path $repo 'YMMProjectManager.sln') -c $Configuration --artifacts-path $artifacts "-p:Version=$($Tag.Substring(1))" -p:ContinuousIntegrationBuild=true
+    dotnet build (Join-Path $repo 'YMMProjectManager.sln') -c $Configuration --artifacts-path $artifacts "-p:Version=$($Tag.Substring(1))" "-p:YMM4Path=$referenceDirectory" -p:YMM4DeployPath= -p:ContinuousIntegrationBuild=true
     if ($LASTEXITCODE -ne 0) { throw "Verification build failed ($LASTEXITCODE)." }
 }
 finally {
@@ -108,6 +118,9 @@ function Invoke-Regression([string]$Name, [bool]$WithLibrary, [string]$Filter) {
     $variables = @{
         TEMP = $testTemp
         TMP = $testTemp
+        YMM4_PATH = $referenceDirectory
+        YMM4DirPath = $referenceDirectory
+        YMM4DeployPath = $null
         YMMPX_LIB_PATH = if ($WithLibrary) { $ymmpxDll } else { $null }
         YMM_TEST_FILTER = $Filter
         YMM_TEST_YMMPX_RELEASED_FIXTURES = $null
@@ -152,6 +165,27 @@ function Invoke-Regression([string]$Name, [bool]$WithLibrary, [string]$Filter) {
     if ($Filter -and ($total -ne 1 -or $skipped -ne 0 -or -not ($lines -match "^PASS group: $Filter \("))) {
         throw "Required group '$Filter' did not pass."
     }
+    $skipPrefix = 'SKIP conditional case: '
+    $skipReasons = @($lines -match '^SKIP conditional case: ' | ForEach-Object { $_.Substring($skipPrefix.Length) })
+    $allowedSkips = if ($Filter) { @() } else {
+        # Optional upstream legacy packages are supplied separately from the hosted candidate job.
+        @('v0.2.1', 'v0.3.0', 'v1.0.1' | ForEach-Object { "Released YMMPX $_ fixture unavailable" })
+    }
+    if (-not $Filter -and -not $WithLibrary) {
+        $allowedSkips += @(
+            'PF research: YmmpxLib RemoveUiSettings unavailable'
+            'real YmmpxLib unavailable'
+            'R23 transfer publishes confirmed names and hashes with no overwrite (requires YmmpxLib)'
+            'Transfer v2 preserves independent PSD layer references and redacts rejected layers (requires YmmpxLib)'
+            'R23 transfer rejects approved asset replacement and leaves no partial public output (requires YmmpxLib)'
+            'R23 transfer cancellation and late target creation preserve output and permit retry (requires YmmpxLib)'
+            'R23 transfer compatibility with real YmmpxLib unavailable'
+        )
+    }
+    $unexpectedSkips = @($skipReasons | Where-Object { $allowedSkips -cnotcontains $_ })
+    if ($skipped -ne $skipReasons.Count -or $unexpectedSkips.Count -ne 0) {
+        throw "Unexpected conditional skips in '$Name': $($unexpectedSkips -join '; ')."
+    }
 
     [ordered]@{
         name = $Name
@@ -163,8 +197,9 @@ function Invoke-Regression([string]$Name, [bool]$WithLibrary, [string]$Filter) {
         failedGroups = 0
         selectedNotRun = 0
         namedCasesPassed = [int]$caseCounts[1].Value
+        namedCasesFailed = 0
         explicitSkips = $skipped
-        conditionalSkipReasons = @($lines -match '^SKIP conditional case: ' | ForEach-Object { $_.Substring(23) })
+        conditionalSkipReasons = $skipReasons
         duration = $groupCounts[6].Value
     }
 }
@@ -203,6 +238,7 @@ $report = [ordered]@{
         archiveSha256 = $ymmpxArchiveSha
         dllSha256 = $ymmpxDllSha
     }
+    testSuite = 'Default suite with and without pinned YmmpxLib, plus isolated Git HTTPS and real YmmpxLib checks'
     regression = $results
     workflowRunId = $env:GITHUB_RUN_ID
     workflowRunAttempt = $env:GITHUB_RUN_ATTEMPT
