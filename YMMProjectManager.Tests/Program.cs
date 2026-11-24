@@ -46,6 +46,11 @@ internal static class Program
 
     public static async Task Main(string[] args)
     {
+        if (args.Length == 2 && args[0] == SettingsAndDiagnosticsTests.InterruptedSaveArgument)
+        {
+            SettingsAndDiagnosticsTests.RunInterruptedSaveChild(args[1]);
+            return;
+        }
         if (args.Length == 2 && args[0] == AssetPoolTests.ChildArgument)
         {
             await AssetPoolTests.RunChildAsync(args[1]);

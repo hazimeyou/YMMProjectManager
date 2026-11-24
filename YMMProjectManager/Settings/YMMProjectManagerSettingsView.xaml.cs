@@ -75,9 +75,32 @@ public partial class YMMProjectManagerSettingsView : UserControl
             ReloadFolders();
             SummaryText.Text = "設定を再読込しました。";
         }
+        else if (settings.FindInterruptedSave() is { } candidate)
+        {
+            var confirmation = MessageBox.Show(
+                $"中断前の設定を確認できました。以前の設定を復元しますか？\n{candidate.BackupPath}",
+                "設定の復元", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                SummaryText.Text = "復元を見送りました。以前の設定は保全されています。";
+                return;
+            }
+
+            if (settings.TryRecoverInterruptedSave(candidate))
+            {
+                ReloadFolders();
+                SummaryText.Text = "中断前の設定を復元しました。";
+            }
+            else
+            {
+                SummaryText.Text = $"以前の設定を復元できませんでした。退避先を確認してください。\n{candidate.BackupPath}";
+            }
+        }
         else
         {
-            SummaryText.Text = "設定の再読込に失敗しました。";
+            SummaryText.Text = settings.RetainedBackupPath is { } backup
+                ? $"設定を再読込できませんでした。退避先を確認してください。\n{backup}"
+                : "設定の再読込に失敗しました。";
         }
     }
 

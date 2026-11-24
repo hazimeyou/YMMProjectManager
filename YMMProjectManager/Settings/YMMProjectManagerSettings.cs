@@ -8,7 +8,7 @@ using YukkuriMovieMaker.Plugin;
 namespace YMMProjectManager.Settings;
 
 //CSJ,class=YMMProjectManagerSettings,プロジェクト管理設定
-public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>
+public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>
 {
     //CSJ,field=SettingsDirectoryName,設定ディレクトリ名
     private const string SettingsDirectoryName = "settings";
@@ -98,6 +98,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
                 confirmedVersion = input is null ? null : GetVersion(input, bytes!);
                 SearchFolders = folders;
                 hasConfirmedSettings = true;
+                RetainedBackupPath = null;
                 return true;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
@@ -116,7 +117,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             ?? throw new IOException("The settings directory needs a containing directory.");
         using var fence = OwnedFilePublication.DirectoryFence.Open(parent, enforceShare: true);
         Directory.CreateDirectory(directory);
-        fence.Add(directory);
+        var directoryHandle = fence.Add(directory);
         using var original = OpenCurrent(allowRename: true);
         var currentVersion = original is null ? null : GetVersion(original, ReadSettings(original));
         if (currentVersion != confirmedVersion) return false;
@@ -125,7 +126,9 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             new JsonSerializerOptions { WriteIndented = true });
         var temporary = settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         using var output = OwnedFilePublication.CreateOwnedOutputFile(temporary, readBack: original is not null);
-        var parkedPath = settingsPath + ".previous-" + Guid.NewGuid().ToString("N");
+        var operationId = Guid.NewGuid();
+        var parkedPath = PreviousSettingsPath(operationId);
+        FileStream? receipt = null;
         var parked = false;
         var published = false;
         try
@@ -140,6 +143,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             output.Flush(flushToDisk: true);
             if (original is not null)
             {
+                receipt = PrepareRecoveryReceipt(operationId, currentVersion!, ProjectFileEvidence.ReadPhysicalIdentity(directoryHandle));
                 OwnedFilePublication.RenameOpenedPath(original.SafeFileHandle, parkedPath);
                 parked = true;
             }
@@ -149,7 +153,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             published = true;
             confirmedVersion = stagedVersion;
             SearchFolders = folders;
-            if (parked) OwnedFilePublication.TryDeleteOpenedPath(original!.SafeFileHandle);
+            if (parked) parked = !OwnedFilePublication.TryDeleteOpenedPath(original!.SafeFileHandle);
             return true;
         }
         finally
@@ -158,7 +162,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
             {
                 if (parked)
                 {
-                    try { OwnedFilePublication.RenameOpenedPath(original!.SafeFileHandle, settingsPath); }
+                    try
+                    {
+                        OwnedFilePublication.RenameOpenedPath(original!.SafeFileHandle, settingsPath);
+                        parked = false;
+                    }
                     catch (IOException)
                     {
                         // A competing file occupies the active path. Keep both files.
@@ -167,6 +175,11 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
                     }
                 }
                 OwnedFilePublication.TryDeleteOpenedPath(output.SafeFileHandle);
+            }
+            if (receipt is not null)
+            {
+                if (!parked) OwnedFilePublication.TryDeleteOpenedPath(receipt.SafeFileHandle);
+                receipt.Dispose();
             }
         }
     }
@@ -179,16 +192,13 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
         }
         catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
-            var directory = Path.GetDirectoryName(settingsPath)!;
-            if (Directory.Exists(directory) && Directory.EnumerateFileSystemEntries(directory,
-                Path.GetFileName(settingsPath) + ".previous-*", SearchOption.TopDirectoryOnly).Any())
-                throw new IOException("The current settings name is missing while previous data is retained.");
-            return null;
+            var retained = FindPreviousSettings();
+            if (retained.Length == 0) return null;
+            RetainedBackupPath = retained.Length == 1 ? retained[0] : Path.GetDirectoryName(settingsPath);
+            throw new IOException("The current settings name is missing while previous data is retained.");
         }
 
-        var handle = OwnedFilePublication.OpenOrdinaryPath(settingsPath, expectDirectory: false, allowRename);
-        try { return new FileStream(handle, FileAccess.Read); }
-        catch { handle.Dispose(); throw; }
+        return OpenSettingsFile(settingsPath, allowRename);
     }
 
     private static byte[] ReadSettings(FileStream input)
