@@ -183,6 +183,38 @@ internal static class ProjectListRecoveryTests
             var uniqueManifest = AssetManifestStore.Create(project, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
             await associateVm.AssociateLegacyMetadataAsync(associateVm.SelectedProject, uniqueManifest);
             if ((await associateRepo.LoadAsync()).Projects.Last().ProjectId != uniqueManifest.ProjectId) throw new Exception("metadata association not persisted");
+            await Program.RunNamedCaseAsync("R33 approved legacy association refuses an in-place PF byte change", async () =>
+            {
+                var original = Path.Combine(root, "edited-after-approval.ymmp");
+                var metadata = Path.Combine(root, "edited-legacy-metadata.json");
+                var listPath = Path.Combine(root, "edited-legacy-list.json");
+                await File.WriteAllTextAsync(original, """{"name":"A"}""");
+                var approved = await ProjectFileEvidence.ReadAsync(original);
+                var manifest = AssetManifestStore.Create(original, [], DateTimeOffset.UtcNow, projectId: Guid.NewGuid());
+                await AssetManifestStore.SaveNewAsync(metadata, manifest);
+                var metadataBytes = await File.ReadAllBytesAsync(metadata);
+                var repo = new JsonProjectRepository(logger, listPath);
+                var store = await repo.LoadAsync();
+                store.Projects.Add(Entry(original));
+                await repo.SaveAsync(store);
+                var confirmedList = await File.ReadAllBytesAsync(listPath);
+                var vm = new ProjectListViewModel(logger, repo);
+                await vm.InitializeAsync();
+                vm.SelectedProject = vm.Projects.Single();
+                await File.WriteAllTextAsync(original, """{"name":"B"}""");
+                if (!approved.IsSameFile(await ProjectFileEvidence.ReadAsync(original)))
+                    throw new InvalidOperationException("Fixture did not retain the original file identity.");
+                try
+                {
+                    await vm.AssociateLegacyMetadataAsync(vm.SelectedProject, manifest, approved);
+                    throw new InvalidOperationException("The changed PF was associated using old evidence.");
+                }
+                catch (InvalidDataException) { }
+                if (!(await File.ReadAllBytesAsync(listPath)).SequenceEqual(confirmedList) ||
+                    !(await File.ReadAllBytesAsync(metadata)).SequenceEqual(metadataBytes) ||
+                    (await File.ReadAllTextAsync(original)) != """{"name":"B"}""")
+                    throw new InvalidOperationException("A refused association modified existing data.");
+            });
             //CSJ,variable=failedPath,失敗パス
             var failedPath = Path.Combine(root, "associate-failure.json");
             var failedSeed = new JsonProjectRepository(logger, failedPath); var failedStore = await failedSeed.LoadAsync();

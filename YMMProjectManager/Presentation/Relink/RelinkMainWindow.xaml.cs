@@ -292,7 +292,21 @@ public partial class RelinkMainWindow : Window
             {
                 //CSJ,variable=timelineRows,タイムライン行一覧
                 var timelineRows = RelinkCandidateVerifier.SnapshotRows(timelineContext.Rows);
+                if (!TimelineMediaRelinkService.IsCurrentReview(timelineContext, timelineRows))
+                {
+                    SetSummaryText("対象タイムラインが変わりました。画面を閉じて再読み込みしてください。");
+                    return;
+                }
                 var hashes = await RelinkCandidateVerifier.HashSelectedAsync(timelineRows, token);
+                token.ThrowIfCancellationRequested();
+                SyncRows();
+                if (!TimelineMediaRelinkService.IsCurrentReview(timelineContext, timelineRows) ||
+                    !timelineRows.Select(ReviewRow).SequenceEqual(timelineContext.Rows.Select(ReviewRow)) ||
+                    !CanShowUiFeedback())
+                {
+                    SetSummaryText("対象タイムラインが変わりました。画面を閉じて再読み込みしてください。");
+                    return;
+                }
                 if (hashes.Count == 0) { SetSummaryText("更新対象はありません。"); return; }
                 MessageBox.Show("期待ハッシュは読み込まれていないため、一致を判定できません。タイムラインへの反映は安全性を検証中のため停止しています。\n" + string.Join("\n\n", hashes), "素材再リンク", MessageBoxButton.OK, MessageBoxImage.Warning);
                 SetSummaryText("候補のハッシュを表示しました。タイムラインは変更していません。");
@@ -317,6 +331,9 @@ public partial class RelinkMainWindow : Window
         }
         finally { saveCancellation = null; CancelSaveButton.IsEnabled = false; }
     }
+
+    private static (int Row, RelinkStatus Status, string? Candidate) ReviewRow(RelinkRow row) =>
+        (row.RowIndex, row.Status, row.SelectedCandidate);
 
     //CSJ,method=SaveManagedRelinkAsync,管理対象再リンクを保存する（非同期）
     private async Task SaveManagedRelinkAsync(RelinkDocumentContext snapshot, AssetRevisionSeries.BranchSelection history,

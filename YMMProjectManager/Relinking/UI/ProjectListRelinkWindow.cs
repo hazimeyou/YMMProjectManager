@@ -65,7 +65,7 @@ public sealed partial class ProjectListViewModel
             }
 
             //CSJ,variable=projectPath,プロジェクトのパス
-            var projectPath = YmmProjectPathResolver.TryGetCurrentProjectPath() ?? SelectedProject?.FullPath;
+            var projectPath = YmmProjectPathResolver.TryGetCurrentProjectPath();
             if (!string.IsNullOrWhiteSpace(projectPath) &&
                 !TryGetOpenableProjectPath(projectPath, out projectPath, out _))
             {

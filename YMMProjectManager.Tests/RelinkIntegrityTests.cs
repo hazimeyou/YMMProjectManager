@@ -25,6 +25,21 @@ internal static class RelinkIntegrityTests
                 "unverified timeline replacement did not suggest file-based SaveAs");
             return Task.CompletedTask;
         });
+        await Program.RunNamedCaseAsync("Timeline review rejects a new owner, replaced item, changed path or duplicate binding", () =>
+        {
+            var owner = new object();
+            var item = new object();
+            var row = new RelinkRow { RowIndex = 0, Status = RelinkStatus.Updated, OriginalPath = "old.wav", SelectedCandidate = "new.wav" };
+            bool CheckReview(object current, object[] items, (int, object)[] targets, string path) =>
+                TimelineMediaRelinkService.MatchesReview(owner, current, items, targets, [row], _ => path);
+
+            Check(CheckReview(owner, [item], [(0, item)], "old.wav"), "current review was rejected");
+            Check(!CheckReview(new object(), [item], [(0, item)], "old.wav"), "unrelated owner was accepted");
+            Check(!CheckReview(owner, [new object()], [(0, item)], "old.wav"), "replaced item was accepted");
+            Check(!CheckReview(owner, [item], [(0, item)], "edited.wav"), "edited path was accepted");
+            Check(!CheckReview(owner, [item], [(0, item), (0, item)], "old.wav"), "duplicate position was accepted");
+            return Task.CompletedTask;
+        });
         string Hash(string path) => Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
         async Task<(string Path, RelinkDocumentContext Context)> Fixture(string name, string json)
         {

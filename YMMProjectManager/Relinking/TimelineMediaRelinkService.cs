@@ -22,6 +22,7 @@ public sealed class TimelineRelinkContext
     public required List<TimelineRelinkTarget> Targets { get; init; }
     //CSJ,property=Rows,行一覧
     public required List<RelinkRow> Rows { get; init; }
+    internal object? ScannedTimeline { get; init; }
 }
 
 //CSJ,class=TimelineMediaRelinkService,タイムライン内の素材再リンク
@@ -39,7 +40,7 @@ public sealed class TimelineMediaRelinkService
     public (TimelineRelinkContext? Context, RelinkResult Result) Scan(TimelineToolInfo? info)
     {
         var result = new RelinkResult();
-        if (info?.Timeline is null)
+        if (info?.Timeline is not { } timeline)
         {
             result.ErrorMessage = "\u30bf\u30a4\u30e0\u30e9\u30a4\u30f3\u60c5\u5831\u3092\u53d6\u5f97\u3067\u304d\u307e\u305b\u3093\u3067\u3057\u305f\u3002";
             return (null, result);
@@ -51,7 +52,7 @@ public sealed class TimelineMediaRelinkService
             //CSJ,variable=rows,行一覧
             var rows = new List<RelinkRow>();
 
-            foreach (var item in info.Timeline.Items)
+            foreach (var item in timeline.Items)
             {
                 if (!TimelineItemFilePathAccessor.TryGetFilePath(item, out var path) || string.IsNullOrWhiteSpace(path))
                 {
@@ -97,6 +98,7 @@ public sealed class TimelineMediaRelinkService
                 Info = info,
                 Targets = targets,
                 Rows = rows,
+                ScannedTimeline = timeline,
             }, result);
         }
         catch (Exception ex)
@@ -107,27 +109,47 @@ public sealed class TimelineMediaRelinkService
         }
     }
 
+    internal static bool IsCurrentReview(TimelineRelinkContext context, IReadOnlyList<RelinkRow> rows)
+    {
+        var current = TimelineContextService.Timeline;
+        return current is not null &&
+            MatchesReview(context.ScannedTimeline, current, current.Items,
+                context.Targets.Select(target => (target.RowIndex, target.Item)), rows,
+                item => TimelineItemFilePathAccessor.TryGetFilePath(item, out var path) ? path : null);
+    }
+
+    internal static bool MatchesReview<T>(object? scannedTimeline, object? currentTimeline, IEnumerable<T> currentItems,
+        IEnumerable<(int RowIndex, T Item)> targets, IReadOnlyList<RelinkRow> rows, Func<T, string?> readPath) where T : class
+    {
+        if (scannedTimeline is null || !ReferenceEquals(scannedTimeline, currentTimeline)) return false;
+        var current = new HashSet<T>(currentItems, ReferenceEqualityComparer.Instance);
+        var byRow = new Dictionary<int, T>();
+        foreach (var (row, item) in targets)
+            if (!byRow.TryAdd(row, item)) return false;
+
+        var used = new HashSet<T>(ReferenceEqualityComparer.Instance);
+        foreach (var row in rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
+        {
+            if (!byRow.TryGetValue(row.RowIndex, out var item) || !current.Contains(item) || !used.Add(item) ||
+                !string.Equals(readPath(item), row.OriginalPath, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
+
     //CSJ,method=Save,保存する
     public (bool Success, string? ErrorMessage, int UpdatedCount) Save(TimelineRelinkContext context)
     {
         try
         {
-            foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
+            var selected = context.Rows
+                .Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)).ToArray();
+            foreach (var row in selected)
                 RelinkJsonUpdate.EnsureSupported(row);
-            //CSJ,variable=updatedCount,更新済みの件数
-            var updatedCount = 0;
-            //CSJ,variable=targetMap,対象対応表
-            var targetMap = context.Targets.ToDictionary(x => x.RowIndex);
-            foreach (var row in context.Rows.Where(x => x.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(x.SelectedCandidate)))
-            {
-                if (!targetMap.TryGetValue(row.RowIndex, out var target) ||
-                    !TimelineItemFilePathAccessor.TryGetFilePath(target.Item, out var currentPath) ||
-                    !string.Equals(currentPath, row.OriginalPath, StringComparison.OrdinalIgnoreCase))
-                    return (false, "タイムラインの素材パスが変更されました。再読み込みしてください。", 0);
-            }
-            if (context.Rows.Any(row => row.Status == RelinkStatus.Updated && !string.IsNullOrWhiteSpace(row.SelectedCandidate)))
-                return (false, "タイムラインへの反映は安全性を検証中のため停止しています。", 0);
-            return (true, null, updatedCount);
+            if (selected.Length == 0) return (true, null, 0);
+            if (!IsCurrentReview(context, selected))
+                return (false, "タイムラインの素材パスまたは対象が変更されました。再読み込みしてください。", 0);
+            return (false, "タイムラインへの反映は安全性を検証中のため停止しています。", 0);
         }
         catch (InvalidDataException ex)
         {
