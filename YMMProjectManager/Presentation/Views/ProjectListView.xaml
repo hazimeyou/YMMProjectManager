@@ -56,7 +56,7 @@
                     Margin="0,0,8,0"
                     Command="{Binding OpenRelinkWindowCommand}" />
                 <Button
-                    Content="サムネイル生成"
+                    Content="サムネイル"
                     MinWidth="90"
                     Margin="0,0,8,0"
                     Command="{Binding GenerateThumbnailsFastCommand}" />

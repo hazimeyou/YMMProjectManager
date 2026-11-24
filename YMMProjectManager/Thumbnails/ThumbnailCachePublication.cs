@@ -2,6 +2,7 @@ using System.Globalization;
 using System.IO;
 using System.Security.Cryptography;
 using Microsoft.Win32.SafeHandles;
+using YMMProjectManager.Domain;
 using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Infrastructure.Output;
@@ -106,22 +107,30 @@ internal sealed class ThumbnailCachePublication : IDisposable
             using var parent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
             using var file = OwnedFilePublication.OpenOrdinaryPath(fullPath, expectDirectory: false, allowRename: false);
             using var root = OwnedFilePublication.DirectoryFence.Open(cacheRoot, enforceShare: true);
-            var cacheDirectory = Path.Combine(cacheRoot, FilmstripCacheKeyFactory.CreateLiveHash(fullPath, file));
-            if (TryOpenCacheChild(cacheDirectory, root))
-            {
-                var generation = LatestGeneration(cacheDirectory).Path;
-                if (generation is not null)
-                    return generation;
-            }
-
-            var legacy = FilmstripCacheKeyFactory.TryCreateHash(fullPath);
-            if (legacy is null)
-                return null;
-            var legacyDirectory = Path.Combine(cacheRoot, legacy);
-            return TryOpenCacheChild(legacyDirectory, root) ? legacyDirectory : null;
+            return FindDisplayDirectory(cacheRoot, fullPath, file, root).Path;
         }
         catch (IOException) { return null; }
         catch (UnauthorizedAccessException) { return null; }
+    }
+
+    // The caller holds the PF handle from which any supplied version was read.
+    internal static (string? Path, bool Detached) FindDisplayDirectory(string cacheRoot, string fullPath, SafeFileHandle file,
+        OwnedFilePublication.DirectoryFence root, ProjectFileIdentity? version = null)
+    {
+        if (version is not null)
+        {
+            var detached = Path.Combine(cacheRoot, FilmstripCacheKeyFactory.CreateDetachedHash(fullPath, version));
+            if (TryOpenCacheChild(detached, root) && LatestGeneration(detached).Path is { } completed)
+                return (completed, true);
+        }
+        var live = Path.Combine(cacheRoot, FilmstripCacheKeyFactory.CreateLiveHash(fullPath, file));
+        if (TryOpenCacheChild(live, root) && LatestGeneration(live).Path is { } legacyCapture)
+            return (legacyCapture, false);
+
+        var legacy = FilmstripCacheKeyFactory.TryCreateHash(fullPath);
+        if (legacy is null) return (null, false);
+        var legacyDirectory = Path.Combine(cacheRoot, legacy);
+        return (TryOpenCacheChild(legacyDirectory, root) ? legacyDirectory : null, false);
     }
 
     private static bool TryOpenCacheChild(string directory, OwnedFilePublication.DirectoryFence root)

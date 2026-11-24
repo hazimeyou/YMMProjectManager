@@ -20,12 +20,12 @@ internal sealed record DetachedThumbnailFrame(int ObservedFrame, BitmapSource Im
 
 public sealed partial class SeekPreviewThumbnailGenerator
 {
-    private const int MaxDetachedProjectBytes = 64 * 1024 * 1024;
+    internal const int MaxDetachedProjectBytes = 64 * 1024 * 1024;
     private const int MaxDetachedFrameBytes = 32 * 1024 * 1024;
 
     internal async Task<SeekPreviewThumbnailGenerationResult> GenerateDetachedAsync(string ymmpPath,
         Func<CancellationToken, ValueTask<IDetachedThumbnailSource>> openSource,
-        Func<bool> isSelectionCurrent, string cacheRoot, CancellationToken token)
+        Func<bool> isSelectionCurrent, string cacheRoot, CancellationToken token, Func<int, ValueTask>? reportProgress = null)
     {
         token.ThrowIfCancellationRequested();
         if (!CaptureGate.Wait(0))
@@ -71,6 +71,7 @@ public sealed partial class SeekPreviewThumbnailGenerator
                     }
 
                     cache.WriteFrame(slot, output => SaveScaledThumbnail(renderer, captured.Image, output));
+                    if (reportProgress is not null) await reportProgress(slot + 1);
                 }
 
                 RequireCurrent();
@@ -99,7 +100,7 @@ public sealed partial class SeekPreviewThumbnailGenerator
                                    InvalidOperationException or InvalidDataException or OverflowException or TargetInvocationException)
         {
             logger.Info("Detached thumbnail not committed: " + ex.GetType().Name);
-            return Failed("描画対象または保存先を確認できません。既存のサムネイルを使用します。");
+            return Failed("描画対象または保存先を確認できません。既存のサムネイルは保全されています。");
         }
         finally
         {

@@ -7,6 +7,7 @@ using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Application.Thumbnails;
 using YMMProjectManager.Infrastructure.Output;
 using YMMProjectManager.Infrastructure.Thumbnails;
+using YMMProjectManager.Presentation.Thumbnails;
 using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Presentation.ViewModels;
@@ -14,56 +15,20 @@ namespace YMMProjectManager.Presentation.ViewModels;
 //CSJ,class=ProjectListViewModel,プロジェクト一覧の表示モデル
 public sealed partial class ProjectListViewModel
 {
-    private async Task GenerateThumbnailsFastAsync()
+    private static string GetFilmstripCacheRoot() =>
+        Path.Combine(AppDirectories.UserDirectory, "plugin", "YMMProjectManager", "cache", "filmstrip");
+
+    private Task GenerateThumbnailsFastAsync() => ExecuteWithBusyAsync("Thumbnail gallery", () =>
     {
-        //CSJ,variable=project,プロジェクト
-        var project = SelectedProject;
-        if (project is null)
-        {
-            return;
-        }
-
+        if (SelectedProject is not { } project) return Task.CompletedTask;
         using var selection = new ThumbnailProjectSelection(this, project);
-
-        await ExecuteToolAsync("Generate thumbnails (fast)", async token =>
-        {
-            // 高速サムネイル生成は、YMM 側で開いているタイムライン情報を前提にする。
-            //CSJ,variable=info,情報
-            var info = TimelineContextService.Info;
-            if (info?.Timeline is null)
-            {
-                MessageBox.Show("Open a project in YMM first.", "YMM Project Manager", MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            SeekPreviewThumbnailGenerationResult result;
-            try
-            {
-                result = await seekPreviewThumbnailGenerator
-                    .GenerateAsync(selection.Path, info, selection.IsCurrent, token)
-                    .ConfigureAwait(true);
-            }
-            catch (OperationCanceledException) when (token.IsCancellationRequested)
-            {
-                MessageBox.Show("サムネイル生成を中止しました。", "YMM Project Manager",
-                    MessageBoxButton.OK, MessageBoxImage.Information);
-                return;
-            }
-
-            if (!result.Success)
-            {
-                MessageBox.Show(
-                    result.Reason,
-                    "YMM Project Manager",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Warning);
-                return;
-            }
-
-            // 生成後はキャッシュパスを再通知し、一覧のスクラブサムネイルを更新する。
-            UpdateThumbnailMetadata(project);
-        }).ConfigureAwait(true);
-    }
+        var window = new ThumbnailGalleryWindow(selection.Path, GetFilmstripCacheRoot(), selection.IsCurrent, logger,
+            seekPreviewThumbnailGenerator);
+        if (GetActiveWindow() is { } owner) window.Owner = owner;
+        window.ShowDialog();
+        if (selection.IsCurrent()) UpdateThumbnailMetadata(project);
+        return Task.CompletedTask;
+    });
 
     internal sealed class ThumbnailProjectSelection : IDisposable
     {
@@ -188,14 +153,7 @@ public sealed partial class ProjectListViewModel
     {
         try
         {
-            //CSJ,variable=cacheDirectory,キャッシュディレクトリ
-            var cacheDirectory = Path.Combine(
-                AppDirectories.UserDirectory,
-                "plugin",
-                "YMMProjectManager",
-                "cache",
-                "filmstrip");
-            var displayDirectory = ThumbnailCachePublication.GetDisplayDirectory(cacheDirectory, entry.FullPath);
+            var displayDirectory = ThumbnailCachePublication.GetDisplayDirectory(GetFilmstripCacheRoot(), entry.FullPath);
             entry.ThumbnailCacheDirectory = null;
             entry.ThumbnailCacheDirectory = displayDirectory;
 
