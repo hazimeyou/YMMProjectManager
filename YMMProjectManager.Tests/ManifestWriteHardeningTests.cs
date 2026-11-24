@@ -52,6 +52,29 @@ internal static class ManifestWriteHardeningTests
             await Expect<OperationCanceledException>(() => new ProjectGenerationService(logger,cancelStorage).CreateGenerationAsync(project,"cancel",null,cts.Token));
         }
         CheckPreserved();
+        await Program.RunNamedCaseAsync("Generation retirement leaves an occupied destination intact", async () =>
+        {
+            // Exercise the storage boundary after the service's earlier absence check.
+            var destination = Path.Combine(storage.GetDeletedDirectory(id), "concurrent-retirement");
+            Directory.CreateDirectory(destination);
+            var existing = Path.Combine(destination, "existing.ymmp");
+            await File.WriteAllTextAsync(existing, "unrelated retained project");
+            await Expect<IOException>(() => storage.MoveDirectoryAsync(first.GenerationPath, destination));
+            CheckPreserved();
+            Check(await File.ReadAllTextAsync(existing) == "unrelated retained project", "previous retirement was overwritten");
+        });
+        await Program.RunNamedCaseAsync("Cancellation before generation retirement leaves both directories intact", async () =>
+        {
+            var destination = Path.Combine(storage.GetDeletedDirectory(id), "cancelled-retirement");
+            Directory.CreateDirectory(destination);
+            var existing = Path.Combine(destination, "existing.ymmp");
+            await File.WriteAllTextAsync(existing, "unrelated retained project");
+            using var cancelled = new CancellationTokenSource();
+            cancelled.Cancel();
+            await Expect<OperationCanceledException>(() => storage.MoveDirectoryAsync(first.GenerationPath, destination, cancelled.Token));
+            CheckPreserved();
+            Check(await File.ReadAllTextAsync(existing) == "unrelated retained project", "cancellation removed a previous retirement");
+        });
         // The delete path moves then rolls back when the manifest write fails.
         //CSJ,variable=deleted,削除済み
         var deleted = await failingService.DeleteGenerationAsync(project, first.GenerationId);

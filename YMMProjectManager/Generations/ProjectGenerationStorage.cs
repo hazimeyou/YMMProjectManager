@@ -354,6 +354,7 @@ public sealed class ProjectGenerationStorage
     //CSJ,method=MoveDirectoryAsync,ディレクトリを移動する（非同期）
     public async Task MoveDirectoryAsync(string sourceDirectory, string destinationDirectory, CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         //CSJ,variable=destinationParent,格納先親
         var destinationParent = Path.GetDirectoryName(destinationDirectory);
         if (!string.IsNullOrWhiteSpace(destinationParent))
@@ -361,12 +362,12 @@ public sealed class ProjectGenerationStorage
             Directory.CreateDirectory(destinationParent);
         }
 
-        if (Directory.Exists(destinationDirectory))
+        // Directory.Move refuses a destination that appears after the caller's preflight.
+        await Task.Run(() =>
         {
-            Directory.Delete(destinationDirectory, recursive: true);
-        }
-
-        await Task.Run(() => Directory.Move(sourceDirectory, destinationDirectory), cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.Move(sourceDirectory, destinationDirectory);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     //CSJ,method=GetDirectorySizeBytes,ディレクトリサイズバイト列を取得する
