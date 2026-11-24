@@ -36,7 +36,7 @@ internal static class SettingsAndDiagnosticsTests
             var time = new DiagnosticTime(now);
             var logger = new FileLogger(path, time, byteLimit: 240);
             for (var index = 0; index < 64; index++)
-                logger.Error("private fixture path", new IOException("private fixture exception"));
+                logger.Error("private fixture path / synthetic credential payload", new IOException("private fixture exception"));
             var usage = logger.InspectLogs();
             Require(usage.Archives is > 0 and <= FileLogger.DefaultArchiveLimit &&
                 usage.Bytes <= 240 * (1 + FileLogger.DefaultArchiveLimit) && File.Exists(expired),
@@ -69,6 +69,11 @@ internal static class SettingsAndDiagnosticsTests
             var pending = Directory.CreateDirectory(Path.Combine(key, ".capture-pending-" + Guid.NewGuid().ToString("N"))).FullName;
             var recovery = Path.Combine(pending, "record.json");
             File.WriteAllText(recovery, "preserve");
+            var oldPng = Path.Combine(key, "000.png");
+            File.WriteAllBytes(oldPng, [1, 2, 3]);
+            var unfinished = Path.Combine(key, $"capture-{DateTime.UtcNow.Ticks:D19}-{Guid.NewGuid():N}");
+            Directory.CreateDirectory(unfinished);
+            File.WriteAllBytes(Path.Combine(unfinished, "000.png"), [4, 5]);
             var replacedCapture = CreateCapture(key);
             var replaced = Path.Combine(replacedCapture, "000.png");
             var replacement = Path.Combine(replacedCapture, "replacement.png");
@@ -77,12 +82,19 @@ internal static class SettingsAndDiagnosticsTests
             var usage = ThumbnailCacheMaintenance.Inspect(cache);
             Require(usage.Count == 2 && usage.Bytes > 2 * 64 * 8,
                 "An unknown cache was counted or an owned cache was skipped.");
+            var fullUsage = ThumbnailCacheMaintenance.InspectUsage(cache);
+            Require(fullUsage.ManagedCount == usage.Count && fullUsage.ManagedBytes == usage.Bytes &&
+                fullUsage.UnverifiedBytes >= 3 && fullUsage.InterruptedBytes == new FileInfo(recovery).Length + 2,
+                "Read-only accounting missed older or unfinished data.");
+            Require(ThumbnailCacheMaintenance.Trim(cache, usage.Bytes) == 0,
+                "A cache exactly at capacity was removed.");
             var oneCapture = new FileInfo(Path.Combine(newerCapture, "ownership.json")).Length + 64 * 8;
             Require(ThumbnailCacheMaintenance.Trim(cache, oneCapture) == 1 &&
                 !Directory.Exists(olderCapture) && Directory.Exists(newerCapture), "The older complete cache was not trimmed.");
             Require(ThumbnailCacheMaintenance.Trim(cache, 0, deleteAll: true) == 1 &&
                 !Directory.Exists(newerCapture) && File.ReadAllText(witness) == "unowned" &&
-                File.ReadAllText(recovery) == "preserve" && File.Exists(replaced), "Removal touched unknown or recoverable data.");
+                File.ReadAllText(recovery) == "preserve" && File.Exists(replaced) && File.Exists(oldPng) &&
+                Directory.Exists(unfinished), "Removal touched unknown or recoverable data.");
             return Task.CompletedTask;
         });
         await Program.RunNamedCaseAsync("Global exception summary excludes raw messages and exception data", () =>

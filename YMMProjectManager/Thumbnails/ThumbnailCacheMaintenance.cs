@@ -9,7 +9,7 @@ using YMMProjectManager.Infrastructure;
 namespace YMMProjectManager.Infrastructure.Output;
 
 /// <summary>Budget and cleanup for completed PM captures in the filmstrip cache.</summary>
-internal static class ThumbnailCacheMaintenance
+internal static partial class ThumbnailCacheMaintenance
 {
     internal const long ByteLimit = 256L * 1024 * 1024;
     internal static readonly object Sync = new();
@@ -27,6 +27,8 @@ internal static class ThumbnailCacheMaintenance
     private sealed record Capture(string Path, long Order, (ulong, Guid) Identity, (ulong, Guid) Marker,
         (ulong, Guid) ReceiptIdentity, long Bytes);
 
+    internal readonly record struct Usage(long ManagedBytes, int ManagedCount, long UnverifiedBytes, long InterruptedBytes, int Skipped);
+
     internal static void WriteReceipt(string path, (ulong Volume, Guid FileId) directory, IEnumerable<FrameProof> frames)
     {
         using var receipt = OwnedFilePublication.CreateOwnedOutputFile(Path.Combine(path, ReceiptName));
@@ -43,6 +45,63 @@ internal static class ThumbnailCacheMaintenance
             var captures = ReadCaptures(root).ToArray();
             return (captures.Sum(capture => capture.Bytes), captures.Length);
         }
+    }
+
+    // Counting and deleting intentionally have different ownership requirements.
+    internal static Usage InspectUsage(string root)
+    {
+        lock (Sync)
+        {
+            if (!Directory.Exists(root)) return default;
+            using var rootLease = OwnedFilePublication.DirectoryFence.Open(root, enforceShare: true);
+            var managed = ReadCaptures(root).ToDictionary(capture => capture.Path, StringComparer.Ordinal);
+            long unverified = 0, interrupted = 0;
+            var skipped = 0;
+            foreach (var project in Directory.EnumerateDirectories(root))
+            {
+                var name = Path.GetFileName(project);
+                if (name.Length != 64 || !name.All(Uri.IsHexDigit)) continue;
+                try
+                {
+                    using var projectLease = OwnedFilePublication.DirectoryFence.Open(project, enforceShare: true);
+                    unverified += MeasureOrdinaryFiles(project, ref skipped);
+                    foreach (var folder in Directory.EnumerateDirectories(project))
+                    {
+                        if (managed.ContainsKey(folder)) continue;
+                        var child = Path.GetFileName(folder);
+                        var pending = child.StartsWith(".capture-pending-", StringComparison.Ordinal) &&
+                            Guid.TryParseExact(child.AsSpan(".capture-pending-".Length), "N", out _);
+                        if (!pending && !TryReadOrder(child, out _)) continue;
+                        try
+                        {
+                            using var pin = OwnedFilePublication.OpenOrdinaryPath(folder, expectDirectory: true, allowRename: false,
+                                FileShare.ReadWrite, enforceDirectoryShare: true);
+                            var bytes = MeasureOrdinaryFiles(folder, ref skipped);
+                            if (pending || !File.Exists(Path.Combine(folder, "complete"))) interrupted += bytes;
+                            else unverified += bytes;
+                        }
+                        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { skipped++; }
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { skipped++; }
+            }
+            return new(managed.Values.Sum(capture => capture.Bytes), managed.Count, unverified, interrupted, skipped);
+        }
+    }
+
+    private static long MeasureOrdinaryFiles(string directory, ref int skipped)
+    {
+        long bytes = 0;
+        foreach (var path in Directory.EnumerateFiles(directory))
+        {
+            try
+            {
+                using var file = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
+                bytes += RandomAccess.GetLength(file);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { skipped++; }
+        }
+        return bytes;
     }
 
     internal static int Trim(string root, long budget, CancellationToken token = default, bool deleteAll = false)
@@ -86,14 +145,19 @@ internal static class ThumbnailCacheMaintenance
             foreach (var path in captures)
             {
                 name = Path.GetFileName(path);
-                if (name.Length != 60 || name[27] != '-' ||
-                    !long.TryParse(name.AsSpan(8, 19), NumberStyles.None, CultureInfo.InvariantCulture, out var order) ||
-                    order <= 0 || order > DateTime.MaxValue.Ticks || !Guid.TryParseExact(name.AsSpan(28), "N", out _))
-                    continue;
+                if (!TryReadOrder(name, out var order)) continue;
                 var capture = TryRead(path, order);
                 if (capture is not null) yield return capture;
             }
         }
+    }
+
+    private static bool TryReadOrder(string name, out long order)
+    {
+        order = 0;
+        return name.Length == 60 && name.StartsWith("capture-", StringComparison.Ordinal) && name[27] == '-' &&
+            long.TryParse(name.AsSpan(8, 19), NumberStyles.None, CultureInfo.InvariantCulture, out order) &&
+            order > 0 && order <= DateTime.MaxValue.Ticks && Guid.TryParseExact(name.AsSpan(28), "N", out _);
     }
 
     private static Capture? TryRead(string path, long order)
@@ -131,7 +195,8 @@ internal static class ThumbnailCacheMaintenance
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException) { return false; }
     }
 
-    private static CaptureFiles PinExactCapture(string path, (ulong, Guid) identity, bool allowDelete)
+    private static CaptureFiles PinExactCapture(string path, (ulong, Guid) identity, bool allowDelete,
+        bool verifyContents = false, CancellationToken token = default, long maxFrameBytes = ByteLimit)
     {
         var pins = new CaptureFiles();
         try
@@ -157,19 +222,22 @@ internal static class ThumbnailCacheMaintenance
                 (receipt.Volume, receipt.DirectoryId) != identity)
                 throw new IOException("The capture directory does not match its ownership record.");
             pins.Bytes = size;
-            var block = allowDelete ? new byte[64 * 1024] : null;
-            using var hash = allowDelete ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
+            var shouldHash = allowDelete || verifyContents;
+            var block = shouldHash ? new byte[64 * 1024] : null;
+            using var hash = shouldHash ? IncrementalHash.CreateHash(HashAlgorithmName.SHA256) : null;
             for (var slot = 0; slot < ThumbnailCachePublication.SlotCount; slot++)
             {
+                token.ThrowIfCancellationRequested();
                 var expected = receipt.Frames[slot];
                 var name = slot.ToString("D3", CultureInfo.InvariantCulture) + ".png";
-                if (expected?.Name != name || expected.Bytes is < 0 or > ByteLimit || expected.Sha256 is not { Length: 64 } digest)
+                if (expected?.Name != name || expected.Bytes < 0 || expected.Bytes > maxFrameBytes ||
+                    expected.Sha256 is not { Length: 64 } digest)
                     throw new IOException("The cache ownership record contains an invalid frame.");
                 var frame = pins.Open(path, name, allowDelete);
                 if (ProjectFileEvidence.ReadPhysicalIdentity(frame) != (expected.Volume, expected.FileId) ||
                     RandomAccess.GetLength(frame) != expected.Bytes)
                     throw new IOException("The cache frame identification changed.");
-                if (hash is not null && !string.Equals(HashFrame(frame, expected.Bytes, block!, hash), digest, StringComparison.Ordinal))
+                if (hash is not null && !string.Equals(HashFrame(frame, expected.Bytes, block!, hash, token), digest, StringComparison.Ordinal))
                     throw new IOException("The cache frame contents changed.");
                 pins.Bytes = checked(pins.Bytes + expected.Bytes);
             }
@@ -182,10 +250,11 @@ internal static class ThumbnailCacheMaintenance
         }
     }
 
-    private static string HashFrame(SafeFileHandle frame, long size, byte[] block, IncrementalHash hash)
+    private static string HashFrame(SafeFileHandle frame, long size, byte[] block, IncrementalHash hash, CancellationToken token)
     {
         for (var offset = 0L; offset < size;)
         {
+            token.ThrowIfCancellationRequested();
             var length = RandomAccess.Read(frame, block.AsSpan(0, (int)Math.Min(block.Length, size - offset)), offset);
             if (length == 0) throw new IOException("The cache frame is incomplete.");
             hash.AppendData(block.AsSpan(0, length));

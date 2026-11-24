@@ -116,7 +116,7 @@ public partial class YMMProjectManagerSettingsView : UserControl
 
     private async void OnClearCacheClick(object sender, RoutedEventArgs e)
     {
-        if (MessageBox.Show("完了済みのサムネイルキャッシュを削除しますか？", "キャッシュの削除",
+        if (MessageBox.Show("所有を確認できる完了キャッシュを削除しますか？\n旧キャッシュと中断ファイルは保持します。", "キャッシュの削除",
                 MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
             await RefreshStorageAsync(() => ThumbnailCacheMaintenance.Trim(FilmstripRoot, 0, deleteAll: true));
     }
@@ -137,13 +137,15 @@ public partial class YMMProjectManagerSettingsView : UserControl
             var result = await Task.Run(() =>
             {
                 var deleted = cleanup?.Invoke();
-                var cache = ThumbnailCacheMaintenance.Inspect(root);
+                var cache = ThumbnailCacheMaintenance.InspectUsage(root);
                 var logs = PluginDiagnostics.Logger.InspectLogs();
                 return (deleted, cache, logs);
             });
             var operation = result.deleted is int count ? $"削除 {count:N0} 件。\n" : "";
             StorageSummary.Text = operation +
-                $"確認済みキャッシュ {result.cache.Count:N0} 件 / {result.cache.Bytes:N0} バイト\n" +
+                $"確認済みキャッシュ {result.cache.ManagedCount:N0} 件 / {result.cache.ManagedBytes:N0} バイト\n" +
+                $"旧形式・未照合 {result.cache.UnverifiedBytes:N0} バイト / 中断物 {result.cache.InterruptedBytes:N0} バイト\n" +
+                (result.cache.Skipped > 0 ? $"確認できなかった項目 {result.cache.Skipped:N0} 件\n" : "") +
                 $"診断ログ {result.logs.Bytes:N0} バイト（過去ログ {result.logs.Archives:N0} 件）";
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
