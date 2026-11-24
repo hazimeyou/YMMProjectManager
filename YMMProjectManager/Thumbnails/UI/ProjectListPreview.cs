@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.IO;
 using System.Windows;
 using System.Diagnostics;
@@ -22,7 +23,9 @@ public sealed partial class ProjectListViewModel
             return;
         }
 
-        await ExecuteWithBusyAsync("Generate thumbnails (fast)", async () =>
+        using var selection = new ThumbnailProjectSelection(this, project);
+
+        await ExecuteToolAsync("Generate thumbnails (fast)", async token =>
         {
             // 高速サムネイル生成は、YMM 側で開いているタイムライン情報を前提にする。
             //CSJ,variable=info,情報
@@ -33,9 +36,19 @@ public sealed partial class ProjectListViewModel
                 return;
             }
 
-            var result = await seekPreviewThumbnailGenerator
-                .GenerateAsync(project.FullPath, info, CancellationToken.None)
-                .ConfigureAwait(true);
+            SeekPreviewThumbnailGenerationResult result;
+            try
+            {
+                result = await seekPreviewThumbnailGenerator
+                    .GenerateAsync(selection.Path, info, selection.IsCurrent, token)
+                    .ConfigureAwait(true);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                MessageBox.Show("サムネイル生成を中止しました。", "YMM Project Manager",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
 
             if (!result.Success)
             {
@@ -50,6 +63,50 @@ public sealed partial class ProjectListViewModel
             // 生成後はキャッシュパスを再通知し、一覧のスクラブサムネイルを更新する。
             UpdateThumbnailMetadata(project);
         }).ConfigureAwait(true);
+    }
+
+    internal sealed class ThumbnailProjectSelection : IDisposable
+    {
+        private readonly ProjectListViewModel owner;
+        private readonly ProjectEntry project;
+        private int invalidated;
+
+        internal ThumbnailProjectSelection(ProjectListViewModel owner, ProjectEntry project)
+        {
+            this.owner = owner;
+            this.project = project;
+            Path = project.FullPath;
+            owner.PropertyChanged += OnSelectionChanged;
+            project.PropertyChanged += OnProjectChanged;
+        }
+
+        internal string Path { get; }
+
+        internal bool IsCurrent() =>
+            Volatile.Read(ref invalidated) == 0 &&
+            ReferenceEquals(owner.SelectedProject, project) &&
+            string.Equals(project.FullPath, Path, StringComparison.Ordinal);
+
+        private void OnSelectionChanged(object? sender, PropertyChangedEventArgs args)
+        {
+            if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == nameof(SelectedProject))
+                Invalidate();
+        }
+
+        private void OnProjectChanged(object? sender, PropertyChangedEventArgs args)
+        {
+            if (string.IsNullOrEmpty(args.PropertyName) || args.PropertyName == nameof(ProjectEntry.FullPath))
+                Invalidate();
+        }
+
+        private void Invalidate() => Interlocked.Exchange(ref invalidated, 1);
+
+        public void Dispose()
+        {
+            Invalidate();
+            owner.PropertyChanged -= OnSelectionChanged;
+            project.PropertyChanged -= OnProjectChanged;
+        }
     }
 
     //CSJ,method=RunSeekProbeAsync,フレーム移動調査を実行する（非同期）
@@ -131,29 +188,18 @@ public sealed partial class ProjectListViewModel
     {
         try
         {
-            // キャッシュキーはプロジェクトパス由来なので、移動や別名保存時も再計算する。
-            //CSJ,variable=hash,ハッシュ
-            var hash = FilmstripCacheKeyFactory.TryCreateHash(entry.FullPath);
-            if (string.IsNullOrWhiteSpace(hash))
-            {
-                entry.ThumbnailCacheDirectory = null;
-                entry.ThumbnailSource = null;
-                return;
-            }
-
             //CSJ,variable=cacheDirectory,キャッシュディレクトリ
             var cacheDirectory = Path.Combine(
                 AppDirectories.UserDirectory,
                 "plugin",
                 "YMMProjectManager",
                 "cache",
-                "filmstrip",
-                hash);
+                "filmstrip");
+            var displayDirectory = ThumbnailCachePublication.GetDisplayDirectory(cacheDirectory, entry.FullPath);
             entry.ThumbnailCacheDirectory = null;
-            entry.ThumbnailCacheDirectory = cacheDirectory;
+            entry.ThumbnailCacheDirectory = displayDirectory;
 
-            var thumbPath = Path.Combine(cacheDirectory, "000.png");
-            if (!File.Exists(thumbPath))
+            if (displayDirectory is null || !File.Exists(Path.Combine(displayDirectory, "000.png")))
             {
                 entry.ThumbnailSource = null;
             }

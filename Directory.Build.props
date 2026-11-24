@@ -1,5 +1,7 @@
 <Project>
   <PropertyGroup>
-	  <YMM4DirPath>C:\Users\yu-za-hazimeyou\Desktop\YukkuriMovieMaker_v4_Lite\</YMM4DirPath>
+    <YMM4Path Condition="'$(YMM4Path)' == '' and '$(YMM4_PATH)' != ''">$(YMM4_PATH)</YMM4Path>
+    <YMM4Path Condition="'$(YMM4Path)' == '' and '$(YMM4DirPath)' != ''">$(YMM4DirPath)</YMM4Path>
+    <YMM4Path Condition="'$(YMM4Path)' == ''">$(MSBuildThisFileDirectory)libs/YMM4</YMM4Path>
   </PropertyGroup>
 </Project>

@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -60,15 +60,48 @@ public partial class YMMProjectManagerSettingsView : UserControl
     //CSJ,method=OnSaveClick,保存クリック時の処理
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        SummaryText.Text = settings.SetSearchFolders(folders)
-            ? "保存しました。"
-            : "保存に失敗しました。";
+        if (settings.SetSearchFolders(folders))
+            SummaryText.Text = "保存しました。";
+        else if (settings.RetainedBackupPath is { } backup)
+            SummaryText.Text = $"保存に失敗しました。以前の設定を保全しました。\n{backup}";
+        else
+            SummaryText.Text = "保存に失敗しました。";
     }
 
     private void OnReloadClick(object sender, RoutedEventArgs e)
     {
-        ReloadFolders();
-        SummaryText.Text = "設定を再読込しました。";
+        if (settings.TryReload())
+        {
+            ReloadFolders();
+            SummaryText.Text = "設定を再読込しました。";
+        }
+        else if (settings.FindInterruptedSave() is { } candidate)
+        {
+            var confirmation = MessageBox.Show(
+                $"中断前の設定を確認できました。以前の設定を復元しますか？\n{candidate.BackupPath}",
+                "設定の復元", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            if (confirmation != MessageBoxResult.Yes)
+            {
+                SummaryText.Text = "復元を見送りました。以前の設定は保全されています。";
+                return;
+            }
+
+            if (settings.TryRecoverInterruptedSave(candidate))
+            {
+                ReloadFolders();
+                SummaryText.Text = "中断前の設定を復元しました。";
+            }
+            else
+            {
+                SummaryText.Text = $"以前の設定を復元できませんでした。退避先を確認してください。\n{candidate.BackupPath}";
+            }
+        }
+        else
+        {
+            SummaryText.Text = settings.RetainedBackupPath is { } backup
+                ? $"設定を再読込できませんでした。退避先を確認してください。\n{backup}"
+                : "設定の再読込に失敗しました。";
+        }
     }
 
     private void ReloadFolders()

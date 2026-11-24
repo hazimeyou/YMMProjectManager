@@ -21,6 +21,7 @@ internal static class PreviewComparisonTests
         await CaseAsync("TL-1 cancellation during buffer acquisition", TestCancellationDuringBufferAcquisition);
         await CaseAsync("TL-1 4K metrics, wide accumulator and bounded allocation", TestLargeImage);
         await Program.RunNamedCaseAsync("TL-1 concurrent comparisons with stable independent buffers", TestConcurrencyAsync);
+        await LiveThumbnailSafetyTests.RunAsync();
     }
 
     private static Task CaseAsync(string name, Action run) => Program.RunNamedCaseAsync(name, () =>

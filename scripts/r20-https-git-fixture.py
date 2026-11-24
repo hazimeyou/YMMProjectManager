@@ -118,5 +118,9 @@ class FixtureServer(http.server.ThreadingHTTPServer):
 
 with FixtureServer(("127.0.0.1", 0), Handler) as server:
     server.socket = context.wrap_socket(server.socket, server_side=True)
-    pathlib.Path(ready_file).write_text(str(server.server_port), encoding="ascii")
+    ready = pathlib.Path(ready_file)
+    pending = ready.with_suffix(".ready.tmp")
+    with pending.open("x", encoding="ascii") as file:
+        file.write(str(server.server_port))
+    pending.rename(ready)
     server.serve_forever()

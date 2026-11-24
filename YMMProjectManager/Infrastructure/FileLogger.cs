@@ -13,11 +13,11 @@ public sealed class FileLogger
     private readonly object sync = new();
     //CSJ,field=writer,書き込み処理
     private StreamWriter? writer;
+    private bool closed;
 
     public FileLogger(string logPath)
     {
         this.logPath = logPath;
-        EnsureLogDirectory();
     }
 
     //CSJ,method=Info,情報
@@ -54,6 +54,19 @@ public sealed class FileLogger
         }
     }
 
+    internal void Close()
+    {
+        lock (sync)
+        {
+            closed = true;
+            var current = writer;
+            writer = null;
+            try { current?.Dispose(); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
     //CSJ,method=Write,書き込む
     private void Write(string level, string message)
     {
@@ -62,6 +75,7 @@ public sealed class FileLogger
             var line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{level}] {message}{Environment.NewLine}";
             lock (sync)
             {
+                if (closed) return;
                 EnsureWriter();
                 writer!.Write(line);
             }

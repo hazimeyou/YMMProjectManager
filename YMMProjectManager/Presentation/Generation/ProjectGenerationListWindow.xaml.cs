@@ -140,7 +140,8 @@ public partial class ProjectGenerationListWindow : Window, INotifyPropertyChange
     //CSJ,method=OnRestoreClick,復元クリック時の処理
     private async void OnRestoreClick(object sender, RoutedEventArgs e)
     {
-        if (SelectedGeneration is null)
+        var selected = SelectedGeneration;
+        if (selected is null)
         {
             return;
         }
@@ -155,7 +156,7 @@ public partial class ProjectGenerationListWindow : Window, INotifyPropertyChange
             return;
         }
 
-        var (success, errorMessage, _) = await generationService.RestoreGenerationAsync(projectPath, SelectedGeneration.GenerationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
+        var (success, errorMessage, _) = await generationService.RestoreGenerationAsync(projectPath, selected.GenerationId, GenerationRestoreMode.RestoreToOriginalWithBackup);
         if (!success)
         {
             MessageBox.Show(errorMessage ?? "復元に失敗しました。", "世代一覧", MessageBoxButton.OK, MessageBoxImage.Warning);
@@ -169,7 +170,8 @@ public partial class ProjectGenerationListWindow : Window, INotifyPropertyChange
     //CSJ,method=OnDeleteClick,削除クリック時の処理
     private async void OnDeleteClick(object sender, RoutedEventArgs e)
     {
-        if (SelectedGeneration is null)
+        var selected = SelectedGeneration;
+        if (selected is null)
         {
             return;
         }
@@ -184,7 +186,7 @@ public partial class ProjectGenerationListWindow : Window, INotifyPropertyChange
             return;
         }
 
-        var (success, errorMessage) = await generationService.DeleteGenerationAsync(projectPath, SelectedGeneration.GenerationId);
+        var (success, errorMessage) = await generationService.DeleteGenerationAsync(projectPath, selected.GenerationId);
         if (!success)
         {
             MessageBox.Show(errorMessage ?? "削除に失敗しました。", "世代一覧", MessageBoxButton.OK, MessageBoxImage.Warning);

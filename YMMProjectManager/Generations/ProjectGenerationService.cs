@@ -4,8 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
-using System.Runtime.InteropServices;
-using System.ComponentModel;
+using Microsoft.Win32.SafeHandles;
 using System.Threading;
 using System.Threading.Tasks;
 using YMMProjectManager.Application;
@@ -16,9 +15,6 @@ namespace YMMProjectManager.Infrastructure.Generations;
 //CSJ,class=ProjectGenerationService,プロジェクトの世代管理
 public sealed class ProjectGenerationService : IProjectGenerationService
 {
-    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateDirectoryExclusive(string path, IntPtr securityAttributes);
     //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
     //CSJ,field=hashService,ハッシュサービス
@@ -29,16 +25,21 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     private readonly ProjectGenerationStorage storage;
     //CSJ,field=manifestRepository,目録リポジトリ
     private readonly ProjectGenerationManifestRepository manifestRepository;
+    private readonly Action<string>? beforeRestoreCommit;
+    private readonly Action? afterRestoreParking;
 
     public ProjectGenerationService(FileLogger logger, string? storageRootDirectory = null)
         : this(logger, new ProjectGenerationStorage(storageRootDirectory)) { }
 
-    internal ProjectGenerationService(FileLogger logger, ProjectGenerationStorage storage, Func<DateTimeOffset, string>? createId = null)
+    internal ProjectGenerationService(FileLogger logger, ProjectGenerationStorage storage,
+        Func<DateTimeOffset, string>? createId = null, Action<string>? beforeRestoreCommit = null, Action? afterRestoreParking = null)
     {
         this.logger = logger;
         hashService = new ProjectGenerationHashService();
         this.createId = createId ?? new ProjectGenerationIdFactory().Create;
         this.storage = storage;
+        this.beforeRestoreCommit = beforeRestoreCommit;
+        this.afterRestoreParking = afterRestoreParking;
         manifestRepository = new ProjectGenerationManifestRepository(storage, logger);
     }
 
@@ -61,7 +62,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         //CSJ,variable=generationDirectory,世代ディレクトリ
         var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
         //CSJ,variable=generationFilePath,世代ファイルパス
-        var generationFilePath = storage.GetGenerationFilePath(projectId, generationId);
+        var generationFilePath = Path.GetFullPath(storage.GetGenerationFilePath(projectId, generationId));
 
         //CSJ,variable=manifestLoad,目録読み込み
         var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
@@ -75,23 +76,25 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
         logger.Info($"GenerationCreateStarted projectPath={normalizedProjectPath}, generationId={generationId}");
 
-        var ownsGenerationDirectory = false;
+        if (manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
+            throw new IOException("Generation ID already exists in the manifest.");
+
+        var fullGenerationDirectory = Path.GetFullPath(generationDirectory);
+        using var generationParent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullGenerationDirectory)!, enforceShare: true);
+        using var generation = CreateGenerationDirectory(fullGenerationDirectory);
+        FileStream? snapshot = null;
+        FileStream? metadataFile = null;
+        var retain = false;
         try
         {
-            if (manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
-                throw new IOException("Generation ID already exists in the manifest.");
-            //CSJ,variable=fullDirectory,完全ディレクトリ
-            var fullDirectory = Path.GetFullPath(generationDirectory);
-            //CSJ,variable=nativeDirectory,ネイティブディレクトリ
-            var nativeDirectory = fullDirectory.StartsWith(@"\\", StringComparison.Ordinal)
-                ? @"\\?\UNC\" + fullDirectory[2..]
-                : @"\\?\" + fullDirectory;
-            if (!CreateDirectoryExclusive(nativeDirectory, IntPtr.Zero))
-                throw new IOException("Could not exclusively create the generation directory.", new Win32Exception(Marshal.GetLastWin32Error()));
-            ownsGenerationDirectory = true;
-            await storage.CopyProjectSnapshotAsync(normalizedProjectPath, generationFilePath, cancellationToken).ConfigureAwait(false);
-            var copiedFileInfo = new FileInfo(generationFilePath);
-            var sha256 = await Task.Run(() => hashService.ComputeFileSha256(generationFilePath), cancellationToken).ConfigureAwait(false);
+            snapshot = OwnedFilePublication.CreateOwnedOutputFile(generationFilePath, readBack: true);
+            using (var source = File.Open(normalizedProjectPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+                await source.CopyToAsync(snapshot, cancellationToken).ConfigureAwait(false);
+            await snapshot.FlushAsync(cancellationToken).ConfigureAwait(false);
+            snapshot.Flush(flushToDisk: true);
+            var copiedSize = snapshot.Length;
+            snapshot.Position = 0;
+            var sha256 = Convert.ToHexString(await SHA256.HashDataAsync(snapshot, cancellationToken).ConfigureAwait(false));
 
             //CSJ,variable=metadata,メタデータ
             var metadata = new ProjectGenerationManifestItem
@@ -101,12 +104,14 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 DisplayName = string.IsNullOrWhiteSpace(displayName) ? FormatDefaultGenerationName(createdAt) : displayName.Trim(),
                 Memo = string.IsNullOrWhiteSpace(memo) ? null : memo.Trim(),
                 SourceProjectPath = normalizedProjectPath,
-                FileSize = copiedFileInfo.Length,
+                FileSize = copiedSize,
                 Sha256 = sha256,
                 CreatedByVersion = GetCreatedByVersion(),
             };
 
-            await storage.WriteMetadataAsync(projectId, generationId, metadata, cancellationToken).ConfigureAwait(false);
+            var metadataPath = Path.GetFullPath(storage.GetGenerationMetadataPath(projectId, generationId));
+            metadataFile = OwnedFilePublication.CreateOwnedOutputFile(metadataPath);
+            await ProjectGenerationStorage.WriteOwnedMetadataAsync(metadataFile, metadata, cancellationToken).ConfigureAwait(false);
 
             manifest.ProjectId = projectId;
             manifest.ProjectPath = normalizedProjectPath;
@@ -114,6 +119,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
             manifest.UpdatedAt = createdAt;
             manifest.Generations.Add(metadata);
             await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
+            retain = true;
 
             logger.Info($"GenerationCreateCompleted projectPath={normalizedProjectPath}, generationId={generationId}, fileSize={metadata.FileSize}");
             return new ProjectGenerationRecord
@@ -132,18 +138,49 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         }
         catch (Exception ex)
         {
+            // A candidate manifest retained for manual recovery may refer to this exact generation.
+            retain |= ex is ProjectGenerationManifestPublication.PendingException;
             logger.Error(ex, $"GenerationCreateFailed projectPath={normalizedProjectPath}, generationId={generationId}");
-            try
+            throw;
+        }
+        finally
+        {
+            if (!retain)
             {
-                if (ownsGenerationDirectory && Directory.Exists(generationDirectory))
-                {
-                    Directory.Delete(generationDirectory, recursive: true);
-                }
-            }
-            catch
-            {
+                if (metadataFile is not null) OwnedFilePublication.TryDeleteOpenedPath(metadataFile.SafeFileHandle);
+                if (snapshot is not null) OwnedFilePublication.TryDeleteOpenedPath(snapshot.SafeFileHandle);
             }
 
+            metadataFile?.Dispose();
+            snapshot?.Dispose();
+            if (!retain)
+                OwnedFilePublication.TryDeleteOpenedPath(generation); // Only succeeds for this exact empty directory.
+        }
+    }
+
+    private static SafeFileHandle CreateGenerationDirectory(string path)
+    {
+        var parent = Path.GetDirectoryName(path)!;
+        using var parentHandle = OwnedFilePublication.OpenOrdinaryPath(parent, expectDirectory: true, allowRename: false, FileShare.ReadWrite);
+        using var created = OwnedStagingDirectory.CreateAndPin(parentHandle, Path.GetFileName(path));
+        using var witness = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: true, allowRename: false,
+            FileShare.ReadWrite | FileShare.Delete, enforceDirectoryShare: true);
+        var identity = ProjectFileEvidence.ReadPhysicalIdentity(created);
+        if (ProjectFileEvidence.ReadPhysicalIdentity(witness) != identity)
+            throw new IOException("作成した世代フォルダーを確認できません。");
+
+        created.Dispose();
+        var owned = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: true, allowRename: true,
+            FileShare.ReadWrite, enforceDirectoryShare: true);
+        try
+        {
+            if (ProjectFileEvidence.ReadPhysicalIdentity(owned) == identity)
+                return owned;
+            throw new IOException("作成した世代フォルダーが変更されました。");
+        }
+        catch
+        {
+            owned.Dispose();
             throw;
         }
     }
@@ -293,22 +330,24 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
         //CSJ,variable=generationPath,世代パス
-        var generationPath = storage.GetGenerationFilePath(projectId, generationId);
+        var generationPath = Path.GetFullPath(storage.GetGenerationFilePath(projectId, generationId));
 
         logger.Info($"GenerationRestoreStarted projectPath={normalizedProjectPath}, generationId={generationId}, mode={restoreMode}");
 
-        //CSJ,variable=tempPath,一時パス
-        string? tempPath = null;
         try
         {
-            if ((File.GetAttributes(Path.GetDirectoryName(generationPath)!) & FileAttributes.ReparsePoint) != 0)
-                return (false, "世代フォルダがリンクのため復元を中止しました。", null);
-            if (!File.Exists(generationPath))
-            {
-                return (false, "世代ファイルが見つかりません。", null);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var projectDirectory = Path.GetDirectoryName(normalizedProjectPath)!;
+            var outputPath = restoreMode == GenerationRestoreMode.RestoreAsNewFile
+                ? CreateRestoreAsNewFilePath(normalizedProjectPath, generationId)
+                : normalizedProjectPath;
 
-            //CSJ,variable=metadata,メタデータ
+            using var targetFence = OwnedFilePublication.DirectoryFence.Open(projectDirectory, enforceShare: true);
+            ProjectGenerationRestoreRecovery.RequireNoPending(outputPath);
+            await using var original = restoreMode == GenerationRestoreMode.RestoreAsNewFile
+                ? null : ProjectGenerationRestorePublication.OpenTarget(outputPath);
+            var generationDirectory = Path.GetDirectoryName(generationPath)!;
+            using var generationFence = OwnedFilePublication.DirectoryFence.Open(generationDirectory, enforceShare: true);
             var metadata = await storage.ReadMetadataAsync(projectId, generationId, cancellationToken).ConfigureAwait(false);
             if (metadata is null)
             {
@@ -316,62 +355,47 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 return (false, "metadata.json が見つかりません。", null);
             }
 
-            //CSJ,variable=actualSha,実測値SHA
-            var actualSha = hashService.ComputeFileSha256(generationPath);
-            if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
+            using var sourceHandle = OwnedFilePublication.OpenOrdinaryPath(generationPath, expectDirectory: false, allowRename: false);
+            using var source = new FileStream(sourceHandle, FileAccess.Read);
+            var temporaryPath = Path.Combine(projectDirectory, $"{Guid.NewGuid():N}.restore.tmp");
+            await using var candidate = ProjectGenerationRestorePublication.CreateCandidate(temporaryPath, original);
+            var retain = false;
+            try
             {
-                logger.Info($"GenerationMetadataCorrupted projectId={projectId}, generationId={generationId}, reason=sha-mismatch");
-                return (false, "SHA256 が一致しません。世代ファイルが破損している可能性があります。", null);
-            }
+                if (original is not null)
+                    ProjectListReplacement.VerifyCompatibleFileSecurity(original, candidate, allowAclCreationMarkerDifference: true);
+                await source.CopyToAsync(candidate, cancellationToken).ConfigureAwait(false);
+                await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
+                if (original is not null)
+                    File.SetCreationTimeUtc(candidate.SafeFileHandle, File.GetCreationTimeUtc(original.SafeFileHandle));
+                candidate.Flush(flushToDisk: true);
+                candidate.Position = 0;
+                var actualSha = Convert.ToHexString(await SHA256.HashDataAsync(candidate, cancellationToken).ConfigureAwait(false));
+                if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("SHA256 が一致しません。世代ファイルが破損している可能性があります。");
 
-            if (restoreMode == GenerationRestoreMode.RestoreAsNewFile)
+                var backupPath = original is null ? null : storage.ResolveRestoreBackupPath(projectId, outputPath);
+                beforeRestoreCommit?.Invoke(backupPath ?? outputPath);
+                var retained = await ProjectGenerationRestorePublication.PublishAsync(candidate, temporaryPath, original, outputPath,
+                    backupPath, cancellationToken, afterRestoreParking).ConfigureAwait(false);
+                retain = true;
+                logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, restoredPath={outputPath}, backupPath={backupPath}, retainedOriginalPath={retained}");
+                return (true, null, BuildGenerationRecord(metadata, generationDirectory));
+            }
+            catch (ProjectGenerationRestorePublication.PendingException)
             {
-                //CSJ,variable=restoredPath,復元済みのパス
-                var restoredPath = CreateRestoreAsNewFilePath(normalizedProjectPath, generationId);
-                //CSJ,variable=tempDirectory,一時ディレクトリ
-                var tempDirectory = Path.GetDirectoryName(restoredPath) ?? AppContext.BaseDirectory;
-                tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, tempDirectory, cancellationToken).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Move(tempPath, restoredPath, overwrite: false);
-                logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, restoredPath={restoredPath}");
-                return (true, null, BuildGenerationRecord(metadata, storage.GetGenerationDirectory(projectId, generationId)));
+                retain = true;
+                throw;
             }
-
-            if (File.Exists(normalizedProjectPath))
+            finally
             {
-                TryOpenExclusive(normalizedProjectPath);
+                if (!retain) OwnedFilePublication.TryDeleteOpenedPath(candidate.SafeFileHandle);
             }
-
-            //CSJ,variable=backupPath,バックアップ先のパス
-            var backupPath = storage.ResolveRestoreBackupPath(projectId, normalizedProjectPath);
-            //CSJ,variable=targetDirectory,対象ディレクトリ
-            var targetDirectory = Path.GetDirectoryName(normalizedProjectPath) ?? AppContext.BaseDirectory;
-            tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, targetDirectory, cancellationToken).ConfigureAwait(false);
-            await storage.ReplaceFileAtomicallyAsync(tempPath, normalizedProjectPath, backupPath, cancellationToken).ConfigureAwait(false);
-
-            logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, backupPath={backupPath}");
-            return (true, null, BuildGenerationRecord(metadata, storage.GetGenerationDirectory(projectId, generationId)));
         }
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationRestoreFailed projectPath={normalizedProjectPath}, generationId={generationId}");
             return (false, ex.Message, null);
-        }
-        finally
-        {
-            if (!string.IsNullOrWhiteSpace(tempPath))
-            {
-                try
-                {
-                    if (File.Exists(tempPath))
-                    {
-                        File.Delete(tempPath);
-                    }
-                }
-                catch
-                {
-                }
-            }
         }
     }
 
@@ -384,39 +408,49 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         //CSJ,variable=projectId,プロジェクトID
         var projectId = hashService.ComputeProjectId(normalizedProjectPath);
         //CSJ,variable=generationDirectory,世代ディレクトリ
-        var generationDirectory = storage.GetGenerationDirectory(projectId, generationId);
+        var generationDirectory = Path.GetFullPath(storage.GetGenerationDirectory(projectId, generationId));
         //CSJ,variable=deletedDirectory,削除済みのディレクトリ
-        var deletedDirectory = storage.GetDeletedGenerationDirectory(projectId, generationId);
+        var deletedDirectory = Path.GetFullPath(storage.GetDeletedGenerationDirectory(projectId, generationId));
 
         logger.Info($"GenerationDeleteStarted projectPath={normalizedProjectPath}, generationId={generationId}");
-        var moved = false;
-
         try
         {
             //CSJ,variable=manifestLoad,目録読み込み
             var manifestLoad = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, cancellationToken).ConfigureAwait(false);
             //CSJ,variable=manifest,目録
             var manifest = RequireManifest(manifestLoad);
-            if (!manifest.Generations.Any(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase)))
+            var retiring = manifest.Generations.FirstOrDefault(item => string.Equals(item.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
+            if (retiring is null)
                 return (false, "世代 manifest に対象がありません。");
-            if (!Directory.Exists(generationDirectory))
+            using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(generationDirectory)!, enforceShare: true);
+            using var destinationFence = ProjectGenerationStorage.OpenOrCreateOutputDirectory(Path.GetDirectoryName(deletedDirectory)!);
+            using var generation = OwnedFilePublication.OpenOrdinaryPath(generationDirectory, expectDirectory: true,
+                allowRename: true, share: FileShare.ReadWrite, enforceDirectoryShare: true);
+            cancellationToken.ThrowIfCancellationRequested();
+            OwnedFilePublication.RenameOpenedPath(generation, deletedDirectory);
+
+            try
             {
-                return (false, "世代フォルダが見つかりません。");
+                manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
+                manifest.UpdatedAt = DateTimeOffset.Now;
+                await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
             }
-            if ((File.GetAttributes(generationDirectory) & FileAttributes.ReparsePoint) != 0)
-                return (false, "世代フォルダがリンクのため削除を中止しました。");
-
-            if (Directory.Exists(deletedDirectory))
+            catch (Exception error)
             {
-                return (false, "削除先が既に存在します。既存データを保護するため処理を中止しました。 ");
+                // Roll back the exact retired directory. A new directory at either path must not be moved or overwritten.
+                var current = await manifestRepository.LoadAsync(projectId, normalizedProjectPath, CancellationToken.None).ConfigureAwait(false);
+                if (current.Manifest?.Generations.Any(item => string.Equals(item.GenerationId, generationId, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(item.Sha256, retiring.Sha256, StringComparison.OrdinalIgnoreCase) && item.FileSize == retiring.FileSize) != true)
+                    throw new IOException($"世代の削除を確定できませんでした。移動先を保全して manifest と照合してください。\n移動先 {deletedDirectory}", error);
+
+                try { OwnedFilePublication.RenameOpenedPath(generation, generationDirectory); }
+                catch (IOException rollbackError)
+                {
+                    throw new IOException($"世代の削除を確定できず、元の場所にも戻せませんでした。両方のフォルダーを保全して状態を確認してください。\n元の場所 {generationDirectory}\n移動先 {deletedDirectory}",
+                        new AggregateException(error, rollbackError));
+                }
+                throw;
             }
-
-            await storage.MoveDirectoryAsync(generationDirectory, deletedDirectory, cancellationToken).ConfigureAwait(false);
-            moved = true;
-
-            manifest.Generations.RemoveAll(x => string.Equals(x.GenerationId, generationId, StringComparison.OrdinalIgnoreCase));
-            manifest.UpdatedAt = DateTimeOffset.Now;
-            await manifestRepository.SaveValidatedAsync(projectId, manifest, manifestLoad, cancellationToken).ConfigureAwait(false);
 
             logger.Info($"GenerationDeleteCompleted projectPath={normalizedProjectPath}, generationId={generationId}, deletedPath={deletedDirectory}");
             return (true, null);
@@ -424,18 +458,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationDeleteFailed projectPath={normalizedProjectPath}, generationId={generationId}");
-            if (!moved) return (false, ex.Message);
-            try
-            {
-                Directory.Move(deletedDirectory, generationDirectory);
-                return (false, ex.Message);
-            }
-            catch (Exception rollbackError) when (rollbackError is IOException or UnauthorizedAccessException)
-            {
-                logger.Error(rollbackError, $"GenerationDeleteRollbackFailed generationId={generationId}, movedPath={deletedDirectory}");
-                logger.Flush();
-                return (false, $"世代の削除を確定できず、元の場所にも戻せませんでした。両方のフォルダーを保全して状態を確認してください。\n元の場所 {generationDirectory}\n移動先 {deletedDirectory}");
-            }
+            return (false, ex.Message);
         }
     }
 
@@ -443,7 +466,7 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     private static ProjectGenerationManifest RequireManifest(ProjectGenerationManifestLoadResult result)
     {
         return result.Manifest ?? throw new InvalidDataException(
-            $"世代 manifest を読み込めません。既存データを保護するため処理を中止しました。状態: {result.Status}");
+            $"世代 manifest を読み込めません。既存データを保護するため処理を中止しました。状態: {result.Status}\n{result.ErrorMessage}");
     }
 
     //CSJ,method=BuildGenerationRecord,世代記録を構築する
@@ -493,51 +516,4 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         return Path.Combine(directory, $"{fileName}_{generationId}{extension}");
     }
 
-    private static void TryOpenExclusive(string path)
-    {
-        //CSJ,variable=stream,ストリーム
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-    }
-
-    private static async Task<string> CreateValidatedRestoreTempAsync(string sourcePath, string expectedSha256, string targetDirectory, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(targetDirectory);
-        //CSJ,variable=tempPath,一時パス
-        var tempPath = Path.Combine(targetDirectory, $"{Guid.NewGuid():N}.restore.tmp");
-        //CSJ,variable=owned,管理対象の
-        var owned = false;
-        try
-        {
-            await using (var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            //CSJ,variable=destination,格納先
-            await using (var destination = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
-            {
-                owned = true;
-                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
-            }
-
-            //CSJ,variable=tempSha,一時SHA
-            var tempSha = await Task.Run(() =>
-            {
-                //CSJ,variable=stream,ストリーム
-                using var stream = File.OpenRead(tempPath);
-                //CSJ,variable=bytes,バイト列
-                var bytes = SHA256.HashData(stream);
-                return Convert.ToHexString(bytes).ToLowerInvariant();
-            }, cancellationToken).ConfigureAwait(false);
-
-            if (!string.Equals(tempSha, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("一時ファイルの SHA256 検証に失敗しました。");
-            return tempPath;
-        }
-        catch
-        {
-            if (owned)
-            {
-                try { File.Delete(tempPath); }
-                catch { /* Preserve the original copy or validation failure. */ }
-            }
-            throw;
-        }
-    }
 }

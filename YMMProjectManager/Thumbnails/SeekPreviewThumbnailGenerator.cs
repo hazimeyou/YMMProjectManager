@@ -1,14 +1,12 @@
 using System.Diagnostics;
 using System.IO;
 using System.Reflection;
-using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using YMMProjectManager.Infrastructure;
-using YMMProjectManager;
 using YukkuriMovieMaker.Commons;
 using YukkuriMovieMaker.Plugin;
-using YukkuriMovieMaker.Project;
 
 namespace YMMProjectManager.Infrastructure.Output;
 
@@ -18,244 +16,163 @@ namespace YMMProjectManager.Infrastructure.Output;
 //CSJ,class=SeekPreviewThumbnailGenerator,フレーム移動プレビューサムネイル生成器
 public sealed class SeekPreviewThumbnailGenerator
 {
-    //CSJ,field=ThumbnailCount,サムネイル件数
-    private const int ThumbnailCount = 64;
-    private const int PreviewSettleDelayMs = 60;
+    private const int ThumbnailCount = ThumbnailCachePublication.SlotCount;
+    private static readonly SemaphoreSlim CaptureGate = new(1);
 
-    //CSJ,field=logger,ロガー
     private readonly FileLogger logger;
-    //CSJ,field=previewCaptureService,プレビューキャプチャサービス
-    private readonly CurrentPreviewCaptureService previewCaptureService;
-    private readonly ThumbnailSequenceFrameRenderer renderer = new();
 
     public SeekPreviewThumbnailGenerator(FileLogger logger, CurrentPreviewCaptureService previewCaptureService)
     {
         this.logger = logger;
-        this.previewCaptureService = previewCaptureService;
+        // This constructor remains available to callers of the existing API.
+        ArgumentNullException.ThrowIfNull(previewCaptureService);
     }
 
     //CSJ,method=GenerateAsync,生成する（非同期）
-    public async Task<SeekPreviewThumbnailGenerationResult> GenerateAsync(
-        //CSJ,parameter=ymmpPath,YMMPパス
-        string ymmpPath,
-        //CSJ,parameter=timelineInfo,タイムライン情報
-        TimelineToolInfo timelineInfo,
-        //CSJ,parameter=cancellationToken,キャンセルトークン
-        CancellationToken cancellationToken)
+    public Task<SeekPreviewThumbnailGenerationResult> GenerateAsync(
+        string ymmpPath, TimelineToolInfo timelineInfo, CancellationToken cancellationToken) =>
+        GenerateAsync(ymmpPath, timelineInfo, () => true, cancellationToken);
+
+    internal async Task<SeekPreviewThumbnailGenerationResult> GenerateAsync(string ymmpPath, TimelineToolInfo timelineInfo,
+        Func<bool> isSelectionCurrent, CancellationToken token)
     {
-        var sw = Stopwatch.StartNew();
-        //CSJ,variable=timeline,タイムライン
-        var timeline = timelineInfo.Timeline;
-        if (timeline is null)
+        token.ThrowIfCancellationRequested();
+        if (global::System.Windows.Application.Current?.Dispatcher is not { } dispatcher)
+            return Failed("YMM のプレビューを確認できません。");
+
+        async Task<SeekPreviewThumbnailGenerationResult> GenerateOnDispatcherAsync()
         {
-            return new SeekPreviewThumbnailGenerationResult(false, "Timeline not found.", 0, 0, 0, 0, 0, string.Empty);
+            using var source = LiveThumbnailSource.TryBind(Path.GetFullPath(ymmpPath), timelineInfo);
+            if (source is null)
+                return Failed("選択した PF と YMM のプレビューが同じ対象か確認できません。");
+            var cacheRoot = Path.Combine(AppDirectories.UserDirectory, "plugin", "YMMProjectManager", "cache", "filmstrip");
+            return await GenerateAsync(ymmpPath, source, isSelectionCurrent, cacheRoot, token).ConfigureAwait(true);
         }
 
-        //CSJ,variable=hash,ハッシュ
-        var hash = FilmstripCacheKeyFactory.TryCreateHash(ymmpPath);
-        if (string.IsNullOrWhiteSpace(hash))
+        try
         {
-            return new SeekPreviewThumbnailGenerationResult(false, "cache hash unavailable", 0, 0, 0, 0, 0, string.Empty);
+            return dispatcher.CheckAccess()
+                ? await GenerateOnDispatcherAsync().ConfigureAwait(true)
+                : await dispatcher.InvokeAsync(GenerateOnDispatcherAsync, DispatcherPriority.Normal, token)
+                    .Task.Unwrap().ConfigureAwait(false);
         }
-
-        if (!TryGetLastFrame(timeline, out var lastFrame, out var failureReason))
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or
+                                   InvalidOperationException or TargetInvocationException or TypeLoadException)
         {
-            return new SeekPreviewThumbnailGenerationResult(false, failureReason, 0, 0, 0, 0, 0, string.Empty);
+            logger.Info("Live thumbnail refused by host or storage: " + ex.GetType().Name);
+            return Failed("YMM の対象を確認できないか、保存先にアクセスできません。");
         }
-
-        //CSJ,variable=totalFrames,合計フレーム列
-        var totalFrames = Math.Max(1, lastFrame + 1);
-        //CSJ,variable=sampleFrames,サンプルフレーム列
-        var sampleFrames = CreateSampleFrames(totalFrames);
-
-        // キャッシュはプロジェクトファイルのパスと更新時刻に紐づける。
-        //CSJ,variable=cacheDirectory,キャッシュディレクトリ
-        var cacheDirectory = Path.Combine(
-            AppDirectories.UserDirectory,
-            "plugin",
-            "YMMProjectManager",
-            "cache",
-            "filmstrip",
-            hash);
-        Directory.CreateDirectory(cacheDirectory);
-        var renderedCount = 0;
-        //CSJ,variable=failedCount,失敗件数
-        var failedCount = 0;
-        //CSJ,variable=seek,フレーム移動
-        var seek = new TimeLineSeek(timelineInfo);
-        logger.Info($"Seek preview thumbnail generation start. ymmp={ymmpPath}, hash={hash}, lastFrame={lastFrame}, samples={sampleFrames.Length}");
-        logger.Flush();
-
-        for (var i = 0; i < sampleFrames.Length; i++)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-
-            //CSJ,variable=frame,フレーム
-            var frame = sampleFrames[i];
-            //CSJ,variable=outputPath,出力パス
-            var outputPath = Path.Combine(cacheDirectory, $"{i:000}.png");
-            logger.Info($"Seek preview thumbnail slot={i} start frame={frame}");
-            logger.Flush();
-
-            // シーク直後はプレビュー描画が追いつかないため、Dispatcher と短い待機で安定させる。
-            seek.SeekToFrame(frame);
-            await YieldDispatcherAsync().ConfigureAwait(true);
-            await Task.Delay(PreviewSettleDelayMs, cancellationToken).ConfigureAwait(true);
-
-            //CSJ,variable=capture,キャプチャ
-            var capture = await previewCaptureService.CaptureCurrentPreviewBitmapAsync(cancellationToken).ConfigureAwait(true);
-            if (!capture.Success || capture.Bitmap is null)
-            {
-                failedCount++;
-                logger.Info($"Seek preview thumbnail slot={i} capture failed reason={capture.FailureReason ?? "unknown"}");
-                logger.Flush();
-                continue;
-            }
-
-            SaveScaledThumbnail(capture.Bitmap, outputPath);
-            renderedCount++;
-
-            logger.Info($"Seek preview thumbnail slot={i} saved path={outputPath}");
-            logger.Flush();
-        }
-
-        sw.Stop();
-        //CSJ,variable=success,成功
-        var success = renderedCount > 0 && failedCount == 0;
-        logger.Info($"Seek preview thumbnail generation end. rendered={renderedCount}, failed={failedCount}, totalMs={sw.ElapsedMilliseconds}");
-        logger.Flush();
-
-        return new SeekPreviewThumbnailGenerationResult(
-            success,
-            success ? string.Empty : "One or more thumbnails failed.",
-            renderedCount,
-            failedCount,
-            sampleFrames.Length,
-            totalFrames,
-            sw.ElapsedMilliseconds,
-            cacheDirectory);
     }
 
-    private void SaveScaledThumbnail(BitmapSource bitmap, string outputPath)
+    internal async Task<SeekPreviewThumbnailGenerationResult> GenerateAsync(string ymmpPath, ILiveThumbnailSource source,
+        Func<bool> isSelectionCurrent, string cacheRoot, CancellationToken token)
     {
-        BitmapSource source = bitmap;
-        if (source.Format != PixelFormats.Bgra32)
+        token.ThrowIfCancellationRequested();
+        if (!CaptureGate.Wait(0))
+            return Failed("別のサムネイル生成が実行中です。");
+
+        var timer = Stopwatch.StartNew();
+        try
         {
-            // renderer の入力フォーマットに合わせ、保存前に BGRA32 へ変換する。
-            var converted = new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
-            if (!converted.IsFrozen && converted.CanFreeze)
+            if (!source.IsCurrent() || !isSelectionCurrent() || source.Length <= 0)
+                return Failed("選択した PF の静止プレビューを確認できません。");
+
+            var path = Path.GetFullPath(ymmpPath);
+            using var parent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
+            using var file = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
+            if (!source.MatchesLoadedProject(file))
+                return Failed("YMM が読み込んだ時点の PF と、現在のファイルが一致するか確認できません。既存のサムネイルを使用します。");
+            var cacheKey = FilmstripCacheKeyFactory.CreateLiveHash(path, file);
+
+            var length = source.Length;
+            var originalFrame = source.Frame;
+            var originalPosition = source.Position;
+            var original = (Frame: originalFrame, Position: originalPosition);
+            var confirmed = original;
+            var requested = original;
+            if (originalFrame < 0 || originalFrame >= length || originalPosition < TimeSpan.Zero)
+                return Failed("元のフレームを確認できません。");
+
+            using var cache = new ThumbnailCachePublication(Path.Combine(cacheRoot, cacheKey));
+            var renderer = new ThumbnailSequenceFrameRenderer();
+            try
             {
-                converted.Freeze();
-            }
-
-            source = converted;
-        }
-
-        //CSJ,variable=frameBytes,フレームバイト列
-        var frameBytes = new byte[source.PixelWidth * source.PixelHeight * 4];
-        source.CopyPixels(frameBytes, source.PixelWidth * 4, 0);
-        renderer.SaveThumbnailPng(frameBytes, source.PixelWidth, source.PixelHeight, outputPath);
-    }
-
-    //CSJ,method=CreateSampleFrames,サンプルフレーム列を作成する
-    private static int[] CreateSampleFrames(int totalFrames)
-    {
-        //CSJ,variable=frames,フレーム列
-        var frames = new int[ThumbnailCount];
-        //CSJ,variable=max,最大
-        var max = Math.Max(0, totalFrames - 1);
-        for (var i = 0; i < ThumbnailCount; i++)
-        {
-            frames[i] = max == 0 ? 0 : (int)Math.Floor(i * (max / (double)(ThumbnailCount - 1)));
-        }
-
-        return frames;
-    }
-
-    //CSJ,method=TryGetLastFrame,最後フレームの取得を試みる
-    private static bool TryGetLastFrame(object timeline, out int lastFrame, out string failureReason)
-    {
-        lastFrame = 0;
-        failureReason = "No usable timeline length candidate was found.";
-
-        // YMM 側のバージョン差分を吸収するため、複数の長さ候補プロパティを見る。
-        //CSJ,variable=propertyName,プロパティ名前
-        foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount", "EndFrame" })
-        {
-            if (!TryReadIntLikeProperty(timeline, propertyName, out var value))
-            {
-                continue;
-            }
-
-            if (!propertyName.Equals("EndFrame", StringComparison.OrdinalIgnoreCase) && value <= 0)
-            {
-                continue;
-            }
-
-            lastFrame = propertyName.Equals("EndFrame", StringComparison.OrdinalIgnoreCase)
-                ? Math.Max(0, value)
-                : Math.Max(0, value - 1);
-            failureReason = string.Empty;
-            return true;
-        }
-
-        //CSJ,variable=videoInfo,動画情報
-        var videoInfo = timeline.GetType().GetProperty("VideoInfo", BindingFlags.Public | BindingFlags.Instance)?.GetValue(timeline);
-        if (videoInfo is not null)
-        {
-            //CSJ,variable=propertyName,プロパティ名前
-            foreach (var propertyName in new[] { "Length", "TotalFrame", "FrameCount" })
-            {
-                if (!TryReadIntLikeProperty(videoInfo, propertyName, out var value) || value <= 0)
+                for (var slot = 0; slot < ThumbnailCount; slot++)
                 {
-                    continue;
-                }
+                    RequireCurrent(confirmed.Frame, confirmed.Position);
+                    var frame = (int)((long)slot * (length - 1) / (ThumbnailCount - 1));
+                    var position = source.TimeAtFrame(frame);
+                    if ((frame, position) != confirmed)
+                    {
+                        // Track the requested position even if YMM faults after moving there.
+                        requested = (frame, position);
+                        await source.SeekAsync(position).ConfigureAwait(true);
+                    }
 
-                lastFrame = Math.Max(0, value - 1);
-                failureReason = string.Empty;
-                return true;
+                    if (global::System.Windows.Application.Current?.Dispatcher is { } dispatcher && dispatcher.CheckAccess())
+                        await dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background, token).Task.ConfigureAwait(true);
+
+                    RequireCurrent(frame, position);
+                    confirmed = (frame, position);
+                    var bitmap = source.Capture();
+                    RequireCurrent(frame, position);
+                    cache.WriteFrame(slot, output => SaveScaledThumbnail(renderer, bitmap, output));
+                }
+            }
+            finally
+            {
+                // A different project, playback or a manually changed position belongs to the host.
+                // On cancellation, still restore our own last position while it can be verified.
+                if (source.IsCurrent())
+                {
+                    var current = (source.Frame, source.Position);
+                    if (current != original && (current == confirmed || current == requested))
+                        await source.SeekAsync(originalPosition).ConfigureAwait(true);
+                }
+            }
+
+            // One non-overwriting directory publication follows the final check on the UI thread.
+            var cacheDirectory = cache.Publish(token, () =>
+            {
+                RequireCurrent(originalFrame, originalPosition);
+                if (!source.MatchesLoadedProject(file) ||
+                    !string.Equals(FilmstripCacheKeyFactory.CreateLiveHash(path, file), cacheKey, StringComparison.Ordinal))
+                    throw new InvalidOperationException("生成中に PF が変更されました。");
+            });
+            return new SeekPreviewThumbnailGenerationResult(true, string.Empty,
+                ThumbnailCount, 0, ThumbnailCount, length, timer.ElapsedMilliseconds, cacheDirectory);
+
+            void RequireCurrent(int frame, TimeSpan position)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!isSelectionCurrent() || !source.IsCurrent() || source.Length != length ||
+                    source.Frame != frame || source.Position != position)
+                    throw new InvalidOperationException("生成中にプロジェクトまたはプレビューの対象が変わりました。");
             }
         }
-
-        return false;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or
+                                   InvalidOperationException or OverflowException or TargetInvocationException)
+        {
+            logger.Info("Live thumbnail not committed: " + ex.GetType().Name);
+            return Failed("対象・フレームの照合、または保存に失敗しました。既存のサムネイルを使用します。");
+        }
+        finally
+        {
+            CaptureGate.Release();
+        }
     }
 
-    private static bool TryReadIntLikeProperty(object instance, string propertyName, out int value)
+    private static SeekPreviewThumbnailGenerationResult Failed(string reason) =>
+        new(false, reason, 0, 0, 0, 0, 0, string.Empty);
+
+    private static void SaveScaledThumbnail(ThumbnailSequenceFrameRenderer renderer, BitmapSource bitmap, Stream output)
     {
-        value = 0;
-        //CSJ,variable=property,プロパティ
-        var property = instance.GetType().GetProperty(propertyName, BindingFlags.Public | BindingFlags.Instance);
-        if (property is null)
-        {
-            return false;
-        }
-
-        var raw = property.GetValue(instance);
-        if (raw is int i)
-        {
-            value = i;
-            return true;
-        }
-
-        if (raw is long l)
-        {
-            value = l > int.MaxValue ? int.MaxValue : (int)l;
-            return true;
-        }
-
-        return false;
-    }
-
-    private static Task YieldDispatcherAsync()
-    {
-        //CSJ,variable=dispatcher,ディスパッチャー
-        var dispatcher = System.Windows.Application.Current?.Dispatcher;
-        if (dispatcher is null)
-        {
-            return Task.CompletedTask;
-        }
-
-        return dispatcher.InvokeAsync(() => { }, System.Windows.Threading.DispatcherPriority.Render).Task;
+        BitmapSource source = bitmap.Format == PixelFormats.Bgra32
+            ? bitmap : new FormatConvertedBitmap(bitmap, PixelFormats.Bgra32, null, 0);
+        var stride = checked(source.PixelWidth * 4);
+        var frameBytes = new byte[checked(stride * source.PixelHeight)];
+        source.CopyPixels(frameBytes, stride, 0);
+        renderer.SaveThumbnailPng(frameBytes, source.PixelWidth, source.PixelHeight, output);
     }
 }
 

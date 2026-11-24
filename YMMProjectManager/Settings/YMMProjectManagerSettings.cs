@@ -1,18 +1,28 @@
-﻿using System.IO;
+using System.IO;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using YMMProjectManager.Plugin;
+using YMMProjectManager.Infrastructure;
 using YukkuriMovieMaker.Plugin;
 
 namespace YMMProjectManager.Settings;
 
 //CSJ,class=YMMProjectManagerSettings,プロジェクト管理設定
-public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>
+public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSettings>
 {
     //CSJ,field=SettingsDirectoryName,設定ディレクトリ名
     private const string SettingsDirectoryName = "settings";
     //CSJ,field=SettingsFileName,設定ファイル名前
     private const string SettingsFileName = "YMMProjectManagerSettings.json";
+
+    private static readonly object SaveLock = new();
+    private readonly string settingsPath;
+    private readonly Action? beforePublish;
+    private bool hasConfirmedSettings;
+    private SettingsVersion? confirmedVersion;
+    internal string? RetainedBackupPath { get; private set; }
+
+    private sealed record SettingsVersion((ulong, Guid) Identity, string Sha256);
 
     //CSJ,property=Current,現在の
     public static YMMProjectManagerSettings Current { get; private set; } = new();
@@ -32,106 +42,183 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
     //CSJ,method=Initialize,初期化する
     public override void Initialize()
     {
+        Reload();
         Current = this;
-        LoadFromPluginDirectory();
     }
 
-    public YMMProjectManagerSettings()
+    public YMMProjectManagerSettings() : this(GetSettingsFilePath())
     {
         Current = this;
-        LoadFromPluginDirectory();
+    }
+
+    internal YMMProjectManagerSettings(string settingsPath, Action? beforePublish = null)
+    {
+        this.settingsPath = Path.GetFullPath(settingsPath);
+        this.beforePublish = beforePublish;
+        Reload();
     }
 
     //CSJ,method=GetSearchFolders,検索フォルダー一覧を取得する
     public IReadOnlyList<string> GetSearchFolders()
     {
-        return SearchFolders.ToArray();
+        lock (SaveLock) return SearchFolders.ToArray();
     }
 
     //CSJ,method=SetSearchFolders,検索フォルダー一覧を設定する
     public bool SetSearchFolders(IEnumerable<string> folders)
     {
-        SearchFolders = NormalizeFolders(folders);
-        return SaveToPluginDirectory();
+        lock (SaveLock)
+        {
+            if (!hasConfirmedSettings) return false;
+            RetainedBackupPath = null;
+            try
+            {
+                return TrySave(NormalizeFolders(folders));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                return false;
+            }
+        }
     }
 
     //CSJ,method=Reload,再読み込みする
-    public void Reload()
+    public void Reload() => TryReload();
+
+    internal bool TryReload()
     {
-        LoadFromPluginDirectory();
-    }
-
-    private void LoadFromPluginDirectory()
-    {
-        try
-        {
-            //CSJ,variable=path,パス
-            var path = GetSettingsFilePath();
-            if (!File.Exists(path))
-            {
-                SearchFolders = [];
-                return;
-            }
-
-            var json = File.ReadAllText(path, Encoding.UTF8);
-            //CSJ,variable=data,データ
-            var data = JsonSerializer.Deserialize<PersistedSettings>(json);
-            SearchFolders = NormalizeFolders(data?.SearchFolders ?? []);
-        }
-        catch
-        {
-            SearchFolders = [];
-        }
-    }
-
-    private bool SaveToPluginDirectory()
-    {
-        //CSJ,variable=tempPath,一時パス
-        string? tempPath = null;
-        try
-        {
-            //CSJ,variable=path,パス
-            var path = GetSettingsFilePath();
-            //CSJ,variable=directory,ディレクトリ
-            var directory = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
-
-            //CSJ,variable=data,データ
-            var data = new PersistedSettings
-            {
-                SearchFolders = SearchFolders,
-            };
-
-            var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
-            {
-                WriteIndented = true,
-            });
-
-            tempPath = path + ".tmp";
-            File.WriteAllText(tempPath, json, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            File.Move(tempPath, path, overwrite: true);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-        finally
+        lock (SaveLock)
         {
             try
             {
-                if (!string.IsNullOrWhiteSpace(tempPath) && File.Exists(tempPath))
-                {
-                    File.Delete(tempPath);
-                }
+                using var input = OpenCurrent(allowRename: false);
+                var bytes = input is null ? null : ReadSettings(input);
+                var data = bytes is null ? null : DecodeSettings(bytes)
+                    ?? throw new InvalidDataException("Invalid settings.");
+                var folders = NormalizeFolders(data?.SearchFolders ?? []);
+                confirmedVersion = input is null ? null : GetVersion(input, bytes!);
+                SearchFolders = folders;
+                hasConfirmedSettings = true;
+                RetainedBackupPath = null;
+                return true;
             }
-            catch
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
             {
+                // Preserve the last confirmed values and prevent saves until a reload succeeds.
+                hasConfirmedSettings = false;
+                return false;
             }
         }
+    }
+
+    private bool TrySave(List<string> folders)
+    {
+        var directory = Path.GetDirectoryName(settingsPath)!;
+        var parent = Path.GetDirectoryName(directory)
+            ?? throw new IOException("The settings directory needs a containing directory.");
+        using var fence = OwnedFilePublication.DirectoryFence.Open(parent, enforceShare: true);
+        Directory.CreateDirectory(directory);
+        var directoryHandle = fence.Add(directory);
+        using var original = OpenCurrent(allowRename: true);
+        var currentVersion = original is null ? null : GetVersion(original, ReadSettings(original));
+        if (currentVersion != confirmedVersion) return false;
+
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new PersistedSettings { SearchFolders = folders },
+            new JsonSerializerOptions { WriteIndented = true });
+        var operationId = Guid.NewGuid();
+        using var output = OwnedFilePublication.CreateOwnedOutputFile(StagedSettingsPath(operationId), readBack: original is not null);
+        var parkedPath = PreviousSettingsPath(operationId);
+        FileStream? receipt = null;
+        var parked = false;
+        var published = false;
+        try
+        {
+            var stagedVersion = GetVersion(output, bytes);
+            if (original is not null)
+            {
+                ProjectListReplacement.VerifyCompatibleFileMetadata(original, output, settingsPath);
+                File.SetCreationTimeUtc(output.SafeFileHandle, File.GetCreationTimeUtc(original.SafeFileHandle));
+            }
+            output.Write(bytes);
+            output.Flush(flushToDisk: true);
+            if (original is not null)
+            {
+                receipt = PrepareRecoveryReceipt(operationId, currentVersion!, stagedVersion,
+                    ProjectFileEvidence.ReadPhysicalIdentity(directoryHandle));
+                OwnedFilePublication.RenameOpenedPath(original.SafeFileHandle, parkedPath);
+                parked = true;
+            }
+
+            beforePublish?.Invoke();
+            OwnedFilePublication.RenameOpenedPath(output.SafeFileHandle, settingsPath);
+            published = true;
+            confirmedVersion = stagedVersion;
+            SearchFolders = folders;
+            if (parked) parked = !OwnedFilePublication.TryDeleteOpenedPath(original!.SafeFileHandle);
+            return true;
+        }
+        finally
+        {
+            if (!published)
+            {
+                if (parked)
+                {
+                    try
+                    {
+                        OwnedFilePublication.RenameOpenedPath(original!.SafeFileHandle, settingsPath);
+                        parked = false;
+                    }
+                    catch (IOException)
+                    {
+                        // A competing file occupies the active path. Keep both files.
+                        RetainedBackupPath = parkedPath;
+                        PluginDiagnostics.Logger.Info($"Settings rollback preserved {Path.GetFileName(parkedPath)}.");
+                    }
+                }
+                // A failed rollback needs both files and the receipt to recognize the interrupted save.
+                if (!parked) OwnedFilePublication.TryDeleteOpenedPath(output.SafeFileHandle);
+            }
+            if (receipt is not null)
+            {
+                if (!parked) OwnedFilePublication.TryDeleteOpenedPath(receipt.SafeFileHandle);
+                receipt.Dispose();
+            }
+        }
+    }
+
+    private FileStream? OpenCurrent(bool allowRename)
+    {
+        try
+        {
+            File.GetAttributes(settingsPath);
+        }
+        catch (IOException ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+        {
+            var retained = FindPreviousSettings();
+            if (retained.Length == 0) return null;
+            RetainedBackupPath = retained.Length == 1 ? retained[0] : Path.GetDirectoryName(settingsPath);
+            throw new IOException("The current settings name is missing while previous data is retained.");
+        }
+
+        return OpenSettingsFile(settingsPath, allowRename);
+    }
+
+    private static byte[] ReadSettings(FileStream input)
+    {
+        if (input.Length > Array.MaxLength) throw new InvalidDataException("The settings file exceeds the read limit.");
+        var bytes = new byte[(int)input.Length];
+        input.ReadExactly(bytes);
+        return bytes;
+    }
+
+    private static SettingsVersion GetVersion(FileStream input, byte[] bytes) =>
+        new(ProjectFileEvidence.ReadPhysicalIdentity(input), Convert.ToHexString(SHA256.HashData(bytes)));
+
+    private static PersistedSettings? DecodeSettings(byte[] bytes)
+    {
+        using var reader = new StreamReader(new MemoryStream(bytes, writable: false),
+            Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        return JsonSerializer.Deserialize<PersistedSettings>(reader.ReadToEnd());
     }
 
     //CSJ,method=NormalizeFolders,フォルダー一覧を正規化する
