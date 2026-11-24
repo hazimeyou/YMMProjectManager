@@ -779,44 +779,12 @@ internal static class YmmpxPackageReader
         catch (UnauthorizedAccessException) { }
     }
 
-    //CSJ,method=CreateDirectory,ディレクトリを作成する
-    [DllImport("kernel32.dll", EntryPoint = "CreateDirectoryW", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateDirectory(string path, IntPtr securityAttributes);
-
     //CSJ,method=OpenOrdinaryDirectory,通常ディレクトリを開く
     private static SafeFileHandle OpenOrdinaryDirectory(string path, bool allowRename = false)
         => OpenOrdinaryPath(path, expectDirectory: true, allowRename);
 
     internal static SafeFileHandle OpenPackageForPublication(string path)
         => OpenOrdinaryPath(path, expectDirectory: false, allowRename: true);
-
-    internal static IDisposable ReserveInstallerDirectory(string tempRoot, out string directory)
-    {
-        directory = Path.GetFullPath(tempRoot);
-        //CSJ,variable=fence,整合性境界
-        var fence = DirectoryFence.Open(directory);
-        try
-        {
-            foreach (var part in new[] { "YMMProjectManager", "YmmpxLibPlugin" })
-            {
-                directory = Path.Combine(directory, part);
-                if (!CreateDirectory(ExtendedPath(directory), IntPtr.Zero))
-                {
-                    //CSJ,variable=error,エラー
-                    var error = Marshal.GetLastWin32Error();
-                    if (error != 183) throw new IOException("ダウンロード先を作成できません。", new Win32Exception(error));
-                }
-                fence.Add(directory);
-            }
-            return fence;
-        }
-        catch
-        {
-            fence.Dispose();
-            throw;
-        }
-    }
 
     //CSJ,method=CreateOwnedOutputFile,管理対象の出力ファイルを作成する
     internal static FileStream CreateOwnedOutputFile(string path) => OwnedFilePublication.CreateOwnedOutputFile(path);

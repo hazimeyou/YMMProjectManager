@@ -1,268 +1,170 @@
-using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
-using System.Text;
+using System.Security.Cryptography;
+using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
 
-//CSJ,class=YmmpxLibInstallGuide,YMMPXライブラリ導入ガイド
 public sealed class YmmpxLibInstallGuide
 {
-    //CSJ,field=YmmpxLibPluginLatestDownloadUrl,YMMPXライブラリプラグイン最新ダウンロードURL
+    internal const string SupportedRelease = "v1.1.0";
+    internal const string SuggestedFileName = "YmmpxLibPlugin-v1.1.0.ymme";
     public const string YmmpxLibPluginLatestDownloadUrl =
-        "https://github.com/hazimeyou/YmmpxLib/releases/latest/download/YmmpxLibPlugin.ymme";
+        "https://github.com/hazimeyou/YmmpxLib/releases/download/v1.1.0/YmmpxLibPlugin.ymme";
 
-    //CSJ,field=logger,ロガー
+    private const int OfficialLength = 31_051;
+    private const string OfficialSha256 = "9D5EE82C96D6A5ED57D805306CFE037A6669F0D3D15D6C28919E1A59158680DA";
+    private static readonly HttpClient Client = new(new HttpClientHandler { AllowAutoRedirect = false })
+    {
+        Timeout = TimeSpan.FromSeconds(30),
+    };
+
     private readonly FileLogger logger;
-    private readonly Action<ProcessStartInfo>? launcher;
-    private readonly Func<string, Stream, CancellationToken, Task>? downloader;
+    private readonly Func<string, CancellationToken, Task<byte[]>> download;
+    private readonly int expectedLength;
+    private readonly byte[] expectedHash;
 
-    public YmmpxLibInstallGuide(FileLogger logger) : this(logger, null, null) { }
+    public YmmpxLibInstallGuide(FileLogger logger)
+        : this(logger, DownloadFileAsync, OfficialLength, OfficialSha256)
+    {
+    }
 
-    internal YmmpxLibInstallGuide(
-        //CSJ,parameter=logger,ロガー
-        FileLogger logger,
-        Action<ProcessStartInfo>? launcher,
-        Func<string, Stream, CancellationToken, Task>? downloader)
+    internal YmmpxLibInstallGuide(FileLogger logger, Func<string, CancellationToken, Task<byte[]>> download,
+        int expectedLength, string expectedSha256)
     {
         this.logger = logger;
-        this.launcher = launcher;
-        this.downloader = downloader;
+        this.download = download;
+        this.expectedLength = expectedLength;
+        expectedHash = Convert.FromHexString(expectedSha256);
     }
 
-    //CSJ,method=GetPassiveStatusMessage,状態表示用のメッセージを取得する
-    public string GetPassiveStatusMessage()
+    public string GetPassiveStatusMessage() =>
+        "YMMPX の作成には YmmpxLibPlugin が必要です。既存の YMMPX はそのまま展開できます。";
+
+    public string BuildMissingPluginMessage(IReadOnlyList<string> searchedPaths, IReadOnlyList<string> legacyPaths) =>
+        BuildGuide("YmmpxLibPlugin が見つかりません。", searchedPaths, legacyPaths);
+
+    internal string BuildGuide(string status, IReadOnlyList<string> paths, IReadOnlyList<string> legacyPaths)
     {
-        return "YmmpxLibPlugin が未導入です。.ymmpx の同梱には導入が必要です。";
+        var guide = $"{status}\n\n対応する配布版 {SupportedRelease}\n{YmmpxLibPluginLatestDownloadUrl}\n\n" +
+            "保存した .ymme を YMM4 のプラグイン導入手順で開いてください。導入・更新後に YMM4 を再起動してください。" +
+            "\n既存の YMMPX の展開は引き続き利用できます。";
+        if (legacyPaths.Count != 0)
+            guide += "\n\n旧フォルダーが見つかりました。更新前に、中身を確認して必要に応じて手動で退避してください。\n" +
+                string.Join("\n", legacyPaths);
+        if (paths.Count != 0)
+            guide += "\n\n確認した場所\n" + string.Join("\n", paths);
+        return guide;
     }
 
-    //CSJ,method=BuildMissingPluginMessage,欠落プラグインメッセージを構築する
-    public string BuildMissingPluginMessage(IReadOnlyList<string> searchedPaths, IReadOnlyList<string> legacyPaths)
-    {
-        //CSJ,variable=builder,ビルダー
-        var builder = new StringBuilder();
-        builder.AppendLine("YmmpxLibPlugin が見つかりません。");
-        builder.AppendLine();
-        builder.AppendLine(".ymmpx の同梱には YmmpxLibPlugin が必要です。");
-        builder.AppendLine();
-        builder.AppendLine("導入先:");
-        builder.AppendLine("YMM4 フォルダー");
-        builder.AppendLine("└ user");
-        builder.AppendLine("   └ plugin");
-        builder.AppendLine("      └ YmmpxLibPlugin");
-        builder.AppendLine();
-        builder.AppendLine("入手先:");
-        builder.AppendLine("YmmpxLib Releases");
-        builder.AppendLine(YmmpxLibPluginLatestDownloadUrl);
-        builder.AppendLine();
-        builder.AppendLine("導入後は YMM4 を再起動してください。");
-
-        if (legacyPaths.Count > 0)
-        {
-            builder.AppendLine();
-            builder.AppendLine("古い YmmpxLib フォルダーが残っている可能性があります。");
-            builder.AppendLine("削除後、YMM4 を再起動してください。");
-            //CSJ,variable=legacyPath,旧形式パス
-            foreach (var legacyPath in legacyPaths)
-            {
-                builder.AppendLine($"- {legacyPath}");
-            }
-        }
-
-        if (searchedPaths.Count > 0)
-        {
-            builder.AppendLine();
-            builder.AppendLine("探索パス:");
-            //CSJ,variable=path,パス
-            foreach (var path in searchedPaths)
-            {
-                builder.AppendLine($"- {path}");
-            }
-        }
-
-        builder.AppendLine();
-        builder.Append("YmmpxLibPlugin をダウンロードして起動しますか？");
-        return builder.ToString();
-    }
-
-    //CSJ,method=FindLegacyFolders,旧形式フォルダー一覧を探す
     public IReadOnlyList<string> FindLegacyFolders(string? baseDirectory = null)
     {
-        //CSJ,variable=resolvedBaseDirectory,解決済み基点ディレクトリ
-        var resolvedBaseDirectory = ResolveBaseDirectory(baseDirectory);
-        if (string.IsNullOrWhiteSpace(resolvedBaseDirectory))
+        var pluginDirectory = baseDirectory is null
+            ? AppDirectories.PluginDirectory
+            : Path.Combine(baseDirectory, "user", "plugin");
+        return new[]
         {
-            return [];
-        }
-
-        //CSJ,variable=results,結果一覧
-        var results = new List<string>();
-        foreach (var ancestor in EnumerateAncestors(resolvedBaseDirectory))
-        {
-            AddIfExists(results, Path.Combine(ancestor, "user", "plugin", "YMMProjectManager", "YmmpxLib"));
-            AddIfExists(results, Path.Combine(ancestor, "user", "plugin", "YmmpxLib"));
-        }
-
-        return results
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+            Path.Combine(pluginDirectory, "YMMProjectManager", "YmmpxLib"),
+            Path.Combine(pluginDirectory, "YmmpxLib"),
+        }.Where(Directory.Exists).ToArray();
     }
 
-    //CSJ,method=DownloadAndLaunchInstallerAsync,インストーラーを取得して起動する（非同期）
-    public async Task<YmmpxLibInstallResult> DownloadAndLaunchInstallerAsync(CancellationToken cancellationToken = default)
+    internal async Task<YmmpxLibInstallResult?> DownloadInstallerAsync(
+        string destination, bool confirmed, CancellationToken cancellationToken = default)
     {
+        if (!confirmed) return null;
         cancellationToken.ThrowIfCancellationRequested();
-        //CSJ,variable=downloadPath,ダウンロードパス
-        string? downloadPath = null;
-        //CSJ,variable=published,公開済み
-        var published = false;
+
         try
         {
-            //CSJ,variable=fence,整合性境界
-            using var fence = YmmpxPackageReader.ReserveInstallerDirectory(Path.GetTempPath(), out var directory);
-            downloadPath = Path.Combine(directory, $"YmmpxLibPlugin-{Guid.NewGuid():N}.ymme");
-            logger.Info($"YmmpxLibPlugin のダウンロードを開始します。url={YmmpxLibPluginLatestDownloadUrl}");
-            logger.Flush();
+            destination = Path.GetFullPath(destination);
+            if (!string.Equals(Path.GetExtension(destination), ".ymme", StringComparison.OrdinalIgnoreCase))
+                throw new IOException(".ymme の保存先を指定してください。");
+            var directory = Path.GetDirectoryName(destination)!;
+            using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+            if (File.Exists(destination) || Directory.Exists(destination))
+                return new() { ErrorMessage = "保存先に既存のファイルがあります。新しい名前を選択してください。" };
 
-            await using (var output = YmmpxPackageReader.CreateOwnedOutputFile(downloadPath + ".download"))
-            {
-                try
-                {
-                    await (downloader ?? DownloadFileAsync)(YmmpxLibPluginLatestDownloadUrl, output, cancellationToken).ConfigureAwait(false);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    if (output.Length == 0)
-                        throw new IOException("インストーラーのファイルが空です。");
-                    await output.FlushAsync(cancellationToken).ConfigureAwait(false);
-                    output.Flush(flushToDisk: true);
-                    cancellationToken.ThrowIfCancellationRequested();
-                    YmmpxPackageReader.RenameOpenedPath(output.SafeFileHandle, downloadPath);
-                    published = true;
-                }
-                finally
-                {
-                    if (!published) YmmpxPackageReader.TryDeleteOpenedPath(output.SafeFileHandle);
-                }
-            }
-
+            var bytes = await download(YmmpxLibPluginLatestDownloadUrl, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            //CSJ,variable=startInfo,開始情報
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = downloadPath,
-                UseShellExecute = true,
-            };
-            if (launcher is not null)
-            {
-                launcher(startInfo);
-            }
-            else
-            {
-                Process.Start(startInfo);
-            }
+            if (bytes.Length != expectedLength || !SHA256.HashData(bytes).AsSpan().SequenceEqual(expectedHash))
+                return new() { ErrorMessage = $"YmmpxLibPlugin {SupportedRelease} のサイズまたは SHA-256 が公式配布物と一致しません。" };
 
-            logger.Info($"YmmpxLibPlugin の .ymme 起動に成功しました。path={downloadPath}");
-            logger.Flush();
-            return new YmmpxLibInstallResult
+            await using var file = OwnedFilePublication.CreateOwnedOutputFile(
+                Path.Combine(directory, $".ymmpxlib-{Guid.NewGuid():N}.download"));
+            var published = false;
+            try
             {
-                Success = true,
-                DownloadPath = downloadPath,
-            };
+                await file.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+                file.Flush(flushToDisk: true);
+                cancellationToken.ThrowIfCancellationRequested();
+                OwnedFilePublication.RenameOpenedPath(file.SafeFileHandle, destination);
+                published = true;
+                return new() { Success = true, DownloadPath = destination };
+            }
+            finally
+            {
+                if (!published) OwnedFilePublication.TryDeleteOpenedPath(file.SafeFileHandle);
+            }
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             throw;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or
+                                   HttpRequestException or OperationCanceledException)
         {
-            logger.Error(ex, $"YmmpxLibPlugin の導入に失敗しました。published={published}");
-            logger.Flush();
-            return new YmmpxLibInstallResult
-            {
-                Success = false,
-                DownloadPath = published ? downloadPath : null,
-                ErrorMessage = published
-                    ? $"インストーラーを起動できませんでした。ダウンロード済みのファイルを手動で開けます。\n{downloadPath}"
-                    : "YmmpxLibPlugin のダウンロードに失敗しました。",
-            };
+            logger.Info($"YmmpxLibPlugin の取得または保存に失敗しました。{ex.GetType().Name} (0x{ex.HResult:X8})");
+            return new() { ErrorMessage = "YmmpxLibPlugin を取得または保存できませんでした。接続と保存先を確認してください。" };
         }
     }
 
-    //CSJ,method=GetInstallerDownloadPath,インストーラーダウンロードパスを取得する
-    public string GetInstallerDownloadPath()
+    [Obsolete("Use the confirmed installer download flow.")]
+    public Task<YmmpxLibInstallResult> DownloadAndLaunchInstallerAsync(CancellationToken cancellationToken = default)
     {
-        //CSJ,variable=baseDirectory,基点ディレクトリ
-        var baseDirectory = Path.Combine(Path.GetTempPath(), "YMMProjectManager", "YmmpxLibPlugin");
-        //CSJ,variable=fileName,ファイル名
-        var fileName = "YmmpxLibPlugin.ymme";
-        return Path.Combine(baseDirectory, fileName);
-    }
-
-    //CSJ,method=DownloadFileAsync,ファイルをダウンロードする（非同期）
-    private static async Task DownloadFileAsync(string url, Stream output, CancellationToken cancellationToken)
-    {
-        //CSJ,variable=client,クライアント
-        using var client = new HttpClient();
-        //CSJ,variable=response,応答
-        using var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
-        response.EnsureSuccessStatusCode();
-
-        await using var input = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
-        await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
-    }
-
-    private static void AddIfExists(ICollection<string> results, string path)
-    {
-        try
+        if (cancellationToken.IsCancellationRequested)
+            return Task.FromCanceled<YmmpxLibInstallResult>(cancellationToken);
+        return Task.FromResult(new YmmpxLibInstallResult
         {
-            if (Directory.Exists(path))
+            ErrorMessage = "自動起動は終了しました。YMMPX 作成画面の導入案内から、公式配布物のダウンロードを確認してください。",
+        });
+    }
+
+    public string GetInstallerDownloadPath() =>
+        Path.Combine(Path.GetTempPath(), "YMMProjectManager", "YmmpxLibPlugin", "YmmpxLibPlugin.ymme");
+
+    internal static bool IsOfficialAssetEndpoint(Uri uri) =>
+        uri.IsAbsoluteUri && uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0 &&
+        uri.Host is "github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com";
+
+    private static async Task<byte[]> DownloadFileAsync(string url, CancellationToken token)
+    {
+        var current = new Uri(url);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(30));
+        for (var redirect = 0; redirect <= 3; redirect++)
+        {
+            if (!IsOfficialAssetEndpoint(current))
+                throw new HttpRequestException("配布サイトの接続先を確認できません。");
+            using var response = await Client.GetAsync(current, HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
+            if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308 && response.Headers.Location is { } location)
             {
-                results.Add(Path.GetFullPath(path));
+                current = new Uri(current, location);
+                continue;
             }
+            response.EnsureSuccessStatusCode();
+            await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
+            var buffer = new byte[OfficialLength + 1];
+            var length = await stream.ReadAtLeastAsync(buffer, buffer.Length, throwOnEndOfStream: false, deadline.Token).ConfigureAwait(false);
+            return buffer[..length];
         }
-        catch
-        {
-        }
-    }
-
-    private static IEnumerable<string> EnumerateAncestors(string directory)
-    {
-        var current = new DirectoryInfo(directory);
-        while (current is not null)
-        {
-            yield return current.FullName;
-            current = current.Parent;
-        }
-    }
-
-    //CSJ,method=ResolveBaseDirectory,基点ディレクトリを解決する
-    private static string? ResolveBaseDirectory(string? baseDirectory)
-    {
-        var candidate = string.IsNullOrWhiteSpace(baseDirectory) ? AppContext.BaseDirectory : baseDirectory;
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return null;
-        }
-
-        try
-        {
-            return Path.GetFullPath(candidate);
-        }
-        catch
-        {
-            return null;
-        }
+        throw new HttpRequestException("配布サイトの転送回数が上限を超えました。");
     }
 }
 
-//CSJ,class=YmmpxLibInstallResult,YMMPXライブラリ導入結果
 public sealed class YmmpxLibInstallResult
 {
-    //CSJ,property=Success,成功
     public bool Success { get; init; }
-
-    //CSJ,property=DownloadPath,ダウンロードパス
     public string? DownloadPath { get; init; }
-
-    //CSJ,property=ErrorMessage,エラーメッセージ
     public string? ErrorMessage { get; init; }
 }

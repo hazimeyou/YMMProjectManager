@@ -1,5 +1,7 @@
 using System.IO;
 using System.IO.Compression;
+using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 using YMMProjectManager.Infrastructure.Packaging;
@@ -12,9 +14,10 @@ internal static class YmmpxBundleTests
     {
         await TestInstallGuideMessageAsync(workRoot);
         await TestLegacyFolderDetectionAsync(workRoot);
-        await RunInInstallerTempAsync(workRoot, TestInstallerCancellationPreservesExistingFileAsync);
-        await Program.RunNamedCaseAsync("Installer publishes only a complete download", () => RunInInstallerTempAsync(workRoot, TestInstallerDownloadAndLaunchAsync));
-        await Program.RunNamedCaseAsync("Installer launch failure preserves completed download", () => RunInInstallerTempAsync(workRoot, TestInstallerLaunchFailureKeepsDownloadAsync));
+        await Program.RunNamedCaseAsync("Installer publishes only a verified download", () => TestVerifiedInstallerAsync(workRoot));
+        await Program.RunNamedCaseAsync("Installer refuses unconfirmed, cancelled and failed downloads", () => TestInstallerNotPublishedAsync(workRoot));
+        await Program.RunNamedCaseAsync("Installer never replaces an occupied destination", () => TestInstallerDestinationConflictAsync(workRoot));
+        await Program.RunNamedCaseAsync("Installer restricts redirects to HTTPS official asset hosts", TestOfficialEndpointAsync);
         await TestResolverSearchPathsAsync(workRoot);
         var configuredLibrary = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
         if (string.IsNullOrWhiteSpace(configuredLibrary)) await TestMissingYmmpxLibReturnsErrorAsync(workRoot);
@@ -81,89 +84,115 @@ internal static class YmmpxBundleTests
         return Task.CompletedTask;
     }
 
-    private static async Task TestInstallerDownloadAndLaunchAsync(string root)
+    private static readonly byte[] VerifiedBytes = "synthetic pinned YMMPX plugin package"u8.ToArray();
+
+    private static YmmpxLibInstallGuide CreateInstallerGuide(string root, Func<string, CancellationToken, Task<byte[]>> download) =>
+        new(new FileLogger(Path.Combine(root, "installer.log")), download, VerifiedBytes.Length,
+            Convert.ToHexString(SHA256.HashData(VerifiedBytes)));
+
+    private static async Task TestVerifiedInstallerAsync(string workRoot)
     {
-        //CSJ,variable=logger,ロガー
-        var logger = new FileLogger(Path.Combine(root, "logs", "installer.log"));
-        var launchedPaths = new List<string>();
-        var guide = new YmmpxLibInstallGuide(
-            logger,
-            launcher: startInfo => launchedPaths.Add(startInfo.FileName),
-            downloader: async (_, output, token) =>
-            {
-                await output.WriteAsync("dummy ymme"u8.ToArray(), token).ConfigureAwait(false);
-            });
-
-        var result = await guide.DownloadAndLaunchInstallerAsync();
-
-        AssertTrue(result.Success, result.ErrorMessage ?? "installer flow should succeed");
-        AssertTrue(!string.IsNullOrWhiteSpace(result.DownloadPath), "download path should be returned");
-        AssertTrue(File.Exists(result.DownloadPath!), "downloaded ymme should exist");
-        AssertTrue(launchedPaths.Count == 1, "installer should be launched once");
-        AssertTrue(string.Equals(launchedPaths[0], result.DownloadPath, StringComparison.OrdinalIgnoreCase), "launched path should match downloaded ymme");
-        AssertTrue(await File.ReadAllTextAsync(result.DownloadPath!) == "dummy ymme", "launched path did not contain full contents");
-        AssertTrue(!Directory.EnumerateFiles(Path.GetDirectoryName(result.DownloadPath!)!, "*.download").Any(), "published installer left partial downloads");
+        var root = CreateRoot(workRoot, nameof(TestVerifiedInstallerAsync));
+        var destination = Path.Combine(root, "verified.ymme");
+        var calls = 0;
+        var guide = CreateInstallerGuide(root, (url, _) =>
+        {
+            AssertTrue(url == YmmpxLibInstallGuide.YmmpxLibPluginLatestDownloadUrl &&
+                url.Contains("/download/v1.1.0/"), "installer must request the pinned release");
+            calls++;
+            return Task.FromResult(VerifiedBytes);
+        });
+        var result = await guide.DownloadInstallerAsync(destination, confirmed: true);
+        AssertTrue(result?.Success == true && result.DownloadPath == destination && calls == 1 &&
+            (await File.ReadAllBytesAsync(destination)).SequenceEqual(VerifiedBytes), "verified package was not published");
+        AssertTrue(!Directory.EnumerateFiles(root, "*.download").Any(), "verified download left temporary files");
     }
 
-    private static async Task TestInstallerLaunchFailureKeepsDownloadAsync(string root)
+    private static async Task TestInstallerNotPublishedAsync(string workRoot)
     {
-        string? attempted = null;
-        var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
-            launcher: start => { attempted = start.FileName; throw new IOException("synthetic launcher error"); },
-            downloader: async (_, output, token) => await output.WriteAsync("verified bytes"u8.ToArray(), token));
+        var root = CreateRoot(workRoot, nameof(TestInstallerNotPublishedAsync));
+        var destination = Path.Combine(root, "blocked.ymme");
+        var calls = 0;
+        var guide = CreateInstallerGuide(root, (_, _) =>
+        {
+            calls++;
+            throw new HttpRequestException("simulated connection failure");
+        });
+        AssertTrue(await guide.DownloadInstallerAsync(destination, confirmed: false) is null && calls == 0,
+            "declining reached the download");
+#pragma warning disable CS0618 // Exercise the retired entry point without reaching download or launch.
+        var legacy = await guide.DownloadAndLaunchInstallerAsync();
+#pragma warning restore CS0618
+        AssertTrue(!legacy.Success && legacy.DownloadPath is null && calls == 0,
+            "the retired entry point reported success or accessed the network");
+        using var cancelled = new CancellationTokenSource();
+        cancelled.Cancel();
+        await ExpectInstallerCancellationAsync(guide, destination, cancelled.Token);
+        AssertTrue(calls == 0, "pre-cancellation reached the download");
+        var failed = await guide.DownloadInstallerAsync(destination, confirmed: true);
+        AssertTrue(failed?.Success == false && calls == 1, "download failure was not reported");
 
-        var result = await guide.DownloadAndLaunchInstallerAsync();
-        AssertTrue(!result.Success && result.DownloadPath is not null && result.DownloadPath == attempted, "manual installer location missing");
-        AssertTrue(await File.ReadAllTextAsync(result.DownloadPath!) == "verified bytes", "launcher failure removed completed installer");
-        AssertTrue(!Directory.EnumerateFiles(Path.GetDirectoryName(result.DownloadPath!)!, "*.download").Any(), "launcher failure left partial downloads");
+        using var inFlight = new CancellationTokenSource();
+        var interrupted = CreateInstallerGuide(root, (_, _) =>
+        {
+            inFlight.Cancel();
+            return Task.FromResult(VerifiedBytes);
+        });
+        await ExpectInstallerCancellationAsync(interrupted, destination, inFlight.Token);
+
+        var changed = (byte[])VerifiedBytes.Clone();
+        changed[0] ^= 1;
+        foreach (var body in new[] { changed, VerifiedBytes[..^1] })
+        {
+            var altered = CreateInstallerGuide(root, (_, _) => Task.FromResult(body));
+            var rejected = await altered.DownloadInstallerAsync(destination, confirmed: true);
+            AssertTrue(rejected?.Success == false && rejected.ErrorMessage?.Contains("SHA-256") == true,
+                "a wrong size or digest was accepted");
+        }
+        AssertTrue(!File.Exists(destination) && !Directory.EnumerateFiles(root, "*.download").Any(),
+            "unconfirmed, failed or altered transfers left downloadable content");
     }
 
-    private static async Task RunInInstallerTempAsync(string workRoot, Func<string, Task> test)
+    private static async Task ExpectInstallerCancellationAsync(YmmpxLibInstallGuide guide, string destination, CancellationToken token)
     {
-        //CSJ,variable=root,ルート
-        var root = CreateRoot(workRoot, test.Method.Name);
-        //CSJ,variable=oldTemp,旧一時
-        var oldTemp = Environment.GetEnvironmentVariable("TEMP");
-        var oldTmp = Environment.GetEnvironmentVariable("TMP");
         try
         {
-            Environment.SetEnvironmentVariable("TEMP", root);
-            Environment.SetEnvironmentVariable("TMP", root);
-            AssertTrue(Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) == root, "installer fixture is not isolated");
-            await test(root);
+            await guide.DownloadInstallerAsync(destination, confirmed: true, token);
+            throw new InvalidOperationException("installer cancellation was not observed");
         }
-        finally
-        {
-            Environment.SetEnvironmentVariable("TEMP", oldTemp);
-            Environment.SetEnvironmentVariable("TMP", oldTmp);
-        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
     }
 
-    private static async Task TestInstallerCancellationPreservesExistingFileAsync(string root)
+    private static async Task TestInstallerDestinationConflictAsync(string workRoot)
     {
-        var launches = 0;
-        var guide = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "installer.log")),
-            launcher: _ => launches++, downloader: (_, _, token) => { token.ThrowIfCancellationRequested(); throw new IOException("synthetic download failure"); });
-        //CSJ,variable=existing,既存
-        var existing = guide.GetInstallerDownloadPath();
-        Directory.CreateDirectory(Path.GetDirectoryName(existing)!);
-        await File.WriteAllTextAsync(existing, "synthetic existing installer");
-        //CSJ,variable=cancelled,キャンセル済み
-        using var cancelled = new CancellationTokenSource(); cancelled.Cancel();
-        try { await guide.DownloadAndLaunchInstallerAsync(cancelled.Token); throw new Exception("installer cancellation ignored"); }
-        catch (OperationCanceledException) { }
-        AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled installer modified existing file or launched");
-        //CSJ,variable=failed,失敗
-        var failed = await guide.DownloadAndLaunchInstallerAsync();
-        AssertTrue(!failed.Success && await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "failed download modified existing file or launched");
-        //CSJ,variable=interrupted,中断済み
-        using var interrupted = new CancellationTokenSource();
-        var duringDownload = new YmmpxLibInstallGuide(new FileLogger(Path.Combine(root, "during.log")),
-            launcher: _ => launches++, downloader: async (_, output, _) => { await output.WriteAsync("synthetic partial"u8.ToArray()); interrupted.Cancel(); });
-        try { await duringDownload.DownloadAndLaunchInstallerAsync(interrupted.Token); throw new Exception("download cancellation ignored before launch"); }
-        catch (OperationCanceledException) { }
-        AssertTrue(await File.ReadAllTextAsync(existing) == "synthetic existing installer" && launches == 0, "cancelled download modified existing file or launched");
-        AssertTrue(Directory.GetFiles(Path.GetDirectoryName(existing)!).SequenceEqual(new[] { existing }), "cancelled or failed downloads left owned partial installers");
+        var root = CreateRoot(workRoot, nameof(TestInstallerDestinationConflictAsync));
+        var destination = Path.Combine(root, "competing.ymme");
+        const string original = "independent existing file";
+        var calls = 0;
+        var guide = CreateInstallerGuide(root, async (_, _) =>
+        {
+            calls++;
+            await File.WriteAllTextAsync(destination, original);
+            return VerifiedBytes;
+        });
+
+        await File.WriteAllTextAsync(destination, original);
+        AssertTrue((await guide.DownloadInstallerAsync(destination, confirmed: true))?.Success == false && calls == 0,
+            "existing output did not prevent the download");
+        File.Delete(destination);
+        AssertTrue((await guide.DownloadInstallerAsync(destination, confirmed: true))?.Success == false && calls == 1 &&
+            await File.ReadAllTextAsync(destination) == original &&
+            !Directory.EnumerateFiles(root, "*.download").Any(), "a competing file was overwritten or temporary output leaked");
+    }
+
+    private static Task TestOfficialEndpointAsync()
+    {
+        AssertTrue(YmmpxLibInstallGuide.IsOfficialAssetEndpoint(new("https://github.com/hazimeyou/YmmpxLib")) &&
+            YmmpxLibInstallGuide.IsOfficialAssetEndpoint(new("https://release-assets.githubusercontent.com/file")), "official hosts were rejected");
+        foreach (var url in new[] { "http://github.com/path", "https://github.com.evil.invalid/path",
+            "https://github.com:444/path", "https://name@github.com/path" })
+            AssertTrue(!YmmpxLibInstallGuide.IsOfficialAssetEndpoint(new(url)), "unapproved asset URL was allowed");
+        return Task.CompletedTask;
     }
 
     //CSJ,method=TestResolverSearchPathsAsync,解決処理検索パス一覧をテストする（非同期）

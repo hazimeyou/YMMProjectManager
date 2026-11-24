@@ -8,6 +8,7 @@ using System.Windows.Data;
 using Microsoft.Win32;
 using YMMProjectManager.Domain.Packaging;
 using YMMProjectManager.Infrastructure;
+using YMMProjectManager.Infrastructure.Packaging;
 
 namespace YMMProjectManager.Presentation.ViewModels;
 
@@ -25,8 +26,7 @@ public sealed partial class ProjectListViewModel
 
         if (!await Task.Run(() => bundleService.TryEnsureAvailable(out _), token))
         {
-            BundleStatus = bundleService.MissingLibraryMessage;
-            MessageBox.Show(BundleStatus, "YMMPX 素材受け渡し", MessageBoxButton.OK, MessageBoxImage.Warning);
+            await OfferYmmpxLibDownloadAsync(token);
             return;
         }
 
@@ -85,6 +85,53 @@ public sealed partial class ProjectListViewModel
         BundleStatus = $"作成完了 {result.OutputPath}\n同梱 {result.PackagedMaterialCount} 件 / 除外・不足 {result.MissingMaterialCount} 件\n受け渡す際は同じフォルダーの照合記録も一緒に渡してください。";
         MessageBox.Show(BundleStatus, "YMMPX 素材受け渡し", MessageBoxButton.OK, MessageBoxImage.Information);
     });
+
+    private async Task OfferYmmpxLibDownloadAsync(CancellationToken token)
+    {
+        var guide = new YmmpxLibInstallGuide(logger);
+        BundleStatus = bundleService.MissingLibraryMessage;
+        var instructions = guide.BuildGuide(BundleStatus, bundleService.SearchedPaths, guide.FindLegacyFolders());
+        if (MessageBox.Show(instructions + "\n\n対応する公式版の保存先を選びますか？",
+            "YmmpxLibPlugin の導入・更新", MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+
+        var destination = new SaveFileDialog
+        {
+            Title = "YmmpxLibPlugin の保存先",
+            Filter = "YMM4 プラグイン (*.ymme)|*.ymme",
+            FileName = YmmpxLibInstallGuide.SuggestedFileName,
+            DefaultExt = ".ymme",
+            OverwritePrompt = false,
+        };
+        if (destination.ShowDialog() != true) return;
+        var destinationPath = destination.FileName;
+
+        var approved = MessageBox.Show(
+            $"公式 {YmmpxLibInstallGuide.SupportedRelease} の .ymme を取得し、SHA-256 を確認して次の場所に保存します。\n\n{destinationPath}\n\nダウンロードしますか？",
+            "YmmpxLibPlugin の取得確認", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes;
+        if (approved) BundleStatus = "YmmpxLibPlugin を取得しています。";
+        YmmpxLibInstallResult? result;
+        try
+        {
+            result = await Task.Run(() => guide.DownloadInstallerAsync(destinationPath, approved, token), token);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            BundleStatus = "YmmpxLibPlugin の取得を取り消しました。";
+            throw;
+        }
+        if (result is null)
+        {
+            BundleStatus = "YmmpxLibPlugin の取得を取りやめました。";
+            return;
+        }
+
+        BundleStatus = result.Success
+            ? $"公式配布物を確認して保存しました。\n{result.DownloadPath}\n保存した .ymme を YMM4 の手順で導入し、YMM4 を再起動してください。"
+            : result.ErrorMessage ?? "YmmpxLibPlugin を取得できませんでした。";
+        MessageBox.Show(BundleStatus, "YmmpxLibPlugin", MessageBoxButton.OK,
+            result.Success ? MessageBoxImage.Information : MessageBoxImage.Warning);
+    }
 
     //CSJ,class=TransferAssetRow,受け渡し素材行
     private sealed class TransferAssetRow(YmmpxTransferCandidate candidate)
