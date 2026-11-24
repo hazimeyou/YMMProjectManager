@@ -1,4 +1,5 @@
 using System.IO;
+using System.Security.Cryptography;
 using System.Text.Json;
 using YMMProjectManager.Infrastructure;
 
@@ -11,9 +12,10 @@ public sealed partial class YMMProjectManagerSettings
     private const int SettingsReceiptVersion = 1;
     private const int MaxSettingsReceiptBytes = 4096;
 
-    internal sealed record SettingsRecoveryCandidate(Guid OperationId, string BackupPath, ulong Volume, Guid FileId, string Sha256);
+    internal sealed record SettingsRecoveryCandidate(Guid OperationId, string BackupPath, ulong Volume, Guid FileId, string Sha256,
+        ulong StagedVolume, Guid StagedId, string StagedSha256);
     private sealed record SettingsRecoveryReceipt(int Version, Guid OperationId, string TargetName, ulong DirectoryVolume,
-        Guid DirectoryId, ulong Volume, Guid FileId, string Sha256);
+        Guid DirectoryId, ulong Volume, Guid FileId, string Sha256, ulong StagedVolume, Guid StagedId, string StagedSha256);
 
     internal SettingsRecoveryCandidate? FindInterruptedSave()
     {
@@ -26,7 +28,8 @@ public sealed partial class YMMProjectManagerSettings
                 if (operationId is null) return null;
                 using var receipt = OpenSettingsFile(SettingsReceiptPath(operationId.Value), allowRename: false);
                 using var backup = OpenSettingsFile(PreviousSettingsPath(operationId.Value), allowRename: false);
-                return InspectRecovery(operationId.Value, receipt, backup, out _);
+                using var staged = OpenSettingsFile(StagedSettingsPath(operationId.Value), allowRename: false);
+                return InspectRecovery(operationId.Value, receipt, backup, staged, out _);
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or JsonException)
             {
@@ -45,7 +48,8 @@ public sealed partial class YMMProjectManagerSettings
                 if (FindMissingSettingsOperation() != candidate.OperationId) return false;
                 using var receipt = OpenSettingsFile(SettingsReceiptPath(candidate.OperationId), allowRename: true);
                 using var backup = OpenSettingsFile(PreviousSettingsPath(candidate.OperationId), allowRename: true);
-                if (InspectRecovery(candidate.OperationId, receipt, backup, out var folders) != candidate)
+                using var staged = OpenSettingsFile(StagedSettingsPath(candidate.OperationId), allowRename: true);
+                if (InspectRecovery(candidate.OperationId, receipt, backup, staged, out var folders) != candidate)
                     return false;
 
                 beforePublish?.Invoke();
@@ -55,6 +59,7 @@ public sealed partial class YMMProjectManagerSettings
                 SearchFolders = folders;
                 hasConfirmedSettings = true;
                 RetainedBackupPath = null;
+                OwnedFilePublication.TryDeleteOpenedPath(staged.SafeFileHandle);
                 OwnedFilePublication.TryDeleteOpenedPath(receipt.SafeFileHandle);
                 return true;
             }
@@ -65,10 +70,12 @@ public sealed partial class YMMProjectManagerSettings
         }
     }
 
-    private FileStream PrepareRecoveryReceipt(Guid operationId, SettingsVersion original, (ulong Volume, Guid Id) directory)
+    private FileStream PrepareRecoveryReceipt(Guid operationId, SettingsVersion original, SettingsVersion staged,
+        (ulong Volume, Guid Id) directory)
     {
         var data = new SettingsRecoveryReceipt(SettingsReceiptVersion, operationId, Path.GetFileName(settingsPath),
-            directory.Volume, directory.Id, original.Identity.Item1, original.Identity.Item2, original.Sha256);
+            directory.Volume, directory.Id, original.Identity.Item1, original.Identity.Item2, original.Sha256,
+            staged.Identity.Item1, staged.Identity.Item2, staged.Sha256);
         var receipt = OwnedFilePublication.CreateOwnedOutputFile(SettingsReceiptPath(operationId));
         try
         {
@@ -84,25 +91,31 @@ public sealed partial class YMMProjectManagerSettings
         }
     }
 
-    private SettingsRecoveryCandidate InspectRecovery(Guid operationId, FileStream receipt, FileStream backup, out List<string> folders)
+    private SettingsRecoveryCandidate InspectRecovery(Guid operationId, FileStream receipt, FileStream backup, FileStream staged,
+        out List<string> folders)
     {
         if (receipt.Length is <= 0 or > MaxSettingsReceiptBytes)
             throw new InvalidDataException("Invalid settings recovery receipt size.");
         var evidence = JsonSerializer.Deserialize<SettingsRecoveryReceipt>(receipt);
         using var parent = OwnedFilePublication.OpenOrdinaryPath(Path.GetDirectoryName(settingsPath)!, expectDirectory: true, allowRename: false);
         var parentId = ProjectFileEvidence.ReadPhysicalIdentity(parent);
-        var bytes = ReadSettings(backup);
-        var version = GetVersion(backup, bytes);
         if (evidence?.Version != SettingsReceiptVersion || evidence.OperationId != operationId ||
             !string.Equals(evidence.TargetName, Path.GetFileName(settingsPath), StringComparison.OrdinalIgnoreCase) ||
             (evidence.DirectoryVolume, evidence.DirectoryId) != parentId ||
-            evidence.Volume != version.Identity.Item1 || evidence.FileId != version.Identity.Item2 ||
-            !string.Equals(evidence.Sha256, version.Sha256, StringComparison.Ordinal))
-            throw new InvalidDataException("Settings recovery evidence no longer matches the retained file.");
+            (evidence.Volume, evidence.FileId) != ProjectFileEvidence.ReadPhysicalIdentity(backup) ||
+            (evidence.StagedVolume, evidence.StagedId) != ProjectFileEvidence.ReadPhysicalIdentity(staged))
+            throw new InvalidDataException("Settings recovery evidence no longer matches the retained files.");
+
+        var bytes = ReadSettings(backup);
+        var hash = Convert.ToHexString(SHA256.HashData(bytes));
+        var stagedHash = Convert.ToHexString(SHA256.HashData(staged));
+        if (hash != evidence.Sha256 || stagedHash != evidence.StagedSha256)
+            throw new InvalidDataException("Settings recovery evidence no longer matches the retained contents.");
 
         var data = DecodeSettings(bytes) ?? throw new InvalidDataException("Invalid retained settings.");
         folders = NormalizeFolders(data.SearchFolders ?? []);
-        return new(operationId, PreviousSettingsPath(operationId), evidence.Volume, evidence.FileId, version.Sha256);
+        return new(operationId, PreviousSettingsPath(operationId), evidence.Volume, evidence.FileId, hash,
+            evidence.StagedVolume, evidence.StagedId, stagedHash);
     }
 
     private Guid? FindMissingSettingsOperation()
@@ -133,6 +146,7 @@ public sealed partial class YMMProjectManagerSettings
 
     private string PreviousSettingsPath(Guid operationId) => settingsPath + PreviousSettingsSuffix + operationId.ToString("N");
     private string SettingsReceiptPath(Guid operationId) => settingsPath + SettingsReceiptSuffix + operationId.ToString("N");
+    private string StagedSettingsPath(Guid operationId) => settingsPath + "." + operationId.ToString("N") + ".tmp";
 
     private static FileStream OpenSettingsFile(string path, bool allowRename)
     {

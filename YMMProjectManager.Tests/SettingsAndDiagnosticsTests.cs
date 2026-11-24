@@ -66,6 +66,13 @@ internal static class SettingsAndDiagnosticsTests
             Require(subject.RetainedBackupPath == backup && bytes.SequenceEqual(File.ReadAllBytes(backup)),
                 "Original settings were not preserved or the recovery path was not reported.");
             Require(!subject.TryReload() && subject.GetSearchFolders().SequenceEqual([older]), "Corrupt input discarded the confirmed settings.");
+            const string releasedTemporaryName = "competing-settings-preserved.json";
+            var moved = Path.Combine(root, releasedTemporaryName);
+            File.Move(path, moved);
+            var candidate = original.FindInterruptedSave();
+            Require(candidate is not null && original.TryRecoverInterruptedSave(candidate) &&
+                File.ReadAllBytes(path).SequenceEqual(bytes) && File.ReadAllText(moved) == "competing version",
+                "The failed rollback lost the evidence needed to recover once the active name was free.");
             return Task.CompletedTask;
         });
         await Program.RunNamedCaseAsync("Existing settings with a Unicode BOM keep the established JSON format", () =>
@@ -117,7 +124,8 @@ internal static class SettingsAndDiagnosticsTests
         {
             var interrupted = await InterruptSaveAsync(root, older);
             var retained = new YMMProjectManagerSettings(interrupted.Path);
-            Require(!retained.TryReload() && !retained.SetSearchFolders([newer]), "A missing current file bypassed recovery.");
+            Require(!retained.TryReload() && !retained.SetSearchFolders([newer]) &&
+                retained.RetainedBackupPath == interrupted.Backup, "A missing current file bypassed recovery or lost its diagnostic.");
             var candidate = retained.FindInterruptedSave();
             Require(candidate is not null && candidate.BackupPath == interrupted.Backup, "No verified recovery was found.");
             using (var backup = File.OpenRead(interrupted.Backup))
@@ -128,7 +136,8 @@ internal static class SettingsAndDiagnosticsTests
                 Require(ProjectFileEvidence.ReadPhysicalIdentity(restored) == interrupted.Identity, "Recovery replaced the original file identity.");
             Require(File.ReadAllBytes(interrupted.Path).SequenceEqual(interrupted.Before) &&
                 retained.GetSearchFolders().SequenceEqual([older]) &&
-                !File.Exists(interrupted.Receipt) && !retained.TryRecoverInterruptedSave(candidate!),
+                !File.Exists(interrupted.Receipt) && !File.Exists(interrupted.Staged) &&
+                !retained.TryRecoverInterruptedSave(candidate!),
                 "Recovery changed the old bytes or was incorrectly repeatable.");
             Require(retained.SetSearchFolders([newer]), "Normal save did not resume after recovery.");
         });
@@ -177,10 +186,26 @@ internal static class SettingsAndDiagnosticsTests
             var movedBackup = Path.Combine(other, Path.GetFileName(interrupted.Backup));
             File.Move(interrupted.Backup, movedBackup);
             File.Move(interrupted.Receipt, Path.Combine(other, Path.GetFileName(interrupted.Receipt)));
+            File.Move(interrupted.Staged, Path.Combine(other, Path.GetFileName(interrupted.Staged)));
             var retained = new YMMProjectManagerSettings(unrelated);
             Require(retained.FindInterruptedSave() is null && !retained.SetSearchFolders([newer]) &&
                 !File.Exists(unrelated) && File.ReadAllBytes(movedBackup).SequenceEqual(interrupted.Before),
                 "Evidence transplanted from another directory was accepted.");
+        });
+        await Program.RunNamedCaseAsync("Settings do not offer rollback after publication when the current name is later removed", async () =>
+        {
+            var interrupted = await InterruptSaveAsync(root, older);
+            var retained = new YMMProjectManagerSettings(interrupted.Path);
+            var candidate = retained.FindInterruptedSave();
+            Require(candidate is not null, "The parked original was not detected.");
+            var published = File.ReadAllBytes(interrupted.Staged);
+            File.Move(interrupted.Staged, interrupted.Path);
+            var moved = interrupted.Path + ".moved-current";
+            File.Move(interrupted.Path, moved);
+            Require(retained.FindInterruptedSave() is null && !retained.TryRecoverInterruptedSave(candidate!) &&
+                !File.Exists(interrupted.Path) && File.ReadAllBytes(moved).SequenceEqual(published) &&
+                File.ReadAllBytes(interrupted.Backup).SequenceEqual(interrupted.Before) && File.Exists(interrupted.Receipt),
+                "A previous save which already published was offered as an interrupted save.");
         });
     }
 
@@ -208,7 +233,7 @@ internal static class SettingsAndDiagnosticsTests
         settings.SetSearchFolders([fixtureRoot]);
     }
 
-    private static async Task<(string Path, string Backup, string Receipt, byte[] Before, (ulong, Guid) Identity)>
+    private static async Task<(string Path, string Backup, string Receipt, string Staged, byte[] Before, (ulong, Guid) Identity)>
         InterruptSaveAsync(string root, string folder)
     {
         var fixture = Directory.CreateDirectory(Path.Combine(root, Guid.NewGuid().ToString("N"))).FullName;
@@ -241,11 +266,13 @@ internal static class SettingsAndDiagnosticsTests
         Require(process.ExitCode != 0, "The child did not terminate abruptly.");
         var backup = Directory.GetFiles(fixture, FixtureFileName + ".previous-*").Single();
         var receipt = Directory.GetFiles(fixture, FixtureFileName + ".recovery-*").Single();
+        var staged = Directory.GetFiles(fixture, FixtureFileName + ".*.tmp").Single();
         // Windows can signal process exit before NTFS releases the child's file sharing locks.
         using var released = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         await WaitForSharingReleaseAsync(receipt, released.Token);
         await WaitForSharingReleaseAsync(backup, released.Token);
-        return (path, backup, receipt, before, identity);
+        await WaitForSharingReleaseAsync(staged, released.Token);
+        return (path, backup, receipt, staged, before, identity);
     }
 
     private static async Task WaitForSharingReleaseAsync(string path, CancellationToken cancellationToken)

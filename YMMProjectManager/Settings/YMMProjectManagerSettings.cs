@@ -69,10 +69,11 @@ public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectM
     {
         lock (SaveLock)
         {
+            if (!hasConfirmedSettings) return false;
             RetainedBackupPath = null;
             try
             {
-                return hasConfirmedSettings && TrySave(NormalizeFolders(folders));
+                return TrySave(NormalizeFolders(folders));
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
             {
@@ -124,9 +125,8 @@ public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectM
 
         var bytes = JsonSerializer.SerializeToUtf8Bytes(new PersistedSettings { SearchFolders = folders },
             new JsonSerializerOptions { WriteIndented = true });
-        var temporary = settingsPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        using var output = OwnedFilePublication.CreateOwnedOutputFile(temporary, readBack: original is not null);
         var operationId = Guid.NewGuid();
+        using var output = OwnedFilePublication.CreateOwnedOutputFile(StagedSettingsPath(operationId), readBack: original is not null);
         var parkedPath = PreviousSettingsPath(operationId);
         FileStream? receipt = null;
         var parked = false;
@@ -143,7 +143,8 @@ public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectM
             output.Flush(flushToDisk: true);
             if (original is not null)
             {
-                receipt = PrepareRecoveryReceipt(operationId, currentVersion!, ProjectFileEvidence.ReadPhysicalIdentity(directoryHandle));
+                receipt = PrepareRecoveryReceipt(operationId, currentVersion!, stagedVersion,
+                    ProjectFileEvidence.ReadPhysicalIdentity(directoryHandle));
                 OwnedFilePublication.RenameOpenedPath(original.SafeFileHandle, parkedPath);
                 parked = true;
             }
@@ -174,7 +175,8 @@ public sealed partial class YMMProjectManagerSettings : SettingsBase<YMMProjectM
                         PluginDiagnostics.Logger.Info($"Settings rollback preserved {Path.GetFileName(parkedPath)}.");
                     }
                 }
-                OwnedFilePublication.TryDeleteOpenedPath(output.SafeFileHandle);
+                // A failed rollback needs both files and the receipt to recognize the interrupted save.
+                if (!parked) OwnedFilePublication.TryDeleteOpenedPath(output.SafeFileHandle);
             }
             if (receipt is not null)
             {
