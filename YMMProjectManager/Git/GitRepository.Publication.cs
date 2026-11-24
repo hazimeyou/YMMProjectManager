@@ -166,12 +166,16 @@ public sealed partial class GitRepository
 
     //CSJ,method=IsBlockedPublicationPath,Git送信禁止パスかを判定する
     private bool IsBlockedPublicationPath(string path) =>
+        !IsOrdinaryPublicationPath(path) ||
         path.EndsWith(".ymmpx", StringComparison.OrdinalIgnoreCase) ||
         path.EndsWith(".ymme", StringComparison.OrdinalIgnoreCase) ||
         publicationAssetNames.Contains(Path.GetFileName(path)) ||
         IsPrivateApplicationPath(path) ||
         IsTransferAssetReference(path) ||
         IsAssetPoolPayload(path);
+
+    private static bool IsOrdinaryPublicationPath(string path) =>
+        !HasHiddenText(path) && path.Split('/').All(component => GitPullWindowsTree.IsOrdinaryWindowsName(component));
 
     private static bool IsPrivateApplicationPath(string path) =>
         path.Split('/').Any(component =>
@@ -369,12 +373,12 @@ public sealed partial class GitRepository
         string content;
         try { content = StrictPublicationUtf8.GetString(bytes); }
         catch (DecoderFallbackException) { return "Git contains binary or unverified encoded content."; }
+        var start = content.AsSpan().TrimStart().TrimStart('\uFEFF').TrimStart();
         if (content.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')) ||
-            content.StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal))
+            start.StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal))
             return "Git contains binary content or an external large file pointer.";
         if (KnownCredentialText.IsMatch(content))
             return "Git contains a recognizable credential or private key.";
-        var start = content.AsSpan().TrimStart('\uFEFF').TrimStart();
         if (start.StartsWith("WEBVTT", StringComparison.Ordinal) &&
             (start.Length == 6 || char.IsWhiteSpace(start[6])))
             return "Git contains a WebVTT media asset.";
@@ -392,6 +396,16 @@ public sealed partial class GitRepository
                 return "Git contains a blob matching a registered asset after line-ending normalization.";
         }
 
+        if (start.StartsWith("["))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(start.ToString());
+                if (document.RootElement.EnumerateArray().Any(IsPrivateExclusionRule))
+                    return "Git contains a local path in a YMMPX exclusion rule.";
+            }
+            catch (JsonException) { /* Ordinary text may contain a JSON fragment. */ }
+        }
         if (start.StartsWith("{"))
         {
             try
@@ -492,6 +506,15 @@ public sealed partial class GitRepository
     }
 
     //CSJ,method=IsMachineLocalReference,端末ローカル参照かを判定する
+    private static bool IsPrivateExclusionRule(JsonElement entry) =>
+        entry.ValueKind == JsonValueKind.Object &&
+        (HasBoolean(entry, "IsFolder") || HasBoolean(entry, "IsExcluded")) &&
+        (entry.TryGetProperty("Path", out var path) || entry.TryGetProperty("FilePath", out path)) &&
+        path.ValueKind == JsonValueKind.String && IsMachineLocalReference(path.GetString()!);
+
+    private static bool HasBoolean(JsonElement entry, string name) =>
+        entry.TryGetProperty(name, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False;
+
     private static bool IsMachineLocalReference(string reference)
     {
         //CSJ,variable=path,パス

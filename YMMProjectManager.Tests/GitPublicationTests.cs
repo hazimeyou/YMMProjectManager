@@ -295,6 +295,47 @@ internal static class GitPublicationTests
                 return (false, null);
             });
         });
+        await Program.RunNamedCaseAsync("R33 Git checks Windows spelling and renamed exclusion records without blocking portable rules", async () =>
+        {
+            await TestAsync(root, "win-stage", async (source, git) =>
+            {
+                var folder = Directory.CreateDirectory(Path.Combine(source, "notes")).FullName;
+                await File.WriteAllTextAsync(Path.Combine(folder, "local.json"),
+                    """[{"IsFolder":true,"IsExcluded":true,"Path":"C:/synthetic/private"}]""");
+                await File.WriteAllTextAsync(Path.Combine(folder, "portable.json"),
+                    """[{"IsFolder":true,"IsExcluded":true,"Path":"fixtures/reference"}]""");
+                await File.WriteAllTextAsync(Path.Combine(folder, "PACKAGE.YMMPX"), "synthetic filename test");
+                var declined = await git.StageAsync([@".\notes\local.json"]);
+                if (declined.Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Renamed local exclusion rules were accepted.");
+                if ((await git.StageAsync([@"notes\PACKAGE.YMMPX"])).Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Case-insensitive media checks were skipped.");
+                try
+                {
+                    await git.StageAsync([@"..\outside.json"]);
+                    throw new InvalidOperationException("An outside path was accepted.");
+                }
+                catch (ArgumentException) { }
+                if (!(await git.StageAsync([@"notes\portable.json"])).Success ||
+                    !(await git.CommitAsync("portable rules")).Success)
+                    throw new InvalidOperationException("A portable relative rule did not pass Stage and Commit.");
+                return (true, null);
+            });
+            await TestAsync(root, "old-rules", async (source, git) =>
+            {
+                const string name = "local-copy.json";
+                var record = """[{"IsFolder":false,"IsExcluded":true,"FilePath":"C:/synthetic/private.dat"}]"""u8.ToArray();
+                await File.WriteAllBytesAsync(Path.Combine(source, name), record);
+                await CommandAsync(source, "add", "--", name);
+                var approved = (await git.InspectCommitAsync()).CommitTarget!;
+                if ((await git.CommitAsync(approved, "private settings")).Failure != GitFailure.MediaPublication)
+                    throw new InvalidOperationException("Commit accepted a known private exclusion record.");
+                await CommandAsync(source, "commit", "-m", "synthetic private settings");
+                await CommandAsync(source, "rm", "--", name);
+                await CommandAsync(source, "commit", "-m", "remove local fixture");
+                return (false, null);
+            });
+        });
         await Program.RunNamedCaseAsync("R29 Stage and Commit block restore evidence beside an ordinary PF", () =>
             TestAsync(root, "restore-local", async (source, git) =>
             {

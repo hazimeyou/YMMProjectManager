@@ -46,7 +46,7 @@ internal static class GitPullWindowsTree
     }
 
     //CSJ,method=IsOrdinaryWindowsName,通常のWindowsファイル名として有効か判定する
-    private static bool IsOrdinaryWindowsName(ReadOnlySpan<char> name)
+    internal static bool IsOrdinaryWindowsName(ReadOnlySpan<char> name)
     {
         if (name.IsEmpty || name.Length > 255 || name[^1] is ' ' or '.' ||
             name.Contains('\uFFFD') || name.IndexOfAny(InvalidNameCharacters) >= 0 ||

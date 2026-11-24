@@ -120,17 +120,17 @@ public sealed partial class GitRepository
         return paths.Select(path =>
         {
             ArgumentException.ThrowIfNullOrWhiteSpace(path);
-            if (Path.IsPathRooted(path) || HasHiddenText(path))
-                throw new ArgumentException("Paths must be relative to the repository.", nameof(paths));
+            if (Path.IsPathRooted(path) || HasHiddenText(path) ||
+                path.Split(['/', '\\']).Any(component => component != "." && !GitPullWindowsTree.IsOrdinaryWindowsName(component)))
+                throw new ArgumentException("Select an ordinary Windows path relative to the repository.", nameof(paths));
             //CSJ,variable=full,絶対パス
             var full = Path.GetFullPath(path, directory);
             if (!full.StartsWith(directory + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException("Path is outside the repository.", nameof(paths));
             //CSJ,variable=relative,相対
             var relative = Path.GetRelativePath(directory, full).Replace('\\', '/');
-            if (relative.Split('/').Any(piece => piece.Equals(".git", StringComparison.OrdinalIgnoreCase) ||
-                piece.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0))
-                throw new ArgumentException("Git metadata and alternate data streams are excluded.", nameof(paths));
+            if (!IsOrdinaryPublicationPath(relative))
+                throw new ArgumentException("Git metadata and ambiguous Windows paths are excluded.", nameof(paths));
             return relative;
         }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     }
