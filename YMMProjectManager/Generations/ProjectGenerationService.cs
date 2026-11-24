@@ -29,16 +29,21 @@ public sealed class ProjectGenerationService : IProjectGenerationService
     private readonly ProjectGenerationStorage storage;
     //CSJ,field=manifestRepository,目録リポジトリ
     private readonly ProjectGenerationManifestRepository manifestRepository;
+    private readonly Action<string>? beforeRestoreCommit;
+    private readonly Action? afterRestoreParking;
 
     public ProjectGenerationService(FileLogger logger, string? storageRootDirectory = null)
         : this(logger, new ProjectGenerationStorage(storageRootDirectory)) { }
 
-    internal ProjectGenerationService(FileLogger logger, ProjectGenerationStorage storage, Func<DateTimeOffset, string>? createId = null)
+    internal ProjectGenerationService(FileLogger logger, ProjectGenerationStorage storage,
+        Func<DateTimeOffset, string>? createId = null, Action<string>? beforeRestoreCommit = null, Action? afterRestoreParking = null)
     {
         this.logger = logger;
         hashService = new ProjectGenerationHashService();
         this.createId = createId ?? new ProjectGenerationIdFactory().Create;
         this.storage = storage;
+        this.beforeRestoreCommit = beforeRestoreCommit;
+        this.afterRestoreParking = afterRestoreParking;
         manifestRepository = new ProjectGenerationManifestRepository(storage, logger);
     }
 
@@ -297,18 +302,19 @@ public sealed class ProjectGenerationService : IProjectGenerationService
 
         logger.Info($"GenerationRestoreStarted projectPath={normalizedProjectPath}, generationId={generationId}, mode={restoreMode}");
 
-        //CSJ,variable=tempPath,一時パス
-        string? tempPath = null;
         try
         {
-            if ((File.GetAttributes(Path.GetDirectoryName(generationPath)!) & FileAttributes.ReparsePoint) != 0)
-                return (false, "世代フォルダがリンクのため復元を中止しました。", null);
-            if (!File.Exists(generationPath))
-            {
-                return (false, "世代ファイルが見つかりません。", null);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            var projectDirectory = Path.GetDirectoryName(normalizedProjectPath)!;
+            var outputPath = restoreMode == GenerationRestoreMode.RestoreAsNewFile
+                ? CreateRestoreAsNewFilePath(normalizedProjectPath, generationId)
+                : normalizedProjectPath;
 
-            //CSJ,variable=metadata,メタデータ
+            using var targetFence = OwnedFilePublication.DirectoryFence.Open(projectDirectory, enforceShare: true);
+            await using var original = restoreMode == GenerationRestoreMode.RestoreAsNewFile
+                ? null : ProjectGenerationRestorePublication.OpenTarget(outputPath);
+            var generationDirectory = Path.GetDirectoryName(generationPath)!;
+            using var generationFence = OwnedFilePublication.DirectoryFence.Open(generationDirectory, enforceShare: true);
             var metadata = await storage.ReadMetadataAsync(projectId, generationId, cancellationToken).ConfigureAwait(false);
             if (metadata is null)
             {
@@ -316,62 +322,38 @@ public sealed class ProjectGenerationService : IProjectGenerationService
                 return (false, "metadata.json が見つかりません。", null);
             }
 
-            //CSJ,variable=actualSha,実測値SHA
-            var actualSha = hashService.ComputeFileSha256(generationPath);
-            if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
+            using var sourceHandle = OwnedFilePublication.OpenOrdinaryPath(generationPath, expectDirectory: false, allowRename: false);
+            using var source = new FileStream(sourceHandle, FileAccess.Read);
+            var temporaryPath = Path.Combine(projectDirectory, $"{Guid.NewGuid():N}.restore.tmp");
+            await using var candidate = OwnedFilePublication.CreateOwnedOutputFile(temporaryPath, readBack: true);
+            var published = false;
+            try
             {
-                logger.Info($"GenerationMetadataCorrupted projectId={projectId}, generationId={generationId}, reason=sha-mismatch");
-                return (false, "SHA256 が一致しません。世代ファイルが破損している可能性があります。", null);
-            }
+                await source.CopyToAsync(candidate, cancellationToken).ConfigureAwait(false);
+                await candidate.FlushAsync(cancellationToken).ConfigureAwait(false);
+                candidate.Flush(flushToDisk: true);
+                candidate.Position = 0;
+                var actualSha = Convert.ToHexString(await SHA256.HashDataAsync(candidate, cancellationToken).ConfigureAwait(false));
+                if (!string.Equals(actualSha, metadata.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("SHA256 が一致しません。世代ファイルが破損している可能性があります。");
 
-            if (restoreMode == GenerationRestoreMode.RestoreAsNewFile)
+                var backupPath = original is null ? null : storage.ResolveRestoreBackupPath(projectId, outputPath);
+                beforeRestoreCommit?.Invoke(backupPath ?? outputPath);
+                var retained = await ProjectGenerationRestorePublication.PublishAsync(candidate, original, outputPath,
+                    backupPath, cancellationToken, afterRestoreParking).ConfigureAwait(false);
+                published = true;
+                logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, restoredPath={outputPath}, backupPath={backupPath}, retainedOriginalPath={retained}");
+                return (true, null, BuildGenerationRecord(metadata, generationDirectory));
+            }
+            finally
             {
-                //CSJ,variable=restoredPath,復元済みのパス
-                var restoredPath = CreateRestoreAsNewFilePath(normalizedProjectPath, generationId);
-                //CSJ,variable=tempDirectory,一時ディレクトリ
-                var tempDirectory = Path.GetDirectoryName(restoredPath) ?? AppContext.BaseDirectory;
-                tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, tempDirectory, cancellationToken).ConfigureAwait(false);
-                cancellationToken.ThrowIfCancellationRequested();
-                File.Move(tempPath, restoredPath, overwrite: false);
-                logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, restoredPath={restoredPath}");
-                return (true, null, BuildGenerationRecord(metadata, storage.GetGenerationDirectory(projectId, generationId)));
+                if (!published) OwnedFilePublication.TryDeleteOpenedPath(candidate.SafeFileHandle);
             }
-
-            if (File.Exists(normalizedProjectPath))
-            {
-                TryOpenExclusive(normalizedProjectPath);
-            }
-
-            //CSJ,variable=backupPath,バックアップ先のパス
-            var backupPath = storage.ResolveRestoreBackupPath(projectId, normalizedProjectPath);
-            //CSJ,variable=targetDirectory,対象ディレクトリ
-            var targetDirectory = Path.GetDirectoryName(normalizedProjectPath) ?? AppContext.BaseDirectory;
-            tempPath = await CreateValidatedRestoreTempAsync(generationPath, metadata.Sha256, targetDirectory, cancellationToken).ConfigureAwait(false);
-            await storage.ReplaceFileAtomicallyAsync(tempPath, normalizedProjectPath, backupPath, cancellationToken).ConfigureAwait(false);
-
-            logger.Info($"GenerationRestoreCompleted projectPath={normalizedProjectPath}, generationId={generationId}, backupPath={backupPath}");
-            return (true, null, BuildGenerationRecord(metadata, storage.GetGenerationDirectory(projectId, generationId)));
         }
         catch (Exception ex)
         {
             logger.Error(ex, $"GenerationRestoreFailed projectPath={normalizedProjectPath}, generationId={generationId}");
             return (false, ex.Message, null);
-        }
-        finally
-        {
-            if (!string.IsNullOrWhiteSpace(tempPath))
-            {
-                try
-                {
-                    if (File.Exists(tempPath))
-                    {
-                        File.Delete(tempPath);
-                    }
-                }
-                catch
-                {
-                }
-            }
         }
     }
 
@@ -493,51 +475,4 @@ public sealed class ProjectGenerationService : IProjectGenerationService
         return Path.Combine(directory, $"{fileName}_{generationId}{extension}");
     }
 
-    private static void TryOpenExclusive(string path)
-    {
-        //CSJ,variable=stream,ストリーム
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
-    }
-
-    private static async Task<string> CreateValidatedRestoreTempAsync(string sourcePath, string expectedSha256, string targetDirectory, CancellationToken cancellationToken)
-    {
-        Directory.CreateDirectory(targetDirectory);
-        //CSJ,variable=tempPath,一時パス
-        var tempPath = Path.Combine(targetDirectory, $"{Guid.NewGuid():N}.restore.tmp");
-        //CSJ,variable=owned,管理対象の
-        var owned = false;
-        try
-        {
-            await using (var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read))
-            //CSJ,variable=destination,格納先
-            await using (var destination = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, true))
-            {
-                owned = true;
-                await source.CopyToAsync(destination, cancellationToken).ConfigureAwait(false);
-            }
-
-            //CSJ,variable=tempSha,一時SHA
-            var tempSha = await Task.Run(() =>
-            {
-                //CSJ,variable=stream,ストリーム
-                using var stream = File.OpenRead(tempPath);
-                //CSJ,variable=bytes,バイト列
-                var bytes = SHA256.HashData(stream);
-                return Convert.ToHexString(bytes).ToLowerInvariant();
-            }, cancellationToken).ConfigureAwait(false);
-
-            if (!string.Equals(tempSha, expectedSha256, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("一時ファイルの SHA256 検証に失敗しました。");
-            return tempPath;
-        }
-        catch
-        {
-            if (owned)
-            {
-                try { File.Delete(tempPath); }
-                catch { /* Preserve the original copy or validation failure. */ }
-            }
-            throw;
-        }
-    }
 }

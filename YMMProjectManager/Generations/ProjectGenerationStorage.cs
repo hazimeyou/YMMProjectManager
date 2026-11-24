@@ -305,32 +305,19 @@ public sealed class ProjectGenerationStorage
     //CSJ,method=ReplaceFileAtomicallyAsync,ファイルをアトミックに置換する（非同期）
     public async Task ReplaceFileAtomicallyAsync(string sourceTempPath, string targetPath, string? backupPath = null, CancellationToken cancellationToken = default)
     {
-        //CSJ,variable=directory,ディレクトリ
-        var directory = Path.GetDirectoryName(targetPath);
-        if (!string.IsNullOrWhiteSpace(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
+        cancellationToken.ThrowIfCancellationRequested();
+        var source = Path.GetFullPath(sourceTempPath);
+        var target = Path.GetFullPath(targetPath);
+        var directory = Path.GetDirectoryName(target)!;
+        Directory.CreateDirectory(directory);
 
-        if (File.Exists(targetPath))
-        {
-            if (!string.IsNullOrWhiteSpace(backupPath))
-            {
-                //CSJ,variable=backupDirectory,バックアップディレクトリ
-                var backupDirectory = Path.GetDirectoryName(backupPath);
-                if (!string.IsNullOrWhiteSpace(backupDirectory))
-                {
-                    Directory.CreateDirectory(backupDirectory);
-                }
-                File.Replace(sourceTempPath, targetPath, backupPath, ignoreMetadataErrors: true);
-                return;
-            }
-
-            File.Move(sourceTempPath, targetPath, overwrite: true);
-            return;
-        }
-
-        File.Move(sourceTempPath, targetPath, overwrite: true);
+        using var targetFence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+        using var sourceFence = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(source)!, enforceShare: true);
+        await using var original = ProjectGenerationRestorePublication.OpenTarget(target);
+        using var candidateHandle = OwnedFilePublication.OpenOrdinaryPath(source, expectDirectory: false,
+            allowRename: true, FileShare.None);
+        using var candidate = new FileStream(candidateHandle, FileAccess.Read);
+        await ProjectGenerationRestorePublication.PublishAsync(candidate, original, target, backupPath, cancellationToken).ConfigureAwait(false);
     }
 
     //CSJ,method=CreateTemporaryCopyAsync,一時コピーを作成する（非同期）
@@ -348,7 +335,7 @@ public sealed class ProjectGenerationStorage
     {
         //CSJ,variable=projectFileName,プロジェクトファイル名
         var projectFileName = Path.GetFileName(targetProjectPath);
-        return Path.Combine(GetRestoreBackupsDirectory(projectId), $"{DateTimeOffset.Now:yyyyMMdd-HHmmss}_before-restore{Path.GetExtension(projectFileName)}");
+        return Path.Combine(GetRestoreBackupsDirectory(projectId), $"{DateTimeOffset.Now:yyyyMMdd-HHmmss}_{Guid.NewGuid():N}_before-restore{Path.GetExtension(projectFileName)}");
     }
 
     //CSJ,method=MoveDirectoryAsync,ディレクトリを移動する（非同期）

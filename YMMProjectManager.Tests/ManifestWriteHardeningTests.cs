@@ -165,5 +165,6 @@ internal static class ManifestWriteHardeningTests
         var restored=await service.RestoreGenerationAsync(project,first.GenerationId,YMMProjectManager.Domain.GenerationRestoreMode.RestoreAsNewFile);
         Check(restored.Success && Hash(snapshot)==snapshotHash,"restore");
         Console.WriteLine("R1-B2 manifest failure, concurrency and external edit checks passed.");
+        await GenerationRestoreSafetyTests.RunAsync(Path.Combine(workRoot, "r28-restore"));
     }
 }
