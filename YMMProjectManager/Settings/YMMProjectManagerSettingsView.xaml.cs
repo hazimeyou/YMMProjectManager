@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
@@ -67,8 +67,15 @@ public partial class YMMProjectManagerSettingsView : UserControl
 
     private void OnReloadClick(object sender, RoutedEventArgs e)
     {
-        ReloadFolders();
-        SummaryText.Text = "設定を再読込しました。";
+        if (settings.TryReload())
+        {
+            ReloadFolders();
+            SummaryText.Text = "設定を再読込しました。";
+        }
+        else
+        {
+            SummaryText.Text = "設定の再読込に失敗しました。";
+        }
     }
 
     private void ReloadFolders()
