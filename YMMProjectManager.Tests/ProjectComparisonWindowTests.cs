@@ -77,6 +77,13 @@ internal static class ProjectComparisonWindowTests
         var path = Path.Combine(root, "timing.json");
         await window.SaveTimingAsync(path);
         var saved = File.ReadAllBytes(path);
+        foreach (var name in new[] { "timing.json:other.json", "CON.json", "suffix.json." })
+        {
+            await window.SaveTimingAsync(Path.Combine(root, name));
+            Require(Error(window).Contains("保存先") && saved.SequenceEqual(File.ReadAllBytes(path)) &&
+                Directory.EnumerateFiles(root, ".ymmpm-comparison-*.tmp").Any() == false,
+                "A nonordinary destination reached timing publication.");
+        }
         workspace.SetDefaultOffset(TimeSpan.FromSeconds(12));
         await window.SaveTimingAsync(path);
         Require(Error(window).Contains("同名") && saved.SequenceEqual(File.ReadAllBytes(path)),
@@ -102,12 +109,14 @@ internal static class ProjectComparisonWindowTests
             Require(Control<TextBlock>(window, "DisconnectedNotice").Visibility == Visibility.Collapsed &&
                 Control<Button>(window, "RefreshPreviewButton").IsEnabled, "Synthetic UI did not connect its supplied provider.");
             workspace.SetSection(null, new(TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(200)));
-            Control<Slider>(window, "CommonSeekBar").Value = 0.5;
+            Control<Slider>(window, "CommonSeekBar").Value = 0.505;
             Click(window, "RefreshPreviewButton");
             await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
             Require(synthetic.LastAlignment is { FrameA: 12, FrameB: 21 } &&
                 Control<Image>(window, "OriginalPreview").Source is not null &&
                 Control<Image>(window, "CurrentPreview").Source is not null &&
+                workspace.OriginalTimeLabel.StartsWith("00:00:00.5000000") &&
+                workspace.CurrentTimeLabel.StartsWith("00:00:00.7000000") &&
                 workspace.CurrentTimeLabel.Contains("フレーム 21"), "Synthetic images or FPS-aligned times were not shown.");
 
             Control<Slider>(window, "CommonSeekBar").Value = 0.8;

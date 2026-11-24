@@ -15,13 +15,22 @@ internal static class ThumbnailGalleryCache
     private const int MaxInputDimension = 1024;
     private const int MaxDisplayDimension = 128;
 
-    internal static async Task<(IReadOnlyList<ThumbnailGalleryFrame> Frames, string Status)> ReadAsync(
-        string cacheRoot, string projectPath, CancellationToken token)
+    internal static async Task ReadAsync(string cacheRoot, string projectPath, CancellationToken token,
+        Func<IReadOnlyList<ThumbnailGalleryFrame>, string, Task> show)
     {
         var fullPath = Path.GetFullPath(projectPath);
         using var parent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
         using var project = new FileStream(OwnedFilePublication.OpenOrdinaryPath(fullPath,
             expectDirectory: false, allowRename: false), FileAccess.Read);
+        var (frames, status) = await ReadPinnedAsync(cacheRoot, fullPath, project, token).ConfigureAwait(false);
+        token.ThrowIfCancellationRequested();
+        // Keep the reviewed PF and its ancestor paths pinned until the UI has adopted or discarded the results.
+        await show(frames, status).ConfigureAwait(false);
+    }
+
+    private static async Task<(IReadOnlyList<ThumbnailGalleryFrame>, string)> ReadPinnedAsync(
+        string cacheRoot, string fullPath, FileStream project, CancellationToken token)
+    {
         if (!Directory.Exists(cacheRoot))
             return ([], "保存済みのサムネイルがありません。");
 
@@ -29,7 +38,7 @@ internal static class ThumbnailGalleryCache
             ? await ProjectFileEvidence.ReadAsync(project, token).ConfigureAwait(false) : null;
         using var root = OwnedFilePublication.DirectoryFence.Open(cacheRoot, enforceShare: true);
         var (path, detached) = ThumbnailCachePublication.FindDisplayDirectory(cacheRoot, fullPath,
-            project.SafeFileHandle, root, version);
+            project.SafeFileHandle, root, version, token);
         if (path is null)
             return ([], "保存済みのサムネイルが見つからないか、キャッシュの完了を確認できません。");
 
@@ -38,7 +47,8 @@ internal static class ThumbnailGalleryCache
         if (detached || HasReceipt(path))
         {
             ThumbnailCacheMaintenance.ReadVerifiedFrames(path, MaxEncodedBytes, (slot, image) => frames.Add(new(slot + 1, ReadImage(image))), token);
-            return (frames, $"保存済みサムネイル {frames.Count} 点");
+            return (frames, detached ? $"保存済みサムネイル {frames.Count} 点" :
+                $"保存済みサムネイル {frames.Count} 点（PF照合はファイルIDと更新時刻）");
         }
 
         // Receiptless caches predate the current format. Decode only the numbered files

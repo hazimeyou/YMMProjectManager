@@ -160,7 +160,7 @@ public partial class ProjectComparisonWindow : Window
     }
 
     internal Task SaveTimingAsync(string path) =>
-        RunFileOperationAsync(token => workspace.SaveTimingCopyAsync(path, token), "比較設定を保存しました。");
+        RunFileOperationAsync(token => workspace.SaveTimingCopyAsync(path, token), "操作開始時点の比較設定を保存しました。");
 
     internal Task LoadTimingAsync(string path) =>
         RunFileOperationAsync(async token =>

@@ -11,6 +11,30 @@ internal static class ThumbnailGalleryTests
 {
     internal static async Task RunAsync()
     {
+        await Program.RunNamedCaseAsync("R33 cache keeps the project version pinned through display handoff",
+            () => WithFixtureAsync(async (project, cache, _, _, _) =>
+            {
+                var legacy = Path.Combine(cache, FilmstripCacheKeyFactory.TryCreateHash(project)!);
+                Directory.CreateDirectory(legacy);
+                ThumbnailSequenceFrameRenderer.SaveBlankPng(Path.Combine(legacy, "000.png"));
+                var replacement = Path.Combine(Path.GetDirectoryName(project)!, "replacement.ymmp");
+                File.WriteAllText(replacement, "{}");
+                var adopted = false;
+                await ThumbnailGalleryCache.ReadAsync(cache, project, default, (frames, _) =>
+                {
+                    Ensure(frames.Count == 1, "an unreadable cache did not test the display handoff");
+                    try
+                    {
+                        File.Move(replacement, project, overwrite: true);
+                        throw new InvalidOperationException("the PF could be replaced during the display handoff");
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                    adopted = true;
+                    return Task.CompletedTask;
+                });
+                Ensure(adopted && File.Exists(replacement), "the display handoff was not reached or changed the fixture");
+            }));
+
         await Program.RunNamedCaseAsync("R33 gallery reads bounded legacy images and keeps production rendering disabled",
             () => WithFixtureAsync(async (project, cache, logger, generator, _) =>
             {

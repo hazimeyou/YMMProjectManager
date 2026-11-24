@@ -71,7 +71,7 @@ internal static partial class ThumbnailCacheMaintenance
                         var child = Path.GetFileName(folder);
                         var pending = child.StartsWith(".capture-pending-", StringComparison.Ordinal) &&
                             Guid.TryParseExact(child.AsSpan(".capture-pending-".Length), "N", out _);
-                        if (!pending && !TryReadOrder(child, out _))
+                        if (!pending && !ThumbnailCachePublication.TryReadGenerationOrder(child, out _))
                         {
                             skipped++;
                             continue;
@@ -150,19 +150,11 @@ internal static partial class ThumbnailCacheMaintenance
             foreach (var path in captures)
             {
                 name = Path.GetFileName(path);
-                if (!TryReadOrder(name, out var order)) continue;
+                if (!ThumbnailCachePublication.TryReadGenerationOrder(name, out var order)) continue;
                 var capture = TryRead(path, order);
                 if (capture is not null) yield return capture;
             }
         }
-    }
-
-    private static bool TryReadOrder(string name, out long order)
-    {
-        order = 0;
-        return name.Length == 60 && name.StartsWith("capture-", StringComparison.Ordinal) && name[27] == '-' &&
-            long.TryParse(name.AsSpan(8, 19), NumberStyles.None, CultureInfo.InvariantCulture, out order) &&
-            order > 0 && order <= DateTime.MaxValue.Ticks && Guid.TryParseExact(name.AsSpan(28), "N", out _);
     }
 
     private static Capture? TryRead(string path, long order)

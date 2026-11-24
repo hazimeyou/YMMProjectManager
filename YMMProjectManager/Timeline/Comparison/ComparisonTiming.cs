@@ -61,7 +61,7 @@ internal sealed class ComparisonTiming
 
     internal async Task SaveCopyAsync(string path, CancellationToken token)
     {
-        path = Path.GetFullPath(path);
+        path = ComparisonFilePaths.GetLocalFile(path);
         using var parent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
         var data = new Document(1, DefaultOffset.Ticks,
             sections.Select(x => new Section(x.Start.Ticks, x.Offset.Ticks)).ToArray());
@@ -85,7 +85,7 @@ internal sealed class ComparisonTiming
 
     internal static async Task<ComparisonTiming> LoadAsync(string path, CancellationToken token)
     {
-        path = Path.GetFullPath(path);
+        path = ComparisonFilePaths.GetLocalFile(path);
         using var parent = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(path)!, enforceShare: true);
         using var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
         using var file = new FileStream(handle, FileAccess.Read);

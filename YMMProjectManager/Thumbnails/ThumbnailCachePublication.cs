@@ -75,7 +75,7 @@ internal sealed class ThumbnailCachePublication : IDisposable
             throw new IOException("サムネイル一式がキャッシュ容量上限を超えています。");
         validate();
         ThumbnailCacheMaintenance.Trim(Path.GetDirectoryName(cacheDirectory)!, ThumbnailCacheMaintenance.ByteLimit - reservedBytes, token);
-        var ordinal = Math.Max(DateTime.UtcNow.Ticks, LatestGeneration(cacheDirectory).Ordinal + 1);
+        var ordinal = Math.Max(DateTime.UtcNow.Ticks, LatestGeneration(cacheDirectory, token).Ordinal + 1);
         if (ordinal > DateTime.MaxValue.Ticks)
             throw new IOException("サムネイルキャッシュの順序を確定できません。");
         var destination = Path.Combine(cacheDirectory,
@@ -115,16 +115,17 @@ internal sealed class ThumbnailCachePublication : IDisposable
 
     // The caller holds the PF handle from which any supplied version was read.
     internal static (string? Path, bool Detached) FindDisplayDirectory(string cacheRoot, string fullPath, SafeFileHandle file,
-        OwnedFilePublication.DirectoryFence root, ProjectFileIdentity? version = null)
+        OwnedFilePublication.DirectoryFence root, ProjectFileIdentity? version = null, CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         if (version is not null)
         {
             var detached = Path.Combine(cacheRoot, FilmstripCacheKeyFactory.CreateDetachedHash(fullPath, version));
-            if (TryOpenCacheChild(detached, root) && LatestGeneration(detached).Path is { } completed)
+            if (TryOpenCacheChild(detached, root) && LatestGeneration(detached, token).Path is { } completed)
                 return (completed, true);
         }
         var live = Path.Combine(cacheRoot, FilmstripCacheKeyFactory.CreateLiveHash(fullPath, file));
-        if (TryOpenCacheChild(live, root) && LatestGeneration(live).Path is { } legacyCapture)
+        if (TryOpenCacheChild(live, root) && LatestGeneration(live, token).Path is { } legacyCapture)
             return (legacyCapture, false);
 
         var legacy = FilmstripCacheKeyFactory.TryCreateHash(fullPath);
@@ -140,23 +141,34 @@ internal sealed class ThumbnailCachePublication : IDisposable
         catch (UnauthorizedAccessException) { return false; }
     }
 
-    private static (string? Path, long Ordinal) LatestGeneration(string cacheDirectory)
+    private static (string? Path, long Ordinal) LatestGeneration(string cacheDirectory, CancellationToken token = default)
     {
         if (!Directory.Exists(cacheDirectory))
             return (null, 0);
-        foreach (var path in Directory.EnumerateDirectories(cacheDirectory, PublishedPrefix + "*")
-            .OrderDescending(StringComparer.Ordinal))
+        string? latest = null;
+        long latestOrder = 0;
+        foreach (var path in Directory.EnumerateDirectories(cacheDirectory, PublishedPrefix + "*"))
         {
-            var name = Path.GetFileName(path);
-            if (name.Length == PublishedPrefix.Length + 19 + 1 + 32 &&
-                name[PublishedPrefix.Length + 19] == '-' &&
-                long.TryParse(name.AsSpan(PublishedPrefix.Length, 19), NumberStyles.None, CultureInfo.InvariantCulture, out var ordinal) &&
-                ordinal > 0 && ordinal <= DateTime.MaxValue.Ticks &&
-                Guid.TryParseExact(name.AsSpan(PublishedPrefix.Length + 20), "N", out _) &&
+            token.ThrowIfCancellationRequested();
+            if (TryReadGenerationOrder(Path.GetFileName(path), out var ordinal) &&
+                (ordinal > latestOrder || (ordinal == latestOrder && string.CompareOrdinal(path, latest) > 0)) &&
                 IsComplete(path))
-                return (path, ordinal);
+            {
+                latest = path;
+                latestOrder = ordinal;
+            }
         }
-        return (null, 0);
+        return (latest, latestOrder);
+    }
+
+    internal static bool TryReadGenerationOrder(string name, out long order)
+    {
+        order = 0;
+        return name.Length == PublishedPrefix.Length + 19 + 1 + 32 &&
+            name.StartsWith(PublishedPrefix, StringComparison.Ordinal) && name[PublishedPrefix.Length + 19] == '-' &&
+            long.TryParse(name.AsSpan(PublishedPrefix.Length, 19), NumberStyles.None, CultureInfo.InvariantCulture, out order) &&
+            order > 0 && order <= DateTime.MaxValue.Ticks &&
+            Guid.TryParseExact(name.AsSpan(PublishedPrefix.Length + 20), "N", out _);
     }
 
     private static bool IsComplete(string path)

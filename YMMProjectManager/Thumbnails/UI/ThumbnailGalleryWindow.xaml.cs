@@ -100,17 +100,23 @@ public partial class ThumbnailGalleryWindow : Window
                     return;
                 }
             }
-            var (frames, status) = await Task.Run(() => ThumbnailGalleryCache.ReadAsync(cacheRoot, projectPath, token), token);
-            token.ThrowIfCancellationRequested();
-            if (closed) return;
-            if (!isSelectionCurrent())
-            {
-                StatusText.Text = "一覧で選択していたプロジェクトが変更されました。";
-                return;
-            }
+            await Task.Run(() => ThumbnailGalleryCache.ReadAsync(cacheRoot, projectPath, token, ShowFramesAsync), token);
 
-            FrameList.ItemsSource = frames;
-            StatusText.Text = status;
+            Task ShowFramesAsync(IReadOnlyList<ThumbnailGalleryFrame> frames, string status)
+            {
+                return Dispatcher.InvokeAsync(() =>
+                {
+                    if (closed || !ReferenceEquals(active, cancellation)) return;
+                    token.ThrowIfCancellationRequested();
+                    if (!isSelectionCurrent())
+                    {
+                        StatusText.Text = "一覧で選択していたプロジェクトが変更されました。";
+                        return;
+                    }
+                    FrameList.ItemsSource = frames;
+                    StatusText.Text = status;
+                }, DispatcherPriority.Normal, token).Task;
+            }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {

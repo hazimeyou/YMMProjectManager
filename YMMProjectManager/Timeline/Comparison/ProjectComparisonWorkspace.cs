@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Globalization;
 using System.IO;
 using System.Windows.Media.Imaging;
+using YMMProjectManager.Infrastructure;
 
 namespace YMMProjectManager.Application.PreviewComparison;
 
@@ -64,9 +65,11 @@ internal sealed class ProjectComparisonWorkspace : INotifyPropertyChanged, IDisp
 
     internal void SetProject(PreviewComparisonSide side, string path)
     {
-        var fullPath = Path.GetFullPath(path);
-        if (!fullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath))
+        var fullPath = ComparisonFilePaths.GetLocalFile(path);
+        if (!fullPath.EndsWith(".ymmp", StringComparison.OrdinalIgnoreCase))
             throw new IOException("存在するPF（.ymmp）を選択してください。");
+        using var directory = OwnedFilePublication.DirectoryFence.Open(Path.GetDirectoryName(fullPath)!, enforceShare: true);
+        using var project = OwnedFilePublication.OpenOrdinaryPath(fullPath, expectDirectory: false, allowRename: false);
         if (side == PreviewComparisonSide.A)
             OriginalPath = fullPath;
         else
@@ -193,8 +196,12 @@ internal sealed class ProjectComparisonWorkspace : INotifyPropertyChanged, IDisp
         var alignment = PreviewFrameAlignment.Align(timing.Bind(CommonTime, observed.Original, observed.Current));
         if (alignment.Error is not (PreviewComparisonError.None or PreviewComparisonError.OutsideCommonDuration))
             return label + "（未確認）";
-        return (original ? alignment.FrameA : alignment.FrameB) is { } frame
-            ? $"{label}（フレーム {frame}）" : $"{label}（範囲外）";
+        if ((original ? alignment.FrameA : alignment.FrameB) is not { } frame)
+            return $"{label}（範囲外）";
+        var rate = (original ? observed.Original : observed.Current).FrameRate;
+        var start = (Int128)frame * TimeSpan.TicksPerSecond * rate.Denominator / rate.Numerator;
+        var display = (original ? OriginalImage : CurrentImage) is null ? "・未表示" : "";
+        return $"{FormatTime(TimeSpan.FromTicks((long)start))}（フレーム {frame}{display}）";
     }
 
     private static double Seconds(PreviewSource source) => source.FrameRate is { Numerator: > 0, Denominator: > 0 }
