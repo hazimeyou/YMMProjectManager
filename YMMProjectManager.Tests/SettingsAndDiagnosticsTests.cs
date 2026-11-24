@@ -61,7 +61,8 @@ internal static class SettingsAndDiagnosticsTests
             Require(File.ReadAllText(path) == "competing version" && subject.GetSearchFolders().SequenceEqual([older]),
                 "Concurrent or committed data changed.");
             var backup = Directory.GetFiles(root, "occupied.json.previous-*").Single();
-            Require(bytes.SequenceEqual(File.ReadAllBytes(backup)), "Original settings were not preserved.");
+            Require(subject.RetainedBackupPath == backup && bytes.SequenceEqual(File.ReadAllBytes(backup)),
+                "Original settings were not preserved or the recovery path was not reported.");
             Require(!subject.TryReload() && subject.GetSearchFolders().SequenceEqual([older]), "Corrupt input discarded the confirmed settings.");
             return Task.CompletedTask;
         });

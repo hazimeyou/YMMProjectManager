@@ -20,6 +20,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
     private readonly Action? beforePublish;
     private bool hasConfirmedSettings;
     private SettingsVersion? confirmedVersion;
+    internal string? RetainedBackupPath { get; private set; }
 
     private sealed record SettingsVersion((ulong, Guid) Identity, string Sha256);
 
@@ -68,6 +69,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
     {
         lock (SaveLock)
         {
+            RetainedBackupPath = null;
             try
             {
                 return hasConfirmedSettings && TrySave(NormalizeFolders(folders));
@@ -152,6 +154,7 @@ public sealed class YMMProjectManagerSettings : SettingsBase<YMMProjectManagerSe
                     catch (IOException)
                     {
                         // A competing file occupies the active path. Keep both files.
+                        RetainedBackupPath = parkedPath;
                         PluginDiagnostics.Logger.Info($"Settings rollback preserved {Path.GetFileName(parkedPath)}.");
                     }
                 }

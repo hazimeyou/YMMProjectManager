@@ -60,9 +60,12 @@ public partial class YMMProjectManagerSettingsView : UserControl
     //CSJ,method=OnSaveClick,保存クリック時の処理
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        SummaryText.Text = settings.SetSearchFolders(folders)
-            ? "保存しました。"
-            : "保存に失敗しました。";
+        if (settings.SetSearchFolders(folders))
+            SummaryText.Text = "保存しました。";
+        else if (settings.RetainedBackupPath is { } backup)
+            SummaryText.Text = $"保存に失敗しました。以前の設定を保全しました。\n{backup}";
+        else
+            SummaryText.Text = "保存に失敗しました。";
     }
 
     private void OnReloadClick(object sender, RoutedEventArgs e)
