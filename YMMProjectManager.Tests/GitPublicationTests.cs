@@ -258,6 +258,37 @@ internal static class GitPublicationTests
                 await CommandAsync(source, "commit", "-m", "synthetic rename");
                 return (false, null);
             }));
+        await Program.RunNamedCaseAsync("R32 Stage and Push reject local recovery and credential records", async () =>
+        {
+            await TestAsync(root, "private-stage", async (source, git) =>
+            {
+                await CommitFileAsync(source, "safe.txt", "safe content"u8.ToArray());
+                var records = new Dictionary<string, string>
+                {
+                    [".git-credentials"] = "synthetic placeholder",
+                    ["projects.json.recovery/draft.json"] = "{}",
+                    ["recovery-renamed.json"] = """{"Projects":[],"Folders":[]}""",
+                    ["key-renamed.txt"] = "-----BEGIN PRIVATE KEY-----\nsynthetic only\n",
+                };
+                foreach (var (relative, contents) in records)
+                {
+                    var path = Path.Combine(source, relative);
+                    Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                    await File.WriteAllTextAsync(path, contents);
+                    var refusal = await git.StageAsync([relative]);
+                    if (refusal.Failure != GitFailure.MediaPublication)
+                        throw new InvalidOperationException("Stage allowed a private record.");
+                }
+                return (true, null);
+            });
+            await TestAsync(root, "private-history", async (source, _) =>
+            {
+                await CommitFileAsync(source, "renamed-copy.json", """{"Projects":[],"Folders":[]}"""u8.ToArray());
+                await CommandAsync(source, "rm", "renamed-copy.json");
+                await CommandAsync(source, "commit", "-m", "remove local copy");
+                return (false, null);
+            });
+        });
         await Program.RunNamedCaseAsync("R29 Stage and Commit block restore evidence beside an ordinary PF", () =>
             TestAsync(root, "restore-local", async (source, git) =>
             {

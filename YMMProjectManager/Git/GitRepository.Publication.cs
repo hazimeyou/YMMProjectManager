@@ -4,6 +4,7 @@ using System.IO;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using YMMProjectManager.Infrastructure.Packaging;
 
 namespace YMMProjectManager.Infrastructure.Git;
@@ -19,6 +20,9 @@ public sealed partial class GitRepository
     //CSJ,field=StrictPublicationUtf8,Git送信検査用の厳格なUTF-8
     private static readonly UTF8Encoding StrictPublicationUtf8 = new(false, true);
     //CSJ,field=publicationAssetNames,Git送信検査で使う素材名の一覧
+    private static readonly Regex KnownCredentialText = new(
+        @"(?:\b(?:gh[pousr]_[A-Za-z0-9_]{30,}|github_pat_[A-Za-z0-9_]{30,})\b|-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----|https?://[^/\s:@]+:[^/\s@]+@)",
+        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
     private readonly HashSet<string> publicationAssetNames = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> publicationAssetHashes = new(StringComparer.OrdinalIgnoreCase);
 
@@ -181,6 +185,20 @@ public sealed partial class GitRepository
             HasOperationName(component, ".ymmpm-relink.tmp-") ||
             HasOperationName(component, ".ymmpm-derived-") ||
             HasOperationName(component, ".ymmpm-derived-pending-") ||
+            HasOperationName(component, ".ymmpm-legacy-export-") ||
+            HasOperationName(component, ".ymmpm-comparison-") ||
+            HasOperationName(component, "projects.json.parked-") ||
+            HasOperationName(component, "projects.json.tmp-") ||
+            HasOperationName(component, "projects.json.publication-") ||
+            HasOperationName(component, "YMMProjectManagerSettings.json.previous-") ||
+            HasOperationName(component, "YMMProjectManagerSettings.json.recovery-") ||
+            component.Equals("projects.json.recovery", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals("projects.json.publication-pending", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals(".git-credentials", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals(".netrc", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals("_netrc", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals(".env", StringComparison.OrdinalIgnoreCase) ||
+            component.Equals(".env.local", StringComparison.OrdinalIgnoreCase) ||
             IsGenerationRestorePathComponent(component));
 
     private static bool IsGenerationRestorePathComponent(string component)
@@ -341,6 +359,8 @@ public sealed partial class GitRepository
         if (content.Any(c => char.IsControl(c) && c is not ('\r' or '\n' or '\t')) ||
             content.StartsWith("version https://git-lfs.github.com/spec/v1", StringComparison.Ordinal))
             return "Git contains binary content or an external large file pointer.";
+        if (KnownCredentialText.IsMatch(content))
+            return "Git contains a recognizable credential or private key.";
         var start = content.AsSpan().TrimStart('\uFEFF').TrimStart();
         if (start.StartsWith("WEBVTT", StringComparison.Ordinal) &&
             (start.Length == 6 || char.IsWhiteSpace(start[6])))
@@ -367,6 +387,8 @@ public sealed partial class GitRepository
                 using var document = JsonDocument.Parse(content.TrimStart('\uFEFF'));
                 //CSJ,variable=root,ルート
                 var root = document.RootElement;
+                if (IsPrivateProjectListRecord(root))
+                    return "Git contains a local project list or recovery record.";
                 if (IsPrivateRelinkRecord(root))
                     return "Git contains a local relink recovery or publication record.";
                 if (IsPrivateGenerationRestoreRecord(root))
@@ -394,6 +416,18 @@ public sealed partial class GitRepository
             catch (JsonException) { /* Ordinary text may contain a JSON fragment. */ }
         }
         return null;
+    }
+
+    private static bool IsPrivateProjectListRecord(JsonElement root)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return false;
+        if (root.TryGetProperty("Projects", out var projects) && projects.ValueKind == JsonValueKind.Array &&
+            root.TryGetProperty("Folders", out var folders) && folders.ValueKind == JsonValueKind.Array)
+            return true;
+        return root.TryGetProperty("Payload", out var payload) && payload.ValueKind == JsonValueKind.String &&
+            (root.TryGetProperty("Sha256", out var hash) || root.TryGetProperty("Hash", out hash)) &&
+            hash.ValueKind == JsonValueKind.String && hash.GetString() is { Length: 64 } digest &&
+            digest.All(Uri.IsHexDigit);
     }
 
     private static bool IsPrivateRelinkRecord(JsonElement root) =>
