@@ -219,6 +219,7 @@ internal static class Program
         new(nameof(TestProjectEntryThumbnailCacheDirectoryNotificationAsync), () => TestProjectEntryThumbnailCacheDirectoryNotificationAsync()),
         new(nameof(TestProjectGenerationStorageReplaceAsync), () => TestProjectGenerationStorageReplaceAsync(workRoot)),
         new(nameof(YmmpxBundleTests), () => YmmpxBundleTests.RunAsync(workRoot)),
+        new(nameof(R30ReflectionTests), () => R30ReflectionTests.RunAsync(workRoot)),
         new(nameof(YmmpxFailureTests), () => YmmpxFailureTests.RunAsync(workRoot)),
         new(nameof(YmmpxArchiveValidationTests), () => YmmpxArchiveValidationTests.RunAsync(workRoot)),
         new(nameof(YmmpxTransferTests), () => YmmpxTransferTests.RunAsync(workRoot)),
@@ -233,6 +234,7 @@ internal static class Program
         new(nameof(AssetManifestTests), () => AssetManifestTests.RunAsync(workRoot)),
         new(nameof(GitHttpsAcceptanceTests), () => GitHttpsAcceptanceTests.RunAsync(workRoot), Default: false),
         new(nameof(RealYmmpxR5Tests), () => RealYmmpxR5Tests.RunAsync(workRoot), Default: false, Alias: "RealYmmpxR5"),
+        new("R30InstalledYmmpxLibTests", () => R30ReflectionTests.RunInstalledAsync(workRoot), Default: false),
         new(nameof(SettingsAndDiagnosticsTests), () => SettingsAndDiagnosticsTests.RunAsync(workRoot)),
         new(nameof(TestRunnerSelectionAsync), () => TestRunnerSelectionAsync(workRoot)),
     ];

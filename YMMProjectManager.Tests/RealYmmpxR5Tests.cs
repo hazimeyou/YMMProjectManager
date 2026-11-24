@@ -14,6 +14,7 @@ internal static class RealYmmpxR5Tests
         //CSJ,variable=library,ライブラリ
         var library = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
         if (string.IsNullOrWhiteSpace(library) || !File.Exists(library)) { Program.ReportConditionalSkip("R5 real YmmpxLib unavailable"); return; }
+        await R30ReflectionTests.RunRealAsync(workRoot, library);
         //CSJ,variable=root,ルート
         var root = Path.Combine(workRoot, "r5-real-ymmpx"); Directory.CreateDirectory(root);
         //CSJ,variable=project,プロジェクト

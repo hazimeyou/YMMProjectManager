@@ -254,7 +254,8 @@ namespace YmmpxLib
     //CSJ,class=YmmpxPackagingOptions,YMMPXパッケージ化オプション
     public sealed class YmmpxPackagingOptions { public bool IncludeProjectUiSettings { get; set; } }
     //CSJ,class=YmmpxPackagingProgress,YMMPXパッケージ化進捗
-    public sealed class YmmpxPackagingProgress { public int Percentage { get; set; } }
+    public sealed class YmmpxPackagingProgress { public double Percentage { get; set; } }
+    public sealed record YmmpxPackagingResult(string OutputPath, int ResourceCount, IReadOnlyDictionary<string, string> FileMap);
     //CSJ,class=YmmpxPackageService,YMMPXパッケージサービス
     public static class YmmpxPackageService
     {
@@ -273,8 +274,12 @@ namespace YmmpxLib
             ExtractionCalls++;
             throw new InvalidOperationException("synthetic extraction must not be called for unsafe archives");
         }
+        public static Task<object> CreatePackageAsync(string project, string output, HashSet<string> ignored,
+            YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token) =>
+            throw new InvalidOperationException("An overload outside the supported contract was invoked.");
+
         //CSJ,method=CreatePackageAsync,パッケージを作成する（非同期）
-        public static async Task<object> CreatePackageAsync(string project, string output, HashSet<string> ignored, YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token)
+        public static async Task<YmmpxPackagingResult> CreatePackageAsync(string project, string output, ISet<string> ignored, YmmpxPackagingOptions options, IProgress<YmmpxPackagingProgress>? progress, CancellationToken token)
         {
             DuringPackaging?.Invoke(project);
             if (Mode == "cancel-after-write")
@@ -292,7 +297,7 @@ namespace YmmpxLib
             if (Mode == "invalid")
             {
                 await File.WriteAllTextAsync(output, "invalid archive", token);
-                return new { OutputPath = output, ResourceCount = 0 };
+                return new(output, 0, new Dictionary<string, string>());
             }
             //CSJ,variable=projectName,プロジェクト名
             var projectName = Mode == "other-project" ? "other-project.ymmp" : Path.GetFileName(project);
@@ -326,7 +331,7 @@ namespace YmmpxLib
                     using (var writer = new StreamWriter(archive.CreateEntry("links.json").Open())) await writer.WriteAsync(Mode == "invalid-links-json" ? "[]" : """{"resources/synthetic.txt":"resources/synthetic.txt"}""");
             }
             if (ExternalPath is not null) await File.WriteAllTextAsync(ExternalPath, "external edit", token);
-            return new { OutputPath = output, ResourceCount = 1 };
+            return new(output, 1, new Dictionary<string, string> { ["synthetic.txt"] = "resources/synthetic.txt" });
         }
     }
 }

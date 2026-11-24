@@ -1,160 +1,200 @@
+using System.ComponentModel;
 using System.IO;
 using System.Reflection;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
+using System.Runtime.Loader;
+using System.Security.Cryptography;
+using YukkuriMovieMaker.Commons;
 
 namespace YMMProjectManager.Infrastructure.Packaging;
+
+internal enum YmmpxLibStatus
+{
+    NotInstalled,
+    Unsupported,
+    Invalid,
+    LoadFailed,
+    Ready,
+}
 
 //CSJ,class=YmmpxLibResolver,YMMPXライブラリ解決処理
 public static class YmmpxLibResolver
 {
-    //CSJ,field=LibraryFileName,ライブラリファイル名
     private const string LibraryFileName = "YmmpxLib.dll";
-    //CSJ,field=LibraryAssemblyName,ライブラリアセンブリ名前
     private const string LibraryAssemblyName = "YmmpxLib";
-    //CSJ,field=PluginRelativePath,プラグイン相対パス
-    private const string PluginRelativePath = @"user\plugin\YmmpxLibPlugin\YmmpxLib.dll";
+    private const string PluginFileName = "YmmpxLibPlugin.dll";
+    private const int MaximumLibraryBytes = 8 * 1024 * 1024;
+    private static readonly Version SupportedVersion = new(1, 1, 0, 0);
 
-    //CSJ,method=GetSearchPaths,検索パス一覧を取得する
+    // The exact DLL from the official YmmpxLibPlugin v1.1.0 release asset.
+    private const string SupportedLibrarySha256 = "9D6E0A5F1A6FE096098CE77F2FD7A970A83A5C7F0476844E441F003AAA10FE23";
+    private const string SupportedPluginSha256 = "8918C7B5141BFB27C62444B41C5899985D83CD250B06914F398AF78395D47CE7";
+    private static readonly object AssemblyLoadGate = new();
+    private static Assembly? verifiedAssembly;
+
     public static IReadOnlyList<string> GetSearchPaths(string? baseDirectory = null, string? explicitAssemblyPath = null)
     {
-        //CSJ,variable=candidates,候補一覧
-        var candidates = new List<string>();
-
-        AddCandidate(candidates, explicitAssemblyPath);
-        AddCandidate(candidates, Environment.GetEnvironmentVariable("YMMPX_LIB_PATH"));
-
-        //CSJ,variable=resolvedBaseDirectory,解決済み基点ディレクトリ
-        var resolvedBaseDirectory = ResolveBaseDirectory(baseDirectory);
-        if (!string.IsNullOrWhiteSpace(resolvedBaseDirectory))
-        {
-            AddCandidate(candidates, Path.Combine(resolvedBaseDirectory, LibraryFileName));
-            AddCandidate(candidates, Path.Combine(resolvedBaseDirectory, "YmmpxLibPlugin", LibraryFileName));
-
-            foreach (var ancestor in EnumerateAncestors(resolvedBaseDirectory))
-            {
-                AddCandidate(candidates, Path.Combine(ancestor, PluginRelativePath));
-            }
-        }
-
-        return candidates
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path =>
-            {
-                try
-                {
-                    return Path.GetFullPath(path);
-                }
-                catch
-                {
-                    return string.Empty;
-                }
-            })
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .ToArray();
+        var configured = NormalizePath(GetConfiguredPath(explicitAssemblyPath));
+        var installed = GetInstalledPath(baseDirectory);
+        if (configured is null) return installed is null ? [] : [installed];
+        if (installed is null || string.Equals(configured, installed, StringComparison.OrdinalIgnoreCase))
+            return [configured];
+        return [configured, installed];
     }
 
-    //CSJ,method=TryResolveAssembly,アセンブリの解決を試みる
-    public static bool TryResolveAssembly(
-        //CSJ,parameter=assembly,アセンブリ
-        out Assembly? assembly,
-        //CSJ,parameter=assemblyPath,アセンブリのパス
-        out string? assemblyPath,
-        out IReadOnlyList<string> searchedPaths,
-        //CSJ,parameter=baseDirectory,基点ディレクトリ
-        string? baseDirectory = null,
-        string? explicitAssemblyPath = null)
+    public static bool TryResolveAssembly(out Assembly? assembly, out string? assemblyPath,
+        out IReadOnlyList<string> searchedPaths, string? baseDirectory = null, string? explicitAssemblyPath = null)
     {
-        searchedPaths = GetSearchPaths(baseDirectory, explicitAssemblyPath);
+        var status = Resolve(out assembly, out assemblyPath, out searchedPaths, baseDirectory, explicitAssemblyPath);
+        return status == YmmpxLibStatus.Ready;
+    }
 
-        //CSJ,variable=loaded,読み込み済み
-        var loaded = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => string.Equals(a.GetName().Name, LibraryAssemblyName, StringComparison.OrdinalIgnoreCase));
-        if (loaded is not null)
-        {
-            assembly = loaded;
-            assemblyPath = SafeGetLocation(loaded);
-            return true;
-        }
-
-        foreach (var candidate in searchedPaths)
-        {
-            if (!File.Exists(candidate))
-            {
-                continue;
-            }
-
-            try
-            {
-                assembly = Assembly.LoadFrom(candidate);
-                assemblyPath = candidate;
-                return true;
-            }
-            catch
-            {
-                // 次の候補へ進む。
-            }
-        }
-
+    internal static YmmpxLibStatus Resolve(out Assembly? assembly, out string? assemblyPath,
+        out IReadOnlyList<string> searchedPaths, string? baseDirectory, string? explicitAssemblyPath)
+    {
+        var configured = GetConfiguredPath(explicitAssemblyPath);
+        var candidate = configured is null ? GetInstalledPath(baseDirectory) : NormalizePath(configured);
         assembly = null;
         assemblyPath = null;
-        return false;
-    }
-
-    //CSJ,method=AddCandidate,候補を追加する
-    private static void AddCandidate(ICollection<string> candidates, string? path)
-    {
-        if (string.IsNullOrWhiteSpace(path))
-        {
-            return;
-        }
-
-        candidates.Add(path.Trim().Trim('"'));
-    }
-
-    //CSJ,method=ResolveBaseDirectory,基点ディレクトリを解決する
-    private static string? ResolveBaseDirectory(string? baseDirectory)
-    {
-        var candidate = baseDirectory;
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            candidate = AppContext.BaseDirectory;
-        }
-
-        if (string.IsNullOrWhiteSpace(candidate))
-        {
-            return null;
-        }
+        searchedPaths = candidate is null ? [] : [candidate];
+        if (candidate is null) return YmmpxLibStatus.Invalid;
 
         try
         {
-            return Path.GetFullPath(candidate);
+            var attributes = File.GetAttributes(candidate);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                return YmmpxLibStatus.Invalid;
+
+            var directory = Path.GetDirectoryName(candidate)!;
+            using var fence = OwnedFilePublication.DirectoryFence.Open(directory, enforceShare: true);
+            // Inspect and authenticate the same owned bytes that will be passed to the runtime.
+            var bytes = ReadImage(candidate);
+            using var verifiedImage = new MemoryStream(bytes, writable: false);
+            using (var pe = new PEReader(verifiedImage, PEStreamOptions.LeaveOpen))
+            {
+                if (!pe.HasMetadata) return YmmpxLibStatus.Invalid;
+                var metadata = pe.GetMetadataReader();
+                if (!metadata.IsAssembly) return YmmpxLibStatus.Invalid;
+                var identity = metadata.GetAssemblyDefinition();
+                if (metadata.GetString(identity.Name) != LibraryAssemblyName)
+                    return YmmpxLibStatus.Invalid;
+                if (identity.Version != SupportedVersion)
+                    return YmmpxLibStatus.Unsupported;
+            }
+
+            if (!MatchesSha256(bytes, SupportedLibrarySha256))
+                return YmmpxLibStatus.Invalid;
+            if (configured is null)
+            {
+                // A loose core DLL in the installed path does not prove the plugin was installed.
+                try
+                {
+                    if (!MatchesSha256(ReadImage(Path.Combine(directory, PluginFileName)), SupportedPluginSha256))
+                        return YmmpxLibStatus.Invalid;
+                }
+                catch (IOException ex) when (IsMissing(ex))
+                {
+                    return YmmpxLibStatus.Invalid;
+                }
+            }
+
+            verifiedImage.Position = 0;
+            lock (AssemblyLoadGate)
+            {
+                // Avoid binding to another plug-in's already-loaded assembly or installing a global resolve hook.
+                if (verifiedAssembly is null)
+                {
+                    var context = new AssemblyLoadContext("YMMProjectManager.YmmpxLib", isCollectible: true);
+                    try { verifiedAssembly = context.LoadFromStream(verifiedImage); }
+                    catch
+                    {
+                        context.Unload();
+                        throw;
+                    }
+                }
+                assembly = verifiedAssembly;
+            }
+            assemblyPath = candidate;
+            return YmmpxLibStatus.Ready;
         }
-        catch
+        catch (IOException ex) when (IsMissing(ex))
         {
-            return null;
+            return YmmpxLibStatus.NotInstalled;
+        }
+        catch (BadImageFormatException)
+        {
+            return YmmpxLibStatus.Invalid;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.SecurityException or
+            NotSupportedException or ArgumentException or InvalidOperationException)
+        {
+            return YmmpxLibStatus.LoadFailed;
         }
     }
 
-    private static IEnumerable<string> EnumerateAncestors(string directory)
+    private static byte[] ReadImage(string path)
     {
-        var current = new DirectoryInfo(directory);
-        while (current is not null)
-        {
-            yield return current.FullName;
-            current = current.Parent;
-        }
+        using var handle = OwnedFilePublication.OpenOrdinaryPath(path, expectDirectory: false, allowRename: false);
+        using var input = new FileStream(handle, FileAccess.Read);
+        if (input.Length is <= 0 or > MaximumLibraryBytes)
+            throw new BadImageFormatException("The YmmpxLib image size is invalid.");
+        var bytes = new byte[(int)input.Length];
+        input.ReadExactly(bytes);
+        return bytes;
     }
 
-    //CSJ,method=SafeGetLocation,安全取得場所
-    private static string? SafeGetLocation(Assembly assembly)
+    private static bool MatchesSha256(byte[] image, string sha256) =>
+        string.Equals(Convert.ToHexString(SHA256.HashData(image)), sha256, StringComparison.Ordinal);
+
+    private static bool IsMissing(IOException ex) =>
+        ex is FileNotFoundException or DirectoryNotFoundException ||
+        ex.InnerException is Win32Exception { NativeErrorCode: 2 or 3 };
+
+    private static string? GetConfiguredPath(string? explicitAssemblyPath)
     {
-        try
+        if (!string.IsNullOrWhiteSpace(explicitAssemblyPath)) return explicitAssemblyPath;
+        var configured = Environment.GetEnvironmentVariable("YMMPX_LIB_PATH");
+        return string.IsNullOrWhiteSpace(configured) ? null : configured;
+    }
+
+    private static string? GetInstalledPath(string? baseDirectory)
+    {
+        if (string.IsNullOrWhiteSpace(baseDirectory))
         {
-            return string.IsNullOrWhiteSpace(assembly.Location) ? null : Path.GetFullPath(assembly.Location);
+            // Use YMM4's own directory contract, including custom user-directory configurations.
+            if (Assembly.GetEntryAssembly()?.GetName().Name == "YukkuriMovieMaker")
+            {
+                var installed = NormalizePath(AppDirectories.PluginDirectory);
+                return installed is null ? null : Path.Combine(installed, "YmmpxLibPlugin", LibraryFileName);
+            }
+            var moduleDirectory = Path.GetDirectoryName(typeof(YmmpxLibResolver).Assembly.Location);
+            baseDirectory = FindPluginDirectory(moduleDirectory) ?? AppContext.BaseDirectory;
         }
-        catch
+        var root = NormalizePath(baseDirectory);
+        if (root is null) return null;
+        var pluginDirectory = FindPluginDirectory(root) ?? Path.Combine(root, "user", "plugin");
+        return Path.Combine(pluginDirectory, "YmmpxLibPlugin", LibraryFileName);
+    }
+
+    private static string? FindPluginDirectory(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        for (var current = new DirectoryInfo(path); current is not null; current = current.Parent)
         {
-            return null;
+            if (current.Name.Equals("plugin", StringComparison.OrdinalIgnoreCase) &&
+                current.Parent?.Name.Equals("user", StringComparison.OrdinalIgnoreCase) == true)
+                return current.FullName;
         }
+        return null;
+    }
+
+    private static string? NormalizePath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return null;
+        var candidate = path.Trim().Trim('"');
+        if (!Path.IsPathFullyQualified(candidate)) return null;
+        try { return Path.GetFullPath(candidate); }
+        catch (Exception ex) when (ex is ArgumentException or IOException or NotSupportedException) { return null; }
     }
 }

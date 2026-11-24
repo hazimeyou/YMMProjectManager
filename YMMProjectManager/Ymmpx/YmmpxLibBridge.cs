@@ -1,7 +1,6 @@
 using System.IO;
 using System.Reflection;
 using System.Text;
-using System.Text.Json.Nodes;
 using System.IO.Compression;
 using System.Text.Json;
 using YMMProjectManager.Domain.Packaging;
@@ -16,10 +15,9 @@ public sealed class YmmpxLibBridge
     private readonly string? explicitAssemblyPath;
     //CSJ,field=baseDirectory,基点ディレクトリ
     private readonly string? baseDirectory;
-    //CSJ,field=cachedAssembly,キャッシュ済みアセンブリ
-    private Assembly? cachedAssembly;
-    //CSJ,field=cachedAssemblyPath,キャッシュ済みアセンブリのパス
-    private string? cachedAssemblyPath;
+    private readonly Assembly? fixtureAssembly;
+    private readonly object bindingGate = new();
+    private YmmpxLibApi? boundApi;
     private IReadOnlyList<string> searchedPaths = [];
 
     public YmmpxLibBridge(FileLogger logger, string? explicitAssemblyPath = null, string? baseDirectory = null)
@@ -32,24 +30,24 @@ public sealed class YmmpxLibBridge
     internal YmmpxLibBridge(FileLogger logger, Assembly assembly)
     {
         this.logger = logger;
-        cachedAssembly = assembly;
-        cachedAssemblyPath = assembly.Location;
+        fixtureAssembly = assembly;
     }
 
     //CSJ,property=SearchedPaths,検索済みのパス一覧
     public IReadOnlyList<string> SearchedPaths => searchedPaths;
 
-    //CSJ,property=MissingLibraryMessage,欠落ライブラリメッセージ
-    public string MissingLibraryMessage =>
-        "YmmpxLib が見つかりません。\nYmmpxLibPlugin を YMM4 の user/plugin に導入してください。";
+    internal YmmpxLibStatus LastStatus { get; private set; }
 
-    //CSJ,method=TryEnsureAvailable,利用可能の確認と準備を試みる
-    public bool TryEnsureAvailable(out string? resolvedAssemblyPath)
+    public string MissingLibraryMessage => LastStatus switch
     {
-        //CSJ,variable=assembly,アセンブリ
-        var assembly = ResolveAssembly(out resolvedAssemblyPath);
-        return assembly is not null;
-    }
+        YmmpxLibStatus.Unsupported => "導入済みの YmmpxLib は非対応です。対応する YmmpxLibPlugin v1.1.0 を確認してください。",
+        YmmpxLibStatus.Invalid => "YmmpxLib.dll の正当性を確認できません。公式の YmmpxLibPlugin v1.1.0 を確認してください。",
+        YmmpxLibStatus.LoadFailed => "YmmpxLib.dll を読み込めません。ファイルのアクセス権と導入先を確認してください。",
+        _ => "YmmpxLib が見つかりません。\nYmmpxLibPlugin を YMM4 の user/plugin に導入してください。",
+    };
+
+    public bool TryEnsureAvailable(out string? resolvedAssemblyPath) =>
+        ResolveApi(out resolvedAssemblyPath) is not null;
 
     //CSJ,method=CreatePackageAsync,パッケージを作成する（非同期）
     public Task<YmmpxPackageResult> CreatePackageAsync(
@@ -65,11 +63,11 @@ public sealed class YmmpxLibBridge
         ISet<string> excludedFiles, CancellationToken token, IProgress<double>? progress)
     {
         token.ThrowIfCancellationRequested();
-        //CSJ,variable=assembly,アセンブリ
-        var assembly = ResolveAssembly(out var resolvedAssemblyPath);
-        if (assembly is null)
+        var api = ResolveApi(out var resolvedAssemblyPath);
+        if (api is null)
         {
-            LogMissingYmmpxLib("同梱");
+            logger.Info($"YmmpxLib を利用できません。状態={LastStatus}");
+            logger.Flush();
             return new YmmpxPackageResult
             {
                 Success = false,
@@ -120,65 +118,15 @@ public sealed class YmmpxLibBridge
             logger.Info(
                 $"YmmpxLib 同梱開始。対象 ymmp={ymmpPath}, 出力 ymmpx={outputYmmpxPath}, 探索パス={string.Join(" | ", searchedPaths)}");
 
-            //CSJ,variable=serviceType,サービス型
-            var serviceType = assembly.GetType("YmmpxLib.YmmpxPackageService")
-                ?? throw new TypeLoadException("YmmpxPackageService が見つかりません。");
-            //CSJ,variable=optionsType,オプション型
-            var optionsType = assembly.GetType("YmmpxLib.YmmpxPackagingOptions")
-                ?? throw new TypeLoadException("YmmpxPackagingOptions が見つかりません。");
-            //CSJ,variable=progressType,進捗型
-            var progressType = assembly.GetType("YmmpxLib.YmmpxPackagingProgress")
-                ?? throw new TypeLoadException("YmmpxPackagingProgress が見つかりません。");
-
-            //CSJ,variable=options,オプション
-            var options = Activator.CreateInstance(optionsType)
-                ?? throw new InvalidOperationException("YmmpxPackagingOptions を生成できません。");
-            optionsType.GetProperty("IncludeProjectUiSettings")?.SetValue(options, true);
-
-            object? reporter = null;
-            if (progress is not null)
-            {
-                var progressImplType = typeof(ObjectProgress<>).MakeGenericType(progressType);
-                reporter = Activator.CreateInstance(progressImplType, new Action<object?>(value =>
-                {
-                    if (value is null)
-                    {
-                        return;
-                    }
-
-                    var t = value.GetType();
-                    var percentage = ConvertToDouble(t.GetProperty("Percentage")?.GetValue(value));
-                    progress.Report(percentage / 100d);
-                }));
-            }
-
-            //CSJ,variable=createMethod,作成メソッド
-            var createMethod = serviceType.GetMethods(BindingFlags.Public | BindingFlags.Static)
-                .FirstOrDefault(m => m.Name == "CreatePackageAsync" && m.GetParameters().Length >= 5)
-                ?? throw new MissingMethodException("CreatePackageAsync が見つかりません。");
-
-            var args = createMethod.GetParameters().Length >= 6
-                ? new object?[] { ymmpPath, temporaryPath, excludedFiles, options, reporter, token }
-                : new object?[] { ymmpPath, temporaryPath, excludedFiles, options, reporter };
-
-            var taskObj = createMethod.Invoke(null, args) ?? throw new InvalidOperationException("CreatePackageAsync の戻り値が null です。");
-            if (taskObj is not Task task)
-            {
-                throw new InvalidOperationException("CreatePackageAsync が Task を返しません。");
-            }
-
-            await task.ConfigureAwait(false);
-            var result = ExtractTaskResult(taskObj);
-            var packagedOutputPath = GetStringProperty(result, "OutputPath") ?? temporaryPath;
+            var result = await api.CreatePackageAsync(ymmpPath, temporaryPath, excludedFiles, progress, token).ConfigureAwait(false);
+            var packagedOutputPath = result.OutputPath;
             if (!string.Equals(Path.GetFullPath(packagedOutputPath), temporaryPath, StringComparison.OrdinalIgnoreCase) ||
                 !File.Exists(temporaryPath) || new FileInfo(temporaryPath).Length == 0)
                 throw new IOException("一時出力が不正です。");
             validatedPackage = new FileStream(YmmpxPackageReader.OpenPackageForPublication(temporaryPath), FileAccess.Read);
             await YmmpxPackageReader.ValidateAsync(validatedPackage, ymmpPath, source.RootElement, token).ConfigureAwait(false);
-            //CSJ,variable=resourceCount,リソース件数
-            var resourceCount = GetIntProperty(result, "ResourceCount");
-            //CSJ,variable=fileMap,ファイル対応表
-            var fileMap = GetDictionaryProperty(result, "FileMap");
+            var resourceCount = result.ResourceCount;
+            var fileMap = new Dictionary<string, string>(result.FileMap, StringComparer.OrdinalIgnoreCase);
             //CSJ,variable=links,リンク一覧
             var links = scan.Links.Select(link => new YmmpxPackageLink
             {
@@ -396,125 +344,41 @@ public sealed class YmmpxLibBridge
         }
     }
 
-    //CSJ,method=ResolveAssembly,アセンブリを解決する
-    private Assembly? ResolveAssembly(out string? resolvedAssemblyPath)
+    private YmmpxLibApi? ResolveApi(out string? resolvedAssemblyPath)
     {
-        if (cachedAssembly is not null)
+        lock (bindingGate)
         {
-            resolvedAssemblyPath = cachedAssemblyPath;
-            return cachedAssembly;
-        }
-
-        if (!YmmpxLibResolver.TryResolveAssembly(out var assembly, out var assemblyPath, out var paths, baseDirectory, explicitAssemblyPath))
-        {
-            searchedPaths = paths;
-            resolvedAssemblyPath = null;
-            return null;
-        }
-
-        cachedAssembly = assembly;
-        cachedAssemblyPath = assemblyPath;
-        searchedPaths = paths;
-        resolvedAssemblyPath = assemblyPath;
-        return assembly;
-    }
-
-    //CSJ,method=LogMissingYmmpxLib,欠落YMMPXライブラリをログに記録する
-    private void LogMissingYmmpxLib(string operation)
-    {
-        logger.Error(
-            new FileNotFoundException("YmmpxLib.dll が見つかりません。"),
-            $"{operation}に必要な YmmpxLib が見つかりません。探索パス={string.Join(" | ", searchedPaths)}");
-        logger.Flush();
-    }
-
-    private static int GetIntProperty(object obj, string propertyName)
-    {
-        try
-        {
-            var value = obj.GetType().GetProperty(propertyName)?.GetValue(obj);
-            return value is null ? 0 : Convert.ToInt32(value);
-        }
-        catch
-        {
-            return 0;
-        }
-    }
-
-    private static string? GetStringProperty(object obj, string propertyName)
-    {
-        try
-        {
-            return obj.GetType().GetProperty(propertyName)?.GetValue(obj)?.ToString();
-        }
-        catch
-        {
-            return null;
-        }
-    }
-
-    //CSJ,method=GetDictionaryProperty,辞書プロパティを取得する
-    private static Dictionary<string, string> GetDictionaryProperty(object obj, string propertyName)
-    {
-        try
-        {
-            var value = obj.GetType().GetProperty(propertyName)?.GetValue(obj);
-            if (value is IReadOnlyDictionary<string, string> typed)
+            Assembly? assembly;
+            if (fixtureAssembly is not null)
             {
-                return typed.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                assembly = fixtureAssembly;
+                resolvedAssemblyPath = fixtureAssembly.Location;
+                LastStatus = YmmpxLibStatus.Ready;
+            }
+            else
+            {
+                LastStatus = YmmpxLibResolver.Resolve(out assembly, out resolvedAssemblyPath, out searchedPaths,
+                    baseDirectory, explicitAssemblyPath);
             }
 
-            if (value is IDictionary<string, string> dict)
+            if (assembly is null) return null;
+            try
             {
-                return dict.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+                return boundApi ??= new YmmpxLibApi(assembly);
             }
-
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        }
-    }
-
-    //CSJ,method=ExtractTaskResult,タスク結果を抽出する
-    private static object ExtractTaskResult(object taskObj)
-    {
-        //CSJ,variable=taskType,タスク型
-        var taskType = taskObj.GetType();
-        //CSJ,variable=resultProperty,結果プロパティ
-        var resultProperty = taskType.GetProperty("Result");
-        return resultProperty?.GetValue(taskObj)
-            ?? throw new InvalidOperationException("Task.Result が取得できません。");
-    }
-
-    private static double ConvertToDouble(object? value)
-    {
-        try
-        {
-            return value is null ? 0d : Convert.ToDouble(value);
-        }
-        catch
-        {
-            return 0d;
-        }
-    }
-
-    //CSJ,class=ObjectProgress,オブジェクト進捗
-    private sealed class ObjectProgress<T> : IProgress<T>
-    {
-        //CSJ,field=report,報告
-        private readonly Action<object?> report;
-
-        public ObjectProgress(Action<object?> report)
-        {
-            this.report = report;
-        }
-
-        //CSJ,method=Report,報告
-        public void Report(T value)
-        {
-            report(value);
+            catch (Exception ex) when (ex is TypeLoadException or ReflectionTypeLoadException or MissingMemberException or AmbiguousMatchException or
+                ArgumentException or InvalidOperationException)
+            {
+                LastStatus = YmmpxLibStatus.Unsupported;
+                resolvedAssemblyPath = null;
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException or BadImageFormatException or NotSupportedException)
+            {
+                LastStatus = YmmpxLibStatus.LoadFailed;
+                resolvedAssemblyPath = null;
+                return null;
+            }
         }
     }
 
