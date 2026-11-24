@@ -1,0 +1,115 @@
+<Window x:Class="YMMProjectManager.Presentation.Views.ProjectComparisonWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:automation="clr-namespace:System.Windows.Automation;assembly=PresentationCore"
+        Title="プロジェクト比較" Width="900" Height="720" MinWidth="625" MinHeight="650"
+        WindowStartupLocation="CenterOwner" Closed="OnClosed">
+    <Grid Margin="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" MinHeight="122" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid Grid.Row="0" Margin="0,0,0,5">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="元プロジェクト" VerticalAlignment="Center" Margin="0,0,12,0" />
+            <TextBox Grid.Column="1" Text="{Binding OriginalPath, Mode=OneWay}" IsReadOnly="True"
+                     automation:AutomationProperties.Name="選択した元プロジェクト" />
+            <Button Grid.Column="2" Content="元PFを選択…" Click="OnSelectOriginalClick" Padding="10,2" Margin="8,0,0,0" />
+        </Grid>
+        <Grid Grid.Row="1" Margin="0,0,0,12">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <TextBlock Text="現プロジェクト" VerticalAlignment="Center" Margin="0,0,12,0" />
+            <TextBox Grid.Column="1" Text="{Binding CurrentPath, Mode=OneWay}" IsReadOnly="True"
+                     automation:AutomationProperties.Name="選択した現プロジェクト" />
+            <Button Grid.Column="2" Content="現PFを選択…" Click="OnSelectCurrentClick" Padding="10,2" Margin="8,0,0,0" />
+        </Grid>
+        <Grid Grid.Row="2" Margin="0,0,0,8">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Header="元プロジェクトのプレビュー">
+                <DockPanel Margin="4">
+                    <TextBlock Text="{Binding OriginalTimeLabel}" DockPanel.Dock="Bottom" Margin="0,4,0,0" />
+                    <Border Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+                        <Image x:Name="OriginalPreview" Source="{Binding OriginalImage}" Stretch="Uniform" />
+                    </Border>
+                </DockPanel>
+            </GroupBox>
+            <GroupBox Grid.Column="2" Header="現プロジェクトのプレビュー">
+                <DockPanel Margin="4">
+                    <TextBlock Text="{Binding CurrentTimeLabel}" DockPanel.Dock="Bottom" Margin="0,4,0,0" />
+                    <Border Background="{DynamicResource {x:Static SystemColors.ControlBrushKey}}">
+                        <Image x:Name="CurrentPreview" Source="{Binding CurrentImage}" Stretch="Uniform" />
+                    </Border>
+                </DockPanel>
+            </GroupBox>
+        </Grid>
+        <StackPanel Grid.Row="3" Margin="0,0,0,8">
+            <TextBlock x:Name="DisconnectedNotice" TextWrapping="Wrap"
+                       Text="実YMM4の描画は未接続です。プロジェクトを選び、表示予定時刻とオフセットを確認できます。" />
+            <Slider x:Name="CommonSeekBar" Minimum="0" Maximum="60" SmallChange="0.04" LargeChange="1"
+                    ValueChanged="OnCommonSeekChanged" automation:AutomationProperties.Name="共通シークバー" />
+            <WrapPanel>
+                <Label Content="比較時刻" Target="{Binding ElementName=CommonTimeInput}" Padding="0,3,6,0" />
+                <TextBox x:Name="CommonTimeInput" Text="00:00:00" Width="145" Margin="0,0,5,0" />
+                <Button x:Name="ApplyTimeButton" Content="時刻へ移動" Click="OnApplyTimeClick" Padding="7,2" />
+                <TextBlock Text="{Binding CommonTimeLabel, StringFormat=現在の比較時刻 {0}}" Margin="12,3,0,0" />
+                <TextBlock Text="{Binding EffectiveOffsetLabel, StringFormat=適用中のオフセット {0}}" Margin="12,3,0,0" />
+            </WrapPanel>
+        </StackPanel>
+        <GroupBox Grid.Row="4" Header="時間オフセット">
+            <StackPanel Margin="4">
+                <WrapPanel Margin="0,0,0,5">
+                    <Label Content="固定オフセット" Target="{Binding ElementName=FixedOffsetInput}" Padding="0,3,6,0" />
+                    <TextBox x:Name="FixedOffsetInput" Text="00:00:00" Width="145" Margin="0,0,5,0" />
+                    <Button x:Name="ApplyFixedOffsetButton" Content="固定値を適用" Click="OnApplyFixedClick" Padding="7,2" />
+                    <TextBlock Text="区間内では区間の値を適用します。" Margin="12,3,0,0" />
+                </WrapPanel>
+                <DataGrid x:Name="SectionList" IsReadOnly="True" AutoGenerateColumns="False"
+                          MinHeight="54" MaxHeight="110" SelectionMode="Single" CanUserAddRows="False"
+                          SelectionChanged="OnSectionSelected" automation:AutomationProperties.Name="オフセット区間">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="開始時刻" Binding="{Binding Start}" Width="*" />
+                        <DataGridTextColumn Header="オフセット" Binding="{Binding Offset}" Width="*" />
+                    </DataGrid.Columns>
+                </DataGrid>
+                <WrapPanel Margin="0,6,0,0">
+                    <Label Content="区間開始" Target="{Binding ElementName=SectionStartInput}" Padding="0,3,5,0" />
+                    <TextBox x:Name="SectionStartInput" Text="00:00:00" Width="126" Margin="0,0,8,0" />
+                    <Label Content="オフセット" Target="{Binding ElementName=SectionOffsetInput}" Padding="0,3,5,0" />
+                    <TextBox x:Name="SectionOffsetInput" Text="00:00:00" Width="126" Margin="0,0,6,0" />
+                    <Button x:Name="AddSectionButton" Content="追加" Click="OnAddSectionClick" Padding="8,2" Margin="0,0,4,0" />
+                    <Button x:Name="EditSectionButton" Content="選択区間を更新" Click="OnEditSectionClick" Padding="8,2" Margin="0,0,4,0" />
+                    <Button x:Name="RemoveSectionButton" Content="削除" Click="OnRemoveSectionClick" Padding="8,2" />
+                </WrapPanel>
+            </StackPanel>
+        </GroupBox>
+        <StackPanel Grid.Row="5" Margin="0,7,0,4">
+            <TextBlock x:Name="EditStatus" TextWrapping="Wrap" />
+            <TextBlock Text="{Binding PreviewStatus}" TextWrapping="Wrap" />
+        </StackPanel>
+        <WrapPanel Grid.Row="6" HorizontalAlignment="Right">
+            <Button Content="設定を読み込む…" Click="OnLoadTimingClick" Padding="8,3" Margin="0,0,5,0" />
+            <Button Content="設定を別名保存…" Click="OnSaveTimingClick" Padding="8,3" Margin="0,0,12,0" />
+            <Button x:Name="RefreshPreviewButton" Content="プレビューを更新" Click="OnRefreshPreviewClick" IsEnabled="False"
+                    Padding="8,3" Margin="0,0,5,0" />
+            <Button x:Name="CancelPreviewButton" Content="中止" Click="OnCancelClick" Padding="8,3" Margin="0,0,5,0" />
+            <Button Content="閉じる" IsCancel="True" Padding="8,3" />
+        </WrapPanel>
+    </Grid>
+</Window>

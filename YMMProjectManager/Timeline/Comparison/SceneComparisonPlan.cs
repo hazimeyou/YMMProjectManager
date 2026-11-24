@@ -87,7 +87,7 @@ internal sealed class SceneComparisonPlan
     {
         comparison = alignment.Request;
         A = new(Guid.NewGuid(), a, comparison.Timestamp, alignment.FrameA!.Value, width, height);
-        B = new(Guid.NewGuid(), b, comparison.Timestamp + comparison.Offset, alignment.FrameB!.Value, width, height);
+        B = new(Guid.NewGuid(), b, comparison.CurrentTime!.Value, alignment.FrameB!.Value, width, height);
     }
 
     private SceneComparisonPlan(PreviewComparisonRequest comparison, SceneRenderRequest a, SceneRenderRequest b)

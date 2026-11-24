@@ -53,6 +53,9 @@ internal sealed class ComparisonTiming
         return DefaultOffset;
     }
 
+    internal TimeSpan? RequestedCurrentTime(TimeSpan comparisonTime) =>
+        PreviewComparisonRequest.ResolveCurrentTime(comparisonTime, GetOffset(comparisonTime));
+
     internal PreviewComparisonRequest Bind(TimeSpan comparisonTime, PreviewSource original, PreviewSource current) =>
         new(comparisonTime, original, current, GetOffset(comparisonTime));
 

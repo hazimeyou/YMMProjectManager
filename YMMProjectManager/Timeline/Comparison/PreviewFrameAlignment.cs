@@ -13,7 +13,16 @@ internal readonly record struct PreviewSource(
 
 //CSJ,record=PreviewComparisonRequest,プレビュー比較要求
 internal readonly record struct PreviewComparisonRequest(
-    TimeSpan Timestamp, PreviewSource A, PreviewSource B, TimeSpan Offset = default);
+    TimeSpan Timestamp, PreviewSource A, PreviewSource B, TimeSpan Offset = default)
+{
+    internal TimeSpan? CurrentTime => ResolveCurrentTime(Timestamp, Offset);
+
+    internal static TimeSpan? ResolveCurrentTime(TimeSpan timestamp, TimeSpan offset)
+    {
+        var ticks = (Int128)timestamp.Ticks + offset.Ticks;
+        return ticks >= long.MinValue && ticks <= long.MaxValue ? TimeSpan.FromTicks((long)ticks) : null;
+    }
+}
 
 //CSJ,enum=PreviewComparisonError,プレビュー比較エラー
 internal enum PreviewComparisonError
@@ -64,10 +73,8 @@ internal sealed record PreviewFrameAlignment(
             return new(request, null, null, PreviewComparisonError.RenderingConfigurationMismatch);
 
         int? frameA = Resolve(request.Timestamp, request.A);
-        var bTicks = (Int128)request.Timestamp.Ticks + request.Offset.Ticks;
-        int? frameB = bTicks >= 0 && bTicks <= long.MaxValue
-            ? Resolve(TimeSpan.FromTicks((long)bTicks), request.B)
-            : null;
+        int? frameB = request.CurrentTime is { } currentTime && currentTime >= TimeSpan.Zero
+            ? Resolve(currentTime, request.B) : null;
         if (frameA is null || frameB is null)
         {
             PreviewComparisonSide? side = frameA.HasValue ? PreviewComparisonSide.B

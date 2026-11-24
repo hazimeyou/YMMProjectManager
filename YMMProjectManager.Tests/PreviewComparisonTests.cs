@@ -24,6 +24,7 @@ internal static class PreviewComparisonTests
         await Program.RunNamedCaseAsync("TL-1 concurrent comparisons with stable independent buffers", TestConcurrencyAsync);
         await CaseAsync("R32 comparison signed offsets, section boundaries and independent Scene bindings", TestProjectOffsets);
         await Program.RunNamedCaseAsync("R32 comparison timing copy is bounded, round-trips and never overwrites", TestTimingCopyAsync);
+        await ProjectComparisonWindowTests.RunAsync();
         await LiveThumbnailSafetyTests.RunAsync();
     }
 
