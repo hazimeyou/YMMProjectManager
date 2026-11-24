@@ -23,16 +23,29 @@ jobs:
       - name: Set Version
         shell: pwsh
         run: |
-          $version = "${{ github.ref_name }}".TrimStart('v')
+          $version = $env:GITHUB_REF_NAME.TrimStart('v')
           echo "VERSION=$version" >> $env:GITHUB_ENV
 
-      - name: Fetch YMM4 Build Libraries
+      - name: Fetch pinned YMM4 build references
         shell: pwsh
         run: |
-          ./scripts/fetch-ymm4-libs.ps1 -OutputDir "libs/YMM4"
+          $refs = Join-Path $env:RUNNER_TEMP 'ymmpm-refs'
+          ./scripts/fetch-ymm4-libs.ps1 -OutputDir $refs
+          "YMM4_PATH=$refs" >> $env:GITHUB_ENV
 
       - name: Build
-        run: dotnet build .\YMMProjectManager.sln -c Release -p:Version=$env:VERSION -p:YMM4_PATH="${{ github.workspace }}\libs\YMM4"
+        run: dotnet build .\YMMProjectManager.sln -c Release -p:Version=$env:VERSION
+
+      - name: Verify the build in isolation
+        shell: pwsh
+        run: |
+          $testRoot = Join-Path $env:RUNNER_TEMP 'yt'
+          New-Item -ItemType Directory -Path $testRoot | Out-Null
+          $env:TEMP = $testRoot
+          $env:TMP = $testRoot
+          Remove-Item Env:YMMPX_LIB_PATH,Env:YMM_TEST_FILTER -ErrorAction SilentlyContinue
+          dotnet run --project .\YMMProjectManager.Tests -c Release --no-build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare Publish Folder
         run: |
@@ -79,11 +92,36 @@ jobs:
       - name: Rename ZIP to .ymme
         run: Move-Item YMMProjectManager.zip YMMProjectManager.ymme
 
+      - name: Record release provenance
+        shell: pwsh
+        run: |
+          $testedCommit = git rev-parse HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $referenceMetadata = Get-Content -LiteralPath (Join-Path $env:YMM4_PATH 'YMM4-reference.json') -Raw | ConvertFrom-Json
+          foreach ($reference in $referenceMetadata.files) {
+            $path = Join-Path $env:YMM4_PATH $reference.name
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath $path).Hash -ne $reference.sha256) {
+              throw "A build reference changed: $($reference.name)"
+            }
+          }
+          $sdk = dotnet --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          [ordered]@{
+            testedCommit = $testedCommit
+            tag = $env:GITHUB_REF_NAME
+            sdk = $sdk
+            testSuite = 'Release default synthetic suite; conditional skips are recorded in the workflow log'
+            workflowRunId = $env:GITHUB_RUN_ID
+            references = $referenceMetadata
+            package = 'YMMProjectManager.ymme'
+            packageSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath 'YMMProjectManager.ymme').Hash
+          } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath 'YMMProjectManager.build.json' -Encoding utf8
+
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
-          artifacts: YMMProjectManager.ymme
+          artifacts: YMMProjectManager.ymme,YMMProjectManager.build.json
           draft: true
           prerelease: true

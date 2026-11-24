@@ -20,6 +20,25 @@ YukkuriMovieMaker 用の補助ツールです。
 
 ---
 
+## 開発用ビルドと配備
+
+YMM4の参照DLLを含むフォルダーを `YMM4_PATH` に指定します。CIと同じ参照を取得する場合は、PowerShell 7で `./scripts/fetch-ymm4-libs.ps1` を実行すると、新規の `libs/YMM4` に検証済みの参照DLLと来歴が保存されます。通常のビルドやテストからYMM4への配備は行われません。
+
+```powershell
+$env:YMM4_PATH = 'C:\path\to\reference-dlls'
+dotnet build .\YMMProjectManager.sln -c Debug
+```
+
+開発先へ配備する場合は、対象のYMM4を終了し、配備先を指定して専用ターゲットを実行します。この操作で配備先のプラグインDLLが更新されます。
+
+```powershell
+dotnet msbuild .\YMMProjectManager\YMMProjectManager.csproj -restore -t:DeployToYMM4 -p:Configuration=Debug "-p:YMM4DeployPath=C:\path\to\YMM4"
+```
+
+タグの配布ワークフローでは、Releaseビルドと隔離テストの成功後に `YMMProjectManager.ymme` を組み立てます。付属する `YMMProjectManager.build.json` に、試験対象コミット・参照DLLの版とSHA-256・パッケージのSHA-256が記録されます。
+
+---
+
 # 主な機能
 
 ## 素材再リンク

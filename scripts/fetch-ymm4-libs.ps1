@@ -4,49 +4,71 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$apiUrl = 'https://api.github.com/repos/manju-summoner/YukkuriMovieMaker4/releases/latest'
-$headers = @{ 'User-Agent' = 'YMMResourcePackager-CI' }
-
-Write-Host "Fetching latest YMM4 release metadata..."
-$release = Invoke-RestMethod -Uri $apiUrl -Headers $headers
-
-$zipAsset = $release.assets |
-    Where-Object { $_.name -match '\.zip$' } |
-    Select-Object -First 1
-
-if (-not $zipAsset) {
-    throw "No .zip asset found in latest YMM4 release: $($release.tag_name)"
-}
-
-Write-Host "Latest release: $($release.tag_name)"
-Write-Host "Using asset: $($zipAsset.name)"
-
-$tmpRoot = Join-Path $env:TEMP ("ymm4-fetch-" + [Guid]::NewGuid().ToString('N'))
-$zipPath = Join-Path $tmpRoot $zipAsset.name
-$extractDir = Join-Path $tmpRoot 'extract'
-
-New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
-New-Item -ItemType Directory -Force -Path $extractDir | Out-Null
-
-Invoke-WebRequest -Uri $zipAsset.browser_download_url -Headers $headers -OutFile $zipPath
-Expand-Archive -Path $zipPath -DestinationPath $extractDir
-
+$tag = 'v4.57.0.1'
+$asset = 'YukkuriMovieMaker_v4.57.0.1_Lite.zip'
+$archiveSha256 = '47837E0AA514533BDEB3D018FF28FBAC8D2A57E8D6A5665DDFB72E9329EC0553'
+$source = "https://github.com/manju-summoner/YukkuriMovieMaker4/releases/download/$tag/$asset"
 $requiredDlls = @(
     'YukkuriMovieMaker.Plugin.dll',
     'YukkuriMovieMaker.dll',
     'YukkuriMovieMaker.Controls.dll'
 )
 
-New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+$output = [IO.Path]::GetFullPath($OutputDir)
+if (Test-Path -LiteralPath $output) {
+    throw "Choose a new output directory for the pinned YMM4 references: $output"
+}
+$parent = Split-Path -Parent $output
+[IO.Directory]::CreateDirectory($parent) | Out-Null
+$staging = Join-Path $parent ('.ymm4-refs-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $staging | Out-Null
 
-foreach ($dllName in $requiredDlls) {
-    $dll = Get-ChildItem -Path $extractDir -Recurse -File -Filter $dllName | Select-Object -First 1
-    if (-not $dll) {
-        throw "Required DLL not found in release archive: $dllName"
+$download = [IO.Directory]::CreateTempSubdirectory('ymm4-fetch-').FullName
+$zipPath = Join-Path $download $asset
+$metadataName = 'YMM4-reference.json'
+try {
+    Invoke-WebRequest -Uri $source -OutFile $zipPath
+    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash -ne $archiveSha256) {
+        throw 'The downloaded YMM4 archive does not match the pinned SHA-256.'
     }
 
-    Copy-Item -Path $dll.FullName -Destination (Join-Path $OutputDir $dllName) -Force
-    Write-Host "Copied: $dllName"
-}
+    $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
+    try {
+        $references = foreach ($dllName in $requiredDlls) {
+            $entries = @($archive.Entries | Where-Object Name -CEQ $dllName)
+            if ($entries.Count -ne 1) {
+                throw "Expected exactly one entry for $dllName in the pinned archive."
+            }
+            $destination = Join-Path $staging $dllName
+            [IO.Compression.ZipFileExtensions]::ExtractToFile($entries[0], $destination)
+            [ordered]@{
+                name = $dllName
+                fileVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($destination).FileVersion
+                sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $destination).Hash
+            }
+        }
+    }
+    finally {
+        $archive.Dispose()
+    }
 
-Write-Host "YMM4 libs prepared at: $(Resolve-Path $OutputDir)"
+    [ordered]@{
+        release = $tag
+        source = $source
+        archiveSha256 = $archiveSha256
+        files = $references
+    } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $staging $metadataName) -Encoding utf8
+
+    [IO.Directory]::Move($staging, $output)
+    Write-Host "YMM4 references prepared at $output ($tag)"
+}
+finally {
+    if ([IO.Directory]::Exists($staging)) {
+        foreach ($name in ($requiredDlls + $metadataName)) {
+            [IO.File]::Delete((Join-Path $staging $name))
+        }
+        [IO.Directory]::Delete($staging)
+    }
+    [IO.File]::Delete($zipPath)
+    [IO.Directory]::Delete($download)
+}

@@ -9,9 +9,6 @@
     <AssemblyName>YMMProjectManager</AssemblyName>
     <Version Condition="'$(Version)'==''">0.4.0</Version>
     <PlatformTarget>x64</PlatformTarget>
-    <YMM4Path Condition="'$(YMM4_PATH)' != ''">$(YMM4_PATH)</YMM4Path>
-    <YMM4Path Condition="'$(YMM4Path)' == '' and '$(YMM4DirPath)' != ''">$(YMM4DirPath)</YMM4Path>
-    <YMM4Path Condition="'$(YMM4Path)' == ''">..\libs\YMM4</YMM4Path>
   </PropertyGroup>
 
   <ItemGroup Condition="Exists('$(YMM4Path)\YukkuriMovieMaker.Plugin.dll')">
@@ -26,18 +23,14 @@
     <Reference Include="YukkuriMovieMaker" HintPath="..\libs\YukkuriMovieMaker.dll" Private="false" />
   </ItemGroup>
 
-  <Target Name="CopyToYMM4" AfterTargets="Build" Condition="Exists('$(YMM4Path)')">
-    <PropertyGroup>
-      <PluginOutputDir>$(YMM4Path)\user\plugin\$(AssemblyName)</PluginOutputDir>
-    </PropertyGroup>
-
-    <MakeDir Directories="$(PluginOutputDir)" Condition="!Exists('$(PluginOutputDir)')" />
-
-    <ItemGroup>
-      <PluginFiles Include="$(TargetDir)$(AssemblyName).dll" />
-    </ItemGroup>
-
-    <Copy SourceFiles="@(PluginFiles)" DestinationFolder="$(PluginOutputDir)" SkipUnchangedFiles="true" />
+  <Target Name="DeployToYMM4" DependsOnTargets="Build">
+    <Error Condition="'$(YMM4DeployPath)' == ''"
+           Text="Set YMM4DeployPath to explicitly select the YMM4 installation for development deployment." />
+    <Error Condition="!Exists('$(YMM4DeployPath)\YukkuriMovieMaker.Plugin.dll')"
+           Text="YMM4DeployPath must point to a YMM4 directory containing YukkuriMovieMaker.Plugin.dll." />
+    <Copy SourceFiles="$(TargetPath)"
+          DestinationFolder="$(YMM4DeployPath)\user\plugin\$(AssemblyName)"
+          SkipUnchangedFiles="true" />
   </Target>
 
 </Project>
