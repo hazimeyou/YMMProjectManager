@@ -6,6 +6,8 @@ YukkuriMovieMaker 用の補助ツールです。
 
 v0.5.0の正式対応環境は Windows 11 x64、.NET 10、YMM4 Lite 4.57.0.1、ローカルストレージです。YMMPXの作成には対応する公式YmmpxLib 1.1系を使用します。Windows 10、他のYMM4版、NASやネットワーク上のストレージは正式保証の対象外です。実環境の受入状況は [R33の記録](docs/development/v0.5.0-r33-nonvm-development.md) を参照してください。
 
+実装の調査・保守には [v0.5.0の仕様書](docs/specification/README.md) を参照してください。機能別の仕様、保存形式、全クラス・型の定義元、検証状況を掲載しています。
+
 ---
 
 # インストール方法
